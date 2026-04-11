@@ -17,12 +17,12 @@ namespace wxd.files.winforms
         private enum LayoutMode { Horizontal, Vertical, Flow }
 
         // ==================== 配色 ====================
-        private static readonly Color _colorTopBg      = Color.FromArgb(248, 250, 252);
-        private static readonly Color _colorTopBorder   = Color.FromArgb(220, 228, 238);
-        private static readonly Color _colorTitleFg     = Color.FromArgb(35, 70, 120);
-        private static readonly Color _colorLabelFg     = Color.FromArgb(90, 95, 105);
+        private static readonly Color _colorTopBg      = Color.FromArgb(245, 246, 247);
+        private static readonly Color _colorTopBorder   = Color.FromArgb(218, 220, 224);
+        private static readonly Color _colorTitleFg     = Color.FromArgb(32, 33, 36);
+        private static readonly Color _colorLabelFg     = Color.FromArgb(95, 99, 104);
 
-        private static readonly int GAP = 5; // 窗格间距
+        private static readonly int GAP = 6; // 窗格间距
 
         public Form1()
         {
@@ -59,7 +59,7 @@ namespace wxd.files.winforms
             Text       = "多窗格文件夹管理器";
             MinimumSize = new Size(600, 450);
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor   = Color.FromArgb(250, 251, 253);
+            BackColor   = Color.FromArgb(250, 250, 250);
             Font        = new Font("Microsoft YaHei UI", 9f);
 
             ResumeLayout(false);
@@ -73,8 +73,8 @@ namespace wxd.files.winforms
             _pnlTopBar = new Panel
             {
                 Dock      = DockStyle.Top,
-                Height    = 50,
-                Padding   = new Padding(12, 6, 12, 4),
+                Height    = 48,
+                Padding   = new Padding(12, 6, 12, 6),
                 BackColor = _colorTopBg
             };
 
@@ -83,7 +83,7 @@ namespace wxd.files.winforms
 
             // 容器面板
             _pnlContainer.Dock     = DockStyle.Fill;
-            _pnlContainer.Padding  = new Padding(GAP);  // 用 padding 统一管理间距
+            _pnlContainer.Padding  = new Padding(GAP);
             _pnlContainer.BackColor = BackColor;
 
             Controls.Add(_pnlContainer);
@@ -96,8 +96,8 @@ namespace wxd.files.winforms
         {
             if (_pnlTopBar == null) return;
 
-            int y = 11;
-            float fontSize = 8.8f;
+            int y = 12;
+            float fontSize = 9f;
             var labelFont = new Font("Microsoft YaHei UI", fontSize);
             var comboFont = new Font("Microsoft YaHei UI", fontSize);
 
@@ -106,14 +106,14 @@ namespace wxd.files.winforms
                 Text      = "多窗格文件管理",
                 Location  = new Point(14, y),
                 AutoSize  = true,
-                Font      = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
-                ForeColor  = _colorTitleFg
+                Font      = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
+                ForeColor = _colorTitleFg
             };
 
             _lblCount = new Label
             {
                 Text     = "窗格数量",
-                Location = new Point(155, y + 2),
+                Location = new Point(180, y + 2),
                 AutoSize = true,
                 Font     = labelFont,
                 ForeColor = _colorLabelFg
@@ -122,7 +122,7 @@ namespace wxd.files.winforms
             _cboCount = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(218, y - 1),
+                Location      = new Point(245, y - 1),
                 Size          = new Size(55, 26),
                 Font          = comboFont,
                 FlatStyle     = FlatStyle.System
@@ -134,7 +134,7 @@ namespace wxd.files.winforms
             _lblLayout = new Label
             {
                 Text     = "布局方式",
-                Location = new Point(285, y + 2),
+                Location = new Point(315, y + 2),
                 AutoSize = true,
                 Font     = labelFont,
                 ForeColor = _colorLabelFg
@@ -143,8 +143,8 @@ namespace wxd.files.winforms
             _cboLayout = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(348, y - 1),
-                Size          = new Size(130, 26),
+                Location      = new Point(380, y - 1),
+                Size          = new Size(120, 26),
                 Font          = comboFont,
                 FlatStyle     = FlatStyle.System
             };

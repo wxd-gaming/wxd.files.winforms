@@ -36,11 +36,23 @@ namespace wxd.files.winforms
         /// <param name="screenY">屏幕Y坐标</param>
         public static void Show(string path, Control control, int screenX, int screenY)
         {
+            System.Diagnostics.Debug.WriteLine($"WindowsShellContextMenu.Show: path='{path}', screenX={screenX}, screenY={screenY}");
+            
             if (control == null || control.IsDisposed || !control.IsHandleCreated)
+            {
+                System.Diagnostics.Debug.WriteLine("控制无效或已释放");
                 return;
+            }
 
-            if (!File.Exists(path) && !Directory.Exists(path))
+            bool isFile = File.Exists(path);
+            bool isDir = Directory.Exists(path);
+            System.Diagnostics.Debug.WriteLine($"路径存在检查: isFile={isFile}, isDir={isDir}");
+            
+            if (!isFile && !isDir)
+            {
+                System.Diagnostics.Debug.WriteLine($"路径不存在: {path}");
                 return;
+            }
 
             if (!IsWindows())
                 return;
@@ -82,23 +94,22 @@ namespace wxd.files.winforms
 
                 desktopFolder = (IShellFolder)Marshal.GetObjectForIUnknown(desktopFolderPtr);
 
-                // 解析路径为 PIDL
-                uint pchEaten = 0;
-                uint pdwAttributes = 0;
-                desktopFolder.ParseDisplayName(control.Handle, IntPtr.Zero, path, out pchEaten, out pidl, ref pdwAttributes);
-                System.Diagnostics.Debug.WriteLine($"ParseDisplayName PIDL: {pidl}");
-                if (pidl == IntPtr.Zero)
-                {
-                    System.Diagnostics.Debug.WriteLine($"ParseDisplayName failed for path: {path}");
-                    return;
-                }
-
                 // 获取父文件夹和相对PIDL
                 // 分离路径获取父目录
                 string parentPath = Path.GetDirectoryName(path);
                 string fileName = Path.GetFileName(path);
                 
-                if (string.IsNullOrEmpty(parentPath))
+                System.Diagnostics.Debug.WriteLine($"parentPath='{parentPath}', fileName='{fileName}'");
+                
+                // 处理根目录情况，如 "C:\"
+                if (string.IsNullOrEmpty(parentPath) && isDir)
+                {
+                    // 对于根目录，直接使用桌面文件夹，并传入驱动器名称
+                    parentFolder = desktopFolder;
+                    fileName = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    System.Diagnostics.Debug.WriteLine($"根目录处理: fileName='{fileName}'");
+                }
+                else if (string.IsNullOrEmpty(parentPath))
                 {
                     // 如果是根目录，直接使用桌面文件夹
                     parentFolder = desktopFolder;
@@ -107,6 +118,8 @@ namespace wxd.files.winforms
                 {
                     // 解析父目录路径
                     IntPtr parentPidl = IntPtr.Zero;
+                    uint pchEaten = 0;
+                    uint pdwAttributes = 0;
                     desktopFolder.ParseDisplayName(control.Handle, IntPtr.Zero, parentPath, out pchEaten, out parentPidl, ref pdwAttributes);
                     if (parentPidl == IntPtr.Zero)
                     {
@@ -134,7 +147,11 @@ namespace wxd.files.winforms
 
                 // 在父文件夹中解析文件名
                 IntPtr childPidl = IntPtr.Zero;
-                parentFolder.ParseDisplayName(control.Handle, IntPtr.Zero, fileName, out pchEaten, out childPidl, ref pdwAttributes);
+                {
+                    uint pchEaten = 0;
+                    uint pdwAttributes = 0;
+                    parentFolder.ParseDisplayName(control.Handle, IntPtr.Zero, fileName, out pchEaten, out childPidl, ref pdwAttributes);
+                }
                 System.Diagnostics.Debug.WriteLine($"Child PIDL: {childPidl}");
                 if (childPidl == IntPtr.Zero)
                 {
