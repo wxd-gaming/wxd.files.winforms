@@ -24,6 +24,8 @@ namespace wxd.files.winforms
         private Label?    _lblDrives;
         private ImageList _imgList = new();
         private Panel?    _pnlToolbar;
+        private Panel?    _pnlBottom;
+        private Button?   _btnOpenExplorer;
 
         // ==================== 状态字段 ====================
         private string          _currentDir     = "";
@@ -217,7 +219,16 @@ namespace wxd.files.winforms
             }
         }
 
-        private void InitializeComponent() { }
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+            // 
+            // FileBrowserPanel
+            // 
+            Name = "FileBrowserPanel";
+            Size = new Size(896, 758);
+            ResumeLayout(false);
+        }
 
         /// <summary>实际创建和布局所有控件</summary>
         private void CreateControls()
@@ -300,11 +311,33 @@ namespace wxd.files.winforms
                 if (_lstFiles.SelectedItems.Count > 0) _lstFiles.Focus();
             };
 
-            // ===== 过滤框（底部）=====
+            // ===== 底部面板（包含过滤框和打开资源管理器按钮）=====
+            _pnlBottom = new Panel
+            {
+                Height = 28,
+                Dock   = DockStyle.Bottom
+            };
+
+            // 打开资源管理器按钮
+            _btnOpenExplorer = new Button
+            {
+                Width       = 80,
+                Height      = 28,
+                Dock        = DockStyle.Right,
+                Text        = "打开目录",
+                Font        = new Font("Microsoft YaHei UI", 8.25f),
+                FlatStyle   = FlatStyle.Flat,
+                BackColor   = Color.FromArgb(240, 240, 242),
+                Cursor      = Cursors.Hand
+            };
+            _btnOpenExplorer.FlatAppearance.BorderColor = Color.FromArgb(200, 200, 200);
+            _btnOpenExplorer.Click += OnOpenExplorerClick;
+
+            // 过滤框
             _txtFilter = new TextBox
             {
                 Height      = 28,
-                Dock        = DockStyle.Bottom,
+                Dock        = DockStyle.Fill,
                 Font        = new Font("Microsoft YaHei UI", 8.25f),
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor   = Color.FromArgb(250, 250, 252)
@@ -324,8 +357,11 @@ namespace wxd.files.winforms
                 }
             };
 
+            _pnlBottom.Controls.Add(_txtFilter);
+            _pnlBottom.Controls.Add(_btnOpenExplorer);
+
             Controls.Add(_lstFiles);
-            Controls.Add(_txtFilter);
+            Controls.Add(_pnlBottom);
             Controls.Add(_pnlToolbar);
 
             MinimumSize = new Size(280, 280);
@@ -492,6 +528,22 @@ namespace wxd.files.winforms
                 _allFiles.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             }
             catch (UnauthorizedAccessException) { }
+        }
+
+        // ==================== 打开资源管理器 ====================
+        private void OnOpenExplorerClick(object? sender, EventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
+            {
+                try
+                {
+                    Process.Start("explorer.exe", _currentDir);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"无法打开资源管理器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         // ==================== 过滤逻辑 ====================
