@@ -325,28 +325,31 @@ namespace wxd.files.winforms
             // ===== 底部面板（包含过滤框和打开资源管理器按钮）=====
             _pnlBottom = new Panel
             {
-                Height = 32,
+                Height = 36,
                 Dock   = DockStyle.Bottom,
                 BackColor = _colorToolbarBg
             };
 
-            // 打开资源管理器按钮
+            // 打开资源管理器按钮 - 使用 Anchor 定位在右侧
             _btnOpenExplorer = new Button
             {
                 Width       = 80,
                 Height      = 26,
-                Dock        = DockStyle.Right,
+                Location    = new Point(_pnlBottom.Width - 84, 5),
+                Anchor      = AnchorStyles.Top | AnchorStyles.Right,
                 Text        = "打开目录",
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 Cursor      = Cursors.Hand
             };
             _btnOpenExplorer.Click += OnOpenExplorerClick;
 
-            // 过滤框
+            // 过滤框 - 使用 Anchor 填充剩余空间
             _txtFilter = new TextBox
             {
                 Height      = 26,
-                Dock        = DockStyle.Fill,
+                Location    = new Point(4, 5),
+                Size        = new Size(_pnlBottom.Width - 92, 26),
+                Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle
             };
@@ -684,12 +687,8 @@ namespace wxd.files.winforms
 
         private void AutoResizeColumns()
         {
-            // 只自动调整名称列（第0列），其他列保持固定宽度
-            if (_lstFiles.Columns.Count > 0)
-            {
-                _lstFiles.Columns[0].Width = -2; // 名称列根据内容自动调整
-            }
-            // 其他列（修改日期、类型、大小）保持创建时设置的固定宽度
+            // 名称列铺满剩余宽度，其他列保持固定宽度
+            OnListViewResize(null, EventArgs.Empty);
         }
 
         // ==================== 双击 & 右键菜单 ====================

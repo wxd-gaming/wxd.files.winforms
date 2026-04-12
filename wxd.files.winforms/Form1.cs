@@ -254,13 +254,53 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>流式排列：自动换行网格布局</summary>
+        /// <summary>流式排列：自动换行网格布局，均匀分布窗格</summary>
         private void DoFlow(int count, int w, int h)
         {
-            // 计算最佳列数：使单元格接近正方形
-            int cols = Math.Max(1, (int)Math.Round(Math.Sqrt((double)count * w / Math.Max(h, 1))));
-            cols = Math.Min(cols, count);
-            int rows = (count + cols - 1) / cols;
+            // 计算最佳行列数，使窗格均匀分布且接近正方形
+            int cols, rows;
+            
+            if (count <= 1)
+            {
+                cols = 1;
+                rows = 1;
+            }
+            else if (count == 2)
+            {
+                // 2个窗格：横向并排
+                cols = 2;
+                rows = 1;
+            }
+            else if (count == 3)
+            {
+                // 3个窗格：一行3个
+                cols = 3;
+                rows = 1;
+            }
+            else if (count == 4)
+            {
+                // 4个窗格：2x2网格
+                cols = 2;
+                rows = 2;
+            }
+            else if (count <= 6)
+            {
+                // 5-6个窗格：3列，2行
+                cols = 3;
+                rows = 2;
+            }
+            else if (count <= 9)
+            {
+                // 7-9个窗格：3列，3行
+                cols = 3;
+                rows = 3;
+            }
+            else
+            {
+                // 10个窗格：5列，2行
+                cols = 5;
+                rows = 2;
+            }
 
             int cellW = w / cols;
             int cellH = h / rows;
