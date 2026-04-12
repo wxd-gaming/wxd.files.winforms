@@ -26,6 +26,7 @@ namespace wxd.files.winforms
         private Panel?    _pnlToolbar;
         private Panel?    _pnlBottom;
         private Button?   _btnOpenExplorer;
+        private Button?   _btnOpenCsvReader;
 
         // ==================== 状态字段 ====================
         private string          _currentDir     = "";
@@ -336,6 +337,12 @@ namespace wxd.files.winforms
                 _btnOpenExplorer.ForeColor = btnForeColor;
             }
 
+            if (_btnOpenCsvReader != null)
+            {
+                _btnOpenCsvReader.BackColor = btnBackColor;
+                _btnOpenCsvReader.ForeColor = btnForeColor;
+            }
+
             Invalidate();
         }
 
@@ -463,6 +470,23 @@ namespace wxd.files.winforms
                 BackColor = _colorToolbarBg
             };
 
+            // 打开CSV阅读器按钮 - 使用 Anchor 定位在右侧
+            _btnOpenCsvReader = new Button
+            {
+                Width       = 90,
+                Height      = 26,
+                Location    = new Point(_pnlBottom.Width - 180, 5),
+                Anchor      = AnchorStyles.Top | AnchorStyles.Right,
+                Text        = "CSV阅读器",
+                Font        = new Font("Microsoft YaHei UI", 9f),
+                Cursor      = Cursors.Hand,
+                BackColor   = Color.FromArgb(0, 122, 204),   // 统一使用深色模式的蓝色
+                ForeColor   = Color.White,                   // 白色文字
+                FlatStyle   = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
+
             // 打开资源管理器按钮 - 使用 Anchor 定位在右侧
             _btnOpenExplorer = new Button
             {
@@ -485,7 +509,7 @@ namespace wxd.files.winforms
             {
                 Height      = 26,
                 Location    = new Point(4, 5),
-                Size        = new Size(_pnlBottom.Width - 92, 26),
+                Size        = new Size(_pnlBottom.Width - 188, 26),
                 Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle
@@ -506,6 +530,7 @@ namespace wxd.files.winforms
             };
 
             _pnlBottom.Controls.Add(_txtFilter);
+            _pnlBottom.Controls.Add(_btnOpenCsvReader);
             _pnlBottom.Controls.Add(_btnOpenExplorer);
 
             Controls.Add(_lstFiles);
@@ -691,6 +716,20 @@ namespace wxd.files.winforms
                 {
                     MessageBox.Show($"无法打开资源管理器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+            }
+        }
+
+        // ==================== 打开CSV阅读器 ====================
+        private void OnOpenCsvReaderClick(object? sender, EventArgs e)
+        {
+            try
+            {
+                var csvForm = new CsvReaderForm(_currentDir);
+                csvForm.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"无法打开CSV阅读器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

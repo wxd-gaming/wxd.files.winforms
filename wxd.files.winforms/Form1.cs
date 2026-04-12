@@ -69,16 +69,19 @@ namespace wxd.files.winforms
 
         private void InitializeComponent()
         {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             SuspendLayout();
-
+            // 
+            // Form1
+            // 
             ClientSize = new Size(1300, 750);
-            Text       = "多窗格文件夹管理器";
+            Font = new Font("Microsoft YaHei UI", 9F);
+            Icon = (Icon)resources.GetObject("$this.Icon");
             MinimumSize = new Size(600, 450);
+            Name = "Form1";
             StartPosition = FormStartPosition.CenterScreen;
+            Text = "多窗格文件夹管理器";
             WindowState = FormWindowState.Maximized;
-            BackColor   = _colorLightFormBg;
-            Font        = new Font("Microsoft YaHei UI", 9f);
-
             ResumeLayout(false);
         }
 
