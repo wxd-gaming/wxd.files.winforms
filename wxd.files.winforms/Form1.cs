@@ -357,72 +357,101 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>流式排列：自动换行网格布局，均匀分布窗格</summary>
+        /// <summary>流式排列：3/5/7个时左边流式+右边一个占满高度，其他数量正常流式布局</summary>
         private void DoFlow(int count, int w, int h)
         {
-            // 计算最佳行列数，使窗格均匀分布且接近正方形
-            int cols, rows;
-            
-            if (count <= 1)
+            const int gap = 4; // 窗格之间的间隙
+
+            // 3、5、7个窗格：特殊布局，左边流式，右边最后一个占满高度
+            if (count == 3 || count == 5 || count == 7)
             {
-                cols = 1;
-                rows = 1;
-            }
-            else if (count == 2)
-            {
-                // 2个窗格：横向并排
-                cols = 2;
-                rows = 1;
-            }
-            else if (count == 3)
-            {
-                // 3个窗格：一行3个
-                cols = 3;
-                rows = 1;
-            }
-            else if (count == 4)
-            {
-                // 4个窗格：2x2网格
-                cols = 2;
-                rows = 2;
-            }
-            else if (count <= 6)
-            {
-                // 5-6个窗格：3列，2行
-                cols = 3;
-                rows = 2;
-            }
-            else if (count <= 9)
-            {
-                // 7-9个窗格：3列，3行
-                cols = 3;
-                rows = 3;
+                int leftCount = count - 1; // 左边窗格数量
+                int leftCols = leftCount <= 2 ? 1 : 2; // 左边列数：2个以内1列，4个2列，6个2列
+                int leftRows = (leftCount + leftCols - 1) / leftCols; // 左边行数（向上取整）
+
+                int rightW = (w - gap) / 3; // 右边占1/3宽度
+                int leftW = w - gap - rightW; // 左边占剩余宽度
+
+                int cellW = (leftW - gap * (leftCols - 1)) / leftCols;
+                int cellH = (h - gap * (leftRows - 1)) / leftRows;
+
+                // 布局左边窗格
+                for (int i = 0; i < leftCount; i++)
+                {
+                    int row = i / leftCols;
+                    int col = i % leftCols;
+                    bool isLastRow = (row == leftRows - 1);
+                    bool isLastCol = (col == leftCols - 1);
+
+                    int x = _pnlContainer.Padding.Left + col * (cellW + gap);
+                    int y = _pnlContainer.Padding.Top + row * (cellH + gap);
+                    int cw = isLastCol ? (leftW - col * (cellW + gap)) : cellW;
+                    int ch = isLastRow ? (h - row * (cellH + gap)) : cellH;
+
+                    _panels[i].SetBounds(x, y, cw, ch);
+                }
+
+                // 右边最后一个窗格占满高度
+                _panels[leftCount].SetBounds(_pnlContainer.Padding.Left + leftW + gap, _pnlContainer.Padding.Top, rightW, h);
             }
             else
             {
-                // 10个窗格：5列，2行
-                cols = 5;
-                rows = 2;
-            }
+                // 其他数量：正常流式网格布局
+                int cols, rows;
 
-            const int gap = 4; // 窗格之间的间隙
-            int cellW = (w - gap * (cols - 1)) / cols;
-            int cellH = (h - gap * (rows - 1)) / rows;
+                if (count <= 1)
+                {
+                    cols = 1;
+                    rows = 1;
+                }
+                else if (count == 2)
+                {
+                    cols = 2;
+                    rows = 1;
+                }
+                else if (count == 4)
+                {
+                    cols = 2;
+                    rows = 2;
+                }
+                else if (count == 6)
+                {
+                    cols = 3;
+                    rows = 2;
+                }
+                else if (count == 8)
+                {
+                    cols = 4;
+                    rows = 2;
+                }
+                else if (count == 9)
+                {
+                    cols = 3;
+                    rows = 3;
+                }
+                else // count == 10
+                {
+                    cols = 5;
+                    rows = 2;
+                }
 
-            for (int i = 0; i < count; i++)
-            {
-                int row = i / cols;
-                int col = i % cols;
-                bool isLastCol = (col == cols - 1);
-                bool isLastRow = (row == rows - 1);
+                int cellW = (w - gap * (cols - 1)) / cols;
+                int cellH = (h - gap * (rows - 1)) / rows;
 
-                int x = _pnlContainer.Padding.Left + col * (cellW + gap);
-                int y = _pnlContainer.Padding.Top  + row  * (cellH + gap);
+                for (int i = 0; i < count; i++)
+                {
+                    int row = i / cols;
+                    int col = i % cols;
+                    bool isLastCol = (col == cols - 1);
+                    bool isLastRow = (row == rows - 1);
 
-                int cw = isLastCol ? (w - col * (cellW + gap)) : cellW;
-                int ch = isLastRow ? (h - row * (cellH + gap)) : cellH;
+                    int x = _pnlContainer.Padding.Left + col * (cellW + gap);
+                    int y = _pnlContainer.Padding.Top + row * (cellH + gap);
+                    int cw = isLastCol ? (w - col * (cellW + gap)) : cellW;
+                    int ch = isLastRow ? (h - row * (cellH + gap)) : cellH;
 
-                _panels[i].SetBounds(x, y, cw, ch);
+                    _panels[i].SetBounds(x, y, cw, ch);
+                }
             }
         }
 
