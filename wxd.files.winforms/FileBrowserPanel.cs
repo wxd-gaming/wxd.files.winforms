@@ -477,7 +477,7 @@ namespace wxd.files.winforms
                 Height      = 26,
                 Location    = new Point(_pnlBottom.Width - 180, 5),
                 Anchor      = AnchorStyles.Top | AnchorStyles.Right,
-                Text        = "CSV阅读器",
+                Text        = "阅读器",
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 Cursor      = Cursors.Hand,
                 BackColor   = Color.FromArgb(0, 122, 204),   // 统一使用深色模式的蓝色

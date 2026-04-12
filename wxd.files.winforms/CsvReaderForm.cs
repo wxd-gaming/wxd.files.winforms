@@ -8,10 +8,11 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using ExcelDataReader;
 
 namespace wxd.files.winforms
 {
-    /// <summary>CSV阅读器窗体</summary>
+    /// <summary>CSV/Excel阅读器窗体</summary>
     public partial class CsvReaderForm : Form
     {
         // ==================== 控件声明 ====================
@@ -24,20 +25,29 @@ namespace wxd.files.winforms
         private Label _lblFilter = new();
         private Button _btnRefresh = new();
         private Button _btnSelectFolder = new();
+        private Button _btnOpenExcel = new();
+        private Button _btnOpenCsv = new();
         private ImageList _imgList = new();
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
-        private List<CsvFileInfo> _allCsvFiles = new();
+        private List<FileInfo> _allFiles = new();
         private CancellationTokenSource? _loadingCts;
         private readonly object _lockObj = new();
 
         // ==================== 数据类 ====================
-        private class CsvFileInfo
+        private class FileInfo
         {
             public string Name { get; set; } = "";
             public string FullPath { get; set; } = "";
             public string RelativePath { get; set; } = "";
+            public FileType Type { get; set; }
+        }
+
+        private enum FileType
+        {
+            Csv,
+            Excel
         }
 
         // ==================== 配色方案 ====================
@@ -49,6 +59,9 @@ namespace wxd.files.winforms
 
         public CsvReaderForm(string? initialDir = null)
         {
+            // 注册ExcelDataReader的编码支持
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
             _currentDir = initialDir ?? "";
             InitializeComponent();
             CreateControls();
@@ -79,7 +92,7 @@ namespace wxd.files.winforms
             // 如果有初始目录，自动加载
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
             {
-                LoadCsvFilesAsync();
+                LoadFilesAsync();
             }
         }
 
@@ -87,7 +100,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             ClientSize = new Size(1200, 800);
-            Text = "CSV阅读器";
+            Text = "CSV/Excel阅读器";
             MinimumSize = new Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
@@ -110,12 +123,42 @@ namespace wxd.files.winforms
             _pnlLeftTop.BackColor = _colorLightBg;
             _pnlLeftTop.Padding = new Padding(6, 4, 6, 4);
 
+            // 打开CSV文件按钮
+            _btnOpenCsv = new Button
+            {
+                Text = "打开CSV",                
+                Location = new Point(6, 6),
+                Size = new Size(70, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = _colorBtnBg,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnOpenCsv.FlatAppearance.BorderSize = 0;
+            _btnOpenCsv.Click += OnOpenCsvClick;
+
+            // 打开Excel文件按钮
+            _btnOpenExcel = new Button
+            {
+                Text = "打开Excel",
+                Location = new Point(80, 6),
+                Size = new Size(75, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(0, 150, 80),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnOpenExcel.FlatAppearance.BorderSize = 0;
+            _btnOpenExcel.Click += OnOpenExcelClick;
+
             // 选择目录按钮
             _btnSelectFolder = new Button
             {
                 Text = "选择目录",
-                Location = new Point(6, 6),
-                Size = new Size(80, 28),
+                Location = new Point(159, 6),
+                Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = _colorBtnBg,
                 ForeColor = Color.White,
@@ -129,8 +172,8 @@ namespace wxd.files.winforms
             _btnRefresh = new Button
             {
                 Text = "刷新",
-                Location = new Point(90, 6),
-                Size = new Size(60, 28),
+                Location = new Point(233, 6),
+                Size = new Size(50, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = _colorBtnBg,
                 ForeColor = Color.White,
@@ -154,7 +197,7 @@ namespace wxd.files.winforms
             _txtFileFilter = new TextBox
             {
                 Location = new Point(45, 40),
-                Size = new Size(140, 23),
+                Size = new Size(238, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
@@ -179,7 +222,7 @@ namespace wxd.files.winforms
                 ForeColor = _colorLightTextSecondary
             };
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _lblFilter, _txtFileFilter, lblHint });
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnOpenCsv, _btnOpenExcel, _btnSelectFolder, _btnRefresh, _lblFilter, _txtFileFilter, lblHint });
 
             // 文件树
             // 初始化图标列表
@@ -188,6 +231,7 @@ namespace wxd.files.winforms
             _imgList.ColorDepth = ColorDepth.Depth32Bit;
             // 添加默认图标
             _imgList.Images.Add("csv", SystemIcons.Application);
+            _imgList.Images.Add("excel", SystemIcons.Application);
 
             _lstFiles = new ListView
             {
@@ -201,7 +245,7 @@ namespace wxd.files.winforms
                 SmallImageList = _imgList,
                 MultiSelect = false
             };
-            _lstFiles.Columns.Add("CSV文件", 380, HorizontalAlignment.Left);
+            _lstFiles.Columns.Add("文件", 380, System.Windows.Forms.HorizontalAlignment.Left);
             _lstFiles.Click += OnListViewClick;
             _lstFiles.DoubleClick += OnListViewDoubleClick;
 
@@ -278,11 +322,43 @@ namespace wxd.files.winforms
         }
 
         // ==================== 目录选择 ====================
+        // ==================== 打开单个文件 ====================
+        private void OnOpenCsvClick(object? sender, EventArgs e)
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "选择CSV文件",
+                Filter = "CSV文件 (*.csv)|*.csv|所有文件 (*.*)|*.*",
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                OpenFile(dialog.FileName, FileType.Csv);
+            }
+        }
+
+        private void OnOpenExcelClick(object? sender, EventArgs e)
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "选择Excel文件",
+                Filter = "Excel文件 (*.xls;*.xlsx)|*.xls;*.xlsx|所有文件 (*.*)|*.*",
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                OpenFile(dialog.FileName, FileType.Excel);
+            }
+        }
+
+        // ==================== 目录选择 ====================
         private void OnSelectFolderClick(object? sender, EventArgs e)
         {
             using var dialog = new FolderBrowserDialog
             {
-                Description = "选择包含CSV文件的目录",
+                Description = "选择包含CSV/Excel文件的目录",
                 ShowNewFolderButton = false
             };
 
@@ -292,7 +368,7 @@ namespace wxd.files.winforms
             if (dialog.ShowDialog() == DialogResult.OK)
             {
                 _currentDir = dialog.SelectedPath;
-                LoadCsvFilesAsync();
+                LoadFilesAsync();
             }
         }
 
@@ -300,12 +376,12 @@ namespace wxd.files.winforms
         {
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
             {
-                LoadCsvFilesAsync();
+                LoadFilesAsync();
             }
         }
 
-        // ==================== 异步加载CSV文件 ====================
-        private async void LoadCsvFilesAsync()
+        // ==================== 异步加载文件 ====================
+        private async void LoadFilesAsync()
         {
             // 取消之前的加载任务
             _loadingCts?.Cancel();
@@ -313,14 +389,14 @@ namespace wxd.files.winforms
             var token = _loadingCts.Token;
 
             _lstFiles.Items.Clear();
-            _allCsvFiles.Clear();
+            _allFiles.Clear();
 
             // 显示加载中
             _lstFiles.Items.Add(new ListViewItem("加载中..."));
 
             try
             {
-                await Task.Run(() => ScanCsvFiles(_currentDir, token), token);
+                await Task.Run(() => ScanFiles(_currentDir, token), token);
 
                 if (!token.IsCancellationRequested)
                 {
@@ -339,23 +415,23 @@ namespace wxd.files.winforms
             {
                 this.Invoke(() =>
                 {
-                    MessageBox.Show($"加载CSV文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show($"加载文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 });
             }
         }
 
-        private void ScanCsvFiles(string rootDir, CancellationToken token)
+        private void ScanFiles(string rootDir, CancellationToken token)
         {
-            var files = new List<CsvFileInfo>();
+            var files = new List<FileInfo>();
             ScanDirectory(rootDir, rootDir, files, token);
 
             lock (_lockObj)
             {
-                _allCsvFiles = files;
+                _allFiles = files;
             }
         }
 
-        private void ScanDirectory(string currentDir, string rootDir, List<CsvFileInfo> files, CancellationToken token)
+        private void ScanDirectory(string currentDir, string rootDir, List<FileInfo> files, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
 
@@ -367,11 +443,41 @@ namespace wxd.files.winforms
                     token.ThrowIfCancellationRequested();
 
                     var relativePath = GetRelativePath(rootDir, file);
-                    files.Add(new CsvFileInfo
+                    files.Add(new FileInfo
                     {
                         Name = Path.GetFileName(file),
                         FullPath = file,
-                        RelativePath = relativePath
+                        RelativePath = relativePath,
+                        Type = FileType.Csv
+                    });
+                }
+
+                // 获取当前目录的Excel文件
+                foreach (var file in Directory.GetFiles(currentDir, "*.xls"))
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    var relativePath = GetRelativePath(rootDir, file);
+                    files.Add(new FileInfo
+                    {
+                        Name = Path.GetFileName(file),
+                        FullPath = file,
+                        RelativePath = relativePath,
+                        Type = FileType.Excel
+                    });
+                }
+
+                foreach (var file in Directory.GetFiles(currentDir, "*.xlsx"))
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    var relativePath = GetRelativePath(rootDir, file);
+                    files.Add(new FileInfo
+                    {
+                        Name = Path.GetFileName(file),
+                        FullPath = file,
+                        RelativePath = relativePath,
+                        Type = FileType.Excel
                     });
                 }
 
@@ -408,9 +514,9 @@ namespace wxd.files.winforms
                 _lstFiles.Columns[0].Width = 380;
             }
 
-            if (_allCsvFiles.Count == 0)
+            if (_allFiles.Count == 0)
             {
-                var emptyItem = new ListViewItem("未找到CSV文件")
+                var emptyItem = new ListViewItem("未找到CSV/Excel文件")
                 {
                     ForeColor = _colorLightTextSecondary
                 };
@@ -418,14 +524,14 @@ namespace wxd.files.winforms
                 return;
             }
 
-            foreach (var csvFile in _allCsvFiles.OrderBy(f => f.RelativePath))
+            foreach (var file in _allFiles.OrderBy(f => f.RelativePath))
             {
                 // 显示相对路径作为文件名（包含目录结构）
-                var item = new ListViewItem(csvFile.RelativePath)
+                var item = new ListViewItem(file.RelativePath)
                 {
-                    Tag = csvFile.FullPath,
-                    ToolTipText = csvFile.FullPath,
-                    ImageKey = "csv"
+                    Tag = file,
+                    ToolTipText = file.FullPath,
+                    ImageKey = file.Type == FileType.Csv ? "csv" : "excel"
                 };
                 _lstFiles.Items.Add(item);
             }
@@ -450,9 +556,9 @@ namespace wxd.files.winforms
                 _lstFiles.Columns[0].Width = 380;
             }
 
-            if (_allCsvFiles.Count == 0)
+            if (_allFiles.Count == 0)
             {
-                var emptyItem = new ListViewItem("未找到CSV文件")
+                var emptyItem = new ListViewItem("未找到CSV/Excel文件")
                 {
                     ForeColor = _colorLightTextSecondary
                 };
@@ -463,20 +569,20 @@ namespace wxd.files.winforms
             // 处理运算符
             var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
 
-            foreach (var csvFile in _allCsvFiles.OrderBy(f => f.RelativePath))
+            foreach (var file in _allFiles.OrderBy(f => f.RelativePath))
             {
                 // 如果有过滤条件，检查是否匹配
                 if (!string.IsNullOrEmpty(filter))
                 {
-                    if (!MatchesFilter(csvFile.RelativePath, processedFilter))
+                    if (!MatchesFilter(file.RelativePath, processedFilter))
                         continue;
                 }
 
-                var item = new ListViewItem(csvFile.RelativePath)
+                var item = new ListViewItem(file.RelativePath)
                 {
-                    Tag = csvFile.FullPath,
-                    ToolTipText = csvFile.FullPath,
-                    ImageKey = "csv"
+                    Tag = file,
+                    ToolTipText = file.FullPath,
+                    ImageKey = file.Type == FileType.Csv ? "csv" : "excel"
                 };
                 _lstFiles.Items.Add(item);
             }
@@ -509,9 +615,9 @@ namespace wxd.files.winforms
             if (_lstFiles.SelectedItems.Count > 0)
             {
                 var item = _lstFiles.SelectedItems[0];
-                if (item.Tag is string path && File.Exists(path))
+                if (item.Tag is FileInfo fileInfo && System.IO.File.Exists(fileInfo.FullPath))
                 {
-                    OpenCsvFile(path);
+                    OpenFile(fileInfo.FullPath, fileInfo.Type);
                 }
             }
         }
@@ -521,14 +627,14 @@ namespace wxd.files.winforms
             if (_lstFiles.SelectedItems.Count > 0)
             {
                 var item = _lstFiles.SelectedItems[0];
-                if (item.Tag is string path && File.Exists(path))
+                if (item.Tag is FileInfo fileInfo && System.IO.File.Exists(fileInfo.FullPath))
                 {
-                    OpenCsvFile(path);
+                    OpenFile(fileInfo.FullPath, fileInfo.Type);
                 }
             }
         }
 
-        private void OpenCsvFile(string filePath)
+        private void OpenFile(string filePath, FileType fileType)
         {
             // 检查是否已经打开
             foreach (TabPage tab in _tabContent.TabPages)
@@ -547,13 +653,24 @@ namespace wxd.files.winforms
                 ToolTipText = filePath
             };
 
-            // 创建CSV内容控件
-            var csvViewer = new CsvViewerControl(filePath)
+            // 根据文件类型创建相应的查看控件
+            Control viewer;
+            if (fileType == FileType.Excel)
             {
-                Dock = DockStyle.Fill
-            };
+                viewer = new ExcelViewerControl(filePath)
+                {
+                    Dock = DockStyle.Fill
+                };
+            }
+            else
+            {
+                viewer = new CsvViewerControl(filePath)
+                {
+                    Dock = DockStyle.Fill
+                };
+            }
 
-            tabPage.Controls.Add(csvViewer);
+            tabPage.Controls.Add(viewer);
             _tabContent.TabPages.Add(tabPage);
             _tabContent.SelectedTab = tabPage;
 
@@ -901,6 +1018,9 @@ namespace wxd.files.winforms
                 var dgv = sender as DataGridView;
                 if (dgv == null) return;
 
+                // 如果双击的是冻结表格，不处理（由 OnFrozenCellDoubleClick 处理）
+                if (dgv == _dataGridHeader) return;
+
                 // 获取双击的单元格
                 var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
                 _editingFromFrozen = false;
@@ -927,7 +1047,7 @@ namespace wxd.files.winforms
         private void EditCell(DataGridViewCell cell)
         {
             _isEditing = true; // 设置编辑标志，防止重复触发
-            
+
             try
             {
                 var rowIndex = cell.RowIndex;
@@ -966,6 +1086,7 @@ namespace wxd.files.winforms
                     timer.Stop();
                     timer.Dispose();
                     _isEditing = false;
+                    _editingFromFrozen = false; // 重置冻结行编辑标志
                 };
                 timer.Start();
             }
@@ -1802,6 +1923,842 @@ namespace wxd.files.winforms
             CancelButton = _btnCancel;
 
             ResumeLayout(false);
+        }
+    }
+
+    /// <summary>Excel内容查看控件</summary>
+    public class ExcelViewerControl : UserControl
+    {
+        private DataGridView _dataGridHeader = new();
+        private DataGridView _dataGrid = new();
+        private SplitContainer _pnlGridContainer = new();
+        private TextBox _txtHeaderFilter = new();
+        private TextBox _txtContentFilter = new();
+        private Label _lblInfo = new();
+        private Panel _pnlTop = new();
+        private DataTable _dataTable = new();
+        private DataTable _headerTable = new();
+        private string _filePath = "";
+        private int _frozenRows = 0;
+        private List<int> _visibleColumnIndices = new();
+
+        // 配色
+        private static readonly Color _colorLightBg = Color.FromArgb(250, 250, 250);
+        private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
+        private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+
+        public ExcelViewerControl(string filePath)
+        {
+            _filePath = filePath;
+            InitializeComponent();
+            LoadExcelAsync();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+            BackColor = Color.White;
+
+            // 顶部工具栏 - 使用 FlowLayoutPanel 自动排列
+            var flowTop = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = _colorLightBg,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(5, 5, 5, 5),
+                AutoSize = true
+            };
+
+            // 冻结行数选择
+            var lblFrozenRows = new Label
+            {
+                Text = "冻结行:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var cboFrozenRows = new ComboBox
+            {
+                Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
+            _frozenRows = CsvSettings.DefaultFrozenRows;
+            cboFrozenRows.SelectedIndex = _frozenRows;
+            cboFrozenRows.SelectedIndexChanged += (s, e) =>
+            {
+                _frozenRows = cboFrozenRows.SelectedIndex;
+                CsvSettings.DefaultFrozenRows = _frozenRows;
+                CsvSettings.Save();
+                RefreshGridLayout();
+            };
+
+            // 表头过滤框
+            var lblHeaderFilter = new Label
+            {
+                Text = "表头过滤:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var txtHeaderFilter = new TextBox
+            {
+                Size = new Size(160, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            txtHeaderFilter.TextChanged += (s, e) => ApplyFilters();
+            txtHeaderFilter.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    txtHeaderFilter.Text = "";
+                    e.Handled = true;
+                }
+            };
+
+            // 内容过滤框
+            var lblContentFilter = new Label
+            {
+                Text = "内容过滤:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var txtContentFilter = new TextBox
+            {
+                Size = new Size(160, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            txtContentFilter.TextChanged += (s, e) => ApplyFilters();
+            txtContentFilter.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    txtContentFilter.Text = "";
+                    e.Handled = true;
+                }
+            };
+
+            // 提示标签
+            var lblHint = new Label
+            {
+                Text = "支持 || 或 &&",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 10, 0)
+            };
+
+            // 信息标签
+            _lblInfo = new Label
+            {
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 0, 0)
+            };
+
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, txtHeaderFilter, lblContentFilter, txtContentFilter, lblHint, _lblInfo });
+
+            _pnlTop = flowTop;
+            _txtHeaderFilter = txtHeaderFilter;
+            _txtContentFilter = txtContentFilter;
+
+            // 表格容器 - 使用SplitContainer来精确控制布局
+            var splitContainer = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterDistance = 28,
+                FixedPanel = FixedPanel.Panel1,
+                IsSplitterFixed = true,
+                BackColor = Color.White
+            };
+
+            // 冻结的表头表格（显示冻结的行）
+            _dataGridHeader = CreateDataGridView();
+            _dataGridHeader.Dock = DockStyle.Fill;
+            _dataGridHeader.ScrollBars = ScrollBars.None;
+            _dataGridHeader.RowHeadersVisible = true;
+            _dataGridHeader.RowHeadersWidth = 50;
+            _dataGridHeader.ColumnHeadersVisible = true;
+            _dataGridHeader.ReadOnly = true;
+            _dataGridHeader.AllowUserToResizeColumns = false;
+            _dataGridHeader.AllowUserToResizeRows = false;
+            _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
+            _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
+            _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
+            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick; // 双击编辑
+
+            // 数据表格（主表格）
+            _dataGrid = CreateDataGridView();
+            _dataGrid.Dock = DockStyle.Fill;
+            _dataGrid.RowHeadersWidth = 50;
+            _dataGrid.RowPostPaint += OnRowPostPaint;
+            _dataGrid.ColumnHeadersVisible = false;
+
+            // 同步水平滚动
+            _dataGrid.Scroll += (s, e) =>
+            {
+                _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset;
+            };
+
+            // 同步列宽调整
+            _dataGrid.ColumnWidthChanged += (s, e) =>
+            {
+                int dataGridColumnIndex = e.Column.Index;
+                int headerColumnIndex = dataGridColumnIndex;
+
+                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && dataGridColumnIndex > 0)
+                {
+                    headerColumnIndex = dataGridColumnIndex - 1;
+                }
+
+                if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
+                {
+                    _dataGridHeader.Columns[headerColumnIndex].Width = _dataGrid.Columns[dataGridColumnIndex].Width;
+                }
+            };
+
+            splitContainer.Panel1.Controls.Add(_dataGridHeader);
+            splitContainer.Panel2.Controls.Add(_dataGrid);
+
+            splitContainer.Panel1Collapsed = true;
+            _pnlGridContainer = splitContainer;
+
+            Controls.Add(_pnlGridContainer);
+            Controls.Add(_pnlTop);
+
+            ResumeLayout(false);
+        }
+
+        private DataGridView CreateDataGridView()
+        {
+            var dgv = new DataGridView
+            {
+                BackgroundColor = Color.White,
+                BorderStyle = BorderStyle.None,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+                ColumnHeadersHeight = 28,
+                RowHeadersVisible = true,
+                RowHeadersWidth = 50,
+                RowHeadersDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    Alignment = DataGridViewContentAlignment.MiddleCenter,
+                    BackColor = Color.FromArgb(240, 240, 240),
+                    ForeColor = Color.FromArgb(32, 33, 36)
+                },
+                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = Color.FromArgb(248, 249, 250)
+                }
+            };
+            dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
+            dgv.CellFormatting += OnCellFormatting;
+            dgv.CellDoubleClick += OnCellDoubleClick; // 双击编辑
+            return dgv;
+        }
+
+        // ==================== 双击编辑功能 ====================
+        private bool _editingFromFrozen = false; // 标记是否来自冻结表格
+        private bool _isEditing = false; // 防止重复触发编辑
+
+        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_isEditing) return; // 防止重复触发
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                var dgv = sender as DataGridView;
+                if (dgv == null) return;
+
+                // 如果双击的是冻结表格，不处理（由 OnFrozenCellDoubleClick 处理）
+                if (dgv == _dataGridHeader) return;
+
+                // 获取双击的单元格
+                var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = false;
+
+                // 打开编辑对话框
+                EditCell(cell);
+            }
+        }
+
+        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_isEditing) return; // 防止重复触发
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                // 获取冻结表格的双击单元格
+                var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = true;
+
+                // 打开编辑对话框
+                EditCell(cell);
+            }
+        }
+
+        private void EditCell(DataGridViewCell cell)
+        {
+            _isEditing = true; // 设置编辑标志，防止重复触发
+
+            try
+            {
+                var rowIndex = cell.RowIndex;
+                var columnIndex = cell.ColumnIndex;
+                var currentValue = cell.Value?.ToString() ?? "";
+
+                // 获取原始数据表中的行列索引
+                var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
+
+                using var dialog = new CellEditDialog(currentValue);
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    var newValue = dialog.CellValue;
+
+                    // 更新原始数据表
+                    if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
+                        originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                    {
+                        _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+
+                        // 刷新显示
+                        RefreshGridLayout();
+                    }
+                }
+            }
+            finally
+            {
+                // 使用延迟重置标志，确保双击事件完全处理完毕
+                var timer = new System.Windows.Forms.Timer();
+                timer.Interval = 200;
+                timer.Tick += (s, e) =>
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    _isEditing = false;
+                    _editingFromFrozen = false; // 重置冻结行编辑标志
+                };
+                timer.Start();
+            }
+        }
+
+        /// <summary>获取原始数据表中的行列索引</summary>
+        private (int rowIndex, int columnIndex) GetOriginalIndices(int displayRowIndex, int displayColumnIndex)
+        {
+            // 如果来自冻结表格，行号直接就是原始行号（0-based）
+            if (_editingFromFrozen)
+            {
+                int originalColumnIndex = displayColumnIndex;
+                // 列索引转换（考虑可见列过滤）
+                if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGridHeader.Columns.Count)
+                {
+                    if (displayColumnIndex < _visibleColumnIndices.Count)
+                    {
+                        originalColumnIndex = _visibleColumnIndices[displayColumnIndex];
+                    }
+                }
+                return (displayRowIndex, originalColumnIndex);
+            }
+
+            // 如果使用了过滤显示，需要转换索引
+            if (_dataGrid.DataSource is DataTable filteredTable && filteredTable.Columns.Count > 0)
+            {
+                // 获取原始行号（从隐藏列）
+                int originalRowIndex = displayRowIndex;
+                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && displayRowIndex >= 0)
+                {
+                    var cellValue = _dataGrid.Rows[displayRowIndex].Cells[0].Value;
+                    if (cellValue != null)
+                    {
+                        originalRowIndex = Convert.ToInt32(cellValue) - 1; // 转换为0-based索引
+                    }
+                }
+
+                // 列索引转换
+                int originalColumnIndex = displayColumnIndex;
+                if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGrid.Columns.Count)
+                {
+                    // 考虑隐藏列（__RowNum__）
+                    var actualDisplayIndex = displayColumnIndex;
+                    if (_dataGrid.Columns[0].Name == "__RowNum__")
+                    {
+                        actualDisplayIndex = displayColumnIndex - 1;
+                    }
+
+                    if (actualDisplayIndex >= 0 && actualDisplayIndex < _visibleColumnIndices.Count)
+                    {
+                        originalColumnIndex = _visibleColumnIndices[actualDisplayIndex];
+                    }
+                }
+
+                return (originalRowIndex, originalColumnIndex);
+            }
+
+            // 无过滤时直接返回
+            return (displayRowIndex + _frozenRows, displayColumnIndex);
+        }
+
+        private async void LoadExcelAsync()
+        {
+            try
+            {
+                if (!this.IsHandleCreated)
+                {
+                    var tcs = new TaskCompletionSource<bool>();
+                    EventHandler? handler = null;
+                    handler = (s, e) =>
+                    {
+                        this.HandleCreated -= handler;
+                        tcs.TrySetResult(true);
+                    };
+                    this.HandleCreated += handler;
+                    await tcs.Task;
+                }
+
+                await Task.Run(() => LoadExcelFile());
+            }
+            catch (Exception ex)
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke(() =>
+                    {
+                        MessageBox.Show($"加载Excel文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+            }
+        }
+
+        private void LoadExcelFile()
+        {
+            if (!System.IO.File.Exists(_filePath))
+                throw new FileNotFoundException("Excel文件不存在", _filePath);
+
+            using var stream = System.IO.File.Open(_filePath, FileMode.Open, FileAccess.Read);
+            using var reader = ExcelReaderFactory.CreateReader(stream);
+            var result = reader.AsDataSet();
+
+            if (result.Tables.Count == 0)
+                throw new InvalidDataException("Excel文件没有工作表");
+
+            // 使用第一个工作表
+            var table = result.Tables[0];
+            var dataTable = new DataTable();
+
+            // 添加列
+            for (int i = 0; i < table.Columns.Count; i++)
+            {
+                var columnName = table.Columns[i].ColumnName;
+                if (string.IsNullOrEmpty(columnName))
+                {
+                    columnName = $"Column{i + 1}";
+                }
+                dataTable.Columns.Add(columnName, typeof(string));
+            }
+
+            // 添加行
+            foreach (DataRow row in table.Rows)
+            {
+                var newRow = dataTable.NewRow();
+                for (int i = 0; i < table.Columns.Count; i++)
+                {
+                    var value = row[i];
+                    newRow[i] = value?.ToString() ?? "";
+                }
+                dataTable.Rows.Add(newRow);
+            }
+
+            this.Invoke(() =>
+            {
+                _dataTable = dataTable;
+                _headerTable = dataTable.Clone();
+
+                _lblInfo.Text = $"行数: {_dataTable.Rows.Count} | 列数: {_dataTable.Columns.Count}";
+
+                if (_frozenRows > 0)
+                {
+                    RefreshGridLayout();
+                }
+                else
+                {
+                    _dataGrid.DataSource = _dataTable;
+
+                    for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                    {
+                        var col = _dataGrid.Columns[i];
+                        col.Width = 120;
+                        col.SortMode = DataGridViewColumnSortMode.Programmatic;
+                        col.HeaderText = GetExcelColumnName(i);
+                    }
+                }
+            });
+        }
+
+        private void RefreshGridLayout()
+        {
+            if (_dataTable.Columns.Count == 0)
+            {
+                return;
+            }
+
+            if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
+            {
+                var headerFilter = _txtHeaderFilter.Text.Trim();
+                _visibleColumnIndices = GetVisibleColumnIndices(headerFilter);
+
+                _headerTable = new DataTable();
+                foreach (var colIndex in _visibleColumnIndices)
+                {
+                    var sourceCol = _dataTable.Columns[colIndex];
+                    _headerTable.Columns.Add(sourceCol.ColumnName, sourceCol.DataType);
+                }
+
+                for (int i = 0; i < Math.Min(_frozenRows, _dataTable.Rows.Count); i++)
+                {
+                    var sourceRow = _dataTable.Rows[i];
+                    var targetRow = _headerTable.NewRow();
+                    for (int j = 0; j < _visibleColumnIndices.Count; j++)
+                    {
+                        targetRow[j] = sourceRow[_visibleColumnIndices[j]];
+                    }
+                    _headerTable.Rows.Add(targetRow);
+                }
+
+                _pnlGridContainer.Panel1Collapsed = false;
+                _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
+
+                _dataGridHeader.DataSource = _headerTable;
+
+                for (int i = 0; i < _dataGridHeader.Columns.Count; i++)
+                {
+                    var colName = _headerTable.Columns[i].ColumnName;
+                    var dgvCol = _dataGridHeader.Columns[colName];
+                    if (dgvCol != null)
+                    {
+                        dgvCol.DisplayIndex = i;
+                        dgvCol.Width = 120;
+                        dgvCol.HeaderText = GetExcelColumnName(i);
+                        dgvCol.SortMode = DataGridViewColumnSortMode.NotSortable;
+                    }
+                }
+
+                var contentFilter = _txtContentFilter.Text.Trim();
+                var visibleRows = GetVisibleRows(contentFilter, headerFilter);
+                RefreshFilteredDisplay(visibleRows);
+            }
+            else
+            {
+                _pnlGridContainer.Panel1Collapsed = true;
+                _dataGrid.DataSource = _dataTable;
+
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    _dataGrid.Columns[i].Width = 120;
+                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                }
+            }
+        }
+
+        private List<int> GetVisibleColumnIndices(string headerFilter)
+        {
+            var visibleIndices = new List<int>();
+
+            if (_dataTable.Columns.Count > 0)
+            {
+                visibleIndices.Add(0);
+            }
+
+            if (string.IsNullOrEmpty(headerFilter))
+            {
+                for (int i = 1; i < _dataTable.Columns.Count; i++)
+                {
+                    visibleIndices.Add(i);
+                }
+                return visibleIndices;
+            }
+
+            var processedFilter = headerFilter.Replace("||", " | ").Replace("&&", " & ");
+
+            for (int i = 1; i < _dataTable.Columns.Count; i++)
+            {
+                bool isMatch = false;
+
+                var colName = _dataTable.Columns[i].ColumnName;
+                if (MatchesFilter(colName, processedFilter))
+                {
+                    isMatch = true;
+                }
+
+                if (!isMatch && _frozenRows > 0)
+                {
+                    for (int row = 0; row < Math.Min(_frozenRows, _dataTable.Rows.Count); row++)
+                    {
+                        var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
+                        if (MatchesFilter(cellValue, processedFilter))
+                        {
+                            isMatch = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isMatch)
+                {
+                    visibleIndices.Add(i);
+                }
+            }
+
+            return visibleIndices;
+        }
+
+        private List<DataRow> GetVisibleRows(string contentFilter, string headerFilter)
+        {
+            var visibleRows = new List<DataRow>();
+
+            for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
+            {
+                var row = _dataTable.Rows[i];
+
+                if (string.IsNullOrEmpty(contentFilter))
+                {
+                    visibleRows.Add(row);
+                    continue;
+                }
+
+                var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
+                bool isMatch = false;
+
+                var columnsToSearch = string.IsNullOrEmpty(headerFilter)
+                    ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
+                    : _visibleColumnIndices;
+
+                foreach (var colIndex in columnsToSearch)
+                {
+                    var cellValue = row[colIndex]?.ToString() ?? "";
+                    if (MatchesFilter(cellValue, processedFilter))
+                    {
+                        isMatch = true;
+                        break;
+                    }
+                }
+
+                if (isMatch)
+                {
+                    visibleRows.Add(row);
+                }
+            }
+
+            return visibleRows;
+        }
+
+        private void RefreshFilteredDisplay(List<DataRow> visibleRows)
+        {
+            var filteredTable = new DataTable();
+
+            filteredTable.Columns.Add("__RowNum__", typeof(int));
+
+            foreach (var colIndex in _visibleColumnIndices)
+            {
+                var sourceCol = _dataTable.Columns[colIndex];
+                filteredTable.Columns.Add(sourceCol.ColumnName, sourceCol.DataType);
+            }
+
+            foreach (var sourceRow in visibleRows)
+            {
+                var newRow = filteredTable.NewRow();
+                var originalRowIndex = _dataTable.Rows.IndexOf(sourceRow) + 1;
+                newRow[0] = originalRowIndex;
+
+                for (int i = 0; i < _visibleColumnIndices.Count; i++)
+                {
+                    newRow[i + 1] = sourceRow[_visibleColumnIndices[i]];
+                }
+                filteredTable.Rows.Add(newRow);
+            }
+
+            _dataGrid.DataSource = filteredTable;
+
+            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+            {
+                _dataGrid.Columns[0].Visible = false;
+            }
+
+            for (int i = 1; i < _dataGrid.Columns.Count; i++)
+            {
+                var colName = filteredTable.Columns[i].ColumnName;
+                var dgvCol = _dataGrid.Columns[colName];
+                if (dgvCol != null)
+                {
+                    dgvCol.DisplayIndex = i;
+                    dgvCol.Width = 120;
+                    dgvCol.HeaderText = GetExcelColumnName(i - 1);
+                    dgvCol.SortMode = DataGridViewColumnSortMode.Programmatic;
+                }
+            }
+
+            _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRows.Count} 行";
+        }
+
+        private void ApplyFilters()
+        {
+            RefreshGridLayout();
+        }
+
+        private bool MatchesFilter(string text, string filter)
+        {
+            if (string.IsNullOrEmpty(filter))
+                return true;
+
+            if (filter.Contains('|'))
+            {
+                var terms = filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                return terms.Any(t => text.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            else if (filter.Contains('&'))
+            {
+                var terms = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                return terms.All(t => text.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            else
+            {
+                return text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        private int _sortColumnIndex = -1;
+        private SortOrder _sortOrder = SortOrder.None;
+
+        private void OnColumnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.ColumnIndex < 0 || e.ColumnIndex >= _dataGrid.Columns.Count)
+                return;
+
+            if (_sortColumnIndex == e.ColumnIndex)
+            {
+                _sortOrder = _sortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+            }
+            else
+            {
+                _sortColumnIndex = e.ColumnIndex;
+                _sortOrder = SortOrder.Ascending;
+            }
+
+            var columnName = _dataGrid.Columns[e.ColumnIndex].DataPropertyName;
+
+            var frozenRows = _dataTable.AsEnumerable().Take(_frozenRows).ToList();
+            var dataRows = _dataTable.AsEnumerable().Skip(_frozenRows).ToList();
+
+            var sortedDataRows = dataRows
+                .OrderBy(row => row.Field<string>(columnName), new NaturalStringComparer(_sortOrder))
+                .ToList();
+
+            var allRows = frozenRows.Concat(sortedDataRows).ToArray();
+            _dataTable = allRows.CopyToDataTable();
+
+            RefreshGridLayout();
+
+            UpdateColumnHeaderSortGlyph();
+        }
+
+        private void UpdateColumnHeaderSortGlyph()
+        {
+            foreach (DataGridViewColumn col in _dataGrid.Columns)
+            {
+                if (col.Index == _sortColumnIndex)
+                {
+                    col.HeaderCell.SortGlyphDirection = _sortOrder;
+                }
+                else
+                {
+                    col.HeaderCell.SortGlyphDirection = SortOrder.None;
+                }
+            }
+        }
+
+        private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
+            {
+                _dataGrid.Rows[e.RowIndex].Height = 24;
+            }
+        }
+
+        private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
+        {
+            int rowIndex;
+            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && e.RowIndex >= 0)
+            {
+                var cellValue = _dataGrid.Rows[e.RowIndex].Cells[0].Value;
+                rowIndex = cellValue != null ? Convert.ToInt32(cellValue) : e.RowIndex + 1 + _frozenRows;
+            }
+            else
+            {
+                rowIndex = e.RowIndex + 1 + _frozenRows;
+            }
+
+            var rowHeaderBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, _dataGrid.RowHeadersWidth, e.RowBounds.Height);
+
+            using (var brush = new SolidBrush(_dataGrid.RowHeadersDefaultCellStyle.ForeColor))
+            {
+                var format = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                };
+                e.Graphics.DrawString(rowIndex.ToString(), _dataGrid.Font, brush, rowHeaderBounds, format);
+            }
+        }
+
+        private void OnFrozenRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
+        {
+            var rowIndex = e.RowIndex + 1;
+            var rowHeaderBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, _dataGridHeader.RowHeadersWidth, e.RowBounds.Height);
+
+            using (var brush = new SolidBrush(_dataGridHeader.RowHeadersDefaultCellStyle.ForeColor))
+            {
+                var format = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                };
+                e.Graphics.DrawString(rowIndex.ToString(), _dataGridHeader.Font, brush, rowHeaderBounds, format);
+            }
+        }
+
+        private static string GetExcelColumnName(int columnIndex)
+        {
+            var result = new StringBuilder();
+            int index = columnIndex;
+
+            do
+            {
+                result.Insert(0, (char)('A' + (index % 26)));
+                index = index / 26 - 1;
+            } while (index >= 0);
+
+            return result.ToString();
         }
     }
 }
