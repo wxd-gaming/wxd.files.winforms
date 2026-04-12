@@ -10,19 +10,31 @@ namespace wxd.files.winforms
         private Label?    _lblCount;
         private ComboBox? _cboLayout;
         private Label?    _lblLayout;
+        private ComboBox? _cboTheme;
+        private Label?    _lblTheme;
         private Panel     _pnlContainer = new();
         private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
         private Panel?    _pnlTopBar;
 
         private enum LayoutMode { Horizontal, Vertical, Flow }
+        private enum ThemeMode { Dark, Light }
 
-        // ==================== 配色 ====================
-        private static readonly Color _colorTopBg      = Color.FromArgb(245, 246, 247);
-        private static readonly Color _colorTopBorder   = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorTitleFg     = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLabelFg     = Color.FromArgb(95, 99, 104);
+        // ==================== 浅色配色 ====================
+        private static readonly Color _colorLightTopBg      = Color.FromArgb(245, 246, 247);
+        private static readonly Color _colorLightTopBorder   = Color.FromArgb(218, 220, 224);
+        private static readonly Color _colorLightTitleFg     = Color.FromArgb(32, 33, 36);
+        private static readonly Color _colorLightLabelFg     = Color.FromArgb(95, 99, 104);
+        private static readonly Color _colorLightFormBg      = Color.FromArgb(250, 250, 250);
+
+        // ==================== 深色配色 (VS风格) ====================
+        private static readonly Color _colorDarkTopBg        = Color.FromArgb(37, 37, 38);      // VS顶部栏
+        private static readonly Color _colorDarkTopBorder    = Color.FromArgb(62, 62, 66);      // VS边框
+        private static readonly Color _colorDarkTitleFg      = Color.FromArgb(241, 241, 241);   // VS白色文字
+        private static readonly Color _colorDarkLabelFg      = Color.FromArgb(200, 200, 200);   // VS灰色文字
+        private static readonly Color _colorDarkFormBg       = Color.FromArgb(30, 30, 30);      // VS深色背景
 
         private static readonly int GAP = 6; // 窗格间距
+        private ThemeMode _currentTheme = ThemeMode.Light;
 
         public Form1()
         {
@@ -30,12 +42,16 @@ namespace wxd.files.winforms
             CreateTopBar();
             InitControlPanel();
 
-            // 恢复全局状态（窗格数量、布局方式）
-            var (panelCount, layoutIndex) = FileBrowserPanel.LoadGlobalState();
+            // 恢复全局状态（窗格数量、布局方式、主题）
+            var (panelCount, layoutIndex, themeIndex) = FileBrowserPanel.LoadGlobalState();
+            _currentTheme = (ThemeMode)themeIndex;
             _cboCount!.SelectedIndex = Math.Min(panelCount - 1, _cboCount.Items.Count - 1);
             _cboLayout!.SelectedIndex = Math.Min(layoutIndex, _cboLayout.Items.Count - 1);
+            _cboTheme!.SelectedIndex = Math.Min(themeIndex, _cboTheme.Items.Count - 1);
 
             CreatePanels(_cboCount.SelectedIndex + 1);
+            // 应用主题
+            ApplyTheme();
             // 首次可见时执行布局（此时 ClientRectangle 已是最终尺寸）
             VisibleChanged += OnFirstVisible;
         }
@@ -59,7 +75,8 @@ namespace wxd.files.winforms
             Text       = "多窗格文件夹管理器";
             MinimumSize = new Size(600, 450);
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor   = Color.FromArgb(250, 250, 250);
+            WindowState = FormWindowState.Maximized;
+            BackColor   = _colorLightFormBg;
             Font        = new Font("Microsoft YaHei UI", 9f);
 
             ResumeLayout(false);
@@ -75,10 +92,10 @@ namespace wxd.files.winforms
                 Dock      = DockStyle.Top,
                 Height    = 48,
                 Padding   = new Padding(12, 6, 12, 6),
-                BackColor = _colorTopBg
+                BackColor = _colorLightTopBg
             };
 
-            var sep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = _colorTopBorder };
+            var sep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = _colorLightTopBorder };
             _pnlTopBar.Controls.Add(sep);
 
             // 容器面板
@@ -107,7 +124,7 @@ namespace wxd.files.winforms
                 Location  = new Point(14, y),
                 AutoSize  = true,
                 Font      = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
-                ForeColor = _colorTitleFg
+                ForeColor = _colorLightTitleFg
             };
 
             _lblCount = new Label
@@ -116,7 +133,7 @@ namespace wxd.files.winforms
                 Location = new Point(180, y + 2),
                 AutoSize = true,
                 Font     = labelFont,
-                ForeColor = _colorLabelFg
+                ForeColor = _colorLightLabelFg
             };
 
             _cboCount = new ComboBox
@@ -137,7 +154,7 @@ namespace wxd.files.winforms
                 Location = new Point(315, y + 2),
                 AutoSize = true,
                 Font     = labelFont,
-                ForeColor = _colorLabelFg
+                ForeColor = _colorLightLabelFg
             };
 
             _cboLayout = new ComboBox
@@ -154,7 +171,29 @@ namespace wxd.files.winforms
             _cboLayout.SelectedIndex = 2;
             _cboLayout.SelectedIndexChanged += OnLayoutChanged;
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout });
+            _lblTheme = new Label
+            {
+                Text     = "主题",
+                Location = new Point(510, y + 2),
+                AutoSize = true,
+                Font     = labelFont,
+                ForeColor = _colorLightLabelFg
+            };
+
+            _cboTheme = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location      = new Point(545, y - 1),
+                Size          = new Size(80, 26),
+                Font          = comboFont,
+                FlatStyle     = FlatStyle.System
+            };
+            _cboTheme.Items.Add("深色");
+            _cboTheme.Items.Add("浅色");
+            _cboTheme.SelectedIndex = 1; // 默认浅色
+            _cboTheme.SelectedIndexChanged += OnThemeChanged;
+
+            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme });
         }
 
         // ==================== 窗格数量变更 ====================
@@ -174,11 +213,70 @@ namespace wxd.files.winforms
             SaveGlobalState();
         }
 
-        /// <summary>实时保存全局状态（窗格数量+布局模式）</summary>
+        /// <summary>实时保存全局状态（窗格数量+布局模式+主题）</summary>
         private void SaveGlobalState()
         {
-            if (_cboCount != null && _cboLayout != null)
-                FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout.SelectedIndex);
+            if (_cboCount != null && _cboLayout != null && _cboTheme != null)
+                FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout.SelectedIndex, _cboTheme.SelectedIndex);
+        }
+
+        // ==================== 主题切换 ====================
+        private void OnThemeChanged(object? sender, EventArgs e)
+        {
+            if (_cboTheme?.SelectedItem == null) return;
+            _currentTheme = (ThemeMode)_cboTheme.SelectedIndex;
+            ApplyTheme();
+            SaveGlobalState();
+        }
+
+        /// <summary>应用主题到整个窗体</summary>
+        private void ApplyTheme()
+        {
+            var isDark = _currentTheme == ThemeMode.Dark;
+
+            // 窗体背景
+            BackColor = isDark ? _colorDarkFormBg : _colorLightFormBg;
+            _pnlContainer.BackColor = BackColor;
+
+            // 顶部工具栏
+            if (_pnlTopBar != null)
+            {
+                _pnlTopBar.BackColor = isDark ? _colorDarkTopBg : _colorLightTopBg;
+                // 更新分隔线颜色
+                foreach (Control c in _pnlTopBar.Controls)
+                {
+                    if (c is Panel p && p.Height == 1)
+                        p.BackColor = isDark ? _colorDarkTopBorder : _colorLightTopBorder;
+                }
+            }
+
+            // 标签文字颜色
+            var labelFg = isDark ? _colorDarkLabelFg : _colorLightLabelFg;
+            var titleFg = isDark ? _colorDarkTitleFg : _colorLightTitleFg;
+
+            foreach (Control c in _pnlTopBar?.Controls!)
+            {
+                if (c is Label lbl)
+                {
+                    if (lbl.Font.Size > 10) // 标题
+                        lbl.ForeColor = titleFg;
+                    else
+                        lbl.ForeColor = labelFg;
+                }
+            }
+
+            // 应用到所有子窗格
+            foreach (var panel in _panels)
+            {
+                ApplyThemeToPanel(panel, isDark);
+            }
+        }
+
+        /// <summary>应用主题到单个文件浏览面板</summary>
+        private void ApplyThemeToPanel(FileBrowserPanel panel, bool isDark)
+        {
+            // 使用反射或公共方法设置面板主题
+            panel.ApplyTheme(isDark);
         }
 
         private LayoutMode GetCurrentLayout() => _cboLayout?.SelectedItem switch
@@ -203,6 +301,8 @@ namespace wxd.files.winforms
                     BorderStyle = BorderStyle.FixedSingle,
                     Padding     = new Padding(0)
                 };
+                // 应用当前主题到新面板
+                _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
                 _pnlContainer.Controls.Add(_panels[i]);
             }
         }
@@ -302,8 +402,9 @@ namespace wxd.files.winforms
                 rows = 2;
             }
 
-            int cellW = w / cols;
-            int cellH = h / rows;
+            const int gap = 4; // 窗格之间的间隙
+            int cellW = (w - gap * (cols - 1)) / cols;
+            int cellH = (h - gap * (rows - 1)) / rows;
 
             for (int i = 0; i < count; i++)
             {
@@ -312,11 +413,11 @@ namespace wxd.files.winforms
                 bool isLastCol = (col == cols - 1);
                 bool isLastRow = (row == rows - 1);
 
-                int x = _pnlContainer.Padding.Left + col * cellW;
-                int y = _pnlContainer.Padding.Top  + row  * cellH;
+                int x = _pnlContainer.Padding.Left + col * (cellW + gap);
+                int y = _pnlContainer.Padding.Top  + row  * (cellH + gap);
 
-                int cw = isLastCol ? (w - col * cellW) : cellW;
-                int ch = isLastRow ? (h - row * cellH) : cellH;
+                int cw = isLastCol ? (w - col * (cellW + gap)) : cellW;
+                int ch = isLastRow ? (h - row * (cellH + gap)) : cellH;
 
                 _panels[i].SetBounds(x, y, cw, ch);
             }
@@ -335,7 +436,7 @@ namespace wxd.files.winforms
         // ==================== 关闭时保存全局状态 ====================
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout?.SelectedIndex ?? 2);
+            FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout?.SelectedIndex ?? 2, _cboTheme?.SelectedIndex ?? 1);
             base.OnFormClosing(e);
         }
     }

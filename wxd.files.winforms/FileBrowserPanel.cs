@@ -70,6 +70,9 @@ namespace wxd.files.winforms
         [DllImport("ole32.dll")]
         private static extern void CoTaskMemFree(IntPtr pv);
 
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct SHFILEINFO
         {
@@ -172,11 +175,25 @@ namespace wxd.files.winforms
         private static readonly Guid IID_IShellFolder = new Guid("000214e6-0000-0000-c000-000000000046");
         private static readonly Guid CLSID_ShellFolder = new Guid("00021400-0000-0000-c000-000000000046");
 
-        // ==================== 配色方案 ====================
-        private static readonly Color _colorToolbarBg      = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorBorder         = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorTextPrimary    = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorTextSecondary  = Color.FromArgb(95, 99, 104);
+        // ==================== 浅色配色方案 ====================
+        private static readonly Color _colorLightToolbarBg     = Color.FromArgb(250, 250, 250);
+        private static readonly Color _colorLightBorder        = Color.FromArgb(218, 220, 224);
+        private static readonly Color _colorLightTextPrimary   = Color.FromArgb(32, 33, 36);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
+        private static readonly Color _colorLightBackColor     = Color.White;
+
+        // ==================== 深色配色方案 (VS风格) ====================
+        private static readonly Color _colorDarkToolbarBg      = Color.FromArgb(51, 51, 55);       // VS工具栏
+        private static readonly Color _colorDarkBorder         = Color.FromArgb(62, 62, 66);       // VS边框
+        private static readonly Color _colorDarkTextPrimary    = Color.FromArgb(241, 241, 241);    // VS白色文字
+        private static readonly Color _colorDarkTextSecondary  = Color.FromArgb(180, 180, 180);    // VS灰色文字
+        private static readonly Color _colorDarkBackColor      = Color.FromArgb(37, 37, 38);       // VS编辑器背景
+
+        // 当前配色
+        private Color _colorToolbarBg;
+        private Color _colorBorder;
+        private Color _colorTextPrimary;
+        private Color _colorTextSecondary;
 
         // ==================== 数据类 ====================
         private class DirInfo { public string Name = ""; public string FullName = ""; }
@@ -200,6 +217,8 @@ namespace wxd.files.winforms
         public FileBrowserPanel(int panelIndex)
         {
             PanelIndex = panelIndex;
+            // 默认使用浅色主题
+            SetThemeColors(false);
             InitializeComponent();
             CreateControls();
             InitImageList();
@@ -219,10 +238,105 @@ namespace wxd.files.winforms
                 if (_txtFilter != null)
                 {
                     _txtFilter.Text = savedFilter;
-                    _txtFilter.ForeColor = SystemColors.WindowText;
+                    _txtFilter.ForeColor = _colorTextPrimary;
                 }
                 ApplyFilter();
             }
+        }
+
+        /// <summary>设置主题颜色</summary>
+        private void SetThemeColors(bool isDark)
+        {
+            if (isDark)
+            {
+                _colorToolbarBg = _colorDarkToolbarBg;
+                _colorBorder = _colorDarkBorder;
+                _colorTextPrimary = _colorDarkTextPrimary;
+                _colorTextSecondary = _colorDarkTextSecondary;
+            }
+            else
+            {
+                _colorToolbarBg = _colorLightToolbarBg;
+                _colorBorder = _colorLightBorder;
+                _colorTextPrimary = _colorLightTextPrimary;
+                _colorTextSecondary = _colorLightTextSecondary;
+            }
+        }
+
+        /// <summary>应用主题（公共方法，由主窗体调用）</summary>
+        public void ApplyTheme(bool isDark)
+        {
+            SetThemeColors(isDark);
+
+            // 更新背景色
+            BackColor = isDark ? _colorDarkBackColor : _colorLightBackColor;
+
+            // 更新工具栏
+            if (_pnlToolbar != null)
+                _pnlToolbar.BackColor = _colorToolbarBg;
+
+            // 更新底部面板
+            if (_pnlBottom != null)
+                _pnlBottom.BackColor = _colorToolbarBg;
+
+            // 更新标签
+            if (_lblDrives != null)
+                _lblDrives.ForeColor = _colorTextSecondary;
+
+            // 更新路径文本框
+            if (_txtPath != null)
+            {
+                _txtPath.BackColor = isDark ? _colorDarkBackColor : Color.White;
+                _txtPath.ForeColor = _colorTextPrimary;
+                _txtPath.BorderStyle = BorderStyle.FixedSingle;
+            }
+
+            // 更新过滤文本框
+            if (_txtFilter != null)
+            {
+                _txtFilter.BackColor = isDark ? _colorDarkBackColor : Color.White;
+                _txtFilter.ForeColor = _filterText.StartsWith("输入关键词") ? _colorTextSecondary : _colorTextPrimary;
+                _txtFilter.BorderStyle = BorderStyle.FixedSingle;
+            }
+
+            // 更新下拉框
+            if (_cboDrives != null)
+            {
+                _cboDrives.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
+                _cboDrives.ForeColor = _colorTextPrimary;
+            }
+
+            // 更新列表视图
+            _lstFiles.BackColor = isDark ? _colorDarkBackColor : Color.White;
+            _lstFiles.ForeColor = _colorTextPrimary;
+
+            // 设置 ListView 主题（深色模式使用 Explorer 主题）
+            if (isDark)
+            {
+                SetWindowTheme(_lstFiles.Handle, "Explorer", null);
+            }
+            else
+            {
+                SetWindowTheme(_lstFiles.Handle, null, null);
+            }
+
+            // 更新按钮（上级按钮和打开目录按钮统一使用深色模式的蓝色）
+            var btnBackColor = Color.FromArgb(0, 122, 204);  // 始终使用深色模式的蓝色
+            var btnForeColor = Color.White;                   // 始终使用白色文字
+
+            if (_btnUp != null)
+            {
+                _btnUp.BackColor = btnBackColor;
+                _btnUp.ForeColor = btnForeColor;
+            }
+
+            if (_btnOpenExplorer != null)
+            {
+                _btnOpenExplorer.BackColor = btnBackColor;
+                _btnOpenExplorer.ForeColor = btnForeColor;
+            }
+
+            Invalidate();
         }
 
         private void InitializeComponent()
@@ -241,7 +355,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            BackColor    = Color.White;
+            BackColor    = _colorLightBackColor; // 默认浅色背景
             BorderStyle = BorderStyle.FixedSingle;
             Padding      = new Padding(1);
 
@@ -273,32 +387,51 @@ namespace wxd.files.winforms
             };
             _cboDrives.SelectedIndexChanged += OnDriveChanged;
 
-            _btnUp = new Button
-            {
-                Text     = "上级",
-                Location = new Point(126, 5),
-                Size     = new Size(50, 24),
-                Font     = new Font("Microsoft YaHei UI", 9f),
-                Cursor   = Cursors.Hand
-            };
-            _btnUp.Click += (s, e) => GoUp();
-
             _txtPath = new TextBox
             {
-                Location    = new Point(182, 6),
-                Size        = new Size(200, 23),
+                Location    = new Point(126, 6),
+                Width       = 200,
+                Height      = 23,
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             _txtPath.KeyDown += OnPathKeyDown;
 
-            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _btnUp, _txtPath });
+            _btnUp = new Button
+            {
+                Text     = "上级",
+                Location = new Point(332, 5),
+                Size     = new Size(50, 24),
+                Font     = new Font("Microsoft YaHei UI", 9f),
+                Cursor   = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 122, 204),  // 统一使用深色模式的蓝色
+                ForeColor = Color.White,                   // 白色文字
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                Anchor   = AnchorStyles.Top | AnchorStyles.Right
+            };
+            _btnUp.Click += (s, e) => GoUp();
+
+            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp });
+            
+            // 工具栏大小改变时调整路径文本框宽度（为上级按钮留出空间）
+            _pnlToolbar.Resize += (s, e) =>
+            {
+                if (_txtPath != null && _btnUp != null)
+                {
+                    int newWidth = _pnlToolbar.Width - _txtPath.Left - _btnUp.Width - 12;
+                    if (newWidth > 100)
+                        _txtPath.Width = newWidth;
+                    // 更新上级按钮位置
+                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - 8;
+                }
+            };
 
             // ===== 文件列表（中间区域）=====
             _lstFiles.Dock           = DockStyle.Fill;
             _lstFiles.View           = View.Details;
             _lstFiles.FullRowSelect  = true;
-            _lstFiles.GridLines      = true;
+            _lstFiles.GridLines      = false; // 去掉网格线
             _lstFiles.HeaderStyle    = ColumnHeaderStyle.Clickable;
             _lstFiles.SmallImageList = _imgList;
             _lstFiles.Font           = new Font("Microsoft YaHei UI", 9.5f);
@@ -339,7 +472,11 @@ namespace wxd.files.winforms
                 Anchor      = AnchorStyles.Top | AnchorStyles.Right,
                 Text        = "打开目录",
                 Font        = new Font("Microsoft YaHei UI", 9f),
-                Cursor      = Cursors.Hand
+                Cursor      = Cursors.Hand,
+                BackColor   = Color.FromArgb(0, 122, 204),   // 统一使用深色模式的蓝色
+                ForeColor   = Color.White,                   // 白色文字
+                FlatStyle   = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
             };
             _btnOpenExplorer.Click += OnOpenExplorerClick;
 
@@ -383,7 +520,7 @@ namespace wxd.files.winforms
         {
             if (_txtFilter == null) return;
             _txtFilter.Text = "输入关键词过滤 (支持 || 或 / && 与)";
-            _txtFilter.ForeColor = SystemColors.GrayText;
+            _txtFilter.ForeColor = _colorTextSecondary;
 
             _txtFilter.GotFocus -= Filter_GotFocus;
             _txtFilter.GotFocus += Filter_GotFocus;
@@ -396,7 +533,7 @@ namespace wxd.files.winforms
             if (_txtFilter != null && _txtFilter.Text.StartsWith("输入关键词"))
             {
                 _txtFilter.Text = "";
-                _txtFilter.ForeColor = SystemColors.WindowText;
+                _txtFilter.ForeColor = _colorTextPrimary;
             }
         }
 
@@ -943,17 +1080,37 @@ namespace wxd.files.winforms
                 {
                     return;
                 }
-                
-                var info = new SHELLEXECUTEINFO
+
+                // 如果是文件，使用 cmd /c start 打开，模拟资源管理器双击效果
+                if (File.Exists(filePath))
                 {
-                    cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
-                    fMask  = SEE_MASK_FLAG_NO_UI,
-                    hwnd   = this.Handle,
-                    lpVerb = verb,
-                    lpFile = filePath,
-                    nShow  = 1
-                };
-                ShellExecuteEx(ref info);
+                    var workingDir = Path.GetDirectoryName(filePath) ?? "";
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c start \"\" \"{filePath}\"",
+                        WorkingDirectory = workingDir,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    Process.Start(startInfo);
+                    return;
+                }
+
+                // 如果是文件夹，使用 ShellExecuteEx
+                if (Directory.Exists(filePath))
+                {
+                    var info = new SHELLEXECUTEINFO
+                    {
+                        cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
+                        fMask  = SEE_MASK_FLAG_NO_UI,
+                        hwnd   = this.Handle,
+                        lpVerb = verb,
+                        lpFile = filePath,
+                        nShow  = 1
+                    };
+                    ShellExecuteEx(ref info);
+                }
             }
             catch (ObjectDisposedException)
             {
@@ -975,6 +1132,7 @@ namespace wxd.files.winforms
             public string Filter { get; set; } = "";
             public int PanelCount { get; set; } = 4;
             public int LayoutIndex { get; set; } = 2;
+            public int ThemeIndex { get; set; } = 0; // 0=深色, 1=浅色
         }
 
         private static void EnsureStateDir()
@@ -1012,7 +1170,7 @@ namespace wxd.files.winforms
             catch { return null; }
         }
 
-        internal static void SaveGlobalState(int panelCount, int layoutIndex)
+        internal static void SaveGlobalState(int panelCount, int layoutIndex, int themeIndex = 0)
         {
             try
             {
@@ -1020,7 +1178,8 @@ namespace wxd.files.winforms
                 allStates["global"] = new PanelState
                 {
                     PanelCount = panelCount,
-                    LayoutIndex = layoutIndex
+                    LayoutIndex = layoutIndex,
+                    ThemeIndex = themeIndex
                 };
                 EnsureStateDir();
                 File.WriteAllText(StateFilePath, JsonSerializer.Serialize(allStates, new JsonSerializerOptions { WriteIndented = true }));
@@ -1028,16 +1187,16 @@ namespace wxd.files.winforms
             catch { }
         }
 
-        internal static (int PanelCount, int LayoutIndex) LoadGlobalState()
+        internal static (int PanelCount, int LayoutIndex, int ThemeIndex) LoadGlobalState()
         {
             try
             {
                 var allStates = LoadAllStates();
                 if (allStates.TryGetValue("global", out var g))
-                    return (g.PanelCount, g.LayoutIndex);
+                    return (g.PanelCount, g.LayoutIndex, g.ThemeIndex);
             }
             catch { }
-            return (4, 2);
+            return (4, 2, 1); // 默认浅色模式
         }
 
         private static Dictionary<string, PanelState> LoadAllStates()
