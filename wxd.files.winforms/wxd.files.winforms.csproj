@@ -8,6 +8,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <StartupObject>wxd.files.winforms.Program</StartupObject>
+    <AssemblyTitle>wxd-gaming</AssemblyTitle>
+    <Company>wxd-gaming</Company>
+    <Authors>wxd-gaming</Authors>
+    <PackageId>wxd-gaming</PackageId>
+    <Copyright>wxd-gaming</Copyright>
+    <Description>wxd-gaming</Description>
   </PropertyGroup>
 
   <ItemGroup>
