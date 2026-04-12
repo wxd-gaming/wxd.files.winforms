@@ -801,9 +801,9 @@ namespace wxd.files.winforms
             _dataGridHeader.AllowUserToResizeColumns = false; // 禁止调整列宽，由主表格控制
             _dataGridHeader.AllowUserToResizeRows = false;
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint; // 绘制冻结行的行号
-            _dataGridHeader.Enabled = false; // 禁用冻结表格的交互
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor; // 禁用选中高亮
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
+            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick; // 双击编辑
 
             // 数据表格（主表格）
             _dataGrid = CreateDataGridView();
@@ -821,10 +821,20 @@ namespace wxd.files.winforms
             // 同步列宽调整
             _dataGrid.ColumnWidthChanged += (s, e) =>
             {
-                // 数据表格的列索引与冻结表格的列索引直接对应（因为冻结表格也有行号列）
-                if (_dataGridHeader.Columns.Count > e.Column.Index && e.Column.Index >= 0)
+                // 考虑主表格可能有隐藏的 __RowNum__ 列
+                int dataGridColumnIndex = e.Column.Index;
+                int headerColumnIndex = dataGridColumnIndex;
+                
+                // 如果主表格有隐藏列，需要调整索引
+                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && dataGridColumnIndex > 0)
                 {
-                    _dataGridHeader.Columns[e.Column.Index].Width = _dataGrid.Columns[e.Column.Index].Width;
+                    headerColumnIndex = dataGridColumnIndex - 1;
+                }
+                
+                // 同步列宽到冻结表格
+                if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
+                {
+                    _dataGridHeader.Columns[headerColumnIndex].Width = _dataGrid.Columns[dataGridColumnIndex].Width;
                 }
             };
 
@@ -875,11 +885,190 @@ namespace wxd.files.winforms
             };
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
+            dgv.CellDoubleClick += OnCellDoubleClick; // 双击编辑
             return dgv;
+        }
+
+        // ==================== 双击编辑功能 ====================
+        private bool _editingFromFrozen = false; // 标记是否来自冻结表格
+        private bool _isEditing = false; // 防止重复触发编辑
+
+        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_isEditing) return; // 防止重复触发
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                var dgv = sender as DataGridView;
+                if (dgv == null) return;
+
+                // 获取双击的单元格
+                var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = false;
+                
+                // 打开编辑对话框
+                EditCell(cell);
+            }
+        }
+
+        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (_isEditing) return; // 防止重复触发
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                // 获取冻结表格的双击单元格
+                var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = true;
+                
+                // 打开编辑对话框
+                EditCell(cell);
+            }
+        }
+
+        private void EditCell(DataGridViewCell cell)
+        {
+            _isEditing = true; // 设置编辑标志，防止重复触发
+            
+            try
+            {
+                var rowIndex = cell.RowIndex;
+                var columnIndex = cell.ColumnIndex;
+                var currentValue = cell.Value?.ToString() ?? "";
+
+                // 获取原始数据表中的行列索引
+                var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
+
+                using var dialog = new CellEditDialog(currentValue);
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    var newValue = dialog.CellValue;
+
+                    // 更新原始数据表
+                    if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
+                        originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                    {
+                        _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+
+                        // 保存到文件
+                        SaveCsvFile();
+
+                        // 刷新显示
+                        RefreshGridLayout();
+                    }
+                }
+            }
+            finally
+            {
+                // 使用延迟重置标志，确保双击事件完全处理完毕
+                var timer = new System.Windows.Forms.Timer();
+                timer.Interval = 200;
+                timer.Tick += (s, e) =>
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    _isEditing = false;
+                };
+                timer.Start();
+            }
+        }
+
+
+
+        /// <summary>获取原始数据表中的行列索引</summary>
+        private (int rowIndex, int columnIndex) GetOriginalIndices(int displayRowIndex, int displayColumnIndex)
+        {
+            // 如果来自冻结表格，行号直接就是原始行号（0-based）
+            if (_editingFromFrozen)
+            {
+                int originalColumnIndex = displayColumnIndex;
+                // 列索引转换（考虑可见列过滤）
+                if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGridHeader.Columns.Count)
+                {
+                    if (displayColumnIndex < _visibleColumnIndices.Count)
+                    {
+                        originalColumnIndex = _visibleColumnIndices[displayColumnIndex];
+                    }
+                }
+                return (displayRowIndex, originalColumnIndex);
+            }
+
+            // 如果使用了过滤显示，需要转换索引
+            if (_dataGrid.DataSource is DataTable filteredTable && filteredTable.Columns.Count > 0)
+            {
+                // 获取原始行号（从隐藏列）
+                int originalRowIndex = displayRowIndex;
+                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+                {
+                    var cellValue = _dataGrid.Rows[displayRowIndex].Cells[0].Value;
+                    if (cellValue != null)
+                    {
+                        originalRowIndex = Convert.ToInt32(cellValue) - 1; // 转换为0-based索引
+                    }
+                }
+
+                // 列索引转换
+                int originalColumnIndex = displayColumnIndex;
+                if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGrid.Columns.Count)
+                {
+                    // 考虑隐藏列（__RowNum__）
+                    var actualDisplayIndex = displayColumnIndex;
+                    if (_dataGrid.Columns[0].Name == "__RowNum__")
+                    {
+                        actualDisplayIndex = displayColumnIndex - 1;
+                    }
+
+                    if (actualDisplayIndex >= 0 && actualDisplayIndex < _visibleColumnIndices.Count)
+                    {
+                        originalColumnIndex = _visibleColumnIndices[actualDisplayIndex];
+                    }
+                }
+
+                return (originalRowIndex, originalColumnIndex);
+            }
+
+            // 无过滤时直接返回
+            return (displayRowIndex + _frozenRows, displayColumnIndex);
+        }
+
+        /// <summary>保存CSV文件</summary>
+        private void SaveCsvFile()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+
+                // 写入数据行
+                foreach (DataRow row in _dataTable.Rows)
+                {
+                    var values = new List<string>();
+                    foreach (var item in row.ItemArray)
+                    {
+                        var value = item?.ToString() ?? "";
+                        // 如果值包含分隔符或引号，需要转义
+                        if (value.Contains(_delimiter) || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+                        {
+                            value = "\"" + value.Replace("\"", "\"\"") + "\"";
+                        }
+                        values.Add(value);
+                    }
+                    sb.AppendLine(string.Join(_delimiter.ToString(), values));
+                }
+
+                File.WriteAllText(_filePath, sb.ToString(), Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void RefreshGridLayout()
         {
+            // 如果数据表还没有加载完成，直接返回
+            if (_dataTable.Columns.Count == 0)
+            {
+                return;
+            }
+
             if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
             {
                 // 先应用过滤，获取可见列索引
@@ -1535,6 +1724,84 @@ namespace wxd.files.winforms
             // 字符串比较
             var strResult = string.Compare(x, y, StringComparison.OrdinalIgnoreCase);
             return _sortOrder == SortOrder.Ascending ? strResult : -strResult;
+        }
+    }
+
+    /// <summary>单元格编辑对话框</summary>
+    public class CellEditDialog : Form
+    {
+        private TextBox _txtValue = new();
+        private Button _btnSave = new();
+        private Button _btnCancel = new();
+
+        public string CellValue => _txtValue.Text;
+
+        public CellEditDialog(string initialValue)
+        {
+            InitializeComponent();
+            _txtValue.Text = initialValue;
+            _txtValue.SelectAll();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+
+            Text = "编辑单元格";
+            ClientSize = new Size(400, 150);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = Color.White;
+
+            // 文本框
+            _txtValue = new TextBox
+            {
+                Location = new Point(12, 20),
+                Size = new Size(360, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            // 保存按钮
+            _btnSave = new Button
+            {
+                Text = "保存",
+                Location = new Point(220, 80),
+                Size = new Size(70, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.OK
+            };
+            _btnSave.FlatAppearance.BorderSize = 0;
+
+            // 取消按钮
+            _btnCancel = new Button
+            {
+                Text = "取消",
+                Location = new Point(302, 80),
+                Size = new Size(70, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(240, 240, 240),
+                ForeColor = Color.FromArgb(32, 33, 36),
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel
+            };
+            _btnCancel.FlatAppearance.BorderSize = 0;
+
+            Controls.Add(_txtValue);
+            Controls.Add(_btnSave);
+            Controls.Add(_btnCancel);
+
+            AcceptButton = _btnSave;
+            CancelButton = _btnCancel;
+
+            ResumeLayout(false);
         }
     }
 }
