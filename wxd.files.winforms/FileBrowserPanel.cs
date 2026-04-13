@@ -27,6 +27,7 @@ namespace wxd.files.winforms
         private Panel?    _pnlBottom;
         private Button?   _btnOpenExplorer;
         private Button?   _btnOpenCsvReader;
+        private Button?   _btnRefresh;
 
         // ==================== 状态字段 ====================
         private string          _currentDir     = "";
@@ -200,6 +201,56 @@ namespace wxd.files.winforms
         private class DirInfo { public string Name = ""; public string FullName = ""; }
         private class FileItemTag { public string FullName = ""; public bool IsDir; }
 
+        // ==================== 自然排序比较器 ====================
+        /// <summary>按字符逐个比较，数字部分按数值比较</summary>
+        private class NaturalSortComparer : IComparer<string>
+        {
+            public int Compare(string? x, string? y)
+            {
+                if (x == null && y == null) return 0;
+                if (x == null) return -1;
+                if (y == null) return 1;
+
+                int i = 0, j = 0;
+                while (i < x.Length && j < y.Length)
+                {
+                    char cx = x[i];
+                    char cy = y[j];
+
+                    // 如果都是数字，按数值比较
+                    if (char.IsDigit(cx) && char.IsDigit(cy))
+                    {
+                        // 提取完整的数字
+                        int numX = 0, numY = 0;
+                        while (i < x.Length && char.IsDigit(x[i]))
+                        {
+                            numX = numX * 10 + (x[i] - '0');
+                            i++;
+                        }
+                        while (j < y.Length && char.IsDigit(y[j]))
+                        {
+                            numY = numY * 10 + (y[j] - '0');
+                            j++;
+                        }
+                        if (numX != numY)
+                            return numX.CompareTo(numY);
+                    }
+                    else
+                    {
+                        // 非数字字符，忽略大小写比较
+                        int result = char.ToUpperInvariant(cx).CompareTo(char.ToUpperInvariant(cy));
+                        if (result != 0)
+                            return result;
+                        i++;
+                        j++;
+                    }
+                }
+
+                // 比较剩余长度
+                return x.Length.CompareTo(y.Length);
+            }
+        }
+
         // ==================== 属性 ====================
         public string CurrentDirectory => _currentDir;
         public string FilterText => _filterText;
@@ -343,6 +394,12 @@ namespace wxd.files.winforms
                 _btnOpenCsvReader.ForeColor = btnForeColor;
             }
 
+            if (_btnRefresh != null)
+            {
+                _btnRefresh.BackColor = btnBackColor;
+                _btnRefresh.ForeColor = btnForeColor;
+            }
+
             Invalidate();
         }
 
@@ -419,18 +476,37 @@ namespace wxd.files.winforms
             };
             _btnUp.Click += (s, e) => GoUp();
 
-            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp });
+            // 刷新按钮
+            _btnRefresh = new Button
+            {
+                Text     = "刷新",
+                Location = new Point(386, 5),
+                Size     = new Size(50, 24),
+                Font     = new Font("Microsoft YaHei UI", 9f),
+                Cursor   = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                Anchor   = AnchorStyles.Top | AnchorStyles.Right
+            };
+            _btnRefresh.Click += (s, e) => RefreshCurrent();
+
+            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp, _btnRefresh });
             
-            // 工具栏大小改变时调整路径文本框宽度（为上级按钮留出空间）
+            // 工具栏大小改变时调整路径文本框宽度（为上级按钮和刷新按钮留出空间）
             _pnlToolbar.Resize += (s, e) =>
             {
-                if (_txtPath != null && _btnUp != null)
+                if (_txtPath != null && _btnUp != null && _btnRefresh != null)
                 {
-                    int newWidth = _pnlToolbar.Width - _txtPath.Left - _btnUp.Width - 12;
+                    int buttonsWidth = _btnUp.Width + _btnRefresh.Width + 16; // 两个按钮 + 间距
+                    int newWidth = _pnlToolbar.Width - _txtPath.Left - buttonsWidth;
                     if (newWidth > 100)
                         _txtPath.Width = newWidth;
                     // 更新上级按钮位置
-                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - 8;
+                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _btnRefresh.Width - 12;
+                    // 更新刷新按钮位置
+                    _btnRefresh.Left = _pnlToolbar.Width - _btnRefresh.Width - 8;
                 }
             };
 
@@ -692,13 +768,13 @@ namespace wxd.files.winforms
                 {
                     try { _allDirs.Add(new DirInfo { Name = Path.GetFileName(dir), FullName = dir }); } catch { }
                 }
-                _allDirs.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+                _allDirs.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
 
                 foreach (var file in Directory.GetFiles(_currentDir))
                 {
                     try { _allFiles.Add(new FileInfo(file)); } catch { }
                 }
-                _allFiles.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+                _allFiles.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
             }
             catch (UnauthorizedAccessException) { }
         }
