@@ -126,7 +126,7 @@ namespace wxd.files.winforms
             // 打开CSV文件按钮
             _btnOpenCsv = new Button
             {
-                Text = "打开CSV",                
+                Text = "打开CSV",
                 Location = new Point(6, 6),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
@@ -772,7 +772,7 @@ namespace wxd.files.winforms
         private void InitializeComponent()
         {
             SuspendLayout();
-            BackColor = Color.White;            
+            BackColor = Color.White;
             // 顶部工具栏 - 使用 FlowLayoutPanel 自动排列
             var flowTop = new FlowLayoutPanel
             {
@@ -941,13 +941,13 @@ namespace wxd.files.winforms
                 // 考虑主表格可能有隐藏的 __RowNum__ 列
                 int dataGridColumnIndex = e.Column.Index;
                 int headerColumnIndex = dataGridColumnIndex;
-                
+
                 // 如果主表格有隐藏列，需要调整索引
                 if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && dataGridColumnIndex > 0)
                 {
                     headerColumnIndex = dataGridColumnIndex - 1;
                 }
-                
+
                 // 同步列宽到冻结表格
                 if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
                 {
@@ -1024,7 +1024,7 @@ namespace wxd.files.winforms
                 // 获取双击的单元格
                 var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
                 _editingFromFrozen = false;
-                
+
                 // 打开编辑对话框
                 EditCell(cell);
             }
@@ -1038,7 +1038,7 @@ namespace wxd.files.winforms
                 // 获取冻结表格的双击单元格
                 var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
                 _editingFromFrozen = true;
-                
+
                 // 打开编辑对话框
                 EditCell(cell);
             }
@@ -1854,13 +1854,25 @@ namespace wxd.files.winforms
         private TextBox _txtValue = new();
         private Button _btnSave = new();
         private Button _btnCancel = new();
+        private Panel _pnlBottom = new();
 
-        public string CellValue => _txtValue.Text;
+        public string CellValue => _txtValue.Text.Replace("\r\n", "\n");
+
+        /// <summary>
+        /// 将各种换行符转换为 Windows 格式 (\r\n)，供 TextBox 多行模式正确显示
+        /// </summary>
+        private static string NormalizeLineBreaksForDisplay(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+            // 先将已有的 \r\n 保护，再处理 \r 和 \n，最后统一输出 \r\n
+            return text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+        }
 
         public CellEditDialog(string initialValue)
         {
             InitializeComponent();
-            _txtValue.Text = initialValue;
+            _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
             _txtValue.SelectAll();
         }
 
@@ -1869,7 +1881,7 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             Text = "编辑单元格";
-            ClientSize = new Size(400, 150);
+            ClientSize = new Size(800, 600);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -1877,21 +1889,19 @@ namespace wxd.files.winforms
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.White;
 
-            // 文本框
-            _txtValue = new TextBox
+            // 底部按钮面板
+            _pnlBottom = new Panel
             {
-                Location = new Point(12, 20),
-                Size = new Size(360, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Dock = DockStyle.Bottom,
+                Height = 50,
+                BackColor = Color.FromArgb(250, 250, 250)
             };
 
             // 保存按钮
             _btnSave = new Button
             {
                 Text = "保存",
-                Location = new Point(220, 80),
+                Location = new Point(640, 10),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(0, 122, 204),
@@ -1905,7 +1915,7 @@ namespace wxd.files.winforms
             _btnCancel = new Button
             {
                 Text = "取消",
-                Location = new Point(302, 80),
+                Location = new Point(720, 10),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(240, 240, 240),
@@ -1915,9 +1925,24 @@ namespace wxd.files.winforms
             };
             _btnCancel.FlatAppearance.BorderSize = 0;
 
+            _pnlBottom.Controls.Add(_btnSave);
+            _pnlBottom.Controls.Add(_btnCancel);
+
+            // 多行文本框
+            _txtValue = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Font = new Font("Microsoft YaHei UI", 10f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Multiline = true,
+                ScrollBars = ScrollBars.Both,
+                WordWrap = true,
+                AcceptsReturn = true,
+                AcceptsTab = true
+            };
+
             Controls.Add(_txtValue);
-            Controls.Add(_btnSave);
-            Controls.Add(_btnCancel);
+            Controls.Add(_pnlBottom);
 
             AcceptButton = _btnSave;
             CancelButton = _btnCancel;
@@ -1991,12 +2016,12 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            _frozenRows = CsvSettings.DefaultFrozenRows;
+            _frozenRows = CsvSettings.ExcelDefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
                 _frozenRows = cboFrozenRows.SelectedIndex;
-                CsvSettings.DefaultFrozenRows = _frozenRows;
+                CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
                 CsvSettings.Save();
                 RefreshGridLayout();
             };

@@ -4,15 +4,16 @@ using System.Configuration;
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// CSV查看器设置管理类
+    /// CSV/Excel查看器设置管理类
     /// </summary>
     public static class CsvSettings
     {
         private const string DefaultFrozenRowsKey = "DefaultFrozenRows";
+        private const string ExcelDefaultFrozenRowsKey = "ExcelDefaultFrozenRows";
         private const int DefaultFrozenRowsValue = 2; // 默认冻结2行
 
         /// <summary>
-        /// 默认冻结行数
+        /// CSV查看器的默认冻结行数
         /// </summary>
         public static int DefaultFrozenRows
         {
@@ -48,6 +49,53 @@ namespace wxd.files.winforms
                         appSettings.Settings[DefaultFrozenRowsKey].Value = value.ToString();
                     }
                     
+                    config.Save(ConfigurationSaveMode.Modified);
+                    ConfigurationManager.RefreshSection("appSettings");
+                }
+                catch
+                {
+                    // 保存失败时忽略
+                }
+            }
+        }
+
+        /// <summary>
+        /// Excel查看器的默认冻结行数
+        /// </summary>
+        public static int ExcelDefaultFrozenRows
+        {
+            get
+            {
+                try
+                {
+                    var value = ConfigurationManager.AppSettings[ExcelDefaultFrozenRowsKey];
+                    if (int.TryParse(value, out int result))
+                    {
+                        return Math.Max(0, Math.Min(8, result)); // 限制在0-8之间
+                    }
+                }
+                catch
+                {
+                    // 读取失败时使用默认值
+                }
+                return DefaultFrozenRowsValue;
+            }
+            set
+            {
+                try
+                {
+                    var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+                    var appSettings = config.AppSettings;
+
+                    if (appSettings.Settings[ExcelDefaultFrozenRowsKey] == null)
+                    {
+                        appSettings.Settings.Add(ExcelDefaultFrozenRowsKey, value.ToString());
+                    }
+                    else
+                    {
+                        appSettings.Settings[ExcelDefaultFrozenRowsKey].Value = value.ToString();
+                    }
+
                     config.Save(ConfigurationSaveMode.Modified);
                     ConfigurationManager.RefreshSection("appSettings");
                 }
