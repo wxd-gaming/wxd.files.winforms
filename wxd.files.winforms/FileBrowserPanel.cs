@@ -8,6 +8,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms
@@ -35,6 +37,8 @@ namespace wxd.files.winforms
         private List<FileInfo>  _allFiles       = new();
         private List<DirInfo>   _allDirs        = new();
         private bool            _suppressEvents = false;
+        private bool            _isLoading      = false;
+        private Label?          _lblLoading;
 
         // ==================== Win32 API ====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -272,8 +276,8 @@ namespace wxd.files.winforms
             // 默认使用浅色主题
             SetThemeColors(false);
             InitializeComponent();
-            CreateControls();
             InitImageList();
+            CreateControls();
             LoadDrives();
             // 恢复记忆的目录和过滤条件
             var state = LoadPanelState(panelIndex);
@@ -531,7 +535,6 @@ namespace wxd.files.winforms
             _lstFiles.Resize += OnListViewResize;
 
             _lstFiles.DoubleClick         += OnFileDoubleClick;
-            _lstFiles.MouseClick          += OnListViewMouseClick;
             _lstFiles.MouseUp             += OnListViewMouseUp;
             _lstFiles.SelectedIndexChanged += (s, e) =>
             {
@@ -697,6 +700,8 @@ namespace wxd.files.winforms
                     _currentDir = trimmed;
                 RefreshUI();
                 SavePanelState();
+                // 异步加载文件列表
+                _ = LoadFileListAsync();
             }
             catch (Exception ex)
             {
@@ -752,31 +757,118 @@ namespace wxd.files.winforms
             if (targetIdx >= 0 && _cboDrives.SelectedIndex != targetIdx)
                 _cboDrives.SelectedIndex = targetIdx;
 
-            LoadFileList();
-            ApplyFilter();
             _suppressEvents = false;
         }
 
-        private void LoadFileList()
+        private CancellationTokenSource? _loadCts;
+
+        /// <summary>异步加载文件列表，避免界面卡顿</summary>
+        private async Task LoadFileListAsync()
         {
-            _allDirs.Clear();
-            _allFiles.Clear();
+            // 取消之前的加载任务
+            _loadCts?.Cancel();
+            _loadCts = new CancellationTokenSource();
+            var token = _loadCts.Token;
+
+            ShowLoading();
 
             try
             {
-                foreach (var dir in Directory.GetDirectories(_currentDir))
-                {
-                    try { _allDirs.Add(new DirInfo { Name = Path.GetFileName(dir), FullName = dir }); } catch { }
-                }
-                _allDirs.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
+                var dirs = new List<DirInfo>();
+                var files = new List<FileInfo>();
 
-                foreach (var file in Directory.GetFiles(_currentDir))
+                // 在后台线程加载目录
+                await Task.Run(() =>
                 {
-                    try { _allFiles.Add(new FileInfo(file)); } catch { }
+                    if (token.IsCancellationRequested) return;
+
+                    try
+                    {
+                        foreach (var dir in Directory.GetDirectories(_currentDir))
+                        {
+                            if (token.IsCancellationRequested) return;
+                            try { dirs.Add(new DirInfo { Name = Path.GetFileName(dir), FullName = dir }); } catch { }
+                        }
+                        dirs.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
+
+                        if (token.IsCancellationRequested) return;
+
+                        foreach (var file in Directory.GetFiles(_currentDir))
+                        {
+                            if (token.IsCancellationRequested) return;
+                            try { files.Add(new FileInfo(file)); } catch { }
+                        }
+                        files.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
+                    }
+                    catch (UnauthorizedAccessException) { }
+                }, token);
+
+                if (token.IsCancellationRequested) return;
+
+                // 更新数据
+                _allDirs = dirs;
+                _allFiles = files;
+
+                // 在 UI 线程更新列表
+                if (!token.IsCancellationRequested)
+                {
+                    if (IsHandleCreated && !IsDisposed)
+                    {
+                        Invoke(() => ApplyFilter());
+                    }
                 }
-                _allFiles.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
             }
-            catch (UnauthorizedAccessException) { }
+            catch (OperationCanceledException)
+            {
+                // 任务被取消，忽略
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"加载文件列表失败: {ex.Message}");
+            }
+            finally
+            {
+                HideLoading();
+            }
+        }
+
+        /// <summary>显示加载提示</summary>
+        private void ShowLoading()
+        {
+            if (_lblLoading == null)
+            {
+                _lblLoading = new Label
+                {
+                    Text = "正在加载...",
+                    AutoSize = false,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Microsoft YaHei UI", 10f),
+                    ForeColor = _colorTextSecondary,
+                    BackColor = Color.Transparent,
+                    Visible = false
+                };
+                // 添加到列表视图上层，居中显示
+                _lstFiles.Controls.Add(_lblLoading);
+                _lblLoading.BringToFront();
+            }
+
+            _lblLoading.Visible = true;
+            _lblLoading.Size = _lstFiles.ClientSize;
+            _lblLoading.Location = new Point(0, 0);
+            _isLoading = true;
+            _lstFiles.BeginUpdate();
+            _lstFiles.Items.Clear();
+        }
+
+        /// <summary>隐藏加载提示</summary>
+        private void HideLoading()
+        {
+            if (_lblLoading != null)
+            {
+                _lblLoading.Visible = false;
+            }
+            _lstFiles.EndUpdate();
+            _isLoading = false;
         }
 
         // ==================== 打开资源管理器 ====================
@@ -828,6 +920,8 @@ namespace wxd.files.winforms
 
         private void ApplyFilter()
         {
+            if (_lstFiles == null || _lstFiles.IsDisposed) return;
+
             _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
@@ -954,71 +1048,6 @@ namespace wxd.files.winforms
                 NavigateTo(tag.FullName);
             else
                 OpenWithShell(tag.FullName, "open");
-        }
-
-        /// <summary>处理 ListView 鼠标点击事件（用于右键菜单）</summary>
-        private void OnListViewMouseClick(object? sender, MouseEventArgs e)
-        {
-            // 检查控件状态，防止在已释放状态下处理事件
-            if (this.IsDisposed || !this.IsHandleCreated) return;
-            
-            if (e.Button != MouseButtons.Right) return;
-
-            Debug.WriteLine($"========================================");
-            Debug.WriteLine($"右键点击事件触发: X={e.X}, Y={e.Y}");
-            Debug.WriteLine($"当前目录: '{_currentDir}'");
-            Debug.WriteLine($"列表项数量: {_lstFiles.Items.Count}");
-
-            // 检测列头区域 - 列名上右键点击显示系统右键菜单
-            if (IsPointOnColumnHeader(e.Location))
-            {
-                Debug.WriteLine("点击列头区域");
-                ShowSystemContextMenu(_currentDir);
-                return;
-            }
-
-            var hit = _lstFiles.HitTest(e.Location);
-            
-            Debug.WriteLine($"HitTest结果: Location={hit.Location}, Item={(hit.Item?.Text ?? "null")}");
-            Debug.WriteLine($"_currentDir='{_currentDir}', Directory.Exists={Directory.Exists(_currentDir)}");
-            
-            // 只有当 Item 不为 null 时才认为是点击了列表项
-            if (hit.Item != null)
-            {
-                // 获取点击的列索引
-                int columnIndex = 0;
-                if (hit.SubItem != null)
-                {
-                    columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
-                }
-                Debug.WriteLine($"点击列表项: {hit.Item.Text}, 列索引: {columnIndex}");
-                
-                // 如果点击的是第一列（名称列），显示该项的系统菜单
-                // 如果点击的是其他列（日期、类型、大小），显示当前目录的系统菜单
-                if (columnIndex == 0)
-                {
-                    hit.Item.Selected = true;
-                    ShowSystemContextMenu(hit.Item.Tag is FileItemTag t ? t.FullName : _currentDir);
-                }
-                else
-                {
-                    // 点击其他列，显示当前目录的系统菜单
-                    ShowSystemContextMenu(_currentDir);
-                }
-            }
-            else
-            {
-                // 点击空白区域（包括没有行的区域），显示当前目录的系统菜单
-                Debug.WriteLine("点击空白区域，准备显示目录菜单");
-                if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
-                {
-                    ShowSystemContextMenu(_currentDir);
-                }
-                else
-                {
-                    Debug.WriteLine($"目录无效: '{_currentDir}'");
-                }
-            }
         }
 
         /// <summary>处理 ListView 大小变化，使名称列自适应剩余宽度</summary>
