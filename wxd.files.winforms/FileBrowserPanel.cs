@@ -39,6 +39,7 @@ namespace wxd.files.winforms
         private bool            _suppressEvents = false;
         private bool            _isLoading      = false;
         private Label?          _lblLoading;
+        private System.Windows.Forms.Timer? _filterDebounceTimer;
 
         // ==================== Win32 API ====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -262,11 +263,6 @@ namespace wxd.files.winforms
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public int PanelIndex { get; set; }
 
-        /// <summary>状态持久化文件路径</summary>
-        private static string StateFilePath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "wxd.files.winforms", "state.json");
-
         // ==================== 构造 & 初始化 ====================
         public FileBrowserPanel() : this(-1) { }
 
@@ -279,10 +275,9 @@ namespace wxd.files.winforms
             InitImageList();
             CreateControls();
             LoadDrives();
-            // 恢复记忆的目录和过滤条件
-            var state = LoadPanelState(panelIndex);
-            var startPath = state?.Directory ?? "";
-            var savedFilter = state?.Filter ?? "";
+            // 恢复记忆的目录和过滤条件（使用ConfigurationManager）
+            var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+            var savedFilter = CsvSettings.GetPaneFilter(panelIndex);
             if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
                 NavigateTo(startPath, restoreFilter: false);
             else
@@ -595,6 +590,16 @@ namespace wxd.files.winforms
             };
 
             SetPlaceholder();
+
+            // 创建过滤防抖定时器（300ms 延迟）
+            _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
+            _filterDebounceTimer.Tick += (s, e) =>
+            {
+                _filterDebounceTimer!.Stop();
+                ApplyFilter();
+                SavePanelState();
+            };
+
             _txtFilter.TextChanged += OnFilterTextChanged;
             _txtFilter.KeyDown += (s, e) =>
             {
@@ -705,7 +710,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"无法访问路径:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, $"无法访问路径:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -882,7 +887,7 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"无法打开资源管理器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this.FindForm(), $"无法打开资源管理器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
         }
@@ -897,7 +902,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"无法打开CSV阅读器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -914,8 +919,10 @@ namespace wxd.files.winforms
                 return;
             }
             _filterText = txt ?? "";
-            ApplyFilter();
-            SavePanelState();
+
+            // 防抖：重启定时器，300ms 内无新输入才真正过滤
+            _filterDebounceTimer?.Stop();
+            _filterDebounceTimer?.Start();
         }
 
         private void ApplyFilter()
@@ -1263,96 +1270,23 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"无法打开:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this.FindForm(), $"无法打开:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         // ==================== 公共接口 & 状态持久化 ====================
         public void RefreshCurrent() => RefreshUI();
 
-        private class PanelState
-        {
-            public string Directory { get; set; } = "";
-            public string Filter { get; set; } = "";
-            public int PanelCount { get; set; } = 4;
-            public int LayoutIndex { get; set; } = 2;
-            public int ThemeIndex { get; set; } = 0; // 0=深色, 1=浅色
-        }
-
-        private static void EnsureStateDir()
-        {
-            var dir = Path.GetDirectoryName(StateFilePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-        }
-
         private void SavePanelState()
         {
             try
             {
-                var allStates = LoadAllStates();
-                var key = $"panel_{PanelIndex}";
-                allStates[key] = new PanelState
-                {
-                    Directory = _currentDir,
-                    Filter = _filterText.StartsWith("输入关键词") ? "" : _filterText
-                };
-                EnsureStateDir();
-                File.WriteAllText(StateFilePath, JsonSerializer.Serialize(allStates, new JsonSerializerOptions { WriteIndented = true }));
+                // 使用ConfigurationManager保存各窗格的目录和过滤条件
+                var filter = _filterText.StartsWith("输入关键词") ? "" : _filterText;
+                CsvSettings.SetPaneDirectory(PanelIndex, _currentDir);
+                CsvSettings.SetPaneFilter(PanelIndex, filter);
             }
             catch { }
-        }
-
-        private static PanelState? LoadPanelState(int panelIndex)
-        {
-            try
-            {
-                var allStates = LoadAllStates();
-                var key = $"panel_{panelIndex}";
-                return allStates.ContainsKey(key) ? allStates[key] : null;
-            }
-            catch { return null; }
-        }
-
-        internal static void SaveGlobalState(int panelCount, int layoutIndex, int themeIndex = 0)
-        {
-            try
-            {
-                var allStates = LoadAllStates();
-                allStates["global"] = new PanelState
-                {
-                    PanelCount = panelCount,
-                    LayoutIndex = layoutIndex,
-                    ThemeIndex = themeIndex
-                };
-                EnsureStateDir();
-                File.WriteAllText(StateFilePath, JsonSerializer.Serialize(allStates, new JsonSerializerOptions { WriteIndented = true }));
-            }
-            catch { }
-        }
-
-        internal static (int PanelCount, int LayoutIndex, int ThemeIndex) LoadGlobalState()
-        {
-            try
-            {
-                var allStates = LoadAllStates();
-                if (allStates.TryGetValue("global", out var g))
-                    return (g.PanelCount, g.LayoutIndex, g.ThemeIndex);
-            }
-            catch { }
-            return (4, 2, 1); // 默认浅色模式
-        }
-
-        private static Dictionary<string, PanelState> LoadAllStates()
-        {
-            try
-            {
-                if (File.Exists(StateFilePath))
-                    return JsonSerializer.Deserialize<Dictionary<string, PanelState>>(File.ReadAllText(StateFilePath))
-                           ?? new Dictionary<string, PanelState>();
-            }
-            catch { }
-            return new Dictionary<string, PanelState>();
         }
 
         protected override void Dispose(bool disposing)
@@ -1360,6 +1294,7 @@ namespace wxd.files.winforms
             SavePanelState();
             if (disposing) 
             { 
+                _filterDebounceTimer?.Dispose();
                 _imgList?.Dispose(); 
                 _lstFiles?.Dispose(); 
             }

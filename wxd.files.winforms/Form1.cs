@@ -43,7 +43,9 @@ namespace wxd.files.winforms
             InitControlPanel();
 
             // 恢复全局状态（窗格数量、布局方式、主题）
-            var (panelCount, layoutIndex, themeIndex) = FileBrowserPanel.LoadGlobalState();
+            var panelCount = CsvSettings.PaneCount;
+            var layoutIndex = CsvSettings.LayoutIndex;
+            var themeIndex = CsvSettings.ThemeMode;
             _currentTheme = (ThemeMode)themeIndex;
             _cboCount!.SelectedIndex = Math.Min(panelCount - 1, _cboCount.Items.Count - 1);
             _cboLayout!.SelectedIndex = Math.Min(layoutIndex, _cboLayout.Items.Count - 1);
@@ -220,7 +222,11 @@ namespace wxd.files.winforms
         private void SaveGlobalState()
         {
             if (_cboCount != null && _cboLayout != null && _cboTheme != null)
-                FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout.SelectedIndex, _cboTheme.SelectedIndex);
+            {
+                CsvSettings.PaneCount = _panels.Length;
+                CsvSettings.LayoutIndex = _cboLayout.SelectedIndex;
+                CsvSettings.ThemeMode = _cboTheme.SelectedIndex;
+            }
         }
 
         // ==================== 主题切换 ====================
@@ -468,7 +474,9 @@ namespace wxd.files.winforms
         // ==================== 关闭时保存全局状态 ====================
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            FileBrowserPanel.SaveGlobalState(_panels.Length, _cboLayout?.SelectedIndex ?? 2, _cboTheme?.SelectedIndex ?? 1);
+            CsvSettings.PaneCount = _panels.Length;
+            CsvSettings.LayoutIndex = _cboLayout?.SelectedIndex ?? 2;
+            CsvSettings.ThemeMode = _cboTheme?.SelectedIndex ?? 1;
             base.OnFormClosing(e);
         }
     }

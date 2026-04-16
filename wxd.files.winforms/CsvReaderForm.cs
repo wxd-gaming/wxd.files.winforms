@@ -34,6 +34,7 @@ namespace wxd.files.winforms
         private List<FileInfo> _allFiles = new();
         private CancellationTokenSource? _loadingCts;
         private readonly object _lockObj = new();
+        private System.Windows.Forms.Timer? _filterDebounceTimer;
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -202,6 +203,14 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.FixedSingle,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
+            // 创建过滤防抖定时器（300ms 延迟）
+            _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
+            _filterDebounceTimer.Tick += (s, e) =>
+            {
+                _filterDebounceTimer!.Stop();
+                ApplyFileFilter();
+            };
+
             _txtFileFilter.TextChanged += OnFileFilterChanged;
             _txtFileFilter.KeyDown += (s, e) =>
             {
@@ -415,7 +424,7 @@ namespace wxd.files.winforms
             {
                 this.Invoke(() =>
                 {
-                    MessageBox.Show($"加载文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this, $"加载文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 });
             }
         }
@@ -540,7 +549,9 @@ namespace wxd.files.winforms
         // ==================== 文件过滤 ====================
         private void OnFileFilterChanged(object? sender, EventArgs e)
         {
-            ApplyFileFilter();
+            // 防抖：重启定时器，300ms 内无新输入才真正过滤
+            _filterDebounceTimer?.Stop();
+            _filterDebounceTimer?.Start();
         }
 
         private void ApplyFileFilter()
@@ -1178,7 +1189,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, $"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -1258,17 +1269,6 @@ namespace wxd.files.winforms
             }
         }
 
-        private void SyncColumnSettings()
-        {
-            // 同步两个表格的列宽和列标题
-            for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
-            {
-                _dataGridHeader.Columns[i].Width = _dataGrid.Columns[i].Width;
-                _dataGridHeader.Columns[i].HeaderText = _dataGrid.Columns[i].HeaderText;
-                _dataGridHeader.Columns[i].SortMode = DataGridViewColumnSortMode.NotSortable;
-            }
-        }
-
         private async void LoadCsvAsync()
         {
             try
@@ -1295,7 +1295,7 @@ namespace wxd.files.winforms
                 {
                     this.Invoke(() =>
                     {
-                        MessageBox.Show($"加载CSV文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(this, $"加载CSV文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     });
                 }
             }
@@ -1304,7 +1304,11 @@ namespace wxd.files.winforms
         private void LoadCsvFile()
         {
             if (!File.Exists(_filePath))
-                throw new FileNotFoundException("CSV文件不存在", _filePath);
+            {
+                if (this.IsHandleCreated)
+                    this.Invoke(() => MessageBox.Show(this, "CSV文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                return;
+            }
 
             // 读取文件内容以检测分隔符
             string content;
@@ -1319,7 +1323,11 @@ namespace wxd.files.winforms
             // 解析CSV
             var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length == 0)
-                throw new InvalidDataException("CSV文件为空");
+            {
+                if (this.IsHandleCreated)
+                    this.Invoke(() => MessageBox.Show(this, "CSV文件为空", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+                return;
+            }
 
             // 解析表头
             var headers = ParseCsvLine(lines[0]);
@@ -1820,7 +1828,7 @@ namespace wxd.files.winforms
     }
 
     /// <summary>自然字符串比较器，支持数字排序</summary>
-    public class NaturalStringComparer : IComparer<string>
+    public class NaturalStringComparer : IComparer<string?>
     {
         private readonly SortOrder _sortOrder;
 
@@ -2369,7 +2377,7 @@ namespace wxd.files.winforms
                 {
                     this.Invoke(() =>
                     {
-                        MessageBox.Show($"加载Excel文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(this, $"加载Excel文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     });
                 }
             }
@@ -2378,14 +2386,22 @@ namespace wxd.files.winforms
         private void LoadExcelFile()
         {
             if (!System.IO.File.Exists(_filePath))
-                throw new FileNotFoundException("Excel文件不存在", _filePath);
+            {
+                if (this.IsHandleCreated)
+                    this.Invoke(() => MessageBox.Show(this, "Excel文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                return;
+            }
 
             using var stream = System.IO.File.Open(_filePath, FileMode.Open, FileAccess.Read);
             using var reader = ExcelReaderFactory.CreateReader(stream);
             var result = reader.AsDataSet();
 
             if (result.Tables.Count == 0)
-                throw new InvalidDataException("Excel文件没有工作表");
+            {
+                if (this.IsHandleCreated)
+                    this.Invoke(() => MessageBox.Show(this, "Excel文件没有工作表", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+                return;
+            }
 
             // 使用第一个工作表
             var table = result.Tables[0];

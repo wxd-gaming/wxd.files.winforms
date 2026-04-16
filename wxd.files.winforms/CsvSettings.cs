@@ -4,114 +4,207 @@ using System.Configuration;
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// CSV/Excel查看器设置管理类
+    /// 全局设置管理类 - 使用ConfigurationManager统一存储
     /// </summary>
     public static class CsvSettings
     {
+        private const int DefaultValue = 2;
+
+        #region CSV查看器设置
+
         private const string DefaultFrozenRowsKey = "DefaultFrozenRows";
-        private const string ExcelDefaultFrozenRowsKey = "ExcelDefaultFrozenRows";
-        private const int DefaultFrozenRowsValue = 2; // 默认冻结2行
 
         /// <summary>
         /// CSV查看器的默认冻结行数
         /// </summary>
         public static int DefaultFrozenRows
         {
-            get
-            {
-                try
-                {
-                    var value = ConfigurationManager.AppSettings[DefaultFrozenRowsKey];
-                    if (int.TryParse(value, out int result))
-                    {
-                        return Math.Max(0, Math.Min(5, result)); // 限制在0-5之间
-                    }
-                }
-                catch
-                {
-                    // 读取失败时使用默认值
-                }
-                return DefaultFrozenRowsValue;
-            }
-            set
-            {
-                try
-                {
-                    var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                    var appSettings = config.AppSettings;
-                    
-                    if (appSettings.Settings[DefaultFrozenRowsKey] == null)
-                    {
-                        appSettings.Settings.Add(DefaultFrozenRowsKey, value.ToString());
-                    }
-                    else
-                    {
-                        appSettings.Settings[DefaultFrozenRowsKey].Value = value.ToString();
-                    }
-                    
-                    config.Save(ConfigurationSaveMode.Modified);
-                    ConfigurationManager.RefreshSection("appSettings");
-                }
-                catch
-                {
-                    // 保存失败时忽略
-                }
-            }
+            get => GetIntValue(DefaultFrozenRowsKey, DefaultValue, 0, 8);
+            set => SetIntValue(DefaultFrozenRowsKey, Math.Max(0, Math.Min(8, value)));
         }
+
+        #endregion
+
+        #region Excel查看器设置
+
+        private const string ExcelDefaultFrozenRowsKey = "ExcelDefaultFrozenRows";
 
         /// <summary>
         /// Excel查看器的默认冻结行数
         /// </summary>
         public static int ExcelDefaultFrozenRows
         {
-            get
-            {
-                try
-                {
-                    var value = ConfigurationManager.AppSettings[ExcelDefaultFrozenRowsKey];
-                    if (int.TryParse(value, out int result))
-                    {
-                        return Math.Max(0, Math.Min(8, result)); // 限制在0-8之间
-                    }
-                }
-                catch
-                {
-                    // 读取失败时使用默认值
-                }
-                return DefaultFrozenRowsValue;
-            }
-            set
-            {
-                try
-                {
-                    var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                    var appSettings = config.AppSettings;
+            get => GetIntValue(ExcelDefaultFrozenRowsKey, DefaultValue, 0, 8);
+            set => SetIntValue(ExcelDefaultFrozenRowsKey, Math.Max(0, Math.Min(8, value)));
+        }
 
-                    if (appSettings.Settings[ExcelDefaultFrozenRowsKey] == null)
-                    {
-                        appSettings.Settings.Add(ExcelDefaultFrozenRowsKey, value.ToString());
-                    }
-                    else
-                    {
-                        appSettings.Settings[ExcelDefaultFrozenRowsKey].Value = value.ToString();
-                    }
+        #endregion
 
-                    config.Save(ConfigurationSaveMode.Modified);
-                    ConfigurationManager.RefreshSection("appSettings");
-                }
-                catch
-                {
-                    // 保存失败时忽略
-                }
-            }
+        #region 主题设置
+
+        private const string ThemeModeKey = "ThemeMode";
+
+        /// <summary>
+        /// 主题模式: 0=深色, 1=浅色
+        /// </summary>
+        public static int ThemeMode
+        {
+            get => GetIntValue(ThemeModeKey, 1, 0, 1);
+            set => SetIntValue(ThemeModeKey, Math.Max(0, Math.Min(1, value)));
+        }
+
+        #endregion
+
+        #region 窗格设置
+
+        private const string PaneCountKey = "PaneCount";
+        private const string LayoutIndexKey = "LayoutIndex";
+
+        /// <summary>
+        /// 窗格数量
+        /// </summary>
+        public static int PaneCount
+        {
+            get => GetIntValue(PaneCountKey, 4, 1, 10);
+            set => SetIntValue(PaneCountKey, Math.Max(1, Math.Min(10, value)));
         }
 
         /// <summary>
-        /// 保存设置
+        /// 布局索引: 0=横向, 1=纵向, 2=流式
+        /// </summary>
+        public static int LayoutIndex
+        {
+            get => GetIntValue(LayoutIndexKey, 2, 0, 2);
+            set => SetIntValue(LayoutIndexKey, Math.Max(0, Math.Min(2, value)));
+        }
+
+        #endregion
+
+        #region 各窗格目录和过滤条件
+
+        private const string Pane1DirectoryKey = "Pane1Directory";
+        private const string Pane2DirectoryKey = "Pane2Directory";
+        private const string Pane3DirectoryKey = "Pane3Directory";
+        private const string Pane4DirectoryKey = "Pane4Directory";
+        private const string Pane5DirectoryKey = "Pane5Directory";
+        private const string Pane6DirectoryKey = "Pane6Directory";
+        private const string Pane7DirectoryKey = "Pane7Directory";
+        private const string Pane8DirectoryKey = "Pane8Directory";
+        private const string Pane9DirectoryKey = "Pane9Directory";
+        private const string Pane10DirectoryKey = "Pane10Directory";
+
+        private const string Pane1FilterKey = "Pane1Filter";
+        private const string Pane2FilterKey = "Pane2Filter";
+        private const string Pane3FilterKey = "Pane3Filter";
+        private const string Pane4FilterKey = "Pane4Filter";
+        private const string Pane5FilterKey = "Pane5Filter";
+        private const string Pane6FilterKey = "Pane6Filter";
+        private const string Pane7FilterKey = "Pane7Filter";
+        private const string Pane8FilterKey = "Pane8Filter";
+        private const string Pane9FilterKey = "Pane9Filter";
+        private const string Pane10FilterKey = "Pane10Filter";
+
+        /// <summary>获取窗格目录</summary>
+        public static string GetPaneDirectory(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}Directory";
+            return GetStringValue(key, "");
+        }
+
+        /// <summary>设置窗格目录</summary>
+        public static void SetPaneDirectory(int paneIndex, string directory)
+        {
+            var key = $"Pane{paneIndex}Directory";
+            SetStringValue(key, directory);
+        }
+
+        /// <summary>获取窗格过滤条件</summary>
+        public static string GetPaneFilter(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}Filter";
+            return GetStringValue(key, "");
+        }
+
+        /// <summary>设置窗格过滤条件</summary>
+        public static void SetPaneFilter(int paneIndex, string filter)
+        {
+            var key = $"Pane{paneIndex}Filter";
+            SetStringValue(key, filter);
+        }
+
+        #endregion
+
+        #region 基础配置方法
+
+        private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
+        {
+            try
+            {
+                var value = ConfigurationManager.AppSettings[key];
+                if (int.TryParse(value, out int result))
+                {
+                    return Math.Max(minValue, Math.Min(maxValue, result));
+                }
+            }
+            catch { }
+            return defaultValue;
+        }
+
+        private static void SetIntValue(string key, int value)
+        {
+            try
+            {
+                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+                var appSettings = config.AppSettings;
+
+                if (appSettings.Settings[key] == null)
+                    appSettings.Settings.Add(key, value.ToString());
+                else
+                    appSettings.Settings[key].Value = value.ToString();
+
+                config.Save(ConfigurationSaveMode.Modified);
+                ConfigurationManager.RefreshSection("appSettings");
+            }
+            catch { }
+        }
+
+        private static string GetStringValue(string key, string defaultValue)
+        {
+            try
+            {
+                var value = ConfigurationManager.AppSettings[key];
+                return value ?? defaultValue;
+            }
+            catch { }
+            return defaultValue;
+        }
+
+        private static void SetStringValue(string key, string value)
+        {
+            try
+            {
+                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+                var appSettings = config.AppSettings;
+
+                if (appSettings.Settings[key] == null)
+                    appSettings.Settings.Add(key, value);
+                else
+                    appSettings.Settings[key].Value = value;
+
+                config.Save(ConfigurationSaveMode.Modified);
+                ConfigurationManager.RefreshSection("appSettings");
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 保存设置（兼容性方法）
         /// </summary>
         public static void Save()
         {
             // 设置已经在属性setter中保存，这里是为了兼容之前的调用
         }
+
+        #endregion
     }
 }
