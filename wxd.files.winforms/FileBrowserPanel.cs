@@ -38,6 +38,7 @@ namespace wxd.files.winforms
         private List<DirInfo>   _allDirs        = new();
         private bool            _suppressEvents = false;
         private bool            _isLoading      = false;
+        private bool            _isDark         = false;
         private Label?          _lblLoading;
         private System.Windows.Forms.Timer? _filterDebounceTimer;
 
@@ -317,6 +318,7 @@ namespace wxd.files.winforms
         /// <summary>应用主题（公共方法，由主窗体调用）</summary>
         public void ApplyTheme(bool isDark)
         {
+            _isDark = isDark;
             SetThemeColors(isDark);
 
             // 更新背景色
@@ -1274,8 +1276,137 @@ namespace wxd.files.winforms
             }
         }
 
+        // ==================== 焦点高亮 ====================
+        private static FileBrowserPanel? _focusedPanel = null;
+
+        private bool HasFocus => _focusedPanel == this;
+
+        protected override void OnEnter(EventArgs e)
+        {
+            base.OnEnter(e);
+            var prev = _focusedPanel;
+            _focusedPanel = this;
+            if (prev != null && prev != this) prev.Invalidate();
+            Invalidate();
+        }
+
+        protected override void OnLeave(EventArgs e)
+        {
+            base.OnLeave(e);
+            if (_focusedPanel == this) _focusedPanel = null;
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            // 在内置边框内侧绘制焦点高亮
+            if (HasFocus)
+            {
+                ControlPaint.DrawBorder(e.Graphics, ClientRectangle,
+                    SystemColors.Highlight, 2, ButtonBorderStyle.Inset,
+                    SystemColors.Highlight, 2, ButtonBorderStyle.Inset,
+                    SystemColors.Highlight, 2, ButtonBorderStyle.Inset,
+                    SystemColors.Highlight, 2, ButtonBorderStyle.Inset);
+            }
+        }
+
+        // ==================== 键盘快捷键 ====================
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.F5)
+            {
+                RefreshCurrent();
+                return true;
+            }
+            if (keyData == Keys.F2)
+            {
+                StartRename();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        // ==================== F2 重命名 ====================
+        private void StartRename()
+        {
+            if (_lstFiles.SelectedItems.Count == 0) return;
+            var item = _lstFiles.SelectedItems[0];
+            var tag = item.Tag as FileItemTag;
+            if (tag == null) return;
+
+            var tb = new TextBox
+            {
+                Text = item.Text,
+                Bounds = item.Bounds,
+                Left = item.Bounds.Left + 18,
+                Width = item.Bounds.Width - 20,
+                Font = _lstFiles.Font,
+                BackColor = _isDark ? _colorDarkBackColor : Color.White,
+                ForeColor = _isDark ? _colorDarkTextPrimary : _colorTextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            void CommitRename(object? s, EventArgs e)
+            {
+                var newName = tb.Text.Trim();
+                if (!string.IsNullOrEmpty(newName) && newName != item.Text)
+                {
+                    var dir = Path.GetDirectoryName(tag.FullName)!;
+                    var newPath = Path.Combine(dir, newName);
+                    if (!File.Exists(newPath) && !Directory.Exists(newPath))
+                    {
+                        try
+                        {
+                            if (tag.IsDir)
+                                Directory.Move(tag.FullName, newPath);
+                            else
+                                File.Move(tag.FullName, newPath);
+                            _ = LoadFileListAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show(this.FindForm(), $"重命名失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        }
+                    }
+                    else
+                    {
+                        MessageBox.Show(this.FindForm(), "该名称已存在。", "重命名", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+                tb.LostFocus -= CommitRename;
+                tb.KeyDown -= OnRenameKeyDown;
+                tb.Dispose();
+            }
+
+            void OnRenameKeyDown(object? s, KeyEventArgs e)
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    CommitRename(tb, EventArgs.Empty);
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.KeyCode == Keys.Escape)
+                {
+                    tb.LostFocus -= CommitRename;
+                    tb.KeyDown -= OnRenameKeyDown;
+                    tb.Dispose();
+                }
+            }
+
+            tb.LostFocus += CommitRename;
+            tb.KeyDown += OnRenameKeyDown;
+            _lstFiles.Controls.Add(tb);
+            tb.Focus();
+            tb.SelectAll();
+        }
+
         // ==================== 公共接口 & 状态持久化 ====================
-        public void RefreshCurrent() => RefreshUI();
+        public void RefreshCurrent()
+        {
+            if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
+                NavigateTo(_currentDir, restoreFilter: false);
+        }
 
         private void SavePanelState()
         {
