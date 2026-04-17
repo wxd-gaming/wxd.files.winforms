@@ -12,6 +12,7 @@ namespace wxd.files.winforms
         private Label?    _lblLayout;
         private ComboBox? _cboTheme;
         private Label?    _lblTheme;
+        private Button?   _btnOpenCsvReader;
         private Panel     _pnlContainer = new();
         private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
         private Panel?    _pnlTopBar;
@@ -198,7 +199,29 @@ namespace wxd.files.winforms
             _cboTheme.SelectedIndex = 1; // 默认浅色
             _cboTheme.SelectedIndexChanged += OnThemeChanged;
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme });
+            // 打开CSV阅读器按钮
+            _btnOpenCsvReader = new Button
+            {
+                Text       = "CSV阅读器",
+                Location   = new Point(635, y - 1),
+                Size       = new Size(80, 26),
+                Font       = new Font("Microsoft YaHei UI", 9f),
+                Cursor     = Cursors.Hand,
+                BackColor  = Color.FromArgb(0, 122, 204),
+                ForeColor  = Color.White,
+                FlatStyle  = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
+
+            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader });
+        }
+
+        // ==================== 打开CSV阅读器 ====================
+        private void OnOpenCsvReaderClick(object? sender, EventArgs e)
+        {
+            var csvForm = new CsvReaderForm("");  // 传入空文件夹
+            csvForm.Show();
         }
 
         // ==================== 窗格数量变更 ====================

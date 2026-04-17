@@ -27,6 +27,7 @@ namespace wxd.files.winforms
         private Button _btnSelectFolder = new();
         private Button _btnOpenExcel = new();
         private Button _btnOpenCsv = new();
+        private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
         // ==================== 状态字段 ====================
@@ -184,24 +185,25 @@ namespace wxd.files.winforms
             _btnRefresh.FlatAppearance.BorderSize = 0;
             _btnRefresh.Click += OnRefreshClick;
 
-            // 过滤标签
-            _lblFilter = new Label
-            {
-                Text = "过滤:",
-                Location = new Point(6, 42),
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary
-            };
-
             // 过滤文本框
             _txtFileFilter = new TextBox
             {
-                Location = new Point(45, 40),
-                Size = new Size(238, 23),
+                Location = new Point(6, 40),
+                Size = new Size(250, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                PlaceholderText = "支持 || 或 && 运算符"
+            };
+
+            // 文件数量标签
+            _lblFileCount = new Label
+            {
+                Text = "共 0 个文件",
+                Location = new Point(6, 66),
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary
             };
             // 创建过滤防抖定时器（300ms 延迟）
             _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
@@ -221,17 +223,7 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 提示标签
-            var lblHint = new Label
-            {
-                Text = "支持 || 或 && 运算符",
-                Location = new Point(6, 64),
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = _colorLightTextSecondary
-            };
-
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnOpenCsv, _btnOpenExcel, _btnSelectFolder, _btnRefresh, _lblFilter, _txtFileFilter, lblHint });
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnOpenCsv, _btnOpenExcel, _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount });
 
             // 文件树
             // 初始化图标列表
@@ -306,7 +298,7 @@ namespace wxd.files.winforms
             // 调整大小处理
             _pnlLeftTop.Resize += (s, e) =>
             {
-                _txtFileFilter.Width = _pnlLeftTop.Width - _txtFileFilter.Left - 8;
+                _txtFileFilter.Width = Math.Max(100, _pnlLeftTop.Width - 16);
             };
 
             // ListView大小改变时保持列宽
@@ -515,6 +507,7 @@ namespace wxd.files.winforms
         // ==================== 刷新文件列表 ====================
         private void RefreshFileList()
         {
+            _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
             // 确保列宽设置正确
@@ -530,6 +523,8 @@ namespace wxd.files.winforms
                     ForeColor = _colorLightTextSecondary
                 };
                 _lstFiles.Items.Add(emptyItem);
+                _lstFiles.EndUpdate();
+                _lblFileCount.Text = "共 0 个文件";
                 return;
             }
 
@@ -544,6 +539,11 @@ namespace wxd.files.winforms
                 };
                 _lstFiles.Items.Add(item);
             }
+
+            _lstFiles.EndUpdate();
+
+            // 更新文件数量标签
+            _lblFileCount.Text = $"共 {_lstFiles.Items.Count} 个文件";
         }
 
         // ==================== 文件过滤 ====================
@@ -558,7 +558,7 @@ namespace wxd.files.winforms
         {
             var filter = _txtFileFilter.Text.Trim();
 
-            // 重新加载列表
+            _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
             // 确保列宽设置正确
@@ -574,6 +574,8 @@ namespace wxd.files.winforms
                     ForeColor = _colorLightTextSecondary
                 };
                 _lstFiles.Items.Add(emptyItem);
+                _lstFiles.EndUpdate();
+                _lblFileCount.Text = "共 0 个文件";
                 return;
             }
 
@@ -597,6 +599,11 @@ namespace wxd.files.winforms
                 };
                 _lstFiles.Items.Add(item);
             }
+
+            _lstFiles.EndUpdate();
+
+            // 更新文件数量标签
+            _lblFileCount.Text = $"共 {_lstFiles.Items.Count} 个文件";
         }
 
         private bool MatchesFilter(string text, string filter)

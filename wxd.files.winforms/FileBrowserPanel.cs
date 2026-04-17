@@ -40,6 +40,7 @@ namespace wxd.files.winforms
         private bool            _isLoading      = false;
         private bool            _isDark         = false;
         private Label?          _lblLoading;
+        private Label?          _lblFileCount;
         private System.Windows.Forms.Timer? _filterDebounceTimer;
 
         // ==================== Win32 API ====================
@@ -359,6 +360,13 @@ namespace wxd.files.winforms
                 _cboDrives.ForeColor = _colorTextPrimary;
             }
 
+            // 更新数量标签
+            if (_lblFileCount != null)
+            {
+                _lblFileCount.ForeColor = _colorTextSecondary;
+                _lblFileCount.BackColor = _colorToolbarBg;
+            }
+
             // 更新列表视图
             _lstFiles.BackColor = isDark ? _colorDarkBackColor : Color.White;
             _lstFiles.ForeColor = _colorTextPrimary;
@@ -580,12 +588,26 @@ namespace wxd.files.winforms
             };
             _btnOpenExplorer.Click += OnOpenExplorerClick;
 
+            // 文件/文件夹数量标签
+            _lblFileCount = new Label
+            {
+                Width       = 130,
+                Height      = 26,
+                Location    = new Point(4, 5),
+                Anchor      = AnchorStyles.Top | AnchorStyles.Left,
+                Text        = "文件夹: 0  文件: 0",
+                TextAlign   = ContentAlignment.MiddleLeft,
+                Font        = new Font("Microsoft YaHei UI", 9f),
+                ForeColor   = _colorTextSecondary,
+                BackColor   = _colorToolbarBg
+            };
+
             // 过滤框 - 使用 Anchor 填充剩余空间
             _txtFilter = new TextBox
             {
-                Height      = 26,
-                Location    = new Point(4, 5),
-                Size        = new Size(_pnlBottom.Width - 188, 26),
+                Height      = 29,
+                Location    = new Point(136, 4),
+                Size        = new Size(_pnlBottom.Width - 328, 29),
                 Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle
@@ -615,9 +637,22 @@ namespace wxd.files.winforms
                 }
             };
 
+            _pnlBottom.Controls.Add(_lblFileCount);
             _pnlBottom.Controls.Add(_txtFilter);
             _pnlBottom.Controls.Add(_btnOpenCsvReader);
             _pnlBottom.Controls.Add(_btnOpenExplorer);
+
+            // 底部面板大小改变时调整过滤框宽度
+            _pnlBottom.Resize += (s, e) =>
+            {
+                if (_txtFilter != null && _btnOpenCsvReader != null)
+                {
+                    int newWidth = _pnlBottom.Width - _lblFileCount!.Width - _btnOpenCsvReader.Width - _btnOpenExplorer!.Width - 21;
+                    if (newWidth > 50)
+                        _txtFilter.Width = newWidth;
+                    _txtFilter.Top = (_pnlBottom.Height - _txtFilter.Height) / 2;
+                }
+            };
 
             Controls.Add(_lstFiles);
             Controls.Add(_pnlBottom);
@@ -934,17 +969,26 @@ namespace wxd.files.winforms
             _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
+            int dirCount = 0;
+            int fileCount = 0;
+
             foreach (var dir in FilterItems(_allDirs.Select(d => d.Name)))
             {
                 var info = _allDirs.First(d => d.Name.Equals(dir, StringComparison.OrdinalIgnoreCase));
                 AddListItem(info.Name, info.FullName, isDir: true);
+                dirCount++;
             }
 
             foreach (var fn in FilterItems(_allFiles.Select(f => f.Name)))
             {
                 var fi = _allFiles.First(f => f.Name.Equals(fn, StringComparison.OrdinalIgnoreCase));
                 AddListItem(fi.Name, fi.FullName, isDir: false, fi.LastWriteTime, fi.Length);
+                fileCount++;
             }
+
+            // 更新文件/文件夹数量标签
+            if (_lblFileCount != null)
+                _lblFileCount.Text = $"文件夹: {dirCount}  文件: {fileCount}";
 
             AutoResizeColumns();
             _lstFiles.EndUpdate();
