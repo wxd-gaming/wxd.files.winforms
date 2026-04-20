@@ -698,57 +698,82 @@ namespace wxd.files.winforms
 
         private void AddCloseButtonToTab(TabPage tabPage)
         {
-            // 使用TabControl的MouseDown事件处理关闭
-            _tabContent.MouseDown += (s, e) =>
+            // 事件处理程序只在第一次添加标签页时注册一次
+            if (!_tabCloseHandlerAdded)
             {
-                for (int i = 0; i < _tabContent.TabPages.Count; i++)
-                {
-                    var tabRect = _tabContent.GetTabRect(i);
-                    var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 4, 12, 12);
+                _tabCloseHandlerAdded = true;
 
-                    if (closeRect.Contains(e.Location))
+                // 使用TabControl的MouseDown事件处理关闭
+                _tabContent.MouseDown += (s, e) =>
+                {
+                    for (int i = 0; i < _tabContent.TabPages.Count; i++)
                     {
-                        _tabContent.TabPages.RemoveAt(i);
-                        // 清除ListView选中状态，允许重新打开同一文件
-                        _lstFiles.SelectedItems.Clear();
-                        return;
+                        var tabRect = _tabContent.GetTabRect(i);
+                        var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 4, 12, 12);
+
+                        if (closeRect.Contains(e.Location))
+                        {
+                            CloseTab(i);
+                            return;
+                        }
                     }
-                }
-            };
+                };
 
-            // 重绘标签页以显示关闭按钮
-            _tabContent.DrawMode = TabDrawMode.OwnerDrawFixed;
-            _tabContent.DrawItem += (s, e) =>
+                // 重绘标签页以显示关闭按钮
+                _tabContent.DrawMode = TabDrawMode.OwnerDrawFixed;
+                _tabContent.DrawItem += (s, e) =>
+                {
+                    var tabPage = _tabContent.TabPages[e.Index];
+                    var tabRect = _tabContent.GetTabRect(e.Index);
+
+                    // 绘制背景
+                    bool isSelected = _tabContent.SelectedIndex == e.Index;
+                    using (var brush = new SolidBrush(isSelected ? Color.White : Color.FromArgb(240, 240, 240)))
+                    {
+                        e.Graphics.FillRectangle(brush, tabRect);
+                    }
+
+                    // 绘制文本（增加文本区域宽度）
+                    var textRect = new Rectangle(tabRect.X + 4, tabRect.Y + 4, tabRect.Width - 24, tabRect.Height - 8);
+                    TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, _colorLightText,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+                    // 绘制关闭按钮
+                    var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 6, 10, 10);
+                    using (var pen = new Pen(_colorLightTextSecondary, 1.5f))
+                    {
+                        e.Graphics.DrawLine(pen, closeRect.Left, closeRect.Top, closeRect.Right, closeRect.Bottom);
+                        e.Graphics.DrawLine(pen, closeRect.Right, closeRect.Top, closeRect.Left, closeRect.Bottom);
+                    }
+
+                    // 绘制边框
+                    using (var pen = new Pen(_colorLightBorder))
+                    {
+                        e.Graphics.DrawLine(pen, tabRect.Left, tabRect.Bottom - 1, tabRect.Right, tabRect.Bottom - 1);
+                    }
+                };
+            }
+        }
+
+        private bool _tabCloseHandlerAdded = false;
+
+        private void CloseTab(int tabIndex)
+        {
+            if (tabIndex < 0 || tabIndex >= _tabContent.TabPages.Count)
+                return;
+
+            var tabPage = _tabContent.TabPages[tabIndex];
+
+            // 释放标签页中的控件资源
+            foreach (Control ctrl in tabPage.Controls)
             {
-                var tabPage = _tabContent.TabPages[e.Index];
-                var tabRect = _tabContent.GetTabRect(e.Index);
+                ctrl.Dispose();
+            }
 
-                // 绘制背景
-                bool isSelected = _tabContent.SelectedIndex == e.Index;
-                using (var brush = new SolidBrush(isSelected ? Color.White : Color.FromArgb(240, 240, 240)))
-                {
-                    e.Graphics.FillRectangle(brush, tabRect);
-                }
+            _tabContent.TabPages.RemoveAt(tabIndex);
 
-                // 绘制文本（增加文本区域宽度）
-                var textRect = new Rectangle(tabRect.X + 4, tabRect.Y + 4, tabRect.Width - 24, tabRect.Height - 8);
-                TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, _colorLightText,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-
-                // 绘制关闭按钮
-                var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 6, 10, 10);
-                using (var pen = new Pen(_colorLightTextSecondary, 1.5f))
-                {
-                    e.Graphics.DrawLine(pen, closeRect.Left, closeRect.Top, closeRect.Right, closeRect.Bottom);
-                    e.Graphics.DrawLine(pen, closeRect.Right, closeRect.Top, closeRect.Left, closeRect.Bottom);
-                }
-
-                // 绘制边框
-                using (var pen = new Pen(_colorLightBorder))
-                {
-                    e.Graphics.DrawLine(pen, tabRect.Left, tabRect.Bottom - 1, tabRect.Right, tabRect.Bottom - 1);
-                }
-            };
+            // 清除ListView选中状态，允许重新打开同一文件
+            _lstFiles.SelectedItems.Clear();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
