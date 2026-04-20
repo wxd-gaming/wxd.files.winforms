@@ -214,7 +214,22 @@ namespace wxd.files.winforms
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader });
+            // 保存状态按钮
+            var btnSaveState = new Button
+            {
+                Text       = "保存状态",
+                Location   = new Point(720, y - 1),
+                Size       = new Size(70, 26),
+                Font       = new Font("Microsoft YaHei UI", 9f),
+                Cursor     = Cursors.Hand,
+                BackColor  = Color.FromArgb(0, 150, 80),
+                ForeColor  = Color.White,
+                FlatStyle  = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            btnSaveState.Click += (s, e) => SaveAllState();
+
+            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnSaveState });
         }
 
         // ==================== 打开CSV阅读器 ====================
@@ -250,6 +265,19 @@ namespace wxd.files.winforms
                 CsvSettings.LayoutIndex = _cboLayout.SelectedIndex;
                 CsvSettings.ThemeMode = _cboTheme.SelectedIndex;
             }
+        }
+
+        /// <summary>保存所有状态（包含每个面板的过滤文本）</summary>
+        private void SaveAllState()
+        {
+            // 强制保存每个面板的过滤文本和目录
+            for (int i = 0; i < _panels.Length; i++)
+            {
+                _panels[i].ForceSaveState();
+            }
+
+            // 保存全局状态
+            SaveGlobalState();
         }
 
         // ==================== 主题切换 ====================
@@ -497,6 +525,15 @@ namespace wxd.files.winforms
         // ==================== 关闭时保存全局状态 ====================
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            System.Diagnostics.Debug.WriteLine("OnFormClosing called");
+            // 保存每个面板的过滤文本
+            for (int i = 0; i < _panels.Length; i++)
+            {
+                var filter = _panels[i].FilterText;
+                System.Diagnostics.Debug.WriteLine($"OnFormClosing: Panel {i} Filter={filter}");
+                CsvSettings.SetPaneFilter(i, filter);
+            }
+
             CsvSettings.PaneCount = _panels.Length;
             CsvSettings.LayoutIndex = _cboLayout?.SelectedIndex ?? 2;
             CsvSettings.ThemeMode = _cboTheme?.SelectedIndex ?? 1;

@@ -42,6 +42,9 @@ namespace wxd.files.winforms
         private Label?          _lblLoading;
         private Label?          _lblFileCount;
         private System.Windows.Forms.Timer? _filterDebounceTimer;
+        private System.Windows.Forms.Timer? _saveDebounceTimer;
+        private bool            _hasUnsavedChanges = false;
+        private string          _savedFilterForCompare = "";
 
         // ==================== Win32 API ====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -281,18 +284,22 @@ namespace wxd.files.winforms
             var startPath = CsvSettings.GetPaneDirectory(panelIndex);
             var savedFilter = CsvSettings.GetPaneFilter(panelIndex);
             if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
-                NavigateTo(startPath, restoreFilter: false);
+                NavigateTo(startPath, restoreFilter: false, saveState: false);
             else
-                NavigateTo(GetFirstDrive(), restoreFilter: false);
-            // 恢复过滤条件
+                NavigateTo(GetFirstDrive(), restoreFilter: false, saveState: false);
+            // 恢复过滤条件（使用 _suppressEvents 阻止防抖定时器干扰）
             if (!string.IsNullOrEmpty(savedFilter))
             {
+                _suppressEvents = true;
                 _filterText = savedFilter;
                 if (_txtFilter != null)
                 {
                     _txtFilter.Text = savedFilter;
                     _txtFilter.ForeColor = _colorTextPrimary;
                 }
+                _suppressEvents = false;
+                // 停止可能正在运行的防抖定时器，直接应用过滤
+                _filterDebounceTimer?.Stop();
                 ApplyFilter();
             }
         }
@@ -349,7 +356,7 @@ namespace wxd.files.winforms
             if (_txtFilter != null)
             {
                 _txtFilter.BackColor = isDark ? _colorDarkBackColor : Color.White;
-                _txtFilter.ForeColor = _filterText.StartsWith("输入关键词") ? _colorTextSecondary : _colorTextPrimary;
+                _txtFilter.ForeColor = _filterText == FilterPlaceholder ? _colorTextSecondary : _colorTextPrimary;
                 _txtFilter.BorderStyle = BorderStyle.FixedSingle;
             }
 
@@ -621,7 +628,18 @@ namespace wxd.files.winforms
             {
                 _filterDebounceTimer!.Stop();
                 ApplyFilter();
-                SavePanelState();
+            };
+
+            // 创建保存防抖定时器（3秒延迟）
+            _saveDebounceTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _saveDebounceTimer.Tick += (s, e) =>
+            {
+                _saveDebounceTimer!.Stop();
+                if (_hasUnsavedChanges)
+                {
+                    SavePanelState();
+                    _hasUnsavedChanges = false;
+                }
             };
 
             _txtFilter.TextChanged += OnFilterTextChanged;
@@ -662,10 +680,12 @@ namespace wxd.files.winforms
             ResumeLayout(false);
         }
 
+        private const string FilterPlaceholder = "输入关键词过滤 (支持 || 或 / && 与)";
+
         private void SetPlaceholder()
         {
             if (_txtFilter == null) return;
-            _txtFilter.Text = "输入关键词过滤 (支持 || 或 / && 与)";
+            _txtFilter.Text = FilterPlaceholder;
             _txtFilter.ForeColor = _colorTextSecondary;
 
             _txtFilter.GotFocus -= Filter_GotFocus;
@@ -676,7 +696,7 @@ namespace wxd.files.winforms
 
         private void Filter_GotFocus(object? sender, EventArgs e)
         {
-            if (_txtFilter != null && _txtFilter.Text.StartsWith("输入关键词"))
+            if (_txtFilter != null && _txtFilter.Text == FilterPlaceholder)
             {
                 _txtFilter.Text = "";
                 _txtFilter.ForeColor = _colorTextPrimary;
@@ -727,7 +747,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 导航操作 ====================
-        public void NavigateTo(string path, bool restoreFilter = true)
+        public void NavigateTo(string path, bool restoreFilter = true, bool saveState = true)
         {
             try
             {
@@ -741,7 +761,13 @@ namespace wxd.files.winforms
                 else
                     _currentDir = trimmed;
                 RefreshUI();
-                SavePanelState();
+                if (saveState)
+                {
+                    // 标记需要保存，重启保存定时器
+                    _hasUnsavedChanges = true;
+                    _saveDebounceTimer?.Stop();
+                    _saveDebounceTimer?.Start();
+                }
                 // 异步加载文件列表
                 _ = LoadFileListAsync();
             }
@@ -948,14 +974,19 @@ namespace wxd.files.winforms
         {
             if (_suppressEvents || _txtFilter == null) return;
             var txt = _txtFilter.Text;
-            if (txt.StartsWith("输入关键词"))
+            if (txt == FilterPlaceholder)
             {
                 _filterText = "";
-                ApplyFilter();
-                SavePanelState();
-                return;
             }
-            _filterText = txt ?? "";
+            else
+            {
+                _filterText = txt ?? "";
+            }
+
+            // 标记需要保存，重启保存定时器
+            _hasUnsavedChanges = true;
+            _saveDebounceTimer?.Stop();
+            _saveDebounceTimer?.Start();
 
             // 防抖：重启定时器，300ms 内无新输入才真正过滤
             _filterDebounceTimer?.Stop();
@@ -1457,19 +1488,41 @@ namespace wxd.files.winforms
             try
             {
                 // 使用ConfigurationManager保存各窗格的目录和过滤条件
-                var filter = _filterText.StartsWith("输入关键词") ? "" : _filterText;
+                var filter = _filterText == FilterPlaceholder ? "" : _filterText;
+                System.Diagnostics.Debug.WriteLine($"SavePanelState: PanelIndex={PanelIndex}, Filter={filter}, _filterText={_filterText}");
                 CsvSettings.SetPaneDirectory(PanelIndex, _currentDir);
                 CsvSettings.SetPaneFilter(PanelIndex, filter);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SavePanelState Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>强制立即保存当前面板状态（用于手动保存按钮）</summary>
+        public void ForceSaveState()
+        {
+            // 停止定时器
+            _saveDebounceTimer?.Stop();
+            _hasUnsavedChanges = false;
+            // 立即保存
+            SavePanelState();
         }
 
         protected override void Dispose(bool disposing)
         {
-            SavePanelState();
+            // 停止定时器并立即保存
+            _saveDebounceTimer?.Stop();
+            _filterDebounceTimer?.Stop();
+            if (_hasUnsavedChanges)
+            {
+                SavePanelState();
+                _hasUnsavedChanges = false;
+            }
             if (disposing) 
             { 
                 _filterDebounceTimer?.Dispose();
+                _saveDebounceTimer?.Dispose();
                 _imgList?.Dispose(); 
                 _lstFiles?.Dispose(); 
             }

@@ -194,7 +194,10 @@ namespace wxd.files.winforms
                 config.Save(ConfigurationSaveMode.Modified);
                 ConfigurationManager.RefreshSection("appSettings");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
+            }
         }
 
         /// <summary>
