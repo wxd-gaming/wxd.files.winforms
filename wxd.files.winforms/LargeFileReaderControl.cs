@@ -1,12 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -326,7 +328,7 @@ namespace wxd.files.winforms
         private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
         static string FormatSize(long b) { string[] u = ["B", "KB", "MB", "GB", "TB"]; double v = b; int o = 0; while (v >= 1024 && o < 4) { o++; v /= 1024; } return $"{v:0.##}{u[o]}"; }
 
-        private void OnDoubleClick(object? s, MouseEventArgs e)
+        private async void OnDoubleClick(object? s, MouseEventArgs e)
         {
             int idx = _lstContent.SelectedIndices.Count > 0
                 ? _lstContent.SelectedIndices[0]
@@ -338,12 +340,10 @@ namespace wxd.files.winforms
             string originalText = _cache.TryGetValue(idx, out var v) ? v : "";
             if (string.IsNullOrEmpty(originalText)) return;
 
-            string formattedText = BuildFormattedText(originalText);
-
             var f = new Form
             {
                 Text = $"行 {idx + 1}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
-                MinimizeBox = false, MaximizeBox = false, ShowIcon = false, ShowInTaskbar = false
+                MinimizeBox = true, MaximizeBox = true, ShowIcon = false, ShowInTaskbar = false
             };
 
             // 顶部工具栏
@@ -364,176 +364,476 @@ namespace wxd.files.winforms
             {
                 Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 Font = new Font("Consolas", 10F), ScrollBars = RichTextBoxScrollBars.Both,
-                WordWrap = false, BackColor = Color.White
+                WordWrap = false, BackColor = Color.White,
+                Text = "正在格式化..."
             };
 
-            // 默认显示格式化
-            ShowFormattedRtf(rtb, formattedText);
-
-            btnFormat.Click += (_, _) => { SetActive(btnFormat, btnRaw); ShowFormattedRtf(rtb, formattedText); };
-            btnRaw.Click += (_, _) => { SetActive(btnRaw, btnFormat); rtb.Text = originalText; };
+            string formattedText = "";
+            btnFormat.Click += async (_, _) =>
+            {
+                SetActive(btnFormat, btnRaw);
+                rtb.Text = "正在构建 RTF...";
+                rtb.WordWrap = false;
+                rtb.ScrollBars = RichTextBoxScrollBars.Both;
+                var clickDeadline = Deadline.FromSeconds(5.0);
+                string? rtf = null;
+                try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, clickDeadline)).ConfigureAwait(true); }
+                catch { /* 解析失败，显示原始文本 */ }
+                if (f.IsDisposed) return;
+                try { rtb.Rtf = rtf ?? originalText; }
+                catch { try { rtb.Text = originalText; } catch { } }
+            };
+            btnRaw.Click += (_, _) => {
+                SetActive(btnRaw, btnFormat);
+                rtb.WordWrap = true;
+                rtb.ScrollBars = RichTextBoxScrollBars.Vertical;
+                rtb.Text = originalText;
+            };
 
             topPanel.Controls.Add(btnFormat);
             topPanel.Controls.Add(btnRaw);
             f.Controls.Add(rtb);
             f.Controls.Add(topPanel);
-            f.ShowDialog(ParentForm);
+
+            f.Show();
+
+            // 格式化在后台线程完成，完成后自动显示 RTF
+            try { formattedText = await Task.Run(() => BuildFormattedText(originalText)).ConfigureAwait(true); }
+            catch { formattedText = originalText; }
+            if (f.IsDisposed) return;
+
+            var autoDeadline = Deadline.FromSeconds(5.0);
+            string? rtf = null;
+            try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, autoDeadline)).ConfigureAwait(true); }
+            catch { /* 解析失败，显示原始文本 */ }
+            if (f.IsDisposed) return;
+            try { rtb.Rtf = rtf ?? originalText; }
+            catch { try { rtb.Text = originalText; } catch { } }
         }
 
-        private static void ShowFormattedRtf(RichTextBox rtb, string formattedText)
+        private static void ShowFormattedRtf(RichTextBox rtb, string formattedText) => ShowFormattedRtf(rtb, formattedText, Deadline.Default);
+
+        private static void ShowFormattedRtf(RichTextBox rtb, string formattedText, Deadline deadline)
         {
-            try { rtb.Rtf = BuildRtfForLine(formattedText); }
+            try
+            {
+                string? rtf = BuildRtfForLine(formattedText, deadline);
+                rtb.Text = rtf ?? formattedText; // null 表示超时或过大，直接显示纯文本
+            }
             catch { rtb.Text = formattedText; }
+        }
+
+        /// <summary>超时截止检查器，防止复杂内容格式化导致卡死</summary>
+        private readonly struct Deadline
+        {
+            private readonly long _limitTicks;
+            private Deadline(long limitTicks) { _limitTicks = limitTicks; }
+            public static Deadline FromSeconds(double seconds) => new(DateTime.UtcNow.Ticks + (long)(seconds * TimeSpan.TicksPerSecond));
+            public static Deadline Default => FromSeconds(2.0);
+            public bool IsExpired => DateTime.UtcNow.Ticks >= _limitTicks;
+            public void ThrowIfExpired()
+            {
+                if (IsExpired) throw new InvalidOperationException("__DEADLINE_EXPIRED__");
+            }
         }
 
         /// <summary>构建格式化文本：JSON 缩进换行，其余内容按逗号换行</summary>
         private static string BuildFormattedText(string line)
         {
-            var sb = new StringBuilder();
-            int i = 0;
-            while (i < line.Length)
+            Deadline deadline = Deadline.Default;
+            try
             {
-                // JSON 对象 { ... }
-                if (line[i] == '{')
-                {
-                    int end = FindJsonEnd(line, i, '{', '}');
-                    if (end > 0)
-                    {
-                        string raw = line.Substring(i, end - i + 1);
-                        string? beautified = TryBeautifyJson(raw);
-                        if (beautified != null)
-                        {
-                            if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                            sb.Append(beautified);
-                            i = end + 1;
-                            continue;
-                        }
-                        // 尝试将 key=value 格式转为 JSON
-                        string? kvJson = TryConvertEqualsToJson(raw);
-                        if (kvJson != null)
-                        {
-                            if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                            sb.Append(kvJson);
-                            i = end + 1;
-                            continue;
-                        }
-                        // 外层 JSON 解析失败 → 剥除外层，逐条目拆分
-                        // 例如 {1:{...}, 2:{...}} → 1:{...} 每条单独处理
-                        string inner = raw.Substring(1, raw.Length - 2).Trim();
-                        var entries = SplitTopLevelEntries(inner);
-                        foreach (var entry in entries)
-                        {
-                            if (string.IsNullOrEmpty(entry)) continue;
-                            string trimmedEntry = entry.Trim();
-                            if (sb.Length > 0) sb.AppendLine();
-                            // 尝试提取内部 JSON 块
-                            int jsonStart = trimmedEntry.IndexOf('{');
-                            int jsonStart2 = trimmedEntry.IndexOf('[');
-                            int jsonStartPos = -1;
-                            if (jsonStart >= 0 && jsonStart2 >= 0) jsonStartPos = Math.Min(jsonStart, jsonStart2);
-                            else if (jsonStart >= 0) jsonStartPos = jsonStart;
-                            else if (jsonStart2 >= 0) jsonStartPos = jsonStart2;
+                return BuildFormattedTextImpl(line, ref deadline);
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "__DEADLINE_EXPIRED__")
+            {
+                return line; // 超时保底：返回原始文本
+            }
+            catch
+            {
+                return line; // 解析异常保底：返回原始文本
+            }
+        }
 
-                            if (jsonStartPos > 0)
-                            {
-                                // key 部分
-                                string keyPart = trimmedEntry[..jsonStartPos].Trim().TrimEnd(':');
-                                if (!string.IsNullOrEmpty(keyPart))
-                                {
-                                    sb.Append(keyPart);
-                                }
-                                // 子 JSON 块
-                                char brace = trimmedEntry[jsonStartPos];
-                                int subEnd = FindJsonEnd(trimmedEntry, jsonStartPos, brace, brace == '{' ? '}' : ']');
-                                if (subEnd > jsonStartPos)
-                                {
-                                    string subRaw = trimmedEntry.Substring(jsonStartPos, subEnd - jsonStartPos + 1);
-                                    string? subBeautified = TryBeautifyJson(subRaw);
-                                    if (subBeautified != null)
-                                    {
-                                        sb.AppendLine();
-                                        sb.Append(IndentBlock(subBeautified, "  "));
-                                    }
-                                    else
-                                    {
-                                        sb.AppendLine();
-                                        sb.Append(subRaw);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                // 整个条目没有 JSON → 按逗号再拆分
-                                sb.Append(trimmedEntry);
-                            }
-                        }
-                        i = end + 1;
-                        continue;
-                    }
-                }
-                // JSON 数组 [ ... ]
-                if (line[i] == '[')
-                {
-                    int end = FindJsonEnd(line, i, '[', ']');
-                    if (end > 0)
-                    {
-                        string raw = line.Substring(i, end - i + 1);
-                        string? beautified = TryBeautifyJson(raw);
-                        if (beautified != null)
-                        {
-                            if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                            sb.Append(beautified);
-                            i = end + 1;
-                            continue;
-                        }
-                        // 尝试将数组元素从 key=value 格式转为 JSON
-                        string? kvArrayJson = TryConvertArrayToJson(raw);
-                        if (kvArrayJson != null)
-                        {
-                            if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                            sb.Append(kvArrayJson);
-                            i = end + 1;
-                            continue;
-                        }
-                        if (sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
-                        sb.Append(raw);
-                        i = end + 1;
-                        continue;
-                    }
-                }
+        /// <summary>内容片段类型</summary>
+        private enum ContentSegType { JsonObject, JsonArray, BracketBlock, PlainText }
 
-                // 非 JSON 内容，累积到下一个 JSON 起始或结尾
-                int start = i;
-                while (i < line.Length && line[i] is not '{' and not '[') i++;
-                if (i > start)
+        /// <summary>内容片段</summary>
+        private readonly struct ContentSegment
+        {
+            public readonly ContentSegType Type;
+            public readonly int Start;
+            public readonly int End; // inclusive
+
+            public ContentSegment(ContentSegType type, int start, int end)
+            {
+                Type = type; Start = start; End = end;
+            }
+        }
+
+        private static string BuildFormattedTextImpl(string line, ref Deadline deadline)
+        {
+            deadline.ThrowIfExpired();
+
+            // Phase 1: 提取所有顶层片段：JSON对象、JSON数组、【】块、纯文本
+            var segments = ExtractTopLevelSegments(line, deadline);
+            if (segments.Count == 0) return line;
+
+            // Phase 2: 格式化每个片段
+            var sb = new StringBuilder();
+            foreach (var seg in segments)
+            {
+                deadline.ThrowIfExpired();
+                string raw = line.Substring(seg.Start, seg.End - seg.Start + 1);
+
+                switch (seg.Type)
                 {
-                    string chunk = line.Substring(start, i - start).Trim();
-                    if (!string.IsNullOrEmpty(chunk))
-                    {
-                        chunk = chunk.Trim().TrimStart(',').TrimEnd(',');
-                        var parts = chunk.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                        foreach (var part in parts)
-                        {
-                            if (!string.IsNullOrEmpty(part))
-                            {
-                                if (sb.Length > 0) sb.AppendLine();
-                                sb.Append(part.Trim());
-                            }
-                        }
-                    }
+                    case ContentSegType.JsonObject:
+                        AppendFormattedJson(sb, raw, deadline);
+                        break;
+                    case ContentSegType.JsonArray:
+                        AppendFormattedJson(sb, raw, deadline);
+                        break;
+                    case ContentSegType.BracketBlock:
+                        AppendFormattedBracketBlock(sb, raw, deadline);
+                        break;
+                    case ContentSegType.PlainText:
+                        AppendFormattedPlainText(sb, raw, deadline);
+                        break;
                 }
             }
             return sb.ToString();
         }
 
+        /// <summary>将一行文本拆分成顶层片段序列</summary>
+        private static List<ContentSegment> ExtractTopLevelSegments(string line, Deadline deadline)
+        {
+            var result = new List<ContentSegment>();
+            int i = 0;
+            // 记录括号深度，用于在【】内跳过嵌套的{}/[]
+            int bracketDepth = -1; // -1 表示不在【】内
+            int bracketStart = -1;
+
+            while (i < line.Length)
+            {
+                deadline.ThrowIfExpired();
+
+                if (bracketDepth >= 0)
+                {
+                    // 在【】内部，需要找到闭合的】
+                    if (line[i] == '】')
+                    {
+                        bracketDepth--;
+                        if (bracketDepth < 0)
+                        {
+                            result.Add(new ContentSegment(ContentSegType.BracketBlock, bracketStart, i));
+                            bracketDepth = -1;
+                            bracketStart = -1;
+                            i++;
+                            continue;
+                        }
+                    }
+                    // 嵌套的【只计数不分割
+                    else if (line[i] == '【')
+                    {
+                        bracketDepth++;
+                    }
+                    i++;
+                    continue;
+                }
+
+                char c = line[i];
+
+                // JSON 对象 { ... }
+                if (c == '{')
+                {
+                    int end = FindJsonEnd(line, i, '{', '}', deadline);
+                    if (end > 0)
+                    {
+                        // 先把之前的纯文本收尾
+                        FlushPlainSegments(result, line, i, deadline);
+                        result.Add(new ContentSegment(ContentSegType.JsonObject, i, end));
+                        i = end + 1;
+                        continue;
+                    }
+                }
+
+                // JSON 数组 [ ... ] — 仅当内容可解析为有效 JSON 时才识别
+                if (c == '[')
+                {
+                    int end = FindJsonEnd(line, i, '[', ']', deadline);
+                    if (end > 0)
+                    {
+                        string candidate = line.Substring(i, end - i + 1);
+                        if (IsValidJsonArray(candidate, deadline))
+                        {
+                            FlushPlainSegments(result, line, i, deadline);
+                            result.Add(new ContentSegment(ContentSegType.JsonArray, i, end));
+                            i = end + 1;
+                            continue;
+                        }
+                        // 不是有效 JSON，当作普通文本继续
+                    }
+                }
+
+                // 【 块开始
+                if (c == '【')
+                {
+                    bracketDepth = 0;
+                    bracketStart = i;
+                    i++;
+                    continue;
+                }
+
+                // 普通字符 → 累积到纯文本段
+                // 但纯文本段由 FlushPlainSegments 在处理完特殊段落时创建
+                // 所以我们先跳过特殊字符，在 FlushPlainSegments 中取前面的纯文本
+                i++;
+            }
+
+            // 最后的纯文本
+            FlushPlainSegments(result, line, line.Length, deadline);
+            return result;
+        }
+
+        /// <summary>将 [prevStart, currStart) 范围的纯文本加入片段列表</summary>
+        private static void FlushPlainSegments(List<ContentSegment> segments, string line, int currStart, Deadline deadline)
+        {
+            if (segments.Count == 0 && currStart <= 0) return;
+            int prevEnd = -1;
+            if (segments.Count > 0)
+                prevEnd = segments[^1].End;
+
+            int pStart = prevEnd + 1;
+            if (pStart >= currStart) return;
+
+            // 跳过纯空白
+            string chunk = line.Substring(pStart, currStart - pStart);
+            if (string.IsNullOrWhiteSpace(chunk)) return;
+
+            segments.Add(new ContentSegment(ContentSegType.PlainText, pStart, currStart - 1));
+        }
+
+        /// <summary>检查字符串是否可解析为有效的 JSON 数组</summary>
+        private static bool IsValidJsonArray(string text, Deadline deadline)
+        {
+            if (text.Length < 2 || text[0] != '[' || text[^1] != ']') return false;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(text);
+                return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>格式化 JSON 对象/数组（美化缩进）</summary>
+        private static void AppendFormattedJson(StringBuilder sb, string raw, Deadline deadline)
+        {
+            // 尝试标准 JSON 美化
+            string? beautified = TryBeautifyJson(raw, deadline);
+            if (beautified != null)
+            {
+                if (sb.Length > 0) sb.AppendLine();
+                sb.Append(beautified);
+                return;
+            }
+
+            // 尝试 key=value → JSON 转换
+            if (raw[0] == '{')
+            {
+                string? kvJson = TryConvertEqualsToJson(raw, deadline);
+                if (kvJson != null)
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(kvJson);
+                    return;
+                }
+            }
+
+            // 数组：尝试转换 key=value 对象数组
+            if (raw[0] == '[')
+            {
+                string? kvArrayJson = TryConvertArrayToJson(raw, deadline);
+                if (kvArrayJson != null)
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(kvArrayJson);
+                    return;
+                }
+            }
+
+            // 都失败 → 原样保留
+            if (sb.Length > 0) sb.AppendLine();
+            sb.Append(raw);
+        }
+
+        /// <summary>格式化【】块：提取内部 JSON 美化，其余按逗号分行</summary>
+        private static void AppendFormattedBracketBlock(StringBuilder sb, string raw, Deadline deadline)
+        {
+            // 去掉最外层【】
+            string inner = raw;
+            if (inner.Length >= 2 && inner[0] == '【' && inner[^1] == '】')
+                inner = inner.Substring(1, inner.Length - 2);
+
+            if (string.IsNullOrWhiteSpace(inner))
+            {
+                if (sb.Length > 0) sb.AppendLine();
+                sb.Append(raw);
+                return;
+            }
+
+            // 查找内部是否有 JSON { } 或 [ ] 块
+            int jsonStart = -1;
+            char jsonOpen = '\0';
+            char jsonClose = '\0';
+            for (int i = 0; i < inner.Length; i++)
+            {
+                if (i % 64 == 0) deadline.ThrowIfExpired();
+                if (inner[i] == '{') { jsonStart = i; jsonOpen = '{'; jsonClose = '}'; break; }
+                if (inner[i] == '[') { jsonStart = i; jsonOpen = '['; jsonClose = ']'; break; }
+            }
+
+            if (jsonStart >= 0)
+            {
+                int jsonEnd = FindJsonEnd(inner, jsonStart, jsonOpen, jsonClose, deadline);
+                if (jsonEnd > jsonStart)
+                {
+                    // 提取 JSON 前的文本（可能是 ClassName）
+                    string prefix = jsonStart > 0 ? inner[..jsonStart].Trim() : "";
+                    string jsonRaw = inner.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                    string? beautified = TryBeautifyJson(jsonRaw, deadline);
+
+                    // 提取 JSON 后的文本
+                    string suffix = jsonEnd + 1 < inner.Length ? inner[(jsonEnd + 1)..].Trim() : "";
+
+                    if (sb.Length > 0) sb.AppendLine();
+
+                    // 输出前缀（过滤出标识符字符）
+                    if (!string.IsNullOrEmpty(prefix))
+                    {
+                        int nameEnd = 0;
+                        while (nameEnd < prefix.Length && (char.IsLetterOrDigit(prefix[nameEnd]) || prefix[nameEnd] == '_')) nameEnd++;
+                        if (nameEnd > 0)
+                        {
+                            sb.Append(prefix[..nameEnd]);
+                            sb.AppendLine();
+                        }
+                    }
+
+                    if (beautified != null)
+                    {
+                        sb.Append(beautified);
+                    }
+                    else
+                    {
+                        sb.Append(jsonRaw);
+                    }
+
+                    if (!string.IsNullOrEmpty(suffix))
+                    {
+                        sb.AppendLine();
+                        sb.Append("剩余: " + suffix);
+                    }
+                    return;
+                }
+            }
+
+            // 内部没有 JSON → 按逗号分离
+            if (sb.Length > 0) sb.AppendLine();
+            var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (i > 0) sb.AppendLine();
+                sb.Append(parts[i].Trim());
+            }
+        }
+
+        /// <summary>格式化纯文本：不盲目拆分</summary>
+        private static void AppendFormattedPlainText(StringBuilder sb, string raw, Deadline deadline)
+        {
+            string text = raw.Trim().TrimStart(',').TrimEnd(',');
+            if (string.IsNullOrEmpty(text)) return;
+
+            // 判断是否为 Java 栈跟踪（包含 <= 符号）
+            bool isStackTrace = text.Contains("<=") || text.Contains("->");
+            // 判断是否包含中文
+            bool hasChinese = text.Any(c => c >= 0x4E00 && c <= 0x9FFF);
+
+            if (isStackTrace)
+            {
+                // 堆栈跟踪：按 <= 分割换行，保持可读性
+                var stackParts = text.Split(new[] { "<=" }, StringSplitOptions.None);
+                for (int i = 0; i < stackParts.Length; i++)
+                {
+                    var sp = stackParts[i].Trim().TrimEnd("<= ".ToCharArray()).Trim();
+                    if (string.IsNullOrEmpty(sp)) continue;
+                    if (sb.Length > 0) sb.AppendLine();
+                    if (i > 0) sb.Append("  ");
+                    sb.Append(sp);
+                }
+            }
+            else if (hasChinese)
+            {
+                // 含中文的日志行：保留整行，不做逗号拆分（防止拆分包含 = 的混合内容）
+                if (sb.Length > 0) sb.AppendLine();
+                sb.Append(text);
+            }
+            else
+            {
+                // 通用文本（无中文）：包含 key=value 的对按逗号拆分，否则整段保留
+                bool hasKeyValue = text.Contains('=') || text.Contains("：");
+                if (hasKeyValue)
+                {
+                    var kvParts = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    foreach (var part in kvParts)
+                    {
+                        var tp = part.Trim();
+                        if (string.IsNullOrEmpty(tp)) continue;
+                        if (sb.Length > 0) sb.AppendLine();
+                        sb.Append(tp);
+                    }
+                }
+                else
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(text);
+                }
+            }
+        }
+
+        /// <summary>按中文标点拆分段</summary>
+        private static List<string> SplitChineseText(string text)
+        {
+            var result = new List<string>();
+            var sb = new StringBuilder();
+            foreach (char c in text)
+            {
+                if (c is '，' or '；' or '。' or ',' or ';')
+                {
+                    if (sb.Length > 0)
+                    {
+                        result.Add(sb.ToString());
+                        sb.Clear();
+                    }
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            if (sb.Length > 0) result.Add(sb.ToString());
+            return result;
+        }
+
         /// <summary>在逗号分隔的字符串中按顶层（忽略嵌套 {}[]）拆分成条目</summary>
-        private static List<string> SplitTopLevelEntries(string s)
+        private static List<string> SplitTopLevelEntries(string s, Deadline deadline)
         {
             var result = new List<string>();
             int depth = 0;
             int start = 0;
             for (int i = 0; i < s.Length; i++)
             {
+                if (i % 256 == 0) deadline.ThrowIfExpired();
                 char c = s[i];
                 if (c is '{' or '[') depth++;
                 else if (c is '}' or ']') depth--;
@@ -556,34 +856,34 @@ namespace wxd.files.winforms
         }
 
         /// <summary>尝试美化 JSON，失败先修复未引号 key 再试，还失败返回 null</summary>
-        private static string? TryBeautifyJson(string json)
+        private static string? TryBeautifyJson(string json, Deadline deadline)
         {
             // 第一次尝试原样解析
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2 });
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             }
             catch { }
 
             // 修复未引号的 key 后再试
-            string fixedJson = FixUnquotedKeys(json);
+            string fixedJson = FixUnquotedKeys(json, deadline);
             if (fixedJson != json)
             {
                 try
                 {
                     using var doc = System.Text.Json.JsonDocument.Parse(fixedJson);
                     return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2 });
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 }
                 catch { }
             }
             return null;
         }
 
-        /// <summary>将 JSON 中未加引号的 key（如 {1:..., key:...}）加上引号</summary>
-        private static string FixUnquotedKeys(string json)
+        /// <summary>将 JSON 中未加引号的 key（如 {1:..., key:...}）加上引号，带超时检查</summary>
+        private static string FixUnquotedKeys(string json, Deadline deadline)
         {
             var sb = new StringBuilder(json.Length + 32);
             bool inStr = false;
@@ -591,6 +891,7 @@ namespace wxd.files.winforms
 
             for (int i = 0; i < json.Length; i++)
             {
+                if (i % 256 == 0) deadline.ThrowIfExpired();
                 char c = json[i];
 
                 // 字符串内：原样复制
@@ -605,7 +906,7 @@ namespace wxd.files.winforms
                 if (c is '"' or '\'') { inStr = true; strChar = c; sb.Append(c); continue; }
 
                 // 遇到 { 或 , 时，检查后面是否跟着一个未引号的 key (word/digits : )
-                if (c is '{' or ',')
+                if (c is '{' or '[' or ',')
                 {
                     sb.Append(c);
                     int j = i + 1;
@@ -616,13 +917,13 @@ namespace wxd.files.winforms
                         while (k < json.Length && (char.IsLetterOrDigit(json[k]) || json[k] is '_' or '.' or '#' or '@' or '-')) k++;
                         int l = k;
                         while (l < json.Length && char.IsWhiteSpace(json[l])) l++;
-                        if (l < json.Length && json[l] == ':')
+                        if (l < json.Length && json[l] is ':' or '=')
                         {
                             // 这是未引号的 key → 加双引号
                             sb.Append('"');
                             sb.Append(json, j, k - j);
-                            sb.Append('"');
-                            i = k - 1; // 循环会自增 i
+                            sb.Append("\":");
+                            i = k; // 跳到 : 或 =，循环 i++ 会再跳一位
                             continue;
                         }
                     }
@@ -635,7 +936,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>将 key=value 格式的 { id=123, name=abc } 转换为标准 JSON</summary>
-        private static string? TryConvertEqualsToJson(string text)
+        private static string? TryConvertEqualsToJson(string text, Deadline deadline)
         {
             if (text.Length < 2 || text[0] != '{' || text[^1] != '}') return null;
             string inner = text.Substring(1, text.Length - 2).Trim();
@@ -644,7 +945,7 @@ namespace wxd.files.winforms
             if (inner.Contains("\":")) return null;
             // 检查是否大部分条目是 key=value 格式
             int eqCount = 0, colonCount = 0, totalEntries = 0;
-            var entries = SplitTopLevelEntries(inner);
+            var entries = SplitTopLevelEntries(inner, deadline);
             foreach (var entry in entries)
             {
                 var t = entry.Trim();
@@ -668,7 +969,7 @@ namespace wxd.files.winforms
                 {
                     string key = entry[..eqPos].Trim();
                     string val = entry[(eqPos + 1)..].Trim();
-                    jsonSb.Append($"  \"{EscapeJsonString(key)}\": ");
+                    jsonSb.Append($"  \"{key}\": ");
                     AppendJsonValue(jsonSb, val);
                 }
                 else
@@ -683,7 +984,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>尝试将数组内容从 key=value 对象格式转为 JSON 数组</summary>
-        private static string? TryConvertArrayToJson(string text)
+        private static string? TryConvertArrayToJson(string text, Deadline deadline)
         {
             if (text.Length < 2 || text[0] != '[' || text[^1] != ']') return null;
             string inner = text.Substring(1, text.Length - 2).Trim();
@@ -691,7 +992,7 @@ namespace wxd.files.winforms
             // 已包含标准 JSON 结构则跳过
             if (inner.TrimStart().StartsWith("{")) return null;
             // 按顶层逗号拆分条目
-            var items = SplitTopLevelEntries(inner);
+            var items = SplitTopLevelEntries(inner, deadline);
             if (items.Count == 0) return null;
             // 检查是否每个条目都包含 {...}
             bool allHaveBrace = items.All(i => i.Contains('{'));
@@ -701,15 +1002,16 @@ namespace wxd.files.winforms
             var convertedItems = new List<string>();
             foreach (string item in items)
             {
+                deadline.ThrowIfExpired();
                 string trimmed = item.Trim();
                 if (string.IsNullOrEmpty(trimmed)) continue;
                 int braceStart = trimmed.IndexOf('{');
                 if (braceStart < 0) { convertedItems.Add($"  {trimmed}"); continue; }
                 string prefix = braceStart > 0 ? trimmed[..braceStart].Trim() : "";
                 string braceContent = trimmed[braceStart..].Trim();
-                string? objJson = TryBeautifyJson(braceContent);
+                string? objJson = TryBeautifyJson(braceContent, deadline);
                 if (objJson == null)
-                    objJson = TryConvertEqualsToJson(braceContent);
+                    objJson = TryConvertEqualsToJson(braceContent, deadline);
                 if (objJson != null)
                 {
                     // 合并 prefix 和 JSON 对象
@@ -760,7 +1062,7 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-        /// <summary>将值智能处理：数字不加引号，其他加引号</summary>
+        /// <summary>将值智能处理：数字不加引号，其他加引号（显示用，不转义引号）</summary>
         private static void AppendJsonValue(StringBuilder sb, string val)
         {
             if (string.IsNullOrEmpty(val)) { sb.Append("\"\""); return; }
@@ -771,7 +1073,7 @@ namespace wxd.files.winforms
             // 有 { 或 [ 的内容原样输出
             if (val.Contains('{') || val.Contains('[')) { sb.Append(val); return; }
             sb.Append('\"');
-            sb.Append(EscapeJsonString(val));
+            sb.Append(val);
             sb.Append('\"');
         }
 
@@ -781,18 +1083,26 @@ namespace wxd.files.winforms
         private enum SegType { JsonBlock, KeyValuePair, QuotedString, Number, BooleanNull, PlainText }
 
         /// <summary>将已格式化文本（多行）渲染为带语法高亮的 RTF</summary>
-        private static string BuildRtfForLine(string formattedText)
+        private static string BuildRtfForLine(string formattedText) => BuildRtfForLine(formattedText, Deadline.Default);
+
+        private static string? BuildRtfForLine(string formattedText, Deadline deadline)
         {
+            // 超大文本跳过 RTF 着色，返回 null 表示用纯文本
+            if (formattedText.Length > 512 * 1024) return null;
+
             var lines = formattedText.Split('\n');
             var sb = new StringBuilder();
-            sb.AppendLine(@"{\rtf1\ansi\deff0");
-            sb.AppendLine(@"{\fonttbl{\f0\fnil Consolas;}}");
+            sb.AppendLine($@"{{\rtf1\ansi\ansicpg{Encoding.Default.CodePage}\deff0");
+            sb.AppendLine($@"{{\fonttbl{{\f0\fnil\fcharset{Encoding.Default.CodePage} Consolas;}}}}");
             sb.AppendLine(@"{\colortbl ;\red0\green122\blue204;\red22\green138\blue8;\red156\green39\blue176;\red117\green117\blue117;\red216\green67\blue21;\red0\green121\blue203;\red30\green30\blue30;}");
             sb.Append(@"\f0\fs20 ");
 
+            int lineIdx = 0;
             bool inJson = false;
             foreach (var rawLine in lines)
             {
+                if (lineIdx++ % 256 == 0) deadline.ThrowIfExpired();
+
                 sb.Append(@"\par ");
                 string rl = rawLine.TrimEnd('\r');
                 if (rl.Length == 0) { sb.Append(' '); continue; }
@@ -813,7 +1123,7 @@ namespace wxd.files.winforms
                 else
                 {
                     // 非 JSON 行 → 逐 token 语法着色
-                    var tokens = TokenizeLine(rl);
+                    var tokens = TokenizeLine(rl, deadline);
                     foreach (var (type, text) in tokens)
                     {
                         string escaped = EscapeRtf(text);
@@ -852,57 +1162,46 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-        /// <summary>RTF 转义</summary>
+                /// <summary>RTF 转义（ANSI 模式，所有字节用 \'HH hex 编码）</summary>
         private static string EscapeRtf(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
-            // 处理特殊 RTF 字符和 Unicode
-            var sb = new StringBuilder(text.Length);
-            foreach (char c in text)
+            var sb = new StringBuilder(text.Length * 2);
+            foreach (byte b in Encoding.Default.GetBytes(text))
             {
-                switch (c)
+                switch (b)
                 {
-                    case '\\': sb.Append(@"\\"); break;
-                    case '{':  sb.Append(@"\{ "); break;
-                    case '}':  sb.Append(@"\} "); break;
-                    case '\n': sb.Append(@"\par "); break;
-                    case '\r': break; // skip
-                    default:
-                        if (c > 127)
-                        {
-                            // Unicode char: \uNNNN?
-                            sb.Append($@"\u{(int)c}?");
-                        }
-                        else if (c < 32)
-                        {
-                            // Control char
-                            sb.Append($@"\'{((int)c):X2}");
-                        }
-                        else
-                        {
-                            sb.Append(c);
-                        }
-                        break;
+                    case 92:  sb.Append(@"\\"); break;  // \
+                    case 123: sb.Append(@"\{ "); break; // {
+                    case 125: sb.Append(@"\} "); break; // }
+                    case 10:  sb.Append(@"\par "); break; // \n
+                    case 13:  break;                  // \r
+                    default:  sb.Append($"\\'{(int)b:X2}"); break;
                 }
             }
             return sb.ToString();
         }
 
-        /// <summary>将一行混合文本分词为带类型的片段列表</summary>
-        private static List<(SegType Type, string Text)> TokenizeLine(string line)
+private static List<(SegType Type, string Text)> TokenizeLine(string line) => TokenizeLine(line, Deadline.Default);
+
+        private static List<(SegType Type, string Text)> TokenizeLine(string line, Deadline deadline)
         {
             var result = new List<(SegType, string)>();
             int i = 0;
             while (i < line.Length)
             {
+                if (i % 256 == 0) deadline.ThrowIfExpired();
+
                 // 1) JSON 对象 { ... }
                 if (line[i] == '{')
                 {
-                    int end = FindJsonEnd(line, i, '{', '}');
+                    int end = FindJsonEnd(line, i, '{', '}', deadline);
                     if (end > 0)
                     {
                         string raw = line.Substring(i, end - i + 1);
-                        string beautified = BeautifyJson(raw);
+                        string beautified;
+                        try { beautified = BeautifyJson(raw, deadline); }
+                        catch { beautified = raw; }
                         result.Add((SegType.JsonBlock, beautified));
                         i = end + 1;
                         continue;
@@ -912,11 +1211,13 @@ namespace wxd.files.winforms
                 // 2) JSON 数组 [ ... ]
                 if (line[i] == '[')
                 {
-                    int end = FindJsonEnd(line, i, '[', ']');
+                    int end = FindJsonEnd(line, i, '[', ']', deadline);
                     if (end > 0)
                     {
                         string raw = line.Substring(i, end - i + 1);
-                        string beautified = BeautifyJson(raw);
+                        string beautified;
+                        try { beautified = BeautifyJson(raw, deadline); }
+                        catch { beautified = raw; }
                         result.Add((SegType.JsonBlock, beautified));
                         i = end + 1;
                         continue;
@@ -1017,8 +1318,11 @@ namespace wxd.files.winforms
             return result;
         }
 
-        /// <summary>找到匹配的括号结束位置，支持嵌套</summary>
-        private static int FindJsonEnd(string s, int start, char open, char close)
+        /// <summary>找到匹配的括号结束位置，支持嵌套（无超时版本，供 TokenizeLine 等调用）</summary>
+        private static int FindJsonEnd(string s, int start, char open, char close) => FindJsonEnd(s, start, open, close, Deadline.Default);
+
+        /// <summary>找到匹配的括号结束位置，支持嵌套，带超时检查</summary>
+        private static int FindJsonEnd(string s, int start, char open, char close, Deadline deadline)
         {
             if (start >= s.Length || s[start] != open) return -1;
             int depth = 1;
@@ -1026,6 +1330,7 @@ namespace wxd.files.winforms
             char stringChar = '\0';
             for (int i = start + 1; i < s.Length; i++)
             {
+                if (i % 512 == 0) deadline.ThrowIfExpired();
                 if (inString)
                 {
                     if (s[i] == '\\') { i++; continue; }
@@ -1040,13 +1345,16 @@ namespace wxd.files.winforms
         }
 
         /// <summary>美化 JSON 片段（缩进展开）</summary>
-        private static string BeautifyJson(string json)
+        private static string BeautifyJson(string json) => BeautifyJson(json, Deadline.Default);
+
+        private static string BeautifyJson(string json, Deadline deadline)
         {
+            deadline.ThrowIfExpired();
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2 });
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             }
             catch
             {
