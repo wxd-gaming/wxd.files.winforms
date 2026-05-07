@@ -202,7 +202,7 @@ namespace wxd.files.winforms
             // 打开CSV阅读器按钮
             _btnOpenCsvReader = new Button
             {
-                Text       = "CSV阅读器",
+                Text       = "阅读器",
                 Location   = new Point(635, y - 1),
                 Size       = new Size(80, 26),
                 Font       = new Font("Microsoft YaHei UI", 9f),
@@ -214,11 +214,26 @@ namespace wxd.files.winforms
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
+            // 打开大文件阅读器按钮
+            var btnLargeFileViewer = new Button
+            {
+                Text       = "大文件阅读",
+                Location   = new Point(720, y - 1),
+                Size       = new Size(80, 26),
+                Font       = new Font("Microsoft YaHei UI", 9f),
+                Cursor     = Cursors.Hand,
+                BackColor  = Color.FromArgb(156, 39, 176),
+                ForeColor  = Color.White,
+                FlatStyle  = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            btnLargeFileViewer.Click += (s, e) => { var f = new LargeFileViewer(); f.Show(this); };
+
             // 保存状态按钮
             var btnSaveState = new Button
             {
                 Text       = "保存状态",
-                Location   = new Point(720, y - 1),
+                Location   = new Point(805, y - 1),
                 Size       = new Size(70, 26),
                 Font       = new Font("Microsoft YaHei UI", 9f),
                 Cursor     = Cursors.Hand,
@@ -229,7 +244,7 @@ namespace wxd.files.winforms
             };
             btnSaveState.Click += (s, e) => SaveAllState();
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnSaveState });
+            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnLargeFileViewer, btnSaveState });
         }
 
         // ==================== 打开CSV阅读器 ====================

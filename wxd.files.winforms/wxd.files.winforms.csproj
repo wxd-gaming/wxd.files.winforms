@@ -18,9 +18,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="app.ico">
+    <EmbeddedResource Include="app.ico">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </Content>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
