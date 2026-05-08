@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -58,6 +60,26 @@ namespace wxd.files.winforms
         private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
         private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
         private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+
+        // ==================== Win32 API（系统图标）====================
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr SHGetFileInfo(
+            string pszPath, uint dwFileAttributes,
+            out SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct SHFILEINFO
+        {
+            public IntPtr hIcon;
+            public int    iIcon;
+            public uint   dwAttributes;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szDisplayName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string szTypeName;
+        }
+
+        private const uint SHGFI_ICON              = 0x100;
+        private const uint SHGFI_SMALLICON         = 0x000000001;
+        private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
 
         public CsvReaderForm(string? initialDir = null)
         {
@@ -230,9 +252,11 @@ namespace wxd.files.winforms
             _imgList = new ImageList();
             _imgList.ImageSize = new Size(16, 16);
             _imgList.ColorDepth = ColorDepth.Depth32Bit;
-            // 添加默认图标
-            _imgList.Images.Add("csv", SystemIcons.Application);
-            _imgList.Images.Add("excel", SystemIcons.Application);
+            // 使用系统文件图标作为默认图标
+            var csvShfi = default(SHFILEINFO);
+            SHGetFileInfo(".csv", 0, out csvShfi, (uint)Marshal.SizeOf(csvShfi),
+                          SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
+            _imgList.Images.Add("default", Icon.FromHandle(csvShfi.hIcon));
 
             _lstFiles = new ListView
             {
@@ -535,7 +559,7 @@ namespace wxd.files.winforms
                 {
                     Tag = file,
                     ToolTipText = file.FullPath,
-                    ImageKey = file.Type == FileType.Csv ? "csv" : "excel"
+                    ImageKey = GetFileIconKey(file.FullPath)
                 };
                 _lstFiles.Items.Add(item);
             }
@@ -595,7 +619,7 @@ namespace wxd.files.winforms
                 {
                     Tag = file,
                     ToolTipText = file.FullPath,
-                    ImageKey = file.Type == FileType.Csv ? "csv" : "excel"
+                    ImageKey = GetFileIconKey(file.FullPath)
                 };
                 _lstFiles.Items.Add(item);
             }
@@ -625,6 +649,28 @@ namespace wxd.files.winforms
             {
                 return text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
             }
+        }
+
+        // ==================== 系统文件图标 ====================
+        private string GetFileIconKey(string filePath)
+        {
+            try
+            {
+                var ext = Path.GetExtension(filePath).ToLowerInvariant();
+                if (!_imgList.Images.ContainsKey(ext))
+                {
+                    var shfi = default(SHFILEINFO);
+                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON);
+                    if (shfi.hIcon != IntPtr.Zero)
+                    {
+                        _imgList.Images.Add(ext, Icon.FromHandle(shfi.hIcon));
+                        return ext;
+                    }
+                }
+                else return ext;
+            }
+            catch { }
+            return "default";
         }
 
         // ==================== 文件选择处理 ====================

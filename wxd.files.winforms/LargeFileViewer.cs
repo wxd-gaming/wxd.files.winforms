@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,27 @@ namespace wxd.files.winforms
         private Button _btnRefresh = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
+
+        // ==================== Win32 API（系统图标）====================
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr SHGetFileInfo(
+            string pszPath, uint dwFileAttributes,
+            out SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct SHFILEINFO
+        {
+            public IntPtr hIcon;
+            public int    iIcon;
+            public uint   dwAttributes;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szDisplayName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string szTypeName;
+        }
+
+        private const uint SHGFI_ICON              = 0x100;
+        private const uint SHGFI_SMALLICON         = 0x000000001;
+        private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
+        private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
 
         // ==================== 状态 ====================
         private string _currentDir = "";
@@ -172,7 +194,11 @@ namespace wxd.files.winforms
             _imgList = new ImageList();
             _imgList.ImageSize = new Size(16, 16);
             _imgList.ColorDepth = ColorDepth.Depth32Bit;
-            _imgList.Images.Add("file", SystemIcons.Application);
+            // 使用系统文件图标作为默认图标
+            var defaultShfi = default(SHFILEINFO);
+            SHGetFileInfo(".txt", 0, out defaultShfi, (uint)Marshal.SizeOf(defaultShfi),
+                          SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
+            _imgList.Images.Add("file", Icon.FromHandle(defaultShfi.hIcon));
 
             _lstFiles = new ListView
             {
@@ -419,7 +445,7 @@ namespace wxd.files.winforms
                 {
                     Tag = file,
                     ToolTipText = file.FullPath,
-                    ImageKey = "file"
+                    ImageKey = GetFileIconKey(file.FullPath)
                 };
                 _lstFiles.Items.Add(item);
             }
@@ -453,7 +479,7 @@ namespace wxd.files.winforms
                 {
                     if (!terms.Any(t => file.RelativePath.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0))
                         continue;
-                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = "file" });
+                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = GetFileIconKey(file.FullPath) });
                 }
             }
             else if (filter.Contains("&&"))
@@ -463,7 +489,7 @@ namespace wxd.files.winforms
                 {
                     if (!terms.All(t => file.RelativePath.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0))
                         continue;
-                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = "file" });
+                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = GetFileIconKey(file.FullPath) });
                 }
             }
             else if (!string.IsNullOrEmpty(filter))
@@ -472,19 +498,41 @@ namespace wxd.files.winforms
                 {
                     if (file.RelativePath.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
                         continue;
-                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = "file" });
+                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = GetFileIconKey(file.FullPath) });
                 }
             }
             else
             {
                 foreach (var file in _allFiles.OrderBy(f => f.RelativePath))
                 {
-                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = "file" });
+                    _lstFiles.Items.Add(new ListViewItem(file.RelativePath) { Tag = file, ToolTipText = file.FullPath, ImageKey = GetFileIconKey(file.FullPath) });
                 }
             }
 
             _lstFiles.EndUpdate();
             _lblFileCount.Text = $"共 {_lstFiles.Items.Count} 个文件";
+        }
+
+        // ==================== 系统文件图标 ====================
+        private string GetFileIconKey(string filePath)
+        {
+            try
+            {
+                var key = Path.GetExtension(filePath).ToLowerInvariant();
+                if (!_imgList.Images.ContainsKey(key))
+                {
+                    var shfi = default(SHFILEINFO);
+                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON);
+                    if (shfi.hIcon != IntPtr.Zero)
+                    {
+                        _imgList.Images.Add(key, Icon.FromHandle(shfi.hIcon));
+                        return key;
+                    }
+                }
+                else return key;
+            }
+            catch { }
+            return "file";
         }
 
         // ==================== 文件选择与打开 ====================
