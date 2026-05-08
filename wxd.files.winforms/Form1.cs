@@ -227,7 +227,7 @@ namespace wxd.files.winforms
                 FlatStyle  = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 }
             };
-            btnLargeFileViewer.Click += (s, e) => { var f = new LargeFileViewer(); f.Show(this); };
+            btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
             // 保存状态按钮
             var btnSaveState = new Button
@@ -247,11 +247,47 @@ namespace wxd.files.winforms
             _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnLargeFileViewer, btnSaveState });
         }
 
-        // ==================== 打开CSV阅读器 ====================
+        // ==================== 打开CSV阅读器（先选目录） ====================
         private void OnOpenCsvReaderClick(object? sender, EventArgs e)
         {
-            var csvForm = new CsvReaderForm("");  // 传入空文件夹
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = "选择包含CSV/Excel文件的目录",
+                ShowNewFolderButton = false
+            };
+
+            var lastDir = CsvSettings.CsvReaderLastDirectory;
+            if (!string.IsNullOrEmpty(lastDir) && Directory.Exists(lastDir))
+                dialog.SelectedPath = lastDir;
+
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+
+            // 记忆本次选择的目录
+            CsvSettings.CsvReaderLastDirectory = dialog.SelectedPath;
+
+            var csvForm = new CsvReaderForm(dialog.SelectedPath);
             csvForm.Show();
+        }
+
+        // ==================== 打开大文件阅读器（先选目录） ====================
+        private void OnOpenLargeFileViewerClick(object? sender, EventArgs e)
+        {
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = "选择包含文本文件的目录",
+                ShowNewFolderButton = false
+            };
+
+            var lastDir = CsvSettings.LargeFileViewerLastDirectory;
+            if (!string.IsNullOrEmpty(lastDir) && Directory.Exists(lastDir))
+                dialog.SelectedPath = lastDir;
+
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+
+            CsvSettings.LargeFileViewerLastDirectory = dialog.SelectedPath;
+
+            var f = new LargeFileViewer(dialog.SelectedPath);
+            f.Show();
         }
 
         // ==================== 窗格数量变更 ====================

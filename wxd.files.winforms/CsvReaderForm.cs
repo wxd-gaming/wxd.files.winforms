@@ -791,6 +791,7 @@ namespace wxd.files.winforms
         private SplitContainer _pnlGridContainer = new(); // 容器面板（使用SplitContainer实现冻结效果）
         private TextBox _txtHeaderFilter = new();      // 表头过滤框
         private TextBox _txtContentFilter = new();     // 内容过滤框
+        private TextBox _txtAdvancedFilter = new();    // 高级表达式过滤框
         private Label _lblInfo = new();
         private Panel _pnlTop = new();
         private DataTable _dataTable = new();
@@ -816,10 +817,28 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             BackColor = Color.White;
-            // 顶部工具栏 - 使用 FlowLayoutPanel 自动排列
-            var flowTop = new FlowLayoutPanel
+
+            // 顶部工具栏 - 使用 TableLayoutPanel 实现两行布局
+            var topTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
+                AutoSize = true,
+                BackColor = _colorLightBg,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(0),
+                Margin = new Padding(0),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            topTable.RowStyles.Clear();
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行1: 原有控件
+            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 3)); // 行2: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行3: 高级过滤
+
+            // 第一行 - 原有 FlowLayoutPanel
+            var flowTop = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
                 Height = 40,
                 BackColor = _colorLightBg,
                 FlowDirection = FlowDirection.LeftToRight,
@@ -871,7 +890,7 @@ namespace wxd.files.winforms
 
             var txtHeaderFilter = new TextBox
             {
-                Size = new Size(160, 23),
+                Size = new Size(280, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -886,7 +905,7 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 内容过滤框
+            // 内容过滤框 (保留原功能)
             var lblContentFilter = new Label
             {
                 Text = "内容过滤:",
@@ -898,7 +917,7 @@ namespace wxd.files.winforms
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(160, 23),
+                Size = new Size(280, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -934,10 +953,75 @@ namespace wxd.files.winforms
 
             flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, txtHeaderFilter, lblContentFilter, txtContentFilter, lblHint, _lblInfo });
 
+            // 第二行（分隔线）放入 topTable
+            var separatorLine = new Panel
+            {
+                Height = 1,
+                Dock = DockStyle.Top,
+                BackColor = Color.FromArgb(200, 200, 200),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            // 第三行 - 高级表达式过滤框
+            var flowAdv = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorLightBg,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(5, 1, 5, 3),
+                AutoSize = true
+            };
+
+            var lblAdvFilter = new Label
+            {
+                Text = "高级过滤:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var txtAdvancedFilter = new TextBox
+            {
+                Size = new Size(400, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
+            txtAdvancedFilter.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    txtAdvancedFilter.Text = "";
+                    e.Handled = true;
+                }
+            };
+
+            var lblAdvHint = new Label
+            {
+                Text = "如: id=123 or name like test",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                ForeColor = Color.FromArgb(0, 122, 204),
+                Margin = new Padding(3, 5, 10, 0)
+            };
+
+            flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
+
+            // 组装 topTable
+            topTable.Controls.Add(flowTop, 0, 0);
+            topTable.Controls.Add(separatorLine, 0, 1);
+            topTable.Controls.Add(flowAdv, 0, 2);
+
             // 保存引用
-            _pnlTop = flowTop;
+            _pnlTop = topTable;
             _txtHeaderFilter = txtHeaderFilter;
             _txtContentFilter = txtContentFilter;
+            _txtAdvancedFilter = txtAdvancedFilter;
 
             // 表格容器 - 使用SplitContainer来精确控制布局
             var splitContainer = new SplitContainer
@@ -1619,41 +1703,45 @@ namespace wxd.files.winforms
         private List<DataRow> GetVisibleRows(string contentFilter, string headerFilter)
         {
             var visibleRows = new List<DataRow>();
+            var advFilter = _txtAdvancedFilter.Text.Trim();
 
             // 从冻结行之后开始遍历
             for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
             {
                 var row = _dataTable.Rows[i];
 
-                // 如果没有内容过滤，所有行都可见
-                if (string.IsNullOrEmpty(contentFilter))
+                // 1) 简单内容过滤（基于 MatchesFilter 的文本匹配）
+                bool contentMatch = string.IsNullOrEmpty(contentFilter); // 空则通过
+                if (!contentMatch)
                 {
-                    visibleRows.Add(row);
-                    continue;
-                }
+                    var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
+                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
+                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
+                        : _visibleColumnIndices;
 
-                // 处理运算符
-                var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
-
-                // 检查该行是否满足内容过滤条件
-                bool isMatch = false;
-
-                // 如果有表头过滤，只在可见列中搜索
-                var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                    ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                    : _visibleColumnIndices;
-
-                foreach (var colIndex in columnsToSearch)
-                {
-                    var cellValue = row[colIndex]?.ToString() ?? "";
-                    if (MatchesFilter(cellValue, processedFilter))
+                    foreach (var colIndex in columnsToSearch)
                     {
-                        isMatch = true;
-                        break;
+                        var cellValue = row[colIndex]?.ToString() ?? "";
+                        if (MatchesFilter(cellValue, processedFilter))
+                        {
+                            contentMatch = true;
+                            break;
+                        }
                     }
                 }
 
-                if (isMatch)
+                // 2) 高级表达式过滤
+                bool advMatch = string.IsNullOrEmpty(advFilter);
+                if (!advMatch)
+                {
+                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
+                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
+                        : _visibleColumnIndices;
+                    advMatch = EvaluateExpression(row, advFilter, columnsToSearch);
+                }
+
+                // 两个过滤条件同时满足（AND 逻辑）
+                if (contentMatch && advMatch)
                 {
                     visibleRows.Add(row);
                 }
@@ -1722,50 +1810,304 @@ namespace wxd.files.winforms
             _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRows.Count} 行";
         }
 
-        private string BuildRowFilterExpression(string filter)
+        /// <summary>递归评估布尔表达式</summary>
+        private bool EvaluateExpression(DataRow row, string expr, List<int> columnsToSearch)
         {
-            if (string.IsNullOrEmpty(filter))
-                return "";
+            expr = expr.Trim();
+            if (string.IsNullOrEmpty(expr))
+                return true;
 
-            var conditions = new List<string>();
-
-            if (filter.Contains('|'))
+            // 去除外层括号
+            while (expr.StartsWith("(") && expr.EndsWith(")") && IsBalanced(expr))
             {
-                // OR 条件
-                var terms = filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var term in terms)
-                {
-                    conditions.Add(BuildSingleCondition(term.Trim()));
-                }
-                return string.Join(" OR ", conditions);
+                expr = expr.Substring(1, expr.Length - 2).Trim();
             }
-            else if (filter.Contains('&'))
+
+            // 找出外部最顶层的 or/and（不在括号内）
+            int parenDepth = 0;
+            int orPos = -1;
+            int andPos = -1;
+
+            for (int i = 0; i < expr.Length; i++)
             {
-                // AND 条件
-                var terms = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var term in terms)
+                if (expr[i] == '(')
+                    parenDepth++;
+                else if (expr[i] == ')')
+                    parenDepth--;
+                else if (parenDepth == 0)
                 {
-                    conditions.Add(BuildSingleCondition(term.Trim()));
+                    // 匹配 or（不区分大小写，注意单词边界）
+                    if (i + 2 < expr.Length &&
+                        (expr[i] == 'o' || expr[i] == 'O') &&
+                        (expr[i+1] == 'r' || expr[i+1] == 'R') &&
+                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i+2])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                    {
+                        orPos = i;
+                        break; // or 优先级低于 and，优先分割
+                    }
+
+                    // 匹配 and
+                    if (i + 3 < expr.Length &&
+                        (expr[i] == 'a' || expr[i] == 'A') &&
+                        (expr[i+1] == 'n' || expr[i+1] == 'N') &&
+                        (expr[i+2] == 'd' || expr[i+2] == 'D') &&
+                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i+3])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                    {
+                        // 先记录 and，但继续搜索。如果找到 or，优先用 or 分割
+                        if (andPos < 0)
+                            andPos = i;
+                        i += 3; // skip "and"
+                    }
                 }
-                return string.Join(" AND ", conditions);
+            }
+
+            if (orPos >= 0)
+            {
+                // 按 or 分割
+                var left = expr.Substring(0, orPos).Trim();
+                var right = expr.Substring(orPos + 2).Trim();
+                return EvaluateExpression(row, left, columnsToSearch) ||
+                       EvaluateExpression(row, right, columnsToSearch);
+            }
+
+            if (andPos >= 0)
+            {
+                var left = expr.Substring(0, andPos).Trim();
+                var right = expr.Substring(andPos + 3).Trim();
+                return EvaluateExpression(row, left, columnsToSearch) &&
+                       EvaluateExpression(row, right, columnsToSearch);
+            }
+
+            // 基础条件，解析比较操作
+            return EvaluateCondition(row, expr, columnsToSearch);
+        }
+
+        /// <summary>检查括号是否平衡</summary>
+        private bool IsBalanced(string s)
+        {
+            int d = 0;
+            foreach (char c in s)
+            {
+                if (c == '(') d++;
+                else if (c == ')') d--;
+                if (d < 0) return false;
+            }
+            return d == 0;
+        }
+
+        /// <summary>评估单个条件表达式</summary>
+        private bool EvaluateCondition(DataRow row, string condition, List<int> columnsToSearch)
+        {
+            condition = condition.Trim();
+
+            // 检测比较操作符: like, =, !=, &lt;&gt;, &gt;, &gt;=, &lt;, &lt;=
+            // 注意 like 优先级高于 =
+            string op = "";
+            int opPos = -1;
+
+            // 先找 like (不区分大小写)
+            var likeIdx = condition.IndexOf(" like ", StringComparison.OrdinalIgnoreCase);
+            if (likeIdx >= 0)
+            {
+                op = "like";
+                opPos = likeIdx;
             }
             else
             {
-                return BuildSingleCondition(filter);
-            }
-        }
+                // 找 !=
+                var neqIdx = FindOperator(condition, "!=");
+                var ltgtIdx = FindOperator(condition, "<>");
+                var geIdx = FindOperator(condition, ">=");
+                var leIdx = FindOperator(condition, "<=");
+                var gtIdx = FindOperator(condition, ">");
+                var ltIdx = FindOperator(condition, "<");
+                var eqIdx = FindOperator(condition, "=");
 
-        private string BuildSingleCondition(string term)
-        {
-            // 对所有列进行OR搜索
-            var columnConditions = new List<string>();
-            foreach (DataColumn col in _dataTable.Columns)
+                // 按优先级选择（先长的操作符以避免错误匹配）
+                if (geIdx >= 0) { op = ">="; opPos = geIdx; }
+                else if (leIdx >= 0) { op = "<="; opPos = leIdx; }
+                else if (neqIdx >= 0) { op = "!="; opPos = neqIdx; }
+                else if (ltgtIdx >= 0) { op = "<>"; opPos = ltgtIdx; }
+                else if (gtIdx >= 0) { op = ">"; opPos = gtIdx; }
+                else if (ltIdx >= 0) { op = "<"; opPos = ltIdx; }
+                else if (eqIdx >= 0) { op = "="; opPos = eqIdx; }
+            }
+
+            if (opPos < 0)
             {
-                columnConditions.Add($"CONVERT([{col.ColumnName}], 'System.String') LIKE '%{term.Replace("'", "''")}%'");
+                // 没有操作符，使用全文搜索（在所有列中搜索整个条件文本）
+                foreach (var colIndex in columnsToSearch)
+                {
+                    var cellValue = row[colIndex]?.ToString() ?? "";
+                    if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
             }
-            return $"({string.Join(" OR ", columnConditions)})";
+
+            // 提取列名和值
+            var rawColumnName = condition.Substring(0, opPos).Trim();
+            // like 匹配的是 " like "（6个字符），其他操作符按实际长度
+            int opRealLen = op == "like" ? " like ".Length : op.Length;
+            var rawValue = condition.Substring(opPos + opRealLen).Trim();
+
+            var columnName = rawColumnName.Trim();
+
+            // 处理值（移除可能的引号）
+            var value = rawValue;
+            if ((value.StartsWith("'") && value.EndsWith("'")) ||
+                (value.StartsWith("\"") && value.EndsWith("\"")))
+            {
+                value = value.Substring(1, value.Length - 2);
+            }
+
+            // 检查是否是指定列名过滤
+            if (!string.IsNullOrEmpty(columnName) && char.IsLetter(columnName[0]))
+            {
+                // 在指定列中查找
+                int colIndex = ResolveColumnIndex(columnName);
+
+                if (colIndex >= 0 && columnsToSearch.Contains(colIndex))
+                {
+                    var cellValue = row[colIndex]?.ToString() ?? "";
+                    return CompareValue(cellValue, value, op);
+                }
+
+                // 列名未找到，回退到所有列搜索（但将列名视为普通搜索文本）
+                foreach (var ci in columnsToSearch)
+                {
+                    var cellValue = row[ci]?.ToString() ?? "";
+                    if (cellValue.IndexOf(condition.Trim(), StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            // 没有列名指定，在所有列中搜索
+            foreach (var colIndex in columnsToSearch)
+            {
+                var cellValue = row[colIndex]?.ToString() ?? "";
+                if (CompareValue(cellValue, columnName + op + rawValue, op))
+                    return true;
+                // 也试一下全文匹配
+                if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
         }
 
+        /// <summary>根据列名字符串解析对应的列索引，优先匹配 ColumnName，再匹配冻结行范围内的单元格内容</summary>
+        private int ResolveColumnIndex(string columnName)
+        {
+            // 1. 尝试精确匹配 ColumnName
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                if (_dataTable.Columns[i].ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+
+            // 2. 在冻结行范围内的各列单元格值中搜索列名
+            // 因为用户设置的冻结行已经包含了表头行
+            int maxHeaderScan = Math.Min(_frozenRows, _dataTable.Rows.Count);
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                for (int row = 0; row < maxHeaderScan; row++)
+                {
+                    var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
+                    if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>在字符串中查找操作符（确保不是单词中间）</summary>
+        private int FindOperator(string s, string op)
+        {
+            int idx = s.IndexOf(op, StringComparison.Ordinal);
+            while (idx >= 0)
+            {
+                int nextIdx = idx + op.Length;
+                // 检查后面是否跟着 =，避免 > 错误匹配 >= 中的 >
+                if (nextIdx < s.Length && op.Length == 1 && (op[0] == '>' || op[0] == '<' || op[0] == '!') && s[nextIdx] == '=')
+                {
+                    idx = s.IndexOf(op, nextIdx + 1, StringComparison.Ordinal);
+                    continue;
+                }
+                return idx;
+            }
+            return -1;
+        }
+
+        /// <summary>比较单元格值和条件值</summary>
+        private bool CompareValue(string cellValue, string filterValue, string op)
+        {
+            // 尝试数字比较
+            bool numericCompare = false;
+            double cellNum = 0, filterNum = 0;
+            if (op != "like" && double.TryParse(cellValue, out cellNum) && double.TryParse(filterValue, out filterNum))
+            {
+                numericCompare = true;
+            }
+
+            switch (op.ToLower())
+            {
+                case "like":
+                    // like: 支持 * 和 % 通配符，默认包含匹配
+                    if (filterValue.Contains("*") || filterValue.Contains("%"))
+                    {
+                        var pattern = Regex.Escape(filterValue)
+                            .Replace("\\*", ".*")
+                            .Replace("\\%", ".*");
+                        return Regex.IsMatch(cellValue, "^" + pattern + "$", RegexOptions.IgnoreCase);
+                    }
+                    else
+                    {
+                        // 无通配符时，默认包含匹配（两端自动加 %）
+                        return cellValue.IndexOf(filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }
+
+                case "=":
+                    return numericCompare
+                        ? Math.Abs(cellNum - filterNum) < 0.000001
+                        : cellValue.Equals(filterValue, StringComparison.OrdinalIgnoreCase);
+
+                case "!=":
+                case "<>":
+                    return numericCompare
+                        ? Math.Abs(cellNum - filterNum) >= 0.000001
+                        : !cellValue.Equals(filterValue, StringComparison.OrdinalIgnoreCase);
+
+                case ">":
+                    return numericCompare ? cellNum > filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) > 0;
+
+                case ">=":
+                    return numericCompare ? cellNum >= filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+
+                case "<":
+                    return numericCompare ? cellNum < filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) < 0;
+
+                case "<=":
+                    return numericCompare ? cellNum <= filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) <= 0;
+
+                default:
+                    return cellValue.IndexOf(filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        /// <summary>简单的文本匹配（用于列名/列内容的表头过滤）</summary>
         private bool MatchesFilter(string text, string filter)
         {
             if (string.IsNullOrEmpty(filter))
@@ -1999,6 +2341,7 @@ namespace wxd.files.winforms
         private SplitContainer _pnlGridContainer = new();
         private TextBox _txtHeaderFilter = new();
         private TextBox _txtContentFilter = new();
+        private TextBox _txtAdvancedFilter = new();
         private Label _lblInfo = new();
         private Panel _pnlTop = new();
         private DataTable _dataTable = new();
@@ -2078,7 +2421,7 @@ namespace wxd.files.winforms
 
             var txtHeaderFilter = new TextBox
             {
-                Size = new Size(160, 23),
+                Size = new Size(280, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -2093,7 +2436,7 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 内容过滤框
+            // 内容过滤框 (保留原功能)
             var lblContentFilter = new Label
             {
                 Text = "内容过滤:",
@@ -2105,7 +2448,7 @@ namespace wxd.files.winforms
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(160, 23),
+                Size = new Size(280, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -2141,9 +2484,89 @@ namespace wxd.files.winforms
 
             flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, txtHeaderFilter, lblContentFilter, txtContentFilter, lblHint, _lblInfo });
 
-            _pnlTop = flowTop;
+            // ====== 第二行: 分隔线 ======
+            var separatorLine = new Panel
+            {
+                Height = 1,
+                Dock = DockStyle.Top,
+                BackColor = Color.FromArgb(200, 200, 200),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            // ====== 第三行: 高级表达式过滤框 ======
+            var flowAdv = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorLightBg,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(5, 1, 5, 3),
+                AutoSize = true
+            };
+
+            var lblAdvFilter = new Label
+            {
+                Text = "高级过滤:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var txtAdvancedFilter = new TextBox
+            {
+                Size = new Size(400, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
+            txtAdvancedFilter.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    txtAdvancedFilter.Text = "";
+                    e.Handled = true;
+                }
+            };
+
+            var lblAdvHint = new Label
+            {
+                Text = "如: id=123 or name like test",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                ForeColor = Color.FromArgb(0, 122, 204),
+                Margin = new Padding(3, 5, 10, 0)
+            };
+
+            flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
+
+            // 组装 topTable 三行布局
+            var topTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                BackColor = _colorLightBg,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(0),
+                Margin = new Padding(0),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            topTable.RowStyles.Clear();
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行0: 原有控件
+            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 3)); // 行1: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行2: 高级过滤
+            topTable.Controls.Add(flowTop, 0, 0);
+            topTable.Controls.Add(separatorLine, 0, 1);
+            topTable.Controls.Add(flowAdv, 0, 2);
+
+            _pnlTop = topTable;
             _txtHeaderFilter = txtHeaderFilter;
             _txtContentFilter = txtContentFilter;
+            _txtAdvancedFilter = txtAdvancedFilter;
 
             // 表格容器 - 使用SplitContainer来精确控制布局
             var splitContainer = new SplitContainer
@@ -2609,35 +3032,44 @@ namespace wxd.files.winforms
         private List<DataRow> GetVisibleRows(string contentFilter, string headerFilter)
         {
             var visibleRows = new List<DataRow>();
+            var advFilter = _txtAdvancedFilter.Text.Trim();
 
             for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
             {
                 var row = _dataTable.Rows[i];
 
-                if (string.IsNullOrEmpty(contentFilter))
+                // 1) 简单内容过滤
+                bool contentMatch = string.IsNullOrEmpty(contentFilter);
+                if (!contentMatch)
                 {
-                    visibleRows.Add(row);
-                    continue;
-                }
+                    var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
+                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
+                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
+                        : _visibleColumnIndices;
 
-                var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
-                bool isMatch = false;
-
-                var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                    ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                    : _visibleColumnIndices;
-
-                foreach (var colIndex in columnsToSearch)
-                {
-                    var cellValue = row[colIndex]?.ToString() ?? "";
-                    if (MatchesFilter(cellValue, processedFilter))
+                    foreach (var colIndex in columnsToSearch)
                     {
-                        isMatch = true;
-                        break;
+                        var cellValue = row[colIndex]?.ToString() ?? "";
+                        if (MatchesFilter(cellValue, processedFilter))
+                        {
+                            contentMatch = true;
+                            break;
+                        }
                     }
                 }
 
-                if (isMatch)
+                // 2) 高级表达式过滤
+                bool advMatch = string.IsNullOrEmpty(advFilter);
+                if (!advMatch)
+                {
+                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
+                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
+                        : _visibleColumnIndices;
+                    advMatch = EvaluateExpression(row, advFilter, columnsToSearch);
+                }
+
+                // AND 逻辑
+                if (contentMatch && advMatch)
                 {
                     visibleRows.Add(row);
                 }
@@ -2699,6 +3131,273 @@ namespace wxd.files.winforms
             RefreshGridLayout();
         }
 
+        /// <summary>递归评估布尔表达式</summary>
+        private bool EvaluateExpression(DataRow row, string expr, List<int> columnsToSearch)
+        {
+            expr = expr.Trim();
+            if (string.IsNullOrEmpty(expr))
+                return true;
+
+            while (expr.StartsWith("(") && expr.EndsWith(")") && IsBalanced(expr))
+            {
+                expr = expr.Substring(1, expr.Length - 2).Trim();
+            }
+
+            int parenDepth = 0;
+            int orPos = -1;
+            int andPos = -1;
+
+            for (int i = 0; i < expr.Length; i++)
+            {
+                if (expr[i] == '(')
+                    parenDepth++;
+                else if (expr[i] == ')')
+                    parenDepth--;
+                else if (parenDepth == 0)
+                {
+                    if (i + 2 < expr.Length &&
+                        (expr[i] == 'o' || expr[i] == 'O') &&
+                        (expr[i+1] == 'r' || expr[i+1] == 'R') &&
+                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i+2])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                    {
+                        orPos = i;
+                        break;
+                    }
+
+                    if (i + 3 < expr.Length &&
+                        (expr[i] == 'a' || expr[i] == 'A') &&
+                        (expr[i+1] == 'n' || expr[i+1] == 'N') &&
+                        (expr[i+2] == 'd' || expr[i+2] == 'D') &&
+                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i+3])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                    {
+                        if (andPos < 0)
+                            andPos = i;
+                        i += 3;
+                    }
+                }
+            }
+
+            if (orPos >= 0)
+            {
+                var left = expr.Substring(0, orPos).Trim();
+                var right = expr.Substring(orPos + 2).Trim();
+                return EvaluateExpression(row, left, columnsToSearch) ||
+                       EvaluateExpression(row, right, columnsToSearch);
+            }
+
+            if (andPos >= 0)
+            {
+                var left = expr.Substring(0, andPos).Trim();
+                var right = expr.Substring(andPos + 3).Trim();
+                return EvaluateExpression(row, left, columnsToSearch) &&
+                       EvaluateExpression(row, right, columnsToSearch);
+            }
+
+            return EvaluateCondition(row, expr, columnsToSearch);
+        }
+
+        private bool IsBalanced(string s)
+        {
+            int d = 0;
+            foreach (char c in s)
+            {
+                if (c == '(') d++;
+                else if (c == ')') d--;
+                if (d < 0) return false;
+            }
+            return d == 0;
+        }
+
+        private bool EvaluateCondition(DataRow row, string condition, List<int> columnsToSearch)
+        {
+            condition = condition.Trim();
+
+            string op = "";
+            int opPos = -1;
+
+            var likeIdx = condition.IndexOf(" like ", StringComparison.OrdinalIgnoreCase);
+            if (likeIdx >= 0)
+            {
+                op = "like";
+                opPos = likeIdx;
+            }
+            else
+            {
+                var neqIdx = FindOperator(condition, "!=");
+                var ltgtIdx = FindOperator(condition, "<>");
+                var geIdx = FindOperator(condition, ">=");
+                var leIdx = FindOperator(condition, "<=");
+                var gtIdx = FindOperator(condition, ">");
+                var ltIdx = FindOperator(condition, "<");
+                var eqIdx = FindOperator(condition, "=");
+
+                if (geIdx >= 0) { op = ">="; opPos = geIdx; }
+                else if (leIdx >= 0) { op = "<="; opPos = leIdx; }
+                else if (neqIdx >= 0) { op = "!="; opPos = neqIdx; }
+                else if (ltgtIdx >= 0) { op = "<>"; opPos = ltgtIdx; }
+                else if (gtIdx >= 0) { op = ">"; opPos = gtIdx; }
+                else if (ltIdx >= 0) { op = "<"; opPos = ltIdx; }
+                else if (eqIdx >= 0) { op = "="; opPos = eqIdx; }
+            }
+
+            if (opPos < 0)
+            {
+                foreach (var colIndex in columnsToSearch)
+                {
+                    var cellValue = row[colIndex]?.ToString() ?? "";
+                    if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            var rawColumnName = condition.Substring(0, opPos).Trim();
+            // like 匹配的是 " like "（6个字符），其他操作符按实际长度
+            int opRealLen = op == "like" ? " like ".Length : op.Length;
+            var rawValue = condition.Substring(opPos + opRealLen).Trim();
+            var columnName = rawColumnName.Trim();
+
+            var value = rawValue;
+            if ((value.StartsWith("'") && value.EndsWith("'")) ||
+                (value.StartsWith("\"") && value.EndsWith("\"")))
+            {
+                value = value.Substring(1, value.Length - 2);
+            }
+
+            if (!string.IsNullOrEmpty(columnName) && char.IsLetter(columnName[0]))
+            {
+                int colIndex = ResolveColumnIndex(columnName);
+
+                if (colIndex >= 0 && columnsToSearch.Contains(colIndex))
+                {
+                    var cellValue = row[colIndex]?.ToString() ?? "";
+                    return CompareValue(cellValue, value, op);
+                }
+
+                foreach (var ci in columnsToSearch)
+                {
+                    var cellValue = row[ci]?.ToString() ?? "";
+                    if (cellValue.IndexOf(condition.Trim(), StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            foreach (var colIndex in columnsToSearch)
+            {
+                var cellValue = row[colIndex]?.ToString() ?? "";
+                if (CompareValue(cellValue, columnName + op + rawValue, op))
+                    return true;
+                if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>根据列名字符串解析对应的列索引，优先匹配 ColumnName，再匹配冻结行范围内的单元格内容</summary>
+        private int ResolveColumnIndex(string columnName)
+        {
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                if (_dataTable.Columns[i].ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+            // 在冻结行范围内的各列单元格值中搜索列名
+            // 因为用户设置的冻结行已经包含了表头行
+            int maxHeaderScan = Math.Min(_frozenRows, _dataTable.Rows.Count);
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                for (int row = 0; row < maxHeaderScan; row++)
+                {
+                    var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
+                    if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        private int FindOperator(string s, string op)
+        {
+            int idx = s.IndexOf(op, StringComparison.Ordinal);
+            while (idx >= 0)
+            {
+                int nextIdx = idx + op.Length;
+                // 检查后面是否跟着 =，避免 > 错误匹配 >= 中的 >
+                if (nextIdx < s.Length && op.Length == 1 && (op[0] == '>' || op[0] == '<' || op[0] == '!') && s[nextIdx] == '=')
+                {
+                    idx = s.IndexOf(op, nextIdx + 1, StringComparison.Ordinal);
+                    continue;
+                }
+                return idx;
+            }
+            return -1;
+        }
+
+        private bool CompareValue(string cellValue, string filterValue, string op)
+        {
+            bool numericCompare = false;
+            double cellNum = 0, filterNum = 0;
+            if (op != "like" && double.TryParse(cellValue, out cellNum) && double.TryParse(filterValue, out filterNum))
+            {
+                numericCompare = true;
+            }
+
+            switch (op.ToLower())
+            {
+                case "like":
+                    // like: 支持 * 和 % 通配符，默认包含匹配
+                    if (filterValue.Contains("*") || filterValue.Contains("%"))
+                    {
+                        var pattern = Regex.Escape(filterValue).Replace("\\*", ".*").Replace("\\%", ".*");
+                        return Regex.IsMatch(cellValue, "^" + pattern + "$", RegexOptions.IgnoreCase);
+                    }
+                    else
+                    {
+                        // 无通配符时，默认包含匹配（两端自动加 %）
+                        return cellValue.IndexOf(filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+                    }
+
+                case "=":
+                    return numericCompare
+                        ? Math.Abs(cellNum - filterNum) < 0.000001
+                        : cellValue.Equals(filterValue, StringComparison.OrdinalIgnoreCase);
+
+                case "!=":
+                case "<>":
+                    return numericCompare
+                        ? Math.Abs(cellNum - filterNum) >= 0.000001
+                        : !cellValue.Equals(filterValue, StringComparison.OrdinalIgnoreCase);
+
+                case ">":
+                    return numericCompare ? cellNum > filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) > 0;
+
+                case ">=":
+                    return numericCompare ? cellNum >= filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+
+                case "<":
+                    return numericCompare ? cellNum < filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) < 0;
+
+                case "<=":
+                    return numericCompare ? cellNum <= filterNum
+                        : string.Compare(cellValue, filterValue, StringComparison.OrdinalIgnoreCase) <= 0;
+
+                default:
+                    return cellValue.IndexOf(filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        /// <summary>简单的文本匹配（用于列名/列内容的表头过滤）</summary>
         private bool MatchesFilter(string text, string filter)
         {
             if (string.IsNullOrEmpty(filter))

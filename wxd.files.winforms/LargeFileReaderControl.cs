@@ -23,6 +23,8 @@ namespace wxd.files.winforms
         private CheckBox _chkCaseSensitive = null!, _chkRegex = null!;
         private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!;
         private Label _lblStatus = null!, _lblIndexProgress = null!, _lblSearchCount = null!;
+        private NumericUpDown _numContextLines = null!;
+        private Label _lblContextLines = null!;
         private HScrollListView _lstContent = null!;
         private System.Windows.Forms.Timer _timer = null!, _timerScroll = null!;
         private TableLayoutPanel _topPanel = null!;
@@ -110,7 +112,10 @@ namespace wxd.files.winforms
             var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
             _btnExport = new Button { Text = "导出结果", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
             _btnExport.Click += OnExport;
-            row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _btnExport, _lblSearchCount });
+            _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
+            _lblContextLines.Margin = new Padding(8, 7, 0, 0);
+            _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
+            row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _lblSearchCount });
 
             _topPanel.Controls.Add(row1, 0, 0);
             _topPanel.Controls.Add(separator, 0, 1);
@@ -1714,37 +1719,85 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string? sourcePath = _filePath;
             if (_searchResults.Count == 0) return;
 
+            int contextLines = (int)_numContextLines.Value;
+
+            // 合并重叠的上下文区间，避免重复输出
+            var ranges = new List<(int Start, int End)>();
+            foreach (int lineIdx in _searchResults)
+            {
+                int start = Math.Max(0, lineIdx - contextLines);
+                int end = Math.Min(_lineOffsets!.Length - 1, lineIdx + contextLines);
+                ranges.Add((start, end));
+            }
+            ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            var mergedRanges = new List<(int Start, int End)>();
+            foreach (var range in ranges)
+            {
+                if (mergedRanges.Count == 0)
+                {
+                    mergedRanges.Add(range);
+                }
+                else
+                {
+                    var last = mergedRanges[^1];
+                    if (range.Start <= last.End + 1) // 相邻或重叠 → 合并
+                    {
+                        mergedRanges[^1] = (last.Start, Math.Max(last.End, range.End));
+                    }
+                    else
+                    {
+                        mergedRanges.Add(range);
+                    }
+                }
+            }
+
+            // 计算总行数
+            int totalLines = 0;
+            foreach (var (s, e) in mergedRanges)
+                totalLines += (e - s + 1);
+
             string dir = Path.GetDirectoryName(sourcePath)!;
-            string fileName = Path.GetFileName(sourcePath);     // 如 xx.log
+            string fileName = Path.GetFileName(sourcePath);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
             string outName = $"{fileName}-{timestamp}{Path.GetExtension(sourcePath)}";
             string outPath = Path.Combine(dir, outName);
 
-            try
+            // 后台线程导出，防止卡 UI
+            Status($"正在导出 {totalLines} 行到 {outName}...");
+            _ = Task.Run(() =>
             {
-                Cursor = Cursors.WaitCursor;
-                Status($"正在导出 {_searchResults.Count} 行到 {outName}...");
-                using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
-                for (int i = 0; i < _searchResults.Count; i++)
+                try
                 {
-                    int lineIdx = _searchResults[i];
-                    string lineText = _cache.TryGetValue(lineIdx, out var v) ? v : ReadLine(lineIdx);
-                    sw.WriteLine(lineText);
+                    using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
+                    foreach (var (start, end) in mergedRanges)
+                    {
+                        for (int lineIdx = start; lineIdx <= end; lineIdx++)
+                        {
+                            string lineText = ReadLine(lineIdx);
+                            sw.WriteLine(lineText);
+                        }
+                    }
+                    sw.Flush();
+
+                    BeginInvoke(() =>
+                    {
+                        Status($"已导出 {totalLines} 行 -> {outName}");
+                        MessageBox.Show(ParentForm,
+                            $"导出完成！\n\n文件: {outName}\n路径: {dir}\n行数: {totalLines:N0}\n匹配行: {_searchResults.Count:N0}\n上下行数: {contextLines}",
+                            "导出成功");
+                        try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
+                    });
                 }
-                sw.Flush();
-                Status($"已导出 {_searchResults.Count} 行 -> {outName}");
-                MessageBox.Show(ParentForm, $"导出完成！\n\n文件: {outName}\n路径: {dir}\n行数: {_searchResults.Count:N0}", "导出成功");
-                try { BeginInvoke(() => FileExported?.Invoke(this, EventArgs.Empty)); } catch { }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ParentForm, $"导出失败: {ex.Message}", "错误");
-                Status("导出失败");
-            }
-            finally
-            {
-                Cursor = Cursors.Default;
-            }
+                catch (Exception ex)
+                {
+                    BeginInvoke(() =>
+                    {
+                        MessageBox.Show(ParentForm, $"导出失败: {ex.Message}", "错误");
+                        Status("导出失败");
+                    });
+                }
+            });
         }
 
         public void Cleanup()

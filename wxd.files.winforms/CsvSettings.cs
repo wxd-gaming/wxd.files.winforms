@@ -200,6 +200,33 @@ namespace wxd.files.winforms
             }
         }
 
+        #endregion
+
+        #region 阅读器记忆目录
+
+        private const string CsvReaderDirKey = "CsvReaderLastDirectory";
+        private const string LargeFileViewerDirKey = "LargeFileViewerLastDirectory";
+
+        /// <summary>
+        /// 阅读器（CSV/Excel）上次选择的目录
+        /// </summary>
+        public static string CsvReaderLastDirectory
+        {
+            get => GetStringValue(CsvReaderDirKey, "");
+            set => SetStringValue(CsvReaderDirKey, value);
+        }
+
+        /// <summary>
+        /// 大文件阅读器上次选择的目录
+        /// </summary>
+        public static string LargeFileViewerLastDirectory
+        {
+            get => GetStringValue(LargeFileViewerDirKey, "");
+            set => SetStringValue(LargeFileViewerDirKey, value);
+        }
+
+        #endregion
+
         /// <summary>
         /// 保存设置（兼容性方法）
         /// </summary>
@@ -207,7 +234,5 @@ namespace wxd.files.winforms
         {
             // 设置已经在属性setter中保存，这里是为了兼容之前的调用
         }
-
-        #endregion
     }
 }
