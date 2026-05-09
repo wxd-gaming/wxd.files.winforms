@@ -65,7 +65,7 @@ namespace wxd.files.winforms
         /// </summary>
         public static int PaneCount
         {
-            get => GetIntValue(PaneCountKey, 4, 1, 10);
+            get => GetIntValue(PaneCountKey, 7, 1, 10);
             set => SetIntValue(PaneCountKey, Math.Max(1, Math.Min(10, value)));
         }
 

@@ -18,6 +18,10 @@ namespace wxd.files.winforms
         private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
         private Panel? _pnlTopBar;
         private Button? _btnCmdManager;                      // 命令管理按钮
+        private Button? _btnSettings;                         // ≡ 设置按钮
+        private Button? _btnSaveState;                        // 保存状态按钮
+        private FlowLayoutPanel? _flowPanel;                  // 顶部流式布局面板
+        private bool _showSettings = false;                   // 是否显示设置界面
         private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
 
         private enum LayoutMode { Horizontal, Vertical, Flow }
@@ -122,57 +126,83 @@ namespace wxd.files.winforms
         {
             if (_pnlTopBar == null) return;
 
-            int y = 12;
             float fontSize = 9f;
             var labelFont = new Font("Microsoft YaHei UI", fontSize);
             var comboFont = new Font("Microsoft YaHei UI", fontSize);
+            int ctrlHeight = 26;
+
+            // 流式布局面板（自动排列控件，收起/展开时自动流动）
+            _flowPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = false,
+                Padding = new Padding(12, 4, 12, 0),
+                BackColor = Color.Transparent
+            };
 
             var lblTitle = new Label
             {
                 Text = "多窗格文件管理",
-                Location = new Point(14, y),
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
-                ForeColor = _colorLightTitleFg
+                ForeColor = _colorLightTitleFg,
+                Margin = new Padding(0, 6, 16, 0)
             };
+
+            // ≡ 设置按钮（点击显示/隐藏配置项，与标题保持足够间距）
+            _btnSettings = new Button
+            {
+                Text = "≡",
+                Size = new Size(32, ctrlHeight),
+                Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(160, 160, 160),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                Margin = new Padding(0, 3, 4, 0)
+            };
+            _btnSettings.Click += OnSettingsClick;
 
             _lblCount = new Label
             {
                 Text = "窗格数量",
-                Location = new Point(180, y + 2),
                 AutoSize = true,
                 Font = labelFont,
-                ForeColor = _colorLightLabelFg
+                ForeColor = _colorLightLabelFg,
+                Margin = new Padding(6, 6, 2, 0)
             };
 
             _cboCount = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(245, y - 1),
-                Size = new Size(55, 26),
+                Size = new Size(55, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System
+                FlatStyle = FlatStyle.System,
+                Margin = new Padding(0, 2, 6, 0)
             };
             for (int i = 1; i <= 10; i++) _cboCount.Items.Add(i.ToString());
-            _cboCount.SelectedIndex = 3;
+            _cboCount.SelectedIndex = 6;  // 默认7个窗格
             _cboCount.SelectedIndexChanged += OnCountChanged;
 
             _lblLayout = new Label
             {
                 Text = "布局方式",
-                Location = new Point(315, y + 2),
                 AutoSize = true,
                 Font = labelFont,
-                ForeColor = _colorLightLabelFg
+                ForeColor = _colorLightLabelFg,
+                Margin = new Padding(6, 6, 2, 0)
             };
 
             _cboLayout = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(380, y - 1),
-                Size = new Size(120, 26),
+                Size = new Size(120, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System
+                FlatStyle = FlatStyle.System,
+                Margin = new Padding(0, 2, 6, 0)
             };
             _cboLayout.Items.Add("横向布局");
             _cboLayout.Items.Add("纵向布局");
@@ -183,37 +213,67 @@ namespace wxd.files.winforms
             _lblTheme = new Label
             {
                 Text = "主题",
-                Location = new Point(510, y + 2),
                 AutoSize = true,
                 Font = labelFont,
-                ForeColor = _colorLightLabelFg
+                ForeColor = _colorLightLabelFg,
+                Margin = new Padding(6, 6, 2, 0)
             };
 
             _cboTheme = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(545, y - 1),
-                Size = new Size(80, 26),
+                Size = new Size(80, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System
+                FlatStyle = FlatStyle.System,
+                Margin = new Padding(0, 2, 6, 0)
             };
             _cboTheme.Items.Add("深色");
             _cboTheme.Items.Add("浅色");
             _cboTheme.SelectedIndex = 1; // 默认浅色
             _cboTheme.SelectedIndexChanged += OnThemeChanged;
 
+            // 保存状态按钮
+            _btnSaveState = new Button
+            {
+                Text = "保存状态",
+                Size = new Size(70, ctrlHeight),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 150, 80),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                Margin = new Padding(4, 2, 2, 0)
+            };
+            _btnSaveState.Click += (s, e) => SaveAllState();
+
+            // --- 命令管理按钮 ---
+            _btnCmdManager = new Button
+            {
+                Text = "命令管理",
+                Size = new Size(75, ctrlHeight),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 150, 136),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                Margin = new Padding(2, 2, 4, 0)
+            };
+            _btnCmdManager.Click += OnCmdManagerClick;
+
             // 打开CSV阅读器按钮
             _btnOpenCsvReader = new Button
             {
                 Text = "阅读器",
-                Location = new Point(635, y - 1),
-                Size = new Size(80, 26),
+                Size = new Size(80, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 0 },
+                Margin = new Padding(4, 2, 2, 0)
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
@@ -221,48 +281,30 @@ namespace wxd.files.winforms
             var btnLargeFileViewer = new Button
             {
                 Text = "大文件阅读",
-                Location = new Point(720, y - 1),
-                Size = new Size(80, 26),
+                Size = new Size(80, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
                 BackColor = Color.FromArgb(156, 39, 176),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 0 },
+                Margin = new Padding(2, 2, 4, 0)
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
-            // 保存状态按钮
-            var btnSaveState = new Button
-            {
-                Text = "保存状态",
-                Location = new Point(805, y - 1),
-                Size = new Size(70, 26),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 150, 80),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
-            };
-            btnSaveState.Click += (s, e) => SaveAllState();
+            // 按顺序添加到流式布局面板：
+            // 标题 → ≡按钮 → 配置项(默认隐藏) → 保存状态 → 命令管理(默认隐藏) → 阅读器 → 大文件阅读
+            _flowPanel.Controls.AddRange(new Control[] {
+                lblTitle, _btnSettings,
+                _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme,
+                _btnSaveState, _btnCmdManager,
+                _btnOpenCsvReader, btnLargeFileViewer
+            });
 
-            // --- 命令管理按钮 ---
-            _btnCmdManager = new Button
-            {
-                Text = "命令管理",
-                Location = new Point(880, y - 1),
-                Size = new Size(75, 26),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 150, 136),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
-            };
-            _btnCmdManager.Click += OnCmdManagerClick;
+            _pnlTopBar.Controls.Add(_flowPanel);
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnLargeFileViewer, btnSaveState, _btnCmdManager });
+            // 设置配置项控件默认隐藏
+            UpdateSettingsVisibility();
 
             // 重建动态命令按钮
             RebuildCmdActionButtons();
@@ -361,6 +403,28 @@ namespace wxd.files.winforms
             SaveGlobalState();
         }
 
+        // ==================== ≡ 设置按钮点击：显示/隐藏配置项 ====================
+        private void OnSettingsClick(object? sender, EventArgs e)
+        {
+            _showSettings = !_showSettings;
+            UpdateSettingsVisibility();
+        }
+
+        /// <summary>根据 _showSettings 显示或隐藏配置项控件</summary>
+        private void UpdateSettingsVisibility()
+        {
+            bool visible = _showSettings;
+
+            if (_lblCount != null) _lblCount.Visible = visible;
+            if (_cboCount != null) _cboCount.Visible = visible;
+            if (_lblLayout != null) _lblLayout.Visible = visible;
+            if (_cboLayout != null) _cboLayout.Visible = visible;
+            if (_lblTheme != null) _lblTheme.Visible = visible;
+            if (_cboTheme != null) _cboTheme.Visible = visible;
+            if (_btnSaveState != null) _btnSaveState.Visible = visible;
+            if (_btnCmdManager != null) _btnCmdManager.Visible = visible;
+        }
+
         /// <summary>应用主题到整个窗体</summary>
         private void ApplyTheme()
         {
@@ -382,18 +446,21 @@ namespace wxd.files.winforms
                 }
             }
 
-            // 标签文字颜色
+            // 标签文字颜色 - 遍历_flowPanel中的控件
             var labelFg = isDark ? _colorDarkLabelFg : _colorLightLabelFg;
             var titleFg = isDark ? _colorDarkTitleFg : _colorLightTitleFg;
 
-            foreach (Control c in _pnlTopBar?.Controls!)
+            if (_flowPanel != null)
             {
-                if (c is Label lbl)
+                foreach (Control c in _flowPanel.Controls)
                 {
-                    if (lbl.Font.Size > 10) // 标题
-                        lbl.ForeColor = titleFg;
-                    else
-                        lbl.ForeColor = labelFg;
+                    if (c is Label lbl)
+                    {
+                        if (lbl.Font.Size > 10) // 标题
+                            lbl.ForeColor = titleFg;
+                        else
+                            lbl.ForeColor = labelFg;
+                    }
                 }
             }
 
@@ -627,18 +694,14 @@ namespace wxd.files.winforms
             // 清除旧按钮
             foreach (var btn in _cmdActionButtons)
             {
-                _pnlTopBar.Controls.Remove(btn);
+                _flowPanel?.Controls.Remove(btn);
                 btn.Dispose();
             }
             _cmdActionButtons.Clear();
 
             // 从配置读取命令列表
             var commands = CsvSettings.GetCustomCommands();
-            if (commands.Count == 0) return;
-
-            // 计算起始位置：在命令管理按钮右侧
-            int startX = (_btnCmdManager?.Right ?? 880) + 8;
-            int btnY = _btnCmdManager?.Top ?? 12;
+            if (commands.Count == 0 || _flowPanel == null) return;
 
             for (int i = 0; i < commands.Count; i++)
             {
@@ -650,7 +713,6 @@ namespace wxd.files.winforms
                 var btn = new Button
                 {
                     Text = cmd.Name,
-                    Location = new Point(startX, btnY),
                     Size = new Size(85, 26),
                     Font = new Font("Microsoft YaHei UI", 9f),
                     Cursor = Cursors.Hand,
@@ -658,6 +720,7 @@ namespace wxd.files.winforms
                     ForeColor = Color.White,
                     FlatStyle = FlatStyle.Flat,
                     FlatAppearance = { BorderSize = 0 },
+                    Margin = new Padding(2, 2, 2, 0),
                     Tag = cmd
                 };
 
@@ -676,10 +739,8 @@ namespace wxd.files.winforms
                 btn.Click += OnCmdActionButtonClick;
 
                 _cmdActionButtons.Add(btn);
-                _pnlTopBar.Controls.Add(btn);
-
-                // 下一个按钮的位置
-                startX += btn.Width + 6;
+                // 在流式布局面板末尾追加
+                _flowPanel.Controls.Add(btn);
             }
         }
 
