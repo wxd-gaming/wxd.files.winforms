@@ -227,6 +227,34 @@ namespace wxd.files.winforms
 
         #endregion
 
+        #region 自定义命令列表
+
+        private const string CustomCommandsKey = "CustomCommands";
+
+        /// <summary>获取所有自定义命令列表</summary>
+        public static List<CustomCommandItem> GetCustomCommands()
+        {
+            var json = GetStringValue(CustomCommandsKey, "[]");
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<CustomCommandItem>>(json)
+                       ?? new List<CustomCommandItem>();
+            }
+            catch
+            {
+                return new List<CustomCommandItem>();
+            }
+        }
+
+        /// <summary>保存自定义命令列表</summary>
+        public static void SetCustomCommands(List<CustomCommandItem> commands)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(commands);
+            SetStringValue(CustomCommandsKey, json);
+        }
+
+        #endregion
+
         /// <summary>
         /// 保存设置（兼容性方法）
         /// </summary>

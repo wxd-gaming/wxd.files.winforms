@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -7,32 +8,34 @@ namespace wxd.files.winforms
     public partial class Form1 : Form
     {
         private ComboBox? _cboCount;
-        private Label?    _lblCount;
+        private Label? _lblCount;
         private ComboBox? _cboLayout;
-        private Label?    _lblLayout;
+        private Label? _lblLayout;
         private ComboBox? _cboTheme;
-        private Label?    _lblTheme;
-        private Button?   _btnOpenCsvReader;
-        private Panel     _pnlContainer = new();
+        private Label? _lblTheme;
+        private Button? _btnOpenCsvReader;
+        private Panel _pnlContainer = new();
         private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
-        private Panel?    _pnlTopBar;
+        private Panel? _pnlTopBar;
+        private Button? _btnCmdManager;                      // 命令管理按钮
+        private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
 
         private enum LayoutMode { Horizontal, Vertical, Flow }
         private enum ThemeMode { Dark, Light }
 
         // ==================== 浅色配色 ====================
-        private static readonly Color _colorLightTopBg      = Color.FromArgb(245, 246, 247);
-        private static readonly Color _colorLightTopBorder   = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorLightTitleFg     = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightLabelFg     = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorLightFormBg      = Color.FromArgb(250, 250, 250);
+        private static readonly Color _colorLightTopBg = Color.FromArgb(245, 246, 247);
+        private static readonly Color _colorLightTopBorder = Color.FromArgb(218, 220, 224);
+        private static readonly Color _colorLightTitleFg = Color.FromArgb(32, 33, 36);
+        private static readonly Color _colorLightLabelFg = Color.FromArgb(95, 99, 104);
+        private static readonly Color _colorLightFormBg = Color.FromArgb(250, 250, 250);
 
         // ==================== 深色配色 (VS风格) ====================
-        private static readonly Color _colorDarkTopBg        = Color.FromArgb(37, 37, 38);      // VS顶部栏
-        private static readonly Color _colorDarkTopBorder    = Color.FromArgb(62, 62, 66);      // VS边框
-        private static readonly Color _colorDarkTitleFg      = Color.FromArgb(241, 241, 241);   // VS白色文字
-        private static readonly Color _colorDarkLabelFg      = Color.FromArgb(200, 200, 200);   // VS灰色文字
-        private static readonly Color _colorDarkFormBg       = Color.FromArgb(30, 30, 30);      // VS深色背景
+        private static readonly Color _colorDarkTopBg = Color.FromArgb(37, 37, 38);      // VS顶部栏
+        private static readonly Color _colorDarkTopBorder = Color.FromArgb(62, 62, 66);      // VS边框
+        private static readonly Color _colorDarkTitleFg = Color.FromArgb(241, 241, 241);   // VS白色文字
+        private static readonly Color _colorDarkLabelFg = Color.FromArgb(200, 200, 200);   // VS灰色文字
+        private static readonly Color _colorDarkFormBg = Color.FromArgb(30, 30, 30);      // VS深色背景
 
         private static readonly int GAP = 6; // 窗格间距
         private ThemeMode _currentTheme = ThemeMode.Light;
@@ -95,9 +98,9 @@ namespace wxd.files.winforms
             // 顶部工具栏面板
             _pnlTopBar = new Panel
             {
-                Dock      = DockStyle.Top,
-                Height    = 48,
-                Padding   = new Padding(12, 6, 12, 6),
+                Dock = DockStyle.Top,
+                Height = 48,
+                Padding = new Padding(12, 6, 12, 6),
                 BackColor = _colorLightTopBg
             };
 
@@ -105,8 +108,8 @@ namespace wxd.files.winforms
             _pnlTopBar.Controls.Add(sep);
 
             // 容器面板
-            _pnlContainer.Dock     = DockStyle.Fill;
-            _pnlContainer.Padding  = new Padding(GAP);
+            _pnlContainer.Dock = DockStyle.Fill;
+            _pnlContainer.Padding = new Padding(GAP);
             _pnlContainer.BackColor = BackColor;
 
             Controls.Add(_pnlContainer);
@@ -126,29 +129,29 @@ namespace wxd.files.winforms
 
             var lblTitle = new Label
             {
-                Text      = "多窗格文件管理",
-                Location  = new Point(14, y),
-                AutoSize  = true,
-                Font      = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
+                Text = "多窗格文件管理",
+                Location = new Point(14, y),
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
                 ForeColor = _colorLightTitleFg
             };
 
             _lblCount = new Label
             {
-                Text     = "窗格数量",
+                Text = "窗格数量",
                 Location = new Point(180, y + 2),
                 AutoSize = true,
-                Font     = labelFont,
+                Font = labelFont,
                 ForeColor = _colorLightLabelFg
             };
 
             _cboCount = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(245, y - 1),
-                Size          = new Size(55, 26),
-                Font          = comboFont,
-                FlatStyle     = FlatStyle.System
+                Location = new Point(245, y - 1),
+                Size = new Size(55, 26),
+                Font = comboFont,
+                FlatStyle = FlatStyle.System
             };
             for (int i = 1; i <= 10; i++) _cboCount.Items.Add(i.ToString());
             _cboCount.SelectedIndex = 3;
@@ -156,20 +159,20 @@ namespace wxd.files.winforms
 
             _lblLayout = new Label
             {
-                Text     = "布局方式",
+                Text = "布局方式",
                 Location = new Point(315, y + 2),
                 AutoSize = true,
-                Font     = labelFont,
+                Font = labelFont,
                 ForeColor = _colorLightLabelFg
             };
 
             _cboLayout = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(380, y - 1),
-                Size          = new Size(120, 26),
-                Font          = comboFont,
-                FlatStyle     = FlatStyle.System
+                Location = new Point(380, y - 1),
+                Size = new Size(120, 26),
+                Font = comboFont,
+                FlatStyle = FlatStyle.System
             };
             _cboLayout.Items.Add("横向布局");
             _cboLayout.Items.Add("纵向布局");
@@ -179,20 +182,20 @@ namespace wxd.files.winforms
 
             _lblTheme = new Label
             {
-                Text     = "主题",
+                Text = "主题",
                 Location = new Point(510, y + 2),
                 AutoSize = true,
-                Font     = labelFont,
+                Font = labelFont,
                 ForeColor = _colorLightLabelFg
             };
 
             _cboTheme = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(545, y - 1),
-                Size          = new Size(80, 26),
-                Font          = comboFont,
-                FlatStyle     = FlatStyle.System
+                Location = new Point(545, y - 1),
+                Size = new Size(80, 26),
+                Font = comboFont,
+                FlatStyle = FlatStyle.System
             };
             _cboTheme.Items.Add("深色");
             _cboTheme.Items.Add("浅色");
@@ -202,14 +205,14 @@ namespace wxd.files.winforms
             // 打开CSV阅读器按钮
             _btnOpenCsvReader = new Button
             {
-                Text       = "阅读器",
-                Location   = new Point(635, y - 1),
-                Size       = new Size(80, 26),
-                Font       = new Font("Microsoft YaHei UI", 9f),
-                Cursor     = Cursors.Hand,
-                BackColor  = Color.FromArgb(0, 122, 204),
-                ForeColor  = Color.White,
-                FlatStyle  = FlatStyle.Flat,
+                Text = "阅读器",
+                Location = new Point(635, y - 1),
+                Size = new Size(80, 26),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 }
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
@@ -217,14 +220,14 @@ namespace wxd.files.winforms
             // 打开大文件阅读器按钮
             var btnLargeFileViewer = new Button
             {
-                Text       = "大文件阅读",
-                Location   = new Point(720, y - 1),
-                Size       = new Size(80, 26),
-                Font       = new Font("Microsoft YaHei UI", 9f),
-                Cursor     = Cursors.Hand,
-                BackColor  = Color.FromArgb(156, 39, 176),
-                ForeColor  = Color.White,
-                FlatStyle  = FlatStyle.Flat,
+                Text = "大文件阅读",
+                Location = new Point(720, y - 1),
+                Size = new Size(80, 26),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(156, 39, 176),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 }
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
@@ -232,19 +235,37 @@ namespace wxd.files.winforms
             // 保存状态按钮
             var btnSaveState = new Button
             {
-                Text       = "保存状态",
-                Location   = new Point(805, y - 1),
-                Size       = new Size(70, 26),
-                Font       = new Font("Microsoft YaHei UI", 9f),
-                Cursor     = Cursors.Hand,
-                BackColor  = Color.FromArgb(0, 150, 80),
-                ForeColor  = Color.White,
-                FlatStyle  = FlatStyle.Flat,
+                Text = "保存状态",
+                Location = new Point(805, y - 1),
+                Size = new Size(70, 26),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 150, 80),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 }
             };
             btnSaveState.Click += (s, e) => SaveAllState();
 
-            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnLargeFileViewer, btnSaveState });
+            // --- 命令管理按钮 ---
+            _btnCmdManager = new Button
+            {
+                Text = "命令管理",
+                Location = new Point(880, y - 1),
+                Size = new Size(75, 26),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(0, 150, 136),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            _btnCmdManager.Click += OnCmdManagerClick;
+
+            _pnlTopBar.Controls.AddRange(new Control[] { lblTitle, _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme, _btnOpenCsvReader, btnLargeFileViewer, btnSaveState, _btnCmdManager });
+
+            // 重建动态命令按钮
+            RebuildCmdActionButtons();
         }
 
         // ==================== 打开CSV阅读器（先选目录） ====================
@@ -392,9 +413,9 @@ namespace wxd.files.winforms
 
         private LayoutMode GetCurrentLayout() => _cboLayout?.SelectedItem switch
         {
-            "纵向布局"           => LayoutMode.Vertical,
+            "纵向布局" => LayoutMode.Vertical,
             "纵横交错流式布局" => LayoutMode.Flow,
-            _                    => LayoutMode.Horizontal
+            _ => LayoutMode.Horizontal
         };
 
         // ==================== 创建/销毁窗格 ====================
@@ -408,9 +429,9 @@ namespace wxd.files.winforms
             {
                 _panels[i] = new FileBrowserPanel(i)
                 {
-                    Dock       = DockStyle.None,
+                    Dock = DockStyle.None,
                     BorderStyle = BorderStyle.FixedSingle,
-                    Padding     = new Padding(0)
+                    Padding = new Padding(0)
                 };
                 // 应用当前主题到新面板
                 _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
@@ -425,7 +446,7 @@ namespace wxd.files.winforms
             if (count == 0) return;
 
             // 容器可用区域（已减去 Padding/GAP）
-            int availW = _pnlContainer.ClientRectangle.Width  - _pnlContainer.Padding.Horizontal;
+            int availW = _pnlContainer.ClientRectangle.Width - _pnlContainer.Padding.Horizontal;
             int availH = _pnlContainer.ClientRectangle.Height - _pnlContainer.Padding.Top - _pnlContainer.Padding.Bottom;
 
             // 保护最小值，避免极端情况
@@ -435,8 +456,8 @@ namespace wxd.files.winforms
             switch (mode)
             {
                 case LayoutMode.Horizontal: DoHorizontal(count, availW, availH); break;
-                case LayoutMode.Vertical:   DoVertical(count, availW, availH); break;
-                case LayoutMode.Flow:       DoFlow(count, availW, availH); break;
+                case LayoutMode.Vertical: DoVertical(count, availW, availH); break;
+                case LayoutMode.Flow: DoFlow(count, availW, availH); break;
             }
         }
 
@@ -589,6 +610,117 @@ namespace wxd.files.winforms
             CsvSettings.LayoutIndex = _cboLayout?.SelectedIndex ?? 2;
             CsvSettings.ThemeMode = _cboTheme?.SelectedIndex ?? 1;
             base.OnFormClosing(e);
+        }
+
+        // ==================== 打开命令管理面板 ====================
+        private void OnCmdManagerClick(object? sender, EventArgs e)
+        {
+            using var form = new CustomCommandManagerForm();
+            form.ShowDialog(this);
+            // 关闭后刷新动态按钮
+            RebuildCmdActionButtons();
+        }
+
+        // ==================== 重建动态命令按钮 ====================
+        private void RebuildCmdActionButtons()
+        {
+            // 清除旧按钮
+            foreach (var btn in _cmdActionButtons)
+            {
+                _pnlTopBar.Controls.Remove(btn);
+                btn.Dispose();
+            }
+            _cmdActionButtons.Clear();
+
+            // 从配置读取命令列表
+            var commands = CsvSettings.GetCustomCommands();
+            if (commands.Count == 0) return;
+
+            // 计算起始位置：在命令管理按钮右侧
+            int startX = (_btnCmdManager?.Right ?? 880) + 8;
+            int btnY = _btnCmdManager?.Top ?? 12;
+
+            for (int i = 0; i < commands.Count; i++)
+            {
+                var cmd = commands[i];
+                Color btnColor;
+                try { btnColor = ColorTranslator.FromHtml(cmd.ButtonColor); }
+                catch { btnColor = Color.FromArgb(123, 31, 162); }
+
+                var btn = new Button
+                {
+                    Text = cmd.Name,
+                    Location = new Point(startX, btnY),
+                    Size = new Size(85, 26),
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    Cursor = Cursors.Hand,
+                    BackColor = btnColor,
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    FlatAppearance = { BorderSize = 0 },
+                    Tag = cmd
+                };
+
+                // Tooltip：显示执行的命令和工作目录
+                var tipParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(cmd.Command))
+                    tipParts.Add($"命令: {cmd.Command}");
+                if (!string.IsNullOrWhiteSpace(cmd.WorkDir))
+                    tipParts.Add($"目录: {cmd.WorkDir}");
+                if (tipParts.Count > 0)
+                {
+                    var tip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 300, ReshowDelay = 100 };
+                    tip.SetToolTip(btn, string.Join("\n", tipParts));
+                }
+
+                btn.Click += OnCmdActionButtonClick;
+
+                _cmdActionButtons.Add(btn);
+                _pnlTopBar.Controls.Add(btn);
+
+                // 下一个按钮的位置
+                startX += btn.Width + 6;
+            }
+        }
+
+        // ==================== 动态命令按钮点击 ====================
+        private void OnCmdActionButtonClick(object? sender, EventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not CustomCommandItem item)
+                return;
+
+            var cmd = item.Command;
+            if (string.IsNullOrWhiteSpace(cmd)) return;
+
+            // 将多行命令用 & 连接，实现逐条依次执行
+            var lines = cmd.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var fullCmd = string.Join(" & ", lines);
+
+            try
+            {
+                var showWindow = item.ShowWindow;
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/c " + fullCmd,
+                    UseShellExecute = false,
+                    CreateNoWindow = !showWindow
+                };
+
+                // 如果配置了工作目录且存在，则设置工作目录
+                var workDir = item.WorkDir;
+                if (!string.IsNullOrWhiteSpace(workDir) && System.IO.Directory.Exists(workDir))
+                {
+                    psi.WorkingDirectory = workDir;
+                }
+
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"执行命令 [{item.Name}] 失败：{ex.Message}", "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
     }
 }
