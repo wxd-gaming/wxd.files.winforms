@@ -17,6 +17,16 @@ namespace wxd.files.winforms
     /// <summary>单个窗格文件夹管理器控件</summary>
     public partial class FileBrowserPanel : UserControl
     {
+        // ==================== 视图模式枚举 ====================
+        public enum FileListViewMode
+        {
+            Details,    // 详细信息
+            List,       // 列表
+            SmallIcon,  // 小图标
+            LargeIcon,  // 大图标
+            Tile        // 平铺
+        }
+
         // ==================== 控件声明 ====================
         private ComboBox? _cboDrives;
         private Button?   _btnUp;
@@ -29,7 +39,7 @@ namespace wxd.files.winforms
         private Panel?    _pnlBottom;
         private Button?   _btnOpenExplorer;
         private Button?   _btnOpenCsvReader;
-        private Button?   _btnRefresh;
+        private ComboBox? _cboViewMode;
 
         // ==================== 状态字段 ====================
         private string          _currentDir     = "";
@@ -41,6 +51,8 @@ namespace wxd.files.winforms
         private bool            _isDark         = false;
         private Label?          _lblLoading;
         private Label?          _lblFileCount;
+        private FileListViewMode _viewMode = FileListViewMode.Details;
+        private ImageList       _imgListLarge = new();
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private System.Windows.Forms.Timer? _saveDebounceTimer;
         private bool            _hasUnsavedChanges = false;
@@ -150,6 +162,7 @@ namespace wxd.files.winforms
         private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
         private const uint SEE_MASK_INVOKEIDLIST   = 0xC;
         private const uint SEE_MASK_FLAG_NO_UI     = 0x400;
+        private const uint LVM_ARRANGE             = 0x1016;
 
         // 上下文菜单常量
         private const int GCS_VERBA = 0x0000;
@@ -280,28 +293,35 @@ namespace wxd.files.winforms
             InitImageList();
             CreateControls();
             LoadDrives();
-            // 恢复记忆的目录和过滤条件（使用ConfigurationManager）
-            var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+
+            // ==== 第一步：恢复视图模式 ====
+            var savedViewMode = CsvSettings.GetPaneViewMode(panelIndex);
+            _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedViewMode));
+            // 面板句柄创建后延迟恢复视图（确保子控件句柄也已就绪）
+            HandleCreated += (_, _) => BeginInvoke(PopulateListView);
+            _suppressEvents = true;
+            if (_cboViewMode != null)
+                _cboViewMode.SelectedIndex = (int)_viewMode;
+            _suppressEvents = false;
+
+            // ==== 第二步：恢复过滤关键词 ====
             var savedFilter = CsvSettings.GetPaneFilter(panelIndex);
-            if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
-                NavigateTo(startPath, restoreFilter: false, saveState: false);
-            else
-                NavigateTo(GetFirstDrive(), restoreFilter: false, saveState: false);
-            // 恢复过滤条件（使用 _suppressEvents 阻止防抖定时器干扰）
             if (!string.IsNullOrEmpty(savedFilter))
             {
-                _suppressEvents = true;
                 _filterText = savedFilter;
                 if (_txtFilter != null)
                 {
                     _txtFilter.Text = savedFilter;
                     _txtFilter.ForeColor = _colorTextPrimary;
                 }
-                _suppressEvents = false;
-                // 停止可能正在运行的防抖定时器，直接应用过滤
-                _filterDebounceTimer?.Stop();
-                ApplyFilter();
             }
+
+            // ==== 第三步：导航到上次目录（触发异步加载 → PopulateListView） ====
+            var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+            if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
+                NavigateTo(startPath, restoreFilter: false, saveState: false);
+            else
+                NavigateTo(GetFirstDrive(), restoreFilter: false, saveState: false);
         }
 
         /// <summary>设置主题颜色</summary>
@@ -410,10 +430,10 @@ namespace wxd.files.winforms
                 _btnOpenCsvReader.ForeColor = btnForeColor;
             }
 
-            if (_btnRefresh != null)
+            if (_cboViewMode != null)
             {
-                _btnRefresh.BackColor = btnBackColor;
-                _btnRefresh.ForeColor = btnForeColor;
+                _cboViewMode.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
+                _cboViewMode.ForeColor = _colorTextPrimary;
             }
 
             Invalidate();
@@ -492,37 +512,32 @@ namespace wxd.files.winforms
             };
             _btnUp.Click += (s, e) => GoUp();
 
-            // 刷新按钮
-            _btnRefresh = new Button
+            // 视图模式选择 ComboBox（替换刷新按钮位置）
+            _cboViewMode = new ComboBox
             {
-                Text     = "刷新",
-                Location = new Point(386, 5),
-                Size     = new Size(50, 24),
-                Font     = new Font("Microsoft YaHei UI", 9f),
-                Cursor   = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 122, 204),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
-                Anchor   = AnchorStyles.Top | AnchorStyles.Right
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location      = new Point(386, 5),
+                Size          = new Size(90, 24),
+                Font          = new Font("Microsoft YaHei UI", 9f),
+                Anchor        = AnchorStyles.Top | AnchorStyles.Right
             };
-            _btnRefresh.Click += (s, e) => RefreshCurrent();
+            _cboViewMode.Items.AddRange(new object[] { "详细信息", "列表", "小图标", "大图标", "平铺" });
+            _cboViewMode.SelectedIndex = (int)_viewMode;
+            _cboViewMode.SelectedIndexChanged += OnViewModeChanged;
 
-            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp, _btnRefresh });
+            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp, _cboViewMode });
             
-            // 工具栏大小改变时调整路径文本框宽度（为上级按钮和刷新按钮留出空间）
+            // 工具栏大小改变时调整路径文本框宽度
             _pnlToolbar.Resize += (s, e) =>
             {
-                if (_txtPath != null && _btnUp != null && _btnRefresh != null)
+                if (_txtPath != null && _btnUp != null && _cboViewMode != null)
                 {
-                    int buttonsWidth = _btnUp.Width + _btnRefresh.Width + 16; // 两个按钮 + 间距
+                    int buttonsWidth = _btnUp.Width + _cboViewMode.Width + 16;
                     int newWidth = _pnlToolbar.Width - _txtPath.Left - buttonsWidth;
                     if (newWidth > 100)
                         _txtPath.Width = newWidth;
-                    // 更新上级按钮位置
-                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _btnRefresh.Width - 12;
-                    // 更新刷新按钮位置
-                    _btnRefresh.Left = _pnlToolbar.Width - _btnRefresh.Width - 8;
+                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _cboViewMode.Width - 12;
+                    _cboViewMode.Left = _pnlToolbar.Width - _cboViewMode.Width - 8;
                 }
             };
 
@@ -535,6 +550,7 @@ namespace wxd.files.winforms
             _lstFiles.SmallImageList = _imgList;
             _lstFiles.Font           = new Font("Microsoft YaHei UI", 9.5f);
             _lstFiles.MultiSelect    = false;
+            _lstFiles.ShowItemToolTips = true;
 
             // 添加列：名称列自适应宽度，其他列固定宽度
             _lstFiles.Columns.Add("名称", 220, HorizontalAlignment.Left);
@@ -724,6 +740,20 @@ namespace wxd.files.winforms
             SHGetFileInfo(".txt", 0, out fileShfi, (uint)Marshal.SizeOf(fileShfi),
                           SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
             _imgList.Images.Add("file_default", Icon.FromHandle(fileShfi.hIcon));
+
+            // 大图标列表（48×48）
+            _imgListLarge.ImageSize = new Size(48, 48);
+            _imgListLarge.ColorDepth = ColorDepth.Depth32Bit;
+
+            var largeFolderShfi = default(SHFILEINFO);
+            SHGetFileInfo(@"C:\Windows", FILE_ATTRIBUTE_DIRECTORY, out largeFolderShfi, (uint)Marshal.SizeOf(largeFolderShfi),
+                          SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+            _imgListLarge.Images.Add("folder", Icon.FromHandle(largeFolderShfi.hIcon));
+
+            var largeFileShfi = default(SHFILEINFO);
+            SHGetFileInfo(".txt", 0, out largeFileShfi, (uint)Marshal.SizeOf(largeFileShfi),
+                          SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+            _imgListLarge.Images.Add("file_default", Icon.FromHandle(largeFileShfi.hIcon));
         }
 
         // ==================== 磁盘操作 ====================
@@ -924,8 +954,6 @@ namespace wxd.files.winforms
             _lblLoading.Size = _lstFiles.ClientSize;
             _lblLoading.Location = new Point(0, 0);
             _isLoading = true;
-            _lstFiles.BeginUpdate();
-            _lstFiles.Items.Clear();
         }
 
         /// <summary>隐藏加载提示</summary>
@@ -935,7 +963,6 @@ namespace wxd.files.winforms
             {
                 _lblLoading.Visible = false;
             }
-            _lstFiles.EndUpdate();
             _isLoading = false;
         }
 
@@ -993,36 +1020,90 @@ namespace wxd.files.winforms
             _filterDebounceTimer?.Start();
         }
 
-        private void ApplyFilter()
+        private void PopulateListView()
         {
             if (_lstFiles == null || _lstFiles.IsDisposed) return;
 
             _lstFiles.BeginUpdate();
-            _lstFiles.Items.Clear();
 
+            // ===== 先清空并重置到 Details，清除原生控件之前残留的间距/布局状态 =====
+            _lstFiles.Items.Clear();
+            _lstFiles.View = View.Details;
+            _lstFiles.SmallImageList = null;
+            _lstFiles.LargeImageList = null;
+            _lstFiles.HeaderStyle = ColumnHeaderStyle.Clickable;
+
+            // ===== 根据当前视图模式配置 ListView =====
+            switch (_viewMode)
+            {
+                case FileListViewMode.Details:
+                    _lstFiles.View = View.Details;
+                    _lstFiles.HeaderStyle = ColumnHeaderStyle.Clickable;
+                    _lstFiles.SmallImageList = _imgList;
+                    break;
+                case FileListViewMode.List:
+                    _lstFiles.View = View.List;
+                    _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
+                    _lstFiles.SmallImageList = _imgList;
+                    break;
+                case FileListViewMode.LargeIcon:
+                    _lstFiles.View = View.LargeIcon;
+                    _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
+                    _lstFiles.LargeImageList = _imgListLarge;
+                    break;
+                case FileListViewMode.Tile:
+                    _lstFiles.View = View.Tile;
+                    _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
+                    _lstFiles.LargeImageList = _imgListLarge;
+                    _lstFiles.TileSize = new Size(180, 56);
+                    break;
+                default: // SmallIcon — 先用 List 绕过布局 bug，填充完再切
+                    _lstFiles.View = View.List;
+                    _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
+                    _lstFiles.SmallImageList = _imgList;
+                    break;
+            }
+
+            // ===== 填充数据 =====
             int dirCount = 0;
             int fileCount = 0;
 
             foreach (var dir in FilterItems(_allDirs.Select(d => d.Name)))
             {
                 var info = _allDirs.First(d => d.Name.Equals(dir, StringComparison.OrdinalIgnoreCase));
-                AddListItem(info.Name, info.FullName, isDir: true);
+                AddListViewItem(info.Name, info.FullName, isDir: true);
                 dirCount++;
             }
 
             foreach (var fn in FilterItems(_allFiles.Select(f => f.Name)))
             {
                 var fi = _allFiles.First(f => f.Name.Equals(fn, StringComparison.OrdinalIgnoreCase));
-                AddListItem(fi.Name, fi.FullName, isDir: false, fi.LastWriteTime, fi.Length);
+                AddListViewItem(fi.Name, fi.FullName, isDir: false, fi.LastWriteTime, fi.Length);
                 fileCount++;
             }
 
-            // 更新文件/文件夹数量标签
+            // ===== 更新统计 =====
             if (_lblFileCount != null)
                 _lblFileCount.Text = $"文件夹: {dirCount}  文件: {fileCount}";
 
-            AutoResizeColumns();
+            // ===== 列宽调整（仅 Details 模式）=====
+            if (_viewMode == FileListViewMode.Details)
+                AutoResizeColumns();
+
             _lstFiles.EndUpdate();
+
+            // ===== SmallIcon：填充完后切回 SmallIcon，触发原生控件正确布局（用 BeginUpdate 避免闪烁）=====
+            if (_viewMode == FileListViewMode.SmallIcon)
+            {
+                _lstFiles.BeginUpdate();
+                _lstFiles.View = View.SmallIcon;
+                _lstFiles.EndUpdate();
+            }
+        }
+
+        private void ApplyFilter()
+        {
+            PopulateListView();
         }
 
         private IEnumerable<string> FilterItems(IEnumerable<string> names)
@@ -1049,22 +1130,46 @@ namespace wxd.files.winforms
         }
 
         // ==================== 列表项操作 ====================
-        private void AddListItem(string name, string fullName, bool isDir,
+        private void AddListViewItem(string name, string fullName, bool isDir,
                                 DateTime lastWrite = default, long size = 0)
         {
             var item = new ListViewItem(name);
             item.Tag = new FileItemTag { FullName = fullName, IsDir = isDir };
+            item.ToolTipText = fullName;
 
             if (isDir)
             {
                 item.ImageKey = "folder";
+                // 确保大图标列表也有 folder
+                if (!_imgListLarge.Images.ContainsKey("folder"))
+                {
+                    var shfi = default(SHFILEINFO);
+                    SHGetFileInfo(@"C:\Windows", FILE_ATTRIBUTE_DIRECTORY, out shfi, (uint)Marshal.SizeOf(shfi),
+                                  SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+                    if (shfi.hIcon != IntPtr.Zero)
+                        _imgListLarge.Images.Add("folder", Icon.FromHandle(shfi.hIcon));
+                }
                 item.SubItems.Add("");
                 item.SubItems.Add("文件夹");
                 item.SubItems.Add("");
             }
             else
             {
-                item.ImageKey = GetFileIconKey(fullName);
+                var iconKey = GetFileIconKey(fullName);
+                item.ImageKey = iconKey;
+                // 同步加载大图标
+                if (!_imgListLarge.Images.ContainsKey(iconKey))
+                {
+                    var largeKey = Path.GetExtension(fullName).ToLowerInvariant();
+                    if (largeKey != iconKey) largeKey = iconKey;
+                    if (!_imgListLarge.Images.ContainsKey(largeKey))
+                    {
+                        var shfi = default(SHFILEINFO);
+                        SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
+                        if (shfi.hIcon != IntPtr.Zero)
+                            _imgListLarge.Images.Add(largeKey, Icon.FromHandle(shfi.hIcon));
+                    }
+                }
                 item.SubItems.Add(lastWrite == default ? "" : lastWrite.ToString("yyyy-MM-dd HH:mm"));
                 item.SubItems.Add(GetFileType(fullName));
                 item.SubItems.Add(size > 0 ? FormatFileSize(size) : "");
@@ -1075,16 +1180,24 @@ namespace wxd.files.winforms
 
         private string GetFileIconKey(string filePath)
         {
+            return GetFileIconKeyInternal(filePath, small: true);
+        }
+
+        private string GetFileIconKeyInternal(string filePath, bool small)
+        {
             try
             {
                 var key = Path.GetExtension(filePath).ToLowerInvariant();
-                if (!_imgList.Images.ContainsKey(key))
+                var list = small ? _imgList : _imgListLarge;
+                if (!list.Images.ContainsKey(key))
                 {
+                    uint flags = SHGFI_ICON;
+                    if (small) flags |= SHGFI_SMALLICON;
                     var shfi = default(SHFILEINFO);
-                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON);
+                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags);
                     if (shfi.hIcon != IntPtr.Zero)
                     {
-                        _imgList.Images.Add(key, Icon.FromHandle(shfi.hIcon));
+                        list.Images.Add(key, Icon.FromHandle(shfi.hIcon));
                         return key;
                     }
                 }
@@ -1119,6 +1232,19 @@ namespace wxd.files.winforms
         {
             // 名称列铺满剩余宽度，其他列保持固定宽度
             OnListViewResize(null, EventArgs.Empty);
+        }
+
+        // ==================== 视图模式切换 ====================
+        private void OnViewModeChanged(object? sender, EventArgs e)
+        {
+            if (_suppressEvents || _cboViewMode == null) return;
+            _viewMode = (FileListViewMode)_cboViewMode.SelectedIndex;
+            // 用 PopulateListView 重新渲染列表（switch 内部根据 _viewMode 切换布局）
+            PopulateListView();
+
+            // 立即持久化视图模式
+            try { CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode); }
+            catch { }
         }
 
         // ==================== 双击 & 右键菜单 ====================
@@ -1492,6 +1618,7 @@ namespace wxd.files.winforms
                 System.Diagnostics.Debug.WriteLine($"SavePanelState: PanelIndex={PanelIndex}, Filter={filter}, _filterText={_filterText}");
                 CsvSettings.SetPaneDirectory(PanelIndex, _currentDir);
                 CsvSettings.SetPaneFilter(PanelIndex, filter);
+                CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode);
             }
             catch (Exception ex)
             {
@@ -1524,6 +1651,7 @@ namespace wxd.files.winforms
                 _filterDebounceTimer?.Dispose();
                 _saveDebounceTimer?.Dispose();
                 _imgList?.Dispose(); 
+                _imgListLarge?.Dispose();
                 _lstFiles?.Dispose(); 
             }
             base.Dispose(disposing);

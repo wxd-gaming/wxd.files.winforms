@@ -665,12 +665,13 @@ namespace wxd.files.winforms
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             System.Diagnostics.Debug.WriteLine("OnFormClosing called");
-            // 保存每个面板的过滤文本
+            // 强制保存每个面板的全部状态（含目录、过滤条件、视图模式）
             for (int i = 0; i < _panels.Length; i++)
             {
                 var filter = _panels[i].FilterText;
                 System.Diagnostics.Debug.WriteLine($"OnFormClosing: Panel {i} Filter={filter}");
                 CsvSettings.SetPaneFilter(i, filter);
+                _panels[i].ForceSaveState();
             }
 
             CsvSettings.PaneCount = _panels.Length;

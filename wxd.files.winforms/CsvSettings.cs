@@ -132,6 +132,20 @@ namespace wxd.files.winforms
             SetStringValue(key, filter);
         }
 
+        /// <summary>获取窗格视图模式</summary>
+        public static int GetPaneViewMode(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}ViewMode";
+            return GetIntValue(key, 0, 0, 4);
+        }
+
+        /// <summary>设置窗格视图模式</summary>
+        public static void SetPaneViewMode(int paneIndex, int mode)
+        {
+            var key = $"Pane{paneIndex}ViewMode";
+            SetIntValue(key, Math.Max(0, Math.Min(4, mode)));
+        }
+
         #endregion
 
         #region 基础配置方法
