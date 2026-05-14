@@ -71,14 +71,14 @@ namespace wxd.files.winforms
         private struct SHFILEINFO
         {
             public IntPtr hIcon;
-            public int    iIcon;
-            public uint   dwAttributes;
+            public int iIcon;
+            public uint dwAttributes;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szDisplayName;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string szTypeName;
         }
 
-        private const uint SHGFI_ICON              = 0x100;
-        private const uint SHGFI_SMALLICON         = 0x000000001;
+        private const uint SHGFI_ICON = 0x100;
+        private const uint SHGFI_SMALLICON = 0x000000001;
         private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
 
         public CsvReaderForm(string? initialDir = null)
@@ -118,6 +118,8 @@ namespace wxd.files.winforms
             {
                 LoadFilesAsync();
             }
+
+            UpdateTitle();
         }
 
         private void InitializeComponent()
@@ -393,8 +395,17 @@ namespace wxd.files.winforms
             if (dialog.ShowDialog() == DialogResult.OK)
             {
                 _currentDir = dialog.SelectedPath;
+                UpdateTitle();
                 LoadFilesAsync();
             }
+        }
+
+        private void UpdateTitle()
+        {
+            if (!string.IsNullOrEmpty(_currentDir))
+                Text = $"CSV/Excel阅读器 - {_currentDir}";
+            else
+                Text = "CSV/Excel阅读器";
         }
 
         private void OnRefreshClick(object? sender, EventArgs e)
@@ -1483,8 +1494,8 @@ namespace wxd.files.winforms
             _delimiter = DetectDelimiter(content);
 
             // 解析CSV
-            var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length == 0)
+            var lines = SplitCsvLines(content);
+            if (lines.Count == 0)
             {
                 if (this.IsHandleCreated)
                     this.Invoke(() => MessageBox.Show(this, "CSV文件为空", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning));
@@ -1515,7 +1526,7 @@ namespace wxd.files.winforms
             }
 
             // 解析数据行（包括第一行，因为第一行可能是数据而非表头）
-            for (int i = 0; i < lines.Length; i++)
+            for (int i = 0; i < lines.Count; i++)
             {
                 var values = ParseCsvLine(lines[i]);
                 var row = dataTable.NewRow();
@@ -1561,8 +1572,8 @@ namespace wxd.files.winforms
 
         private char DetectDelimiter(string content)
         {
-            var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length == 0) return ',';
+            var lines = SplitCsvLines(content);
+            if (lines.Count == 0) return ',';
 
             var firstLine = lines[0];
 
@@ -1577,6 +1588,59 @@ namespace wxd.files.winforms
 
             // 选择出现次数最多的分隔符
             return counts.OrderByDescending(kv => kv.Value).First().Key;
+        }
+
+        /// <summary>
+        /// 逐行解析CSV内容，兼容单元格内引号包裹的换行
+        /// </summary>
+        private List<string> SplitCsvLines(string content)
+        {
+            var lines = new List<string>();
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+
+            for (int i = 0; i < content.Length; i++)
+            {
+                char c = content[i];
+
+                if (c == '"')
+                {
+                    // 引号转义
+                    if (i + 1 < content.Length && content[i + 1] == '"')
+                    {
+                        sb.Append('"');
+                        sb.Append('"');
+                        i++;
+                        continue;
+                    }
+                    inQuotes = !inQuotes;
+                    sb.Append(c);
+                }
+                else if (!inQuotes && (c == '\n' || c == '\r'))
+                {
+                    // 在引号外的换行符才是真正的行结束符
+                    // 跳过 \r\n 中的 
+                    if (c == '\r' && i + 1 < content.Length && content[i + 1] == '\n')
+                    {
+                        i++; // 跳过 
+
+                    }
+                    lines.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+
+            // 最后一段
+            if (sb.Length > 0)
+            {
+                lines.Add(sb.ToString());
+            }
+
+            return lines;
         }
 
         private string[] ParseCsvLine(string line)
@@ -1885,9 +1949,9 @@ namespace wxd.files.winforms
                     // 匹配 or（不区分大小写，注意单词边界）
                     if (i + 2 < expr.Length &&
                         (expr[i] == 'o' || expr[i] == 'O') &&
-                        (expr[i+1] == 'r' || expr[i+1] == 'R') &&
-                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i+2])) &&
-                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                        (expr[i + 1] == 'r' || expr[i + 1] == 'R') &&
+                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i + 2])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
                     {
                         orPos = i;
                         break; // or 优先级低于 and，优先分割
@@ -1896,10 +1960,10 @@ namespace wxd.files.winforms
                     // 匹配 and
                     if (i + 3 < expr.Length &&
                         (expr[i] == 'a' || expr[i] == 'A') &&
-                        (expr[i+1] == 'n' || expr[i+1] == 'N') &&
-                        (expr[i+2] == 'd' || expr[i+2] == 'D') &&
-                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i+3])) &&
-                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                        (expr[i + 1] == 'n' || expr[i + 1] == 'N') &&
+                        (expr[i + 2] == 'd' || expr[i + 2] == 'D') &&
+                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i + 3])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
                     {
                         // 先记录 and，但继续搜索。如果找到 or，优先用 or 分割
                         if (andPos < 0)
@@ -2279,15 +2343,18 @@ namespace wxd.files.winforms
     /// <summary>单元格编辑对话框</summary>
     public class CellEditDialog : Form
     {
-        private TextBox _txtValue = new();
+        private RichTextBox _txtValue = new();
         private Button _btnSave = new();
         private Button _btnCancel = new();
+        private Button _btnDefault = new();
+        private Button _btnRaw = new();
         private Panel _pnlBottom = new();
+        private Panel _pnlTop = new();
 
         public string CellValue => _txtValue.Text.Replace("\r\n", "\n");
 
         /// <summary>
-        /// 将各种换行符转换为 Windows 格式 (\r\n)，供 TextBox 多行模式正确显示
+        /// 将各种换行符转换为 Windows 格式 (\r\n)，供 RichTextBox 多行模式正确显示
         /// </summary>
         private static string NormalizeLineBreaksForDisplay(string text)
         {
@@ -2301,7 +2368,14 @@ namespace wxd.files.winforms
         {
             InitializeComponent();
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
-            _txtValue.SelectAll();
+        }
+
+        private void SetActiveButton(Button active, Button inactive)
+        {
+            active.BackColor = Color.FromArgb(0, 122, 204);
+            active.ForeColor = Color.White;
+            inactive.BackColor = Color.FromArgb(220, 220, 220);
+            inactive.ForeColor = Color.FromArgb(32, 33, 36);
         }
 
         private void InitializeComponent()
@@ -2311,13 +2385,61 @@ namespace wxd.files.winforms
             Text = "编辑单元格";
             ClientSize = new Size(800, 600);
             StartPosition = FormStartPosition.CenterParent;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
+            MinimizeBox = true;
+            MaximizeBox = true;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.White;
 
-            // 底部按钮面板
+            // ==================== 顶部格式切换面板 ====================
+            _pnlTop = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                BackColor = Color.FromArgb(245, 246, 247),
+                Padding = new Padding(6, 6, 6, 6)
+            };
+
+            _btnDefault = new Button
+            {
+                Text = "默认格式",
+                Location = new Point(6, 6),
+                Size = new Size(90, 30),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnDefault.FlatAppearance.BorderSize = 0;
+            _btnDefault.Click += (s, e) =>
+            {
+                SetActiveButton(_btnDefault, _btnRaw);
+                _txtValue.WordWrap = false;
+                _txtValue.ScrollBars = RichTextBoxScrollBars.Both;
+            };
+
+            _btnRaw = new Button
+            {
+                Text = "自动换行",
+                Location = new Point(104, 6),
+                Size = new Size(90, 30),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnRaw.FlatAppearance.BorderSize = 0;
+            _btnRaw.Click += (s, e) =>
+            {
+                SetActiveButton(_btnRaw, _btnDefault);
+                _txtValue.WordWrap = true;
+                _txtValue.ScrollBars = RichTextBoxScrollBars.Both;
+            };
+
+            // 默认选中"默认格式"
+            SetActiveButton(_btnDefault, _btnRaw);
+
+            _pnlTop.Controls.Add(_btnDefault);
+            _pnlTop.Controls.Add(_btnRaw);
+
+            // ==================== 底部按钮面板 ====================
             _pnlBottom = new Panel
             {
                 Dock = DockStyle.Bottom,
@@ -2329,7 +2451,6 @@ namespace wxd.files.winforms
             _btnSave = new Button
             {
                 Text = "保存",
-                Location = new Point(640, 10),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(0, 122, 204),
@@ -2343,7 +2464,6 @@ namespace wxd.files.winforms
             _btnCancel = new Button
             {
                 Text = "取消",
-                Location = new Point(720, 10),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(240, 240, 240),
@@ -2356,21 +2476,32 @@ namespace wxd.files.winforms
             _pnlBottom.Controls.Add(_btnSave);
             _pnlBottom.Controls.Add(_btnCancel);
 
-            // 多行文本框
-            _txtValue = new TextBox
+            // 窗口调整大小时重新定位按钮（保持在右下角）
+            void LayoutButtons()
+            {
+                _btnCancel.Left = _pnlBottom.Width - _btnCancel.Width - 10;
+                _btnSave.Left = _btnCancel.Left - _btnSave.Width - 10;
+                _btnSave.Top = 10;
+                _btnCancel.Top = 10;
+            }
+            LayoutButtons();
+            _pnlBottom.Resize += (s, e) => LayoutButtons();
+
+            // ==================== 编辑区（RichTextBox）====================
+            _txtValue = new RichTextBox
             {
                 Dock = DockStyle.Fill,
-                Font = new Font("Microsoft YaHei UI", 10f),
+                Font = new Font("Consolas", 10f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Multiline = true,
-                ScrollBars = ScrollBars.Both,
-                WordWrap = true,
-                AcceptsReturn = true,
-                AcceptsTab = true
+                WordWrap = false,
+                ScrollBars = RichTextBoxScrollBars.Both,
+                AcceptsTab = true,
+                BackColor = Color.White
             };
 
             Controls.Add(_txtValue);
             Controls.Add(_pnlBottom);
+            Controls.Add(_pnlTop);
 
             AcceptButton = _btnSave;
             CancelButton = _btnCancel;
@@ -3203,9 +3334,9 @@ namespace wxd.files.winforms
                 {
                     if (i + 2 < expr.Length &&
                         (expr[i] == 'o' || expr[i] == 'O') &&
-                        (expr[i+1] == 'r' || expr[i+1] == 'R') &&
-                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i+2])) &&
-                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                        (expr[i + 1] == 'r' || expr[i + 1] == 'R') &&
+                        (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i + 2])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
                     {
                         orPos = i;
                         break;
@@ -3213,10 +3344,10 @@ namespace wxd.files.winforms
 
                     if (i + 3 < expr.Length &&
                         (expr[i] == 'a' || expr[i] == 'A') &&
-                        (expr[i+1] == 'n' || expr[i+1] == 'N') &&
-                        (expr[i+2] == 'd' || expr[i+2] == 'D') &&
-                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i+3])) &&
-                        (i == 0 || !char.IsLetterOrDigit(expr[i-1])))
+                        (expr[i + 1] == 'n' || expr[i + 1] == 'N') &&
+                        (expr[i + 2] == 'd' || expr[i + 2] == 'D') &&
+                        (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i + 3])) &&
+                        (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
                     {
                         if (andPos < 0)
                             andPos = i;

@@ -89,6 +89,8 @@ namespace wxd.files.winforms
             {
                 LoadFilesAsync();
             }
+
+            UpdateTitle();
         }
 
         private void InitializeComponent()
@@ -311,7 +313,16 @@ namespace wxd.files.winforms
             {
                 _currentDir = dialog.SelectedPath;
                 LoadFilesAsync();
+                UpdateTitle();
             }
+        }
+
+        private void UpdateTitle()
+        {
+            if (!string.IsNullOrEmpty(_currentDir))
+                Text = $"大文件阅读器 - {_currentDir}";
+            else
+                Text = "大文件阅读器";
         }
 
         private void OnRefreshClick(object? sender, EventArgs e)
@@ -702,13 +713,14 @@ namespace wxd.files.winforms
 
         private void OnTabSelectedChanged(object? sender, EventArgs e)
         {
+            var dirText = !string.IsNullOrEmpty(_currentDir) ? $" - {_currentDir}" : "";
             if (_tabContent.SelectedTab?.Tag is string path)
             {
-                Text = $"大文件阅读器 - {Path.GetFileName(path)}";
+                Text = $"大文件阅读器{dirText} - {Path.GetFileName(path)}";
             }
             else
             {
-                Text = "大文件阅读器";
+                Text = $"大文件阅读器{dirText}";
             }
         }
 
