@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
@@ -28,12 +29,10 @@ namespace wxd.files.winforms
         }
 
         // ==================== 控件声明 ====================
-        private ComboBox? _cboDrives;
+        private ComboBox?  _cboPath;      // 路径选择下拉框（替代原先的 TextBox 路径 + 磁盘下拉框）
         private Button?   _btnUp;
-        private TextBox?  _txtPath;
         private ListView  _lstFiles = new();
         private TextBox?  _txtFilter;
-        private Label?    _lblDrives;
         private ImageList _imgList = new();
         private Panel?    _pnlToolbar;
         private Panel?    _pnlBottom;
@@ -53,6 +52,7 @@ namespace wxd.files.winforms
         private Label?          _lblFileCount;
         private FileListViewMode _viewMode = FileListViewMode.Details;
         private ImageList       _imgListLarge = new();
+        private ToolTip         _pathToolTip  = new();
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private System.Windows.Forms.Timer? _saveDebounceTimer;
         private bool            _hasUnsavedChanges = false;
@@ -153,6 +153,22 @@ namespace wxd.files.winforms
             public IntPtr hIcon;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct SHFILEOPSTRUCT
+        {
+            public IntPtr hwnd;
+            public uint wFunc;
+            [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+            [MarshalAs(UnmanagedType.LPWStr)] public string pTo;
+            public uint fFlags;
+            public int fAnyOperationsAborted;
+            public IntPtr hNameMappings;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpszProgressTitle;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern int SHFileOperation(ref SHFILEOPSTRUCT lpFileOp);
+
 
 
         // ==================== 常量 ====================
@@ -163,6 +179,13 @@ namespace wxd.files.winforms
         private const uint SEE_MASK_INVOKEIDLIST   = 0xC;
         private const uint SEE_MASK_FLAG_NO_UI     = 0x400;
         private const uint LVM_ARRANGE             = 0x1016;
+
+        // 文件操作常量
+        private const uint FO_DELETE        = 3;
+        private const uint FOF_ALLOWUNDO    = 0x40;
+        private const uint FOF_NOCONFIRMATION = 0x10;
+        private const uint FOF_SIMPLEPROGRESS = 0x100;   // 显示进度对话框
+        private const uint FOF_WANTNUKEWARNING = 0x4000; // 删除大文件时显示警告
 
         // 上下文菜单常量
         private const int GCS_VERBA = 0x0000;
@@ -223,6 +246,11 @@ namespace wxd.files.winforms
         // ==================== 数据类 ====================
         private class DirInfo { public string Name = ""; public string FullName = ""; }
         private class FileItemTag { public string FullName = ""; public bool IsDir; }
+        /// <summary>下拉选项中的分隔线占位</summary>
+        private class SeparatorItem
+        {
+            public override string ToString() => "──────────";
+        }
 
         // ==================== 自然排序比较器 ====================
         /// <summary>按字符逐个比较，数字部分按数值比较</summary>
@@ -292,7 +320,7 @@ namespace wxd.files.winforms
             InitializeComponent();
             InitImageList();
             CreateControls();
-            LoadDrives();
+            RebuildPathComboItems();
 
             // ==== 第一步：恢复视图模式 ====
             var savedViewMode = CsvSettings.GetPaneViewMode(panelIndex);
@@ -360,16 +388,11 @@ namespace wxd.files.winforms
             if (_pnlBottom != null)
                 _pnlBottom.BackColor = _colorToolbarBg;
 
-            // 更新标签
-            if (_lblDrives != null)
-                _lblDrives.ForeColor = _colorTextSecondary;
-
-            // 更新路径文本框
-            if (_txtPath != null)
+            // 更新路径下拉框
+            if (_cboPath != null)
             {
-                _txtPath.BackColor = isDark ? _colorDarkBackColor : Color.White;
-                _txtPath.ForeColor = _colorTextPrimary;
-                _txtPath.BorderStyle = BorderStyle.FixedSingle;
+                _cboPath.BackColor = isDark ? _colorDarkBackColor : Color.White;
+                _cboPath.ForeColor = _colorTextPrimary;
             }
 
             // 更新过滤文本框
@@ -380,11 +403,11 @@ namespace wxd.files.winforms
                 _txtFilter.BorderStyle = BorderStyle.FixedSingle;
             }
 
-            // 更新下拉框
-            if (_cboDrives != null)
+            // 更新下拉框（视图模式）
+            if (_cboViewMode != null)
             {
-                _cboDrives.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
-                _cboDrives.ForeColor = _colorTextPrimary;
+                _cboViewMode.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
+                _cboViewMode.ForeColor = _colorTextPrimary;
             }
 
             // 更新数量标签
@@ -468,34 +491,19 @@ namespace wxd.files.winforms
                 Padding  = new Padding(6, 4, 6, 4)
             };
 
-            _lblDrives = new Label
+            _cboPath = new ComboBox
             {
-                Text      = "磁盘:",
-                Location  = new Point(8, 8),
-                AutoSize  = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Font      = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorTextSecondary
-            };
-
-            _cboDrives = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(45, 5),
-                Size          = new Size(75, 24),
-                Font          = new Font("Microsoft YaHei UI", 9f)
-            };
-            _cboDrives.SelectedIndexChanged += OnDriveChanged;
-
-            _txtPath = new TextBox
-            {
-                Location    = new Point(126, 6),
+                Location    = new Point(6, 6),
                 Width       = 200,
                 Height      = 23,
                 Font        = new Font("Microsoft YaHei UI", 9f),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.FileSystem
             };
-            _txtPath.KeyDown += OnPathKeyDown;
+            _cboPath.KeyDown += OnPathKeyDown;
+            _cboPath.SelectedIndexChanged += OnPathComboSelectedIndexChanged;
 
             _btnUp = new Button
             {
@@ -525,19 +533,19 @@ namespace wxd.files.winforms
             _cboViewMode.SelectedIndex = (int)_viewMode;
             _cboViewMode.SelectedIndexChanged += OnViewModeChanged;
 
-            _pnlToolbar.Controls.AddRange(new Control[] { _lblDrives, _cboDrives, _txtPath, _btnUp, _cboViewMode });
+            _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnUp, _cboViewMode });
             
-            // 工具栏大小改变时调整路径文本框宽度
+            // 工具栏大小改变时调整路径下拉框宽度
             _pnlToolbar.Resize += (s, e) =>
             {
-                if (_txtPath != null && _btnUp != null && _cboViewMode != null)
+                if (_cboPath != null && _btnUp != null && _cboViewMode != null)
                 {
-                    int buttonsWidth = _btnUp.Width + _cboViewMode.Width + 16;
-                    int newWidth = _pnlToolbar.Width - _txtPath.Left - buttonsWidth;
+                    int buttonsWidth = _btnUp.Width + _cboViewMode.Width + 12;
+                    int newWidth = _pnlToolbar.Width - _cboPath.Left - buttonsWidth;
                     if (newWidth > 100)
-                        _txtPath.Width = newWidth;
-                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _cboViewMode.Width - 12;
-                    _cboViewMode.Left = _pnlToolbar.Width - _cboViewMode.Width - 8;
+                        _cboPath.Width = newWidth;
+                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _cboViewMode.Width - 10;
+                    _cboViewMode.Left = _pnlToolbar.Width - _cboViewMode.Width - 6;
                 }
             };
 
@@ -549,7 +557,7 @@ namespace wxd.files.winforms
             _lstFiles.HeaderStyle    = ColumnHeaderStyle.Clickable;
             _lstFiles.SmallImageList = _imgList;
             _lstFiles.Font           = new Font("Microsoft YaHei UI", 9.5f);
-            _lstFiles.MultiSelect    = false;
+            _lstFiles.MultiSelect    = true;
             _lstFiles.ShowItemToolTips = true;
 
             // 添加列：名称列自适应宽度，其他列固定宽度
@@ -756,24 +764,57 @@ namespace wxd.files.winforms
             _imgListLarge.Images.Add("file_default", Icon.FromHandle(largeFileShfi.hIcon));
         }
 
-        // ==================== 磁盘操作 ====================
-        private void LoadDrives()
+        // ==================== 路径下拉框 ====================
+        /// <summary>重建路径下拉框选项：磁盘盘符 + 最近访问路径</summary>
+        private void RebuildPathComboItems()
         {
+            if (_cboPath == null) return;
             _suppressEvents = true;
-            _cboDrives!.Items.Clear();
+            _cboPath.Items.Clear();
+
+            // 添加磁盘盘符
             foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
-                _cboDrives.Items.Add(drive.RootDirectory.FullName);  // 保留 "C:\", "D:\"
+                _cboPath.Items.Add(drive.RootDirectory.FullName);
+
+            // 添加分隔线
+            _cboPath.Items.Add(new SeparatorItem());
+
+            // 添加最近访问路径
+            var recents = CsvSettings.GetRecentPaths();
+            foreach (var p in recents)
+            {
+                if (Directory.Exists(p) && !_cboPath.Items.Contains(p))
+                    _cboPath.Items.Add(p);
+            }
+
             _suppressEvents = false;
         }
 
-        private string GetFirstDrive() => _cboDrives!.Items.Count > 0 ? _cboDrives.Items[0].ToString()! : "C:\\";
-
-        private void OnDriveChanged(object? sender, EventArgs e)
+        private string GetFirstDrive()
         {
-            if (_suppressEvents || _cboDrives?.SelectedItem == null) return;
-            var drivePath = _cboDrives.SelectedItem.ToString()!;
-            if (Directory.Exists(drivePath))
-                NavigateTo(drivePath);
+            // 从路径下拉框中找第一个有效的盘符选项
+            if (_cboPath != null)
+            {
+                foreach (var item in _cboPath.Items)
+                {
+                    if (item is string s && Directory.Exists(s) && s.Length >= 2 && s[1] == ':')
+                        return s;
+                }
+            }
+            return "C:\\";
+        }
+
+        /// <summary>下拉框选中项变化——当用户从下拉列表中选择时触发</summary>
+        private void OnPathComboSelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_suppressEvents || _cboPath?.SelectedItem == null) return;
+
+            // 忽略分隔线选中
+            if (_cboPath.SelectedItem is SeparatorItem) return;
+
+            var selected = _cboPath.SelectedItem.ToString();
+            if (!string.IsNullOrEmpty(selected) && Directory.Exists(selected))
+                NavigateTo(selected);
         }
 
         // ==================== 导航操作 ====================
@@ -790,6 +831,10 @@ namespace wxd.files.winforms
                     _currentDir = trimmed + Path.DirectorySeparatorChar;
                 else
                     _currentDir = trimmed;
+                // 记录到最近访问历史
+                CsvSettings.AddRecentPath(_currentDir);
+                // 重建下拉框选项（刷新驱动器和最近路径）
+                RebuildPathComboItems();
                 RefreshUI();
                 if (saveState)
                 {
@@ -822,7 +867,8 @@ namespace wxd.files.winforms
             if (e.KeyCode == Keys.Enter)
             {
                 e.SuppressKeyPress = true;
-                var input = _txtPath?.Text.Trim() ?? "";
+                if (_cboPath == null) return;
+                var input = _cboPath.Text.Trim();
                 if (!string.IsNullOrEmpty(input))
                 {
                     if (!Path.IsPathRooted(input) && !string.IsNullOrEmpty(_currentDir))
@@ -837,23 +883,29 @@ namespace wxd.files.winforms
         {
             _suppressEvents = true;
 
-            if (_txtPath != null)
-                _txtPath.Text = _currentDir;
-
-            // 同步磁盘选择
-            int targetIdx = -1;
-            for (int i = 0; i < _cboDrives!.Items.Count; i++)
+            if (_cboPath != null)
             {
-                var d = _cboDrives.Items[i].ToString()!;
-                if (_currentDir.Equals(d, StringComparison.OrdinalIgnoreCase) ||
-                    (_currentDir.StartsWith(d, StringComparison.OrdinalIgnoreCase) && _currentDir.Length > d.Length))
-                {
-                    targetIdx = i;
-                    break;
-                }
+                _cboPath.Text = _currentDir;
+                _pathToolTip.SetToolTip(_cboPath, _currentDir);
             }
-            if (targetIdx >= 0 && _cboDrives.SelectedIndex != targetIdx)
-                _cboDrives.SelectedIndex = targetIdx;
+
+            // 同步选中项：尝试在下拉框中找到匹配项
+            if (_cboPath != null)
+            {
+                int targetIdx = -1;
+                for (int i = 0; i < _cboPath.Items.Count; i++)
+                {
+                    if (_cboPath.Items[i] is SeparatorItem) continue;
+                    var itemText = _cboPath.Items[i].ToString() ?? "";
+                    if (_currentDir.Equals(itemText, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetIdx = i;
+                        break;
+                    }
+                }
+                if (targetIdx >= 0 && _cboPath.SelectedIndex != targetIdx)
+                    _cboPath.SelectedIndex = targetIdx;
+            }
 
             _suppressEvents = false;
         }
@@ -1303,7 +1355,7 @@ namespace wxd.files.winforms
             if (IsPointOnColumnHeader(e.Location))
             {
                 Debug.WriteLine("MouseUp: 点击列头区域");
-                ShowSystemContextMenu(_currentDir);
+                ShowSystemContextMenuForPaths(new[] { _currentDir });
                 return;
             }
             
@@ -1312,28 +1364,60 @@ namespace wxd.files.winforms
             {
                 int columnIndex = 0;
                 if (hit.SubItem != null)
-                {
                     columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
-                }
                 
-                if (columnIndex == 0)
+                // 如果点击的项未选中，则只选中它（取消其他选择）
+                if (!hit.Item.Selected)
                 {
+                    _lstFiles.SelectedItems.Clear();
                     hit.Item.Selected = true;
-                    ShowSystemContextMenu(hit.Item.Tag is FileItemTag t ? t.FullName : _currentDir);
                 }
-                else
-                {
-                    ShowSystemContextMenu(_currentDir);
-                }
+                // 如果点击的项已选中，则保持当前多选状态不变
+                
+                ShowContextMenuForSelectedItems();
             }
             else
             {
-                // 点击空白区域
+                // 点击空白区域：取消所有选择，显示目录背景菜单
+                _lstFiles.SelectedItems.Clear();
                 Debug.WriteLine("MouseUp: 点击空白区域");
                 if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
-                {
-                    ShowSystemContextMenu(_currentDir);
-                }
+                    ShowSystemContextMenuForPaths(new[] { _currentDir });
+            }
+        }
+        
+        /// <summary>获取当前选中项的完整路径列表</summary>
+        private List<string> GetSelectedFullPaths()
+        {
+            var paths = new List<string>();
+            foreach (ListViewItem item in _lstFiles.SelectedItems)
+            {
+                if (item.Tag is FileItemTag t)
+                    paths.Add(t.FullName);
+            }
+            return paths;
+        }
+        
+        /// <summary>为当前选中项显示右键菜单</summary>
+        private void ShowContextMenuForSelectedItems()
+        {
+            var paths = GetSelectedFullPaths();
+            if (paths.Count == 0)
+            {
+                if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
+                    ShowSystemContextMenuForPaths(new[] { _currentDir });
+                return;
+            }
+            
+            if (paths.Count == 1)
+            {
+                // 单个文件/文件夹：使用系统原生右键菜单
+                ShowSystemContextMenu(paths[0]);
+            }
+            else
+            {
+                // 多个文件/文件夹：使用内置右键菜单（拷贝、删除、复制路径等）
+                ShowMultiSelectContextMenu(paths);
             }
         }
 
@@ -1361,7 +1445,7 @@ namespace wxd.files.winforms
             return font.Height + 8;
         }
 
-        /// <summary>显示系统右键上下文菜单</summary>
+        /// <summary>显示系统右键上下文菜单（单个路径）</summary>
         private void ShowSystemContextMenu(string itemPath)
         {
             // 检查控件状态，防止在已释放状态下处理事件
@@ -1380,6 +1464,157 @@ namespace wxd.files.winforms
                 Debug.WriteLine($"显示系统右键菜单失败: {ex.Message}");
                 ShowFallbackContextMenu(itemPath);
             }
+        }
+        
+        /// <summary>显示系统右键上下文菜单（支持多路径——仅当仅一个路径时使用 Shell API）</summary>
+        private void ShowSystemContextMenuForPaths(string[] paths)
+        {
+            if (this.IsDisposed || !this.IsHandleCreated) return;
+            if (paths.Length == 0) return;
+            
+            if (paths.Length == 1)
+            {
+                ShowSystemContextMenu(paths[0]);
+            }
+            else
+            {
+                ShowMultiSelectContextMenu(new List<string>(paths));
+            }
+        }
+        
+        /// <summary>多选右键菜单：复制、剪切、删除、复制路径</summary>
+        private void ShowMultiSelectContextMenu(List<string> paths)
+        {
+            try
+            {
+                var menu = new ContextMenuStrip();
+                menu.Font = new Font("Microsoft YaHei UI", 9f);
+                
+                ToolStripMenuItem itemCopy = new ToolStripMenuItem("复制", null, (s, e) => CopyFilesToClipboard(paths, false));
+                ToolStripMenuItem itemCut = new ToolStripMenuItem("剪切", null, (s, e) => CopyFilesToClipboard(paths, true));
+                ToolStripMenuItem itemDelete = new ToolStripMenuItem("删除", null, (s, e) => DeleteFiles(paths));
+                ToolStripMenuItem itemCopyPath = new ToolStripMenuItem("复制路径", null, (s, e) => CopyPathsToClipboard(paths));
+                
+                menu.Items.Add(itemCopy);
+                menu.Items.Add(itemCut);
+                menu.Items.Add("-");
+                menu.Items.Add(itemDelete);
+                menu.Items.Add("-");
+                menu.Items.Add(itemCopyPath);
+                
+                menu.Show(Cursor.Position);
+            }
+            catch
+            {
+                // 忽略
+            }
+        }
+        
+        /// <summary>复制或剪切文件到剪贴板</summary>
+        private void CopyFilesToClipboard(List<string> paths, bool cut)
+        {
+            try
+            {
+                var collection = new System.Collections.Specialized.StringCollection();
+                collection.AddRange(paths.ToArray());
+                Clipboard.SetFileDropList(collection);
+                if (cut)
+                {
+                    // 标记剪切操作（通过设置包含 Preferred DropEffect 的 MemoryStream）
+                    byte[] dropEffect = new byte[] { (byte)DragDropEffects.Move, 0, 0, 0 };
+                    using (var ms = new System.IO.MemoryStream())
+                    {
+                        ms.Write(dropEffect, 0, dropEffect.Length);
+                        var data = new DataObject();
+                        data.SetFileDropList(collection);
+                        data.SetData("Preferred DropEffect", ms);
+                        Clipboard.SetDataObject(data);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+        
+        /// <summary>复制路径列表到剪贴板</summary>
+        private void CopyPathsToClipboard(List<string> paths)
+        {
+            try
+            {
+                Clipboard.SetText(string.Join(Environment.NewLine, paths));
+            }
+            catch { }
+        }
+        
+        /// <summary>删除选中文件/文件夹（使用系统 Shell API，显示原生进度对话框）</summary>
+        private void DeleteFiles(List<string> paths)
+        {
+            if (paths.Count == 0) return;
+            
+            string msg = paths.Count == 1
+                ? $"确定要删除 \"{Path.GetFileName(paths[0])}\" 吗？"
+                : $"确定要删除选中的 {paths.Count} 个项目吗？";
+            
+            var result = MessageBox.Show(this.FindForm(), msg, "确认删除",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (result != DialogResult.Yes) return;
+            
+            try
+            {
+                // 用 \0 分隔文件路径，最后以 \0\0 结尾
+                var fromBuf = string.Join("\0", paths) + "\0\0";
+                
+                var fileOp = new SHFILEOPSTRUCT
+                {
+                    hwnd = this.Handle,
+                    wFunc = FO_DELETE,
+                    pFrom = fromBuf,
+                    fFlags = FOF_ALLOWUNDO | FOF_SIMPLEPROGRESS | FOF_WANTNUKEWARNING
+                };
+                
+                int ret = SHFileOperation(ref fileOp);
+                if (ret != 0)
+                {
+                    // 用户取消不算错误
+                    if (fileOp.fAnyOperationsAborted == 0 && ret != 0x78) // 0x78 = DE_SAMEFILE
+                    {
+                        // 只提示可能部分失败，不弹错误框干扰用户
+                        Debug.WriteLine($"SHFileOperation 返回: {ret}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"系统删除 API 失败，使用逐文件删除: {ex.Message}");
+                // 降级：同步逐文件删除（后台线程避免卡UI）
+                Task.Run(() =>
+                {
+                    foreach (var p in paths)
+                    {
+                        try
+                        {
+                            if (Directory.Exists(p))
+                                Directory.Delete(p, true);
+                            else if (File.Exists(p))
+                                File.Delete(p);
+                        }
+                        catch { }
+                    }
+                }).ContinueWith(_ =>
+                {
+                    if (!this.IsDisposed)
+                    {
+                        try { BeginInvoke(() => RefreshCurrent()); }
+                        catch { }
+                    }
+                });
+                return;
+            }
+            
+            // 完成后刷新
+            RefreshCurrent();
         }
         
         /// <summary>显示备用右键菜单</summary>
@@ -1525,6 +1760,25 @@ namespace wxd.files.winforms
                 StartRename();
                 return true;
             }
+            if (keyData == Keys.Delete)
+            {
+                var paths = GetSelectedFullPaths();
+                if (paths.Count > 0)
+                {
+                    DeleteFiles(paths);
+                    return true;
+                }
+            }
+            if (keyData == (Keys.Control | Keys.A))
+            {
+                // 全选
+                if (_lstFiles.Items.Count > 0)
+                {
+                    foreach (ListViewItem item in _lstFiles.Items)
+                        item.Selected = true;
+                }
+                return true;
+            }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -1650,6 +1904,7 @@ namespace wxd.files.winforms
             { 
                 _filterDebounceTimer?.Dispose();
                 _saveDebounceTimer?.Dispose();
+                _pathToolTip?.Dispose();
                 _imgList?.Dispose(); 
                 _imgListLarge?.Dispose();
                 _lstFiles?.Dispose(); 

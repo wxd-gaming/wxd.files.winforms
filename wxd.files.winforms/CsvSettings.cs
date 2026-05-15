@@ -269,6 +269,46 @@ namespace wxd.files.winforms
 
         #endregion
 
+        #region 最近访问路径历史
+
+        private const string RecentPathsKey = "RecentPaths";
+
+        /// <summary>获取最近访问的路径列表（最多5条）</summary>
+        public static List<string> GetRecentPaths()
+        {
+            try
+            {
+                var json = GetStringValue(RecentPathsKey, "[]");
+                var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+                return list ?? new List<string>();
+            }
+            catch
+            {
+                return new List<string>();
+            }
+        }
+
+        /// <summary>添加一条路径到最近访问记录，保留最近5条</summary>
+        public static void AddRecentPath(string path)
+        {
+            try
+            {
+                var list = GetRecentPaths();
+                // 如果已存在则移除旧记录
+                list.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
+                // 插入到最前面
+                list.Insert(0, path);
+                // 只保留5条
+                if (list.Count > 5)
+                    list.RemoveRange(5, list.Count - 5);
+                var json = System.Text.Json.JsonSerializer.Serialize(list);
+                SetStringValue(RecentPathsKey, json);
+            }
+            catch { }
+        }
+
+        #endregion
+
         /// <summary>
         /// 保存设置（兼容性方法）
         /// </summary>
