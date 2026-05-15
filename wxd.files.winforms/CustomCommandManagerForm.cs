@@ -64,7 +64,9 @@ public class CustomCommandManagerForm : Form
             HeaderText = "工作目录",
             DataPropertyName = "WorkDir",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 30
+            FillWeight = 30,
+            ReadOnly = true,
+            SortMode = DataGridViewColumnSortMode.NotSortable
         };
         var colShowWindow = new DataGridViewCheckBoxColumn
         {
@@ -105,6 +107,25 @@ public class CustomCommandManagerForm : Form
                     e.CellStyle.SelectionForeColor = color;
                 }
                 catch { }
+            }
+        };
+
+        // 双击工作目录列弹出目录选择对话框
+        _dgv.CellDoubleClick += (s, e) =>
+        {
+            if (_dgv.Columns[e.ColumnIndex].DataPropertyName == "WorkDir" && e.RowIndex >= 0)
+            {
+                var row = _dgv.Rows[e.RowIndex];
+                if (row.DataBoundItem is CustomCommandItem item)
+                {
+                    using var fbd = new FolderBrowserDialog();
+                    if (!string.IsNullOrEmpty(item.WorkDir))
+                        fbd.SelectedPath = item.WorkDir;
+                    if (fbd.ShowDialog() == DialogResult.OK)
+                    {
+                        item.WorkDir = fbd.SelectedPath;
+                    }
+                }
             }
         };
 
@@ -304,13 +325,30 @@ public class CustomCommandManagerForm : Form
     /// <summary>进入编辑时，将命令列设为多行模式</summary>
     private void OnEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
     {
-        if (_dgv.CurrentCell?.OwningColumn?.DataPropertyName == "Command"
-            && e.Control is TextBox tb)
+        if (e.Control is TextBox tb)
         {
-            tb.Multiline = true;
-            // 设置合适高度以容纳多行输入
-            _dgv.Rows[_dgv.CurrentCell.RowIndex].Height = 90;
+            // 命令列支持多行编辑
+            if (_dgv.CurrentCell?.OwningColumn?.DataPropertyName == "Command")
+            {
+                tb.Multiline = true;
+                _dgv.Rows[_dgv.CurrentCell.RowIndex].Height = 90;
+            }
         }
+    }
+
+    /// <summary>拦截 Ctrl+C：编辑状态下只复制单元格内选中的文本，不复制整行</summary>
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.C))
+        {
+            // 检测是否处于编辑状态，且编辑控件中有选中文本
+            if (_dgv.IsCurrentCellInEditMode && _dgv.EditingControl is TextBox tb && tb.SelectionLength > 0)
+            {
+                Clipboard.SetText(tb.SelectedText);
+                return true; // 已处理，不再交给 DGV
+            }
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     /// <summary>确定时保存到配置</summary>
