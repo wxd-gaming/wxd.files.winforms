@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -27,8 +28,6 @@ namespace wxd.files.winforms
         private Label _lblFilter = new();
         private Button _btnRefresh = new();
         private Button _btnSelectFolder = new();
-        private Button _btnOpenExcel = new();
-        private Button _btnOpenCsv = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
@@ -54,12 +53,26 @@ namespace wxd.files.winforms
             Excel
         }
 
-        // ==================== 配色方案 ====================
-        private static readonly Color _colorLightBg = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorLightBorder = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+        // ==================== 配色方案（简洁清晰的Office风格）====================
+        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorSurface = Color.White;
+        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
+        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
+        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
+        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
+        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
 
         // ==================== Win32 API（系统图标）====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -130,6 +143,8 @@ namespace wxd.files.winforms
             MinimumSize = new Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = _colorBg;
+            Padding = new Padding(0);
 
             ResumeLayout(false);
         }
@@ -140,94 +155,65 @@ namespace wxd.files.winforms
 
             // ==================== 左侧面板 ====================
             _pnlLeft.Dock = DockStyle.Fill;
-            _pnlLeft.BackColor = Color.White;
+            _pnlLeft.BackColor = _colorSurface;
             _pnlLeft.Padding = new Padding(0);
 
             // 左侧顶部工具栏
             _pnlLeftTop.Height = 80;
             _pnlLeftTop.Dock = DockStyle.Top;
-            _pnlLeftTop.BackColor = _colorLightBg;
-            _pnlLeftTop.Padding = new Padding(6, 4, 6, 4);
-
-            // 打开CSV文件按钮
-            _btnOpenCsv = new Button
-            {
-                Text = "打开CSV",
-                Location = new Point(6, 6),
-                Size = new Size(70, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorBtnBg,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            _btnOpenCsv.FlatAppearance.BorderSize = 0;
-            _btnOpenCsv.Click += OnOpenCsvClick;
-
-            // 打开Excel文件按钮
-            _btnOpenExcel = new Button
-            {
-                Text = "打开Excel",
-                Location = new Point(80, 6),
-                Size = new Size(75, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(0, 150, 80),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            _btnOpenExcel.FlatAppearance.BorderSize = 0;
-            _btnOpenExcel.Click += OnOpenExcelClick;
+            _pnlLeftTop.BackColor = _colorSurface;
+            _pnlLeftTop.Padding = new Padding(8, 6, 8, 6);
 
             // 选择目录按钮
             _btnSelectFolder = new Button
             {
                 Text = "选择目录",
-                Location = new Point(159, 6),
+                Location = new Point(8, 6),
                 Size = new Size(70, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorBtnBg,
+                BackColor = _colorPrimary,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 0, MouseOverBackColor = _colorPrimaryDark }
             };
-            _btnSelectFolder.FlatAppearance.BorderSize = 0;
             _btnSelectFolder.Click += OnSelectFolderClick;
 
             // 刷新按钮
             _btnRefresh = new Button
             {
-                Text = "刷新",
-                Location = new Point(233, 6),
-                Size = new Size(50, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorBtnBg,
-                ForeColor = Color.White,
+                Text = "↻",
+                Location = new Point(84, 6),
+                Size = new Size(32, 28),
+                Font = new Font("Segoe UI", 12f),
+                BackColor = _colorHoverBg,
+                ForeColor = _colorLightTextSecondary,
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(224, 228, 234) }
             };
-            _btnRefresh.FlatAppearance.BorderSize = 0;
             _btnRefresh.Click += OnRefreshClick;
+
+            // 文件数量标签（放在第一行右侧）
+            _lblFileCount = new Label
+            {
+                Text = "共 0 个文件",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Location = new Point(124, 10)
+            };
 
             // 过滤文本框
             _txtFileFilter = new TextBox
             {
-                Location = new Point(6, 40),
+                Location = new Point(8, 42),
                 Size = new Size(250, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left,
-                PlaceholderText = "支持 || 或 && 运算符"
-            };
-
-            // 文件数量标签
-            _lblFileCount = new Label
-            {
-                Text = "共 0 个文件",
-                Location = new Point(6, 66),
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                PlaceholderText = "支持 || 或 && 运算符",
+                BackColor = Color.FromArgb(248, 249, 251)
             };
             // 创建过滤防抖定时器（300ms 延迟）
             _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
@@ -247,7 +233,7 @@ namespace wxd.files.winforms
                 }
             };
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnOpenCsv, _btnOpenExcel, _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount });
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount });
 
             // 文件树
             // 初始化图标列表
@@ -263,15 +249,21 @@ namespace wxd.files.winforms
             _lstFiles = new ListView
             {
                 Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = false,
                 HideSelection = false,
                 SmallImageList = _imgList,
-                MultiSelect = false
+                MultiSelect = false,
+                BackColor = _colorSurface,
+                ForeColor = _colorLightText,
+                OwnerDraw = true
             };
+            _lstFiles.DrawItem += OnListViewDrawItem;
+            _lstFiles.DrawSubItem += OnListViewDrawSubItem;
+            _lstFiles.DrawColumnHeader += OnListViewDrawColumnHeader;
             _lstFiles.Columns.Add("文件", 380, System.Windows.Forms.HorizontalAlignment.Left);
             _lstFiles.Click += OnListViewClick;
             _lstFiles.DoubleClick += OnListViewDoubleClick;
@@ -295,8 +287,10 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 Font = new Font("Microsoft YaHei UI", 9f),
-                ItemSize = new Size(200, 28),  // 增加标签页宽度到200
-                SizeMode = TabSizeMode.Fixed   // 固定宽度模式
+                ItemSize = new Size(200, 28),
+                SizeMode = TabSizeMode.Fixed,
+                BackColor = _colorSurface,
+                Padding = new Point(12, 4)
             };
 
             // ==================== 分割容器 ====================
@@ -341,11 +335,63 @@ namespace wxd.files.winforms
 
         private void ApplyTheme()
         {
-            BackColor = _colorLightBg;
-            _pnlLeft.BackColor = Color.White;
-            _lstFiles.BackColor = Color.White;
+            BackColor = _colorBg;
+            _pnlLeft.BackColor = _colorSurface;
+            _lstFiles.BackColor = _colorSurface;
             _lstFiles.ForeColor = _colorLightText;
-            _tabContent.BackColor = Color.White;
+            _tabContent.BackColor = _colorSurface;
+        }
+
+        // ==================== 自定义ListView绘制（现代风格）====================
+        private void OnListViewDrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using var headerBrush = new SolidBrush(_colorHeaderBg);
+            e.Graphics.FillRectangle(headerBrush, e.Bounds);
+            TextRenderer.DrawText(e.Graphics, e.Header.Text, new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                e.Bounds, _colorLightTextSecondary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            using var bottomPen = new Pen(_colorDarkBorder);
+            e.Graphics.DrawLine(bottomPen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+            using var rightPen = new Pen(_colorLightBorder);
+            e.Graphics.DrawLine(rightPen, e.Bounds.Right - 1, e.Bounds.Top, e.Bounds.Right - 1, e.Bounds.Bottom - 1);
+        }
+
+        private void OnListViewDrawItem(object? sender, DrawListViewItemEventArgs e)
+        {
+            if (e.Item.Selected)
+            {
+                e.Graphics.FillRectangle(new SolidBrush(_colorSelectedBg), e.Bounds);
+                using var pen = new Pen(_colorPrimaryLight);
+                e.Graphics.DrawRectangle(pen, e.Bounds.X, e.Bounds.Y, e.Bounds.Width - 1, e.Bounds.Height - 1);
+            }
+            else if (e.ItemIndex % 2 == 0)
+            {
+                e.Graphics.FillRectangle(new SolidBrush(_colorAltRow), e.Bounds);
+            }
+            else
+            {
+                e.Graphics.FillRectangle(new SolidBrush(_colorSurface), e.Bounds);
+            }
+
+            // 绘制图标和文本（OwnerDraw 模式下需要手动绘制）
+            if (e.Item.ImageKey != null && _imgList.Images.ContainsKey(e.Item.ImageKey))
+            {
+                int imgIdx = _imgList.Images.IndexOfKey(e.Item.ImageKey);
+                if (imgIdx >= 0)
+                    _imgList.Draw(e.Graphics, e.Bounds.X + 3, e.Bounds.Y + (e.Bounds.Height - 16) / 2, 16, 16, imgIdx);
+            }
+            var textRect = new Rectangle(e.Bounds.X + 22, e.Bounds.Y + 2, e.Bounds.Width - 26, e.Bounds.Height - 4);
+            TextRenderer.DrawText(e.Graphics, e.Item.Text, _lstFiles.Font, textRect,
+                e.Item.Selected ? Color.FromArgb(30, 64, 175) : _colorLightText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            // 底部行线
+            using var linePen = new Pen(_colorLightBorder);
+            e.Graphics.DrawLine(linePen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+        }
+
+        private void OnListViewDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+        {
+            // DrawSubItem 由 DrawItem 处理，这里留空避免重复绘制
         }
 
         // ==================== 目录选择 ====================
@@ -711,46 +757,121 @@ namespace wxd.files.winforms
 
         private void OpenFile(string filePath, FileType fileType)
         {
-            // 检查是否已经打开
-            foreach (TabPage tab in _tabContent.TabPages)
+            OpenFile(filePath, fileType, null, false);
+        }
+
+        private void OpenFile(string filePath, FileType fileType, TabPage? existingTab, bool linkMode)
+        {
+            // 检查是否已经打开（非关联模式）
+            if (!linkMode)
             {
-                if (tab.Tag is string path && path.Equals(filePath, StringComparison.OrdinalIgnoreCase))
+                foreach (TabPage tab in _tabContent.TabPages)
                 {
-                    _tabContent.SelectedTab = tab;
-                    return;
+                    if (tab.Tag is string path && path.Equals(filePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _tabContent.SelectedTab = tab;
+                        return;
+                    }
                 }
             }
 
-            // 创建新的标签页
-            var tabPage = new TabPage(Path.GetFileName(filePath))
-            {
-                Tag = filePath,
-                ToolTipText = filePath
-            };
-
-            // 根据文件类型创建相应的查看控件
             Control viewer;
             if (fileType == FileType.Excel)
+                viewer = new ExcelViewerControl(filePath) { Dock = DockStyle.Fill };
+            else
+                viewer = new CsvViewerControl(filePath) { Dock = DockStyle.Fill };
+
+            if (linkMode && existingTab != null)
             {
-                viewer = new ExcelViewerControl(filePath)
+                // 关联模式：在当前标签页内使用横向 SplitContainer，左右对比
+                var existingViewer = existingTab.Controls[0] as UserControl;
+                if (existingViewer == null)
                 {
-                    Dock = DockStyle.Fill
+                    viewer.Dispose();
+                    return;
+                }
+
+                existingTab.Controls.Clear();
+
+                var linkSplit = new SplitContainer
+                {
+                    Dock = DockStyle.Fill,
+                    Orientation = Orientation.Vertical,
+                    SplitterDistance = existingTab.Width / 2,
+                    BackColor = Color.FromArgb(224, 228, 234),
+                    SplitterWidth = 2
                 };
+
+                existingViewer.Dock = DockStyle.Fill;
+                linkSplit.Panel1.Controls.Add(existingViewer);
+                linkSplit.Panel2.Controls.Add(viewer);
+
+                existingTab.Controls.Add(linkSplit);
+                existingTab.Tag = filePath; // 更新 tag 为关联后的主文件
             }
             else
             {
-                viewer = new CsvViewerControl(filePath)
+                // 普通模式：创建新标签页
+                var tabPage = new TabPage(Path.GetFileName(filePath))
                 {
-                    Dock = DockStyle.Fill
+                    Tag = filePath,
+                    ToolTipText = filePath
                 };
+                tabPage.Controls.Add(viewer);
+                _tabContent.TabPages.Add(tabPage);
+                _tabContent.SelectedTab = tabPage;
+                AddCloseButtonToTab(tabPage);
             }
 
-            tabPage.Controls.Add(viewer);
-            _tabContent.TabPages.Add(tabPage);
-            _tabContent.SelectedTab = tabPage;
+            // 注册关联表事件
+            if (viewer is CsvViewerControl csvViewer)
+                csvViewer.LinkTableRequested += OnViewerLinkTableRequested;
+            else if (viewer is ExcelViewerControl excelViewer)
+                excelViewer.LinkTableRequested += OnViewerLinkTableRequested;
+        }
 
-            // 添加关闭按钮
-            AddCloseButtonToTab(tabPage);
+        /// <summary>处理查看控件的关联表请求 — 弹出左侧文件列表供选择</summary>
+        private void OnViewerLinkTableRequested(object? sender, EventArgs e)
+        {
+            // 找到发出请求的 TabPage
+            TabPage? targetTab = null;
+            var senderCtrl = sender as Control;
+            foreach (TabPage tab in _tabContent.TabPages)
+            {
+                if (senderCtrl != null &&
+                    (tab.Controls.Contains(senderCtrl) ||
+                     (tab.Controls.Count == 1 && tab.Controls[0] is SplitContainer sc &&
+                      (sc.Panel1.Contains(senderCtrl) || sc.Panel2.Contains(senderCtrl)))))
+                {
+                    targetTab = tab;
+                    break;
+                }
+            }
+            if (targetTab == null) return;
+
+            using var dialog = new LinkTableSelectorDialog(
+                _allFiles.Select(f => (f.RelativePath, f.FullPath)).ToList());
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                var linkedPath = dialog.SelectedFilePath;
+                if (string.IsNullOrEmpty(linkedPath) || !File.Exists(linkedPath)) return;
+
+                // 检查是否已在同一个 TabPage 中打开
+                if (targetTab.Controls.Count == 1 && targetTab.Controls[0] is SplitContainer sc2)
+                {
+                    foreach (Control c in sc2.Panel2.Controls)
+                    {
+                        if (c is CsvViewerControl csvv && csvv.FilePath == linkedPath)
+                            return;
+                        if (c is ExcelViewerControl excv && excv.FilePath == linkedPath)
+                            return;
+                    }
+                }
+
+                var ext = Path.GetExtension(linkedPath).ToLowerInvariant();
+                var fileType = ext == ".csv" ? FileType.Csv : FileType.Excel;
+                OpenFile(linkedPath, fileType, targetTab, true);
+            }
         }
 
         private void AddCloseButtonToTab(TabPage tabPage)
@@ -776,37 +897,85 @@ namespace wxd.files.winforms
                     }
                 };
 
-                // 重绘标签页以显示关闭按钮
+                // 重绘标签页以显示关闭按钮和圆角
                 _tabContent.DrawMode = TabDrawMode.OwnerDrawFixed;
                 _tabContent.DrawItem += (s, e) =>
                 {
                     var tabPage = _tabContent.TabPages[e.Index];
                     var tabRect = _tabContent.GetTabRect(e.Index);
-
-                    // 绘制背景
                     bool isSelected = _tabContent.SelectedIndex == e.Index;
-                    using (var brush = new SolidBrush(isSelected ? Color.White : Color.FromArgb(240, 240, 240)))
+
+                    // 选中页签底部多延伸2px，与内容区无缝衔接
+                    int bottomExtra = isSelected ? 2 : 0;
+                    var roundRect = new Rectangle(
+                        tabRect.X + 2, tabRect.Y + 2,
+                        tabRect.Width - 4, tabRect.Height - 2 + bottomExtra);
+                    int radius = 6;
+
+                    Color bgColor, borderColor;
+                    if (isSelected)
                     {
-                        e.Graphics.FillRectangle(brush, tabRect);
+                        bgColor = Color.FromArgb(37, 99, 235);
+                        borderColor = Color.FromArgb(37, 99, 235);
+                    }
+                    else
+                    {
+                        bgColor = Color.FromArgb(219, 234, 254);
+                        borderColor = Color.FromArgb(191, 219, 254);
                     }
 
-                    // 绘制文本（增加文本区域宽度）
-                    var textRect = new Rectangle(tabRect.X + 4, tabRect.Y + 4, tabRect.Width - 24, tabRect.Height - 8);
-                    TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, _colorLightText,
+                    using (var path = new GraphicsPath())
+                    {
+                        // 顶部左圆角
+                        path.AddArc(roundRect.X, roundRect.Y, radius * 2, radius * 2, 180, 90);
+                        // 顶部右圆角
+                        path.AddArc(roundRect.Right - radius * 2, roundRect.Y, radius * 2, radius * 2, 270, 90);
+                        // 右侧直线
+                        path.AddLine(roundRect.Right, roundRect.Y + radius, roundRect.Right, roundRect.Bottom);
+                        // 底部直线（无圆角）
+                        path.AddLine(roundRect.Right, roundRect.Bottom, roundRect.X, roundRect.Bottom);
+                        // 左侧直线
+                        path.AddLine(roundRect.X, roundRect.Bottom, roundRect.X, roundRect.Y + radius);
+                        path.CloseFigure();
+
+                        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+                        using (var brush = new SolidBrush(bgColor))
+                        {
+                            e.Graphics.FillPath(brush, path);
+                        }
+
+                        // 绘制圆角边框
+                        using (var pen = new Pen(borderColor, 1f))
+                        {
+                            e.Graphics.DrawPath(pen, path);
+                        }
+                    }
+
+                    // 绘制文本
+                    var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
+                    Color textColor = isSelected ? Color.White : Color.FromArgb(30, 64, 175);
+                    TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
                     // 绘制关闭按钮
-                    var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 6, 10, 10);
-                    using (var pen = new Pen(_colorLightTextSecondary, 1.5f))
+                    var closeRect = new Rectangle(tabRect.Right - 18, tabRect.Top + 6, 12, 12);
+                    Color closeColor = isSelected ? Color.FromArgb(200, 220, 255) : Color.FromArgb(107, 114, 128);
+                    using (var pen = new Pen(closeColor, 1.5f))
                     {
-                        e.Graphics.DrawLine(pen, closeRect.Left, closeRect.Top, closeRect.Right, closeRect.Bottom);
-                        e.Graphics.DrawLine(pen, closeRect.Right, closeRect.Top, closeRect.Left, closeRect.Bottom);
+                        e.Graphics.DrawLine(pen, closeRect.Left + 2, closeRect.Top + 2, closeRect.Right - 2, closeRect.Bottom - 2);
+                        e.Graphics.DrawLine(pen, closeRect.Right - 2, closeRect.Top + 2, closeRect.Left + 2, closeRect.Bottom - 2);
                     }
 
-                    // 绘制边框
-                    using (var pen = new Pen(_colorLightBorder))
+                    // 选中页签底部遮盖 TabControl 默认的分隔线
+                    if (isSelected)
                     {
-                        e.Graphics.DrawLine(pen, tabRect.Left, tabRect.Bottom - 1, tabRect.Right, tabRect.Bottom - 1);
+                        using (var coverPen = new Pen(bgColor, 2f))
+                        {
+                            e.Graphics.DrawLine(coverPen,
+                                roundRect.X + 1, roundRect.Bottom,
+                                roundRect.Right - 1, roundRect.Bottom);
+                        }
                     }
                 };
             }
@@ -846,7 +1015,7 @@ namespace wxd.files.winforms
         private DataGridView _dataGridHeader = new();  // 冻结的表头行
         private DataGridView _dataGrid = new();        // 数据区域
         private SplitContainer _pnlGridContainer = new(); // 容器面板（使用SplitContainer实现冻结效果）
-        private TextBox _txtHeaderFilter = new();      // 表头过滤框
+        private Button _btnSelectColumns = new();     // 列选择按钮
         private TextBox _txtContentFilter = new();     // 内容过滤框
         private TextBox _txtAdvancedFilter = new();    // 高级表达式过滤框
         private Label _lblInfo = new();
@@ -854,14 +1023,35 @@ namespace wxd.files.winforms
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();        // 冻结的表头数据
         private string _filePath = "";
+        /// <summary>当前文件完整路径</summary>
+        public string FilePath => _filePath;
         private char _delimiter = ',';
         private int _frozenRows = 0;                   // 冻结行数
+        private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
+
+        /// <summary>请求关联打开另一张表事件</summary>
+        public event EventHandler? LinkTableRequested;
 
         // 配色
-        private static readonly Color _colorLightBg = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorSurface = Color.White;
+        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
+        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
+        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
+        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
+        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
 
         public CsvViewerControl(string filePath)
         {
@@ -873,23 +1063,24 @@ namespace wxd.files.winforms
         private void InitializeComponent()
         {
             SuspendLayout();
-            BackColor = Color.White;
+            BackColor = _colorSurface;
 
             // 顶部工具栏 - 使用 TableLayoutPanel 实现两行布局
             var topTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
-                BackColor = _colorLightBg,
+                BackColor = _colorSurface,
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 4,
                 Padding = new Padding(0),
                 Margin = new Padding(0),
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
             };
             topTable.RowStyles.Clear();
-            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行1: 原有控件
-            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 3)); // 行2: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行0: 原有控件
+            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1)); // 行1: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行2: 内容过滤
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 行3: 高级过滤
 
             // 第一行 - 原有 FlowLayoutPanel
@@ -897,10 +1088,10 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 Height = 40,
-                BackColor = _colorLightBg,
+                BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(5, 5, 5, 5),
+                Padding = new Padding(8, 5, 8, 5),
                 AutoSize = true
             };
 
@@ -935,46 +1126,83 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             };
 
-            // 表头过滤框
+            // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
             {
-                Text = "表头过滤:",
+                Text = "列选择:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
-            var txtHeaderFilter = new TextBox
+            _btnSelectColumns = new Button
             {
-                Size = new Size(280, 23),
+                Size = new Size(120, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
+                FlatStyle = FlatStyle.Flat,
+                Text = "选择列 (全部)",
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = _colorHoverBg,
+                ForeColor = _colorLightText,
+                FlatAppearance = { BorderSize = 1, BorderColor = _colorBorder },
+                Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            txtHeaderFilter.TextChanged += (s, e) => ApplyFilters();
-            txtHeaderFilter.KeyDown += (s, e) =>
+            _btnSelectColumns.Click += OnSelectColumnsClick;
+
+            // 信息标签
+            _lblInfo = new Label
             {
-                if (e.KeyCode == Keys.Escape)
-                {
-                    txtHeaderFilter.Text = "";
-                    e.Handled = true;
-                }
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 0, 0)
             };
 
-            // 内容过滤框 (保留原功能)
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns, _lblInfo });
+
+            // 关联表按钮
+            var btnLinkTable = new Button
+            {
+                Text = "关联表",
+                Size = new Size(60, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = Color.FromArgb(37, 99, 235),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 },
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
+            flowTop.Controls.Add(btnLinkTable);
+
+            // 第二行（分隔线）放入 topTable
+            var separatorLine = new Panel
+            {
+                Height = 1,
+                Dock = DockStyle.Top,
+                BackColor = Color.FromArgb(224, 228, 234),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+
+            // 内容过滤
             var lblContentFilter = new Label
             {
                 Text = "内容过滤:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
+                ForeColor = _colorLightText,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(280, 23),
+                Size = new Size(400, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -989,55 +1217,12 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 提示标签
-            var lblHint = new Label
-            {
-                Text = "支持 || 或 &&",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 10, 0)
-            };
-
-            // 信息标签
-            _lblInfo = new Label
-            {
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 0, 0)
-            };
-
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, txtHeaderFilter, lblContentFilter, txtContentFilter, lblHint, _lblInfo });
-
-            // 第二行（分隔线）放入 topTable
-            var separatorLine = new Panel
-            {
-                Height = 1,
-                Dock = DockStyle.Top,
-                BackColor = Color.FromArgb(200, 200, 200),
-                Margin = new Padding(0),
-                Padding = new Padding(0)
-            };
-
-            // 第三行 - 高级表达式过滤框
-            var flowAdv = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                Height = 30,
-                BackColor = _colorLightBg,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Padding = new Padding(5, 1, 5, 3),
-                AutoSize = true
-            };
-
             var lblAdvFilter = new Label
             {
                 Text = "高级过滤:",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                ForeColor = _colorLightTextSecondary,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightText,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
@@ -1046,7 +1231,8 @@ namespace wxd.files.winforms
                 Size = new Size(400, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 2, 10, 0),
+                BackColor = Color.FromArgb(248, 249, 251)
             };
             txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
             txtAdvancedFilter.KeyDown += (s, e) =>
@@ -1063,20 +1249,49 @@ namespace wxd.files.winforms
                 Text = "如: id=123 or name like test",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(0, 122, 204),
+                ForeColor = _colorPrimary,
                 Margin = new Padding(3, 5, 10, 0)
             };
 
+            // 第三行 - 内容过滤
+            var flowContent = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorSurface,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(8, 1, 8, 0),
+                AutoSize = true
+            };
+            flowContent.Controls.AddRange(new Control[] { lblContentFilter, txtContentFilter });
+
+            // 第四行 - 高级表达式过滤框
+            var flowAdv = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorSurface,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(8, 1, 8, 5),
+                AutoSize = true
+            };
             flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
 
             // 组装 topTable
+            topTable.RowStyles.Clear();
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行0: 原有控件
+            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1)); // 行1: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行2: 内容过滤
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行3: 高级过滤
             topTable.Controls.Add(flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
-            topTable.Controls.Add(flowAdv, 0, 2);
+            topTable.Controls.Add(flowContent, 0, 2);
+            topTable.Controls.Add(flowAdv, 0, 3);
 
             // 保存引用
             _pnlTop = topTable;
-            _txtHeaderFilter = txtHeaderFilter;
             _txtContentFilter = txtContentFilter;
             _txtAdvancedFilter = txtAdvancedFilter;
 
@@ -1085,33 +1300,49 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Horizontal,
-                SplitterDistance = 28, // 初始只有列标题高度
+                SplitterDistance = 28,
                 FixedPanel = FixedPanel.Panel1,
                 IsSplitterFixed = true,
-                BackColor = Color.White
+                BackColor = _colorSurface,
+                SplitterWidth = 1,
+                BorderStyle = BorderStyle.FixedSingle
             };
 
             // 冻结的表头表格（显示冻结的行）
             _dataGridHeader = CreateDataGridView();
             _dataGridHeader.Dock = DockStyle.Fill;
-            _dataGridHeader.ScrollBars = ScrollBars.None; // 不显示滚动条
-            _dataGridHeader.RowHeadersVisible = true; // 显示行头（用于对齐）
-            _dataGridHeader.RowHeadersWidth = 50; // 与数据表格相同的行头宽度
-            _dataGridHeader.ColumnHeadersVisible = true; // 显示列标题
+            _dataGridHeader.ScrollBars = ScrollBars.None;
+            _dataGridHeader.RowHeadersVisible = true;
+            _dataGridHeader.RowHeadersWidth = 50;
+            _dataGridHeader.ColumnHeadersVisible = true;
             _dataGridHeader.ReadOnly = true;
-            _dataGridHeader.AllowUserToResizeColumns = false; // 禁止调整列宽，由主表格控制
+            _dataGridHeader.AllowUserToResizeColumns = false;
             _dataGridHeader.AllowUserToResizeRows = false;
-            _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint; // 绘制冻结行的行号
-            _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor; // 禁用选中高亮
+            _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
+            _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
-            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick; // 双击编辑
+            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+            _dataGridHeader.TabStop = false;
+            _dataGridHeader.CellMouseDown += (s, e) =>
+            {
+                // 鼠标点击时同步重置，阻止滚动偏移发生
+                if (e.RowIndex >= 0 && _dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
+                    _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+            };
+            _dataGridHeader.CurrentCellChanged += (s, e) =>
+            {
+                // 键盘导航等情况的兜底处理
+                if (_dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
+                    _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+            };
+            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick;
 
             // 数据表格（主表格）
             _dataGrid = CreateDataGridView();
             _dataGrid.Dock = DockStyle.Fill;
             _dataGrid.RowHeadersWidth = 50;
             _dataGrid.RowPostPaint += OnRowPostPaint;
-            _dataGrid.ColumnHeadersVisible = false; // 隐藏列标题（由冻结表格显示）
+            _dataGrid.ColumnHeadersVisible = false;
 
             // 同步水平滚动
             _dataGrid.Scroll += (s, e) =>
@@ -1162,7 +1393,7 @@ namespace wxd.files.winforms
         {
             var dgv = new DataGridView
             {
-                BackgroundColor = Color.White,
+                BackgroundColor = _colorSurface,
                 BorderStyle = BorderStyle.None,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -1176,17 +1407,40 @@ namespace wxd.files.winforms
                 RowHeadersDefaultCellStyle = new DataGridViewCellStyle
                 {
                     Alignment = DataGridViewContentAlignment.MiddleCenter,
-                    BackColor = Color.FromArgb(240, 240, 240),
-                    ForeColor = Color.FromArgb(32, 33, 36)
+                    BackColor = _colorRowNumBg,
+                    ForeColor = _colorLightTextSecondary,
+                    Font = new Font("Microsoft YaHei UI", 8.5f)
                 },
                 AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
                 {
-                    BackColor = Color.FromArgb(248, 249, 250)
-                }
+                    BackColor = _colorAltRow
+                },
+                GridColor = _colorGridLine,
+                CellBorderStyle = DataGridViewCellBorderStyle.Single,
+                EnableHeadersVisualStyles = false,
+                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = _colorHeaderBg,
+                    ForeColor = _colorLightText,
+                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                    Alignment = DataGridViewContentAlignment.MiddleCenter,
+                    SelectionBackColor = _colorHeaderBg,
+                    SelectionForeColor = _colorLightText
+                },
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = _colorSurface,
+                    ForeColor = _colorLightText,
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    SelectionBackColor = _colorSelectedBg,
+                    SelectionForeColor = Color.FromArgb(30, 64, 175),
+                    Padding = new Padding(2, 0, 2, 0)
+                },
+                RowTemplate = new DataGridViewRow { Height = 24 }
             };
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
-            dgv.CellDoubleClick += OnCellDoubleClick; // 双击编辑
+            dgv.CellDoubleClick += OnCellDoubleClick;
             return dgv;
         }
 
@@ -1377,8 +1631,7 @@ namespace wxd.files.winforms
             if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
             {
                 // 先应用过滤，获取可见列索引
-                var headerFilter = _txtHeaderFilter.Text.Trim();
-                _visibleColumnIndices = GetVisibleColumnIndices(headerFilter);
+                _visibleColumnIndices = GetVisibleColumnIndices();
 
                 // 创建冻结行数据表，只包含可见列
                 _headerTable = new DataTable();
@@ -1423,7 +1676,7 @@ namespace wxd.files.winforms
 
                 // 应用内容过滤（设置主表格的数据源）
                 var contentFilter = _txtContentFilter.Text.Trim();
-                var visibleRows = GetVisibleRows(contentFilter, headerFilter);
+                var visibleRows = GetVisibleRows(contentFilter);
                 RefreshFilteredDisplay(visibleRows);
             }
             else
@@ -1544,6 +1797,13 @@ namespace wxd.files.winforms
             {
                 _dataTable = dataTable;
                 _headerTable = headerTable.Clone();
+
+                // 初始化列选中状态（默认全选，第一列始终选中）
+                _columnCheckStates = new bool[_dataTable.Columns.Count];
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    _columnCheckStates[i] = true;
+
+                UpdateColumnSelectorButton();
 
                 // 更新信息
                 _lblInfo.Text = $"分隔符: '{_delimiter}' | 行数: {_dataTable.Rows.Count} | 列数: {_dataTable.Columns.Count}";
@@ -1748,8 +2008,8 @@ namespace wxd.files.winforms
             RefreshGridLayout();
         }
 
-        /// <summary>获取可见的列索引（第一列始终可见，保持原始顺序）</summary>
-        private List<int> GetVisibleColumnIndices(string headerFilter)
+        /// <summary>获取可见的列索引（第一列始终可见，基于多选框状态）</summary>
+        private List<int> GetVisibleColumnIndices()
         {
             var visibleIndices = new List<int>();
 
@@ -1759,48 +2019,10 @@ namespace wxd.files.winforms
                 visibleIndices.Add(0);
             }
 
-            // 如果没有表头过滤，所有列都可见（按原始顺序）
-            if (string.IsNullOrEmpty(headerFilter))
-            {
-                for (int i = 1; i < _dataTable.Columns.Count; i++)
-                {
-                    visibleIndices.Add(i);
-                }
-                return visibleIndices;
-            }
-
-            // 处理运算符
-            var processedFilter = headerFilter.Replace("||", " | ").Replace("&&", " & ");
-
-            // 检查每一列（从第2列开始，第1列始终可见）
-            // 按原始顺序检查，保持列的顺序
+            // 根据 _columnCheckStates 过滤列
             for (int i = 1; i < _dataTable.Columns.Count; i++)
             {
-                bool isMatch = false;
-
-                // 检查列名是否匹配
-                var colName = _dataTable.Columns[i].ColumnName;
-                if (MatchesFilter(colName, processedFilter))
-                {
-                    isMatch = true;
-                }
-
-                // 检查数据表前N行（冻结行）的数据是否匹配
-                if (!isMatch && _frozenRows > 0)
-                {
-                    for (int row = 0; row < Math.Min(_frozenRows, _dataTable.Rows.Count); row++)
-                    {
-                        var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
-                        if (MatchesFilter(cellValue, processedFilter))
-                        {
-                            isMatch = true;
-                            break;
-                        }
-                    }
-                }
-
-                // 如果匹配或者是第一列，添加到可见列表（保持原始顺序）
-                if (isMatch)
+                if (i < _columnCheckStates.Length && _columnCheckStates[i])
                 {
                     visibleIndices.Add(i);
                 }
@@ -1809,8 +2031,36 @@ namespace wxd.files.winforms
             return visibleIndices;
         }
 
+        /// <summary>点击"选择列"按钮</summary>
+        private void OnSelectColumnsClick(object? sender, EventArgs e)
+        {
+            if (_dataTable.Columns.Count == 0) return;
+
+            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0);
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _columnCheckStates = dialog.GetCheckedStates();
+                UpdateColumnSelectorButton();
+                RefreshGridLayout();
+            }
+        }
+
+        /// <summary>更新选择列按钮文本</summary>
+        private void UpdateColumnSelectorButton()
+        {
+            if (_dataTable.Columns.Count == 0) return;
+            int checkedCount = 0;
+            for (int i = 0; i < _columnCheckStates.Length; i++)
+                if (_columnCheckStates[i]) checkedCount++;
+
+            // 第一列不参与计数
+            int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
+            int checkedData = Math.Max(0, checkedCount - 1);
+            _btnSelectColumns.Text = $"选择列 ({checkedData}/{dataColumns})";
+        }
+
         /// <summary>获取可见的行（从冻结行之后开始）</summary>
-        private List<DataRow> GetVisibleRows(string contentFilter, string headerFilter)
+        private List<DataRow> GetVisibleRows(string contentFilter)
         {
             var visibleRows = new List<DataRow>();
             var advFilter = _txtAdvancedFilter.Text.Trim();
@@ -1825,11 +2075,8 @@ namespace wxd.files.winforms
                 if (!contentMatch)
                 {
                     var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
-                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                        : _visibleColumnIndices;
 
-                    foreach (var colIndex in columnsToSearch)
+                    foreach (var colIndex in _visibleColumnIndices)
                     {
                         var cellValue = row[colIndex]?.ToString() ?? "";
                         if (MatchesFilter(cellValue, processedFilter))
@@ -1844,9 +2091,7 @@ namespace wxd.files.winforms
                 bool advMatch = string.IsNullOrEmpty(advFilter);
                 if (!advMatch)
                 {
-                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                        : _visibleColumnIndices;
+                    var columnsToSearch = _visibleColumnIndices;
                     advMatch = EvaluateExpression(row, advFilter, columnsToSearch);
                 }
 
@@ -2370,12 +2615,14 @@ namespace wxd.files.winforms
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
         }
 
-        private void SetActiveButton(Button active, Button inactive)
+        private static void SetActiveButton(Button active, Button inactive)
         {
-            active.BackColor = Color.FromArgb(0, 122, 204);
+            active.BackColor = Color.FromArgb(0, 120, 212);
             active.ForeColor = Color.White;
-            inactive.BackColor = Color.FromArgb(220, 220, 220);
-            inactive.ForeColor = Color.FromArgb(32, 33, 36);
+            active.FlatAppearance.BorderSize = 0;
+            inactive.BackColor = Color.FromArgb(240, 242, 245);
+            inactive.ForeColor = Color.FromArgb(55, 65, 81);
+            inactive.FlatAppearance.BorderSize = 0;
         }
 
         private void InitializeComponent()
@@ -2388,44 +2635,45 @@ namespace wxd.files.winforms
             MinimizeBox = true;
             MaximizeBox = true;
             Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.White;
+            BackColor = Color.FromArgb(248, 249, 251);
 
             // ==================== 顶部格式切换面板 ====================
             _pnlTop = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 44,
-                BackColor = Color.FromArgb(245, 246, 247),
-                Padding = new Padding(6, 6, 6, 6)
+                BackColor = Color.FromArgb(245, 246, 248),
+                Padding = new Padding(8, 7, 8, 7)
             };
 
             _btnDefault = new Button
             {
                 Text = "默认格式",
-                Location = new Point(6, 6),
-                Size = new Size(90, 30),
+                Location = new Point(8, 7),
+                Size = new Size(90, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(227, 242, 253) }
             };
-            _btnDefault.FlatAppearance.BorderSize = 0;
+
+            _btnRaw = new Button
+            {
+                Text = "自动换行",
+                Location = new Point(106, 7),
+                Size = new Size(90, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(227, 242, 253) }
+            };
+
             _btnDefault.Click += (s, e) =>
             {
                 SetActiveButton(_btnDefault, _btnRaw);
                 _txtValue.WordWrap = false;
                 _txtValue.ScrollBars = RichTextBoxScrollBars.Both;
             };
-
-            _btnRaw = new Button
-            {
-                Text = "自动换行",
-                Location = new Point(104, 6),
-                Size = new Size(90, 30),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            _btnRaw.FlatAppearance.BorderSize = 0;
             _btnRaw.Click += (s, e) =>
             {
                 SetActiveButton(_btnRaw, _btnDefault);
@@ -2443,35 +2691,35 @@ namespace wxd.files.winforms
             _pnlBottom = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 50,
-                BackColor = Color.FromArgb(250, 250, 250)
+                Height = 52,
+                BackColor = Color.FromArgb(245, 246, 248)
             };
 
             // 保存按钮
             _btnSave = new Button
             {
                 Text = "保存",
-                Size = new Size(70, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(0, 122, 204),
+                Size = new Size(80, 30),
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                BackColor = Color.FromArgb(0, 120, 212),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.OK
+                DialogResult = DialogResult.OK,
+                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(16, 110, 190) }
             };
-            _btnSave.FlatAppearance.BorderSize = 0;
 
             // 取消按钮
             _btnCancel = new Button
             {
                 Text = "取消",
-                Size = new Size(70, 28),
+                Size = new Size(80, 30),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(240, 240, 240),
-                ForeColor = Color.FromArgb(32, 33, 36),
+                BackColor = Color.FromArgb(240, 242, 245),
+                ForeColor = Color.FromArgb(55, 65, 81),
                 FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel
+                DialogResult = DialogResult.Cancel,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219), MouseOverBackColor = Color.FromArgb(229, 231, 235) }
             };
-            _btnCancel.FlatAppearance.BorderSize = 0;
 
             _pnlBottom.Controls.Add(_btnSave);
             _pnlBottom.Controls.Add(_btnCancel);
@@ -2480,7 +2728,7 @@ namespace wxd.files.winforms
             void LayoutButtons()
             {
                 _btnCancel.Left = _pnlBottom.Width - _btnCancel.Width - 10;
-                _btnSave.Left = _btnCancel.Left - _btnSave.Width - 10;
+                _btnSave.Left = _btnCancel.Left - _btnSave.Width - 8;
                 _btnSave.Top = 10;
                 _btnCancel.Top = 10;
             }
@@ -2492,7 +2740,7 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 Font = new Font("Consolas", 10f),
-                BorderStyle = BorderStyle.FixedSingle,
+                BorderStyle = BorderStyle.None,
                 WordWrap = false,
                 ScrollBars = RichTextBoxScrollBars.Both,
                 AcceptsTab = true,
@@ -2516,7 +2764,7 @@ namespace wxd.files.winforms
         private DataGridView _dataGridHeader = new();
         private DataGridView _dataGrid = new();
         private SplitContainer _pnlGridContainer = new();
-        private TextBox _txtHeaderFilter = new();
+        private Button _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
         private Label _lblInfo = new();
@@ -2524,14 +2772,35 @@ namespace wxd.files.winforms
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
         private string _filePath = "";
+        /// <summary>当前文件完整路径</summary>
+        public string FilePath => _filePath;
         private int _frozenRows = 0;
         private List<int> _visibleColumnIndices = new();
+        private bool[] _columnCheckStates = Array.Empty<bool>();
+
+        /// <summary>请求关联打开另一张表事件</summary>
+        public event EventHandler? LinkTableRequested;
 
         // 配色
-        private static readonly Color _colorLightBg = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        private static readonly Color _colorSurface = Color.White;
+        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
+        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
+        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
+        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
+        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
+        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
 
         public ExcelViewerControl(string filePath)
         {
@@ -2543,17 +2812,17 @@ namespace wxd.files.winforms
         private void InitializeComponent()
         {
             SuspendLayout();
-            BackColor = Color.White;
+            BackColor = _colorSurface;
 
             // 顶部工具栏 - 使用 FlowLayoutPanel 自动排列
             var flowTop = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
                 Height = 40,
-                BackColor = _colorLightBg,
+                BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(5, 5, 5, 5),
+                Padding = new Padding(8, 5, 8, 5),
                 AutoSize = true
             };
 
@@ -2586,46 +2855,82 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             };
 
-            // 表头过滤框
+            // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
             {
-                Text = "表头过滤:",
+                Text = "列选择:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
-            var txtHeaderFilter = new TextBox
+            _btnSelectColumns = new Button
             {
-                Size = new Size(280, 23),
+                Size = new Size(120, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
+                FlatStyle = FlatStyle.Flat,
+                Text = "选择列 (全部)",
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = _colorHoverBg,
+                ForeColor = _colorLightText,
+                FlatAppearance = { BorderSize = 1, BorderColor = _colorBorder },
+                Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            txtHeaderFilter.TextChanged += (s, e) => ApplyFilters();
-            txtHeaderFilter.KeyDown += (s, e) =>
+            _btnSelectColumns.Click += OnSelectColumnsClick;
+
+            // 信息标签
+            _lblInfo = new Label
             {
-                if (e.KeyCode == Keys.Escape)
-                {
-                    txtHeaderFilter.Text = "";
-                    e.Handled = true;
-                }
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 0, 0)
             };
 
-            // 内容过滤框 (保留原功能)
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns, _lblInfo });
+
+            // 关联表按钮
+            var btnLinkTable = new Button
+            {
+                Text = "关联表",
+                Size = new Size(60, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = Color.FromArgb(37, 99, 235),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 },
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
+            flowTop.Controls.Add(btnLinkTable);
+
+            // ====== 第二行: 分隔线 ======
+            var separatorLine = new Panel
+            {
+                Height = 1,
+                Dock = DockStyle.Top,
+                BackColor = Color.FromArgb(224, 228, 234),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            // ====== 第三行: 内容过滤 + 高级表达式过滤框 并列 ======
             var lblContentFilter = new Label
             {
                 Text = "内容过滤:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
+                ForeColor = _colorLightText,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(280, 23),
+                Size = new Size(400, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -2640,46 +2945,28 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 提示标签
-            var lblHint = new Label
+            // ====== 第三行: 内容过滤 ======
+            var flowContent = new FlowLayoutPanel
             {
-                Text = "支持 || 或 &&",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 10, 0)
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorSurface,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(8, 1, 8, 0),
+                AutoSize = true
             };
+            flowContent.Controls.AddRange(new Control[] { lblContentFilter, txtContentFilter });
 
-            // 信息标签
-            _lblInfo = new Label
-            {
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 0, 0)
-            };
-
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, txtHeaderFilter, lblContentFilter, txtContentFilter, lblHint, _lblInfo });
-
-            // ====== 第二行: 分隔线 ======
-            var separatorLine = new Panel
-            {
-                Height = 1,
-                Dock = DockStyle.Top,
-                BackColor = Color.FromArgb(200, 200, 200),
-                Margin = new Padding(0),
-                Padding = new Padding(0)
-            };
-
-            // ====== 第三行: 高级表达式过滤框 ======
+            // ====== 第四行: 高级过滤 ======
             var flowAdv = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 Height = 30,
-                BackColor = _colorLightBg,
+                BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(5, 1, 5, 3),
+                Padding = new Padding(8, 3, 8, 5),
                 AutoSize = true
             };
 
@@ -2687,8 +2974,8 @@ namespace wxd.files.winforms
             {
                 Text = "高级过滤:",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                ForeColor = _colorLightTextSecondary,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightText,
                 Margin = new Padding(3, 5, 3, 0)
             };
 
@@ -2697,7 +2984,8 @@ namespace wxd.files.winforms
                 Size = new Size(400, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 2, 10, 0),
+                BackColor = Color.FromArgb(248, 249, 251)
             };
             txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
             txtAdvancedFilter.KeyDown += (s, e) =>
@@ -2714,7 +3002,7 @@ namespace wxd.files.winforms
                 Text = "如: id=123 or name like test",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(0, 122, 204),
+                ForeColor = _colorPrimary,
                 Margin = new Padding(3, 5, 10, 0)
             };
 
@@ -2725,23 +3013,24 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
-                BackColor = _colorLightBg,
+                BackColor = _colorSurface,
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 4,
                 Padding = new Padding(0),
                 Margin = new Padding(0),
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
             };
             topTable.RowStyles.Clear();
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行0: 原有控件
-            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 3)); // 行1: 分隔线
-            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行2: 高级过滤
+            topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1)); // 行1: 分隔线
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行2: 内容过滤
+            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // 行3: 高级过滤
             topTable.Controls.Add(flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
-            topTable.Controls.Add(flowAdv, 0, 2);
+            topTable.Controls.Add(flowContent, 0, 2);
+            topTable.Controls.Add(flowAdv, 0, 3);
 
             _pnlTop = topTable;
-            _txtHeaderFilter = txtHeaderFilter;
             _txtContentFilter = txtContentFilter;
             _txtAdvancedFilter = txtAdvancedFilter;
 
@@ -2753,7 +3042,9 @@ namespace wxd.files.winforms
                 SplitterDistance = 28,
                 FixedPanel = FixedPanel.Panel1,
                 IsSplitterFixed = true,
-                BackColor = Color.White
+                BackColor = _colorSurface,
+                SplitterWidth = 1,
+                BorderStyle = BorderStyle.FixedSingle
             };
 
             // 冻结的表头表格（显示冻结的行）
@@ -2769,6 +3060,20 @@ namespace wxd.files.winforms
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
+            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+            _dataGridHeader.TabStop = false;
+            _dataGridHeader.CellMouseDown += (s, e) =>
+            {
+                // 鼠标点击时同步重置，阻止滚动偏移发生
+                if (e.RowIndex >= 0 && _dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
+                    _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+            };
+            _dataGridHeader.CurrentCellChanged += (s, e) =>
+            {
+                // 键盘导航等情况的兜底处理
+                if (_dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
+                    _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+            };
             _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick; // 双击编辑
 
             // 数据表格（主表格）
@@ -2817,7 +3122,7 @@ namespace wxd.files.winforms
         {
             var dgv = new DataGridView
             {
-                BackgroundColor = Color.White,
+                BackgroundColor = _colorSurface,
                 BorderStyle = BorderStyle.None,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -2831,17 +3136,40 @@ namespace wxd.files.winforms
                 RowHeadersDefaultCellStyle = new DataGridViewCellStyle
                 {
                     Alignment = DataGridViewContentAlignment.MiddleCenter,
-                    BackColor = Color.FromArgb(240, 240, 240),
-                    ForeColor = Color.FromArgb(32, 33, 36)
+                    BackColor = _colorRowNumBg,
+                    ForeColor = _colorLightTextSecondary,
+                    Font = new Font("Microsoft YaHei UI", 8.5f)
                 },
                 AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
                 {
-                    BackColor = Color.FromArgb(248, 249, 250)
-                }
+                    BackColor = _colorAltRow
+                },
+                GridColor = _colorGridLine,
+                CellBorderStyle = DataGridViewCellBorderStyle.Single,
+                EnableHeadersVisualStyles = false,
+                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = _colorHeaderBg,
+                    ForeColor = _colorLightText,
+                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                    Alignment = DataGridViewContentAlignment.MiddleCenter,
+                    SelectionBackColor = _colorHeaderBg,
+                    SelectionForeColor = _colorLightText
+                },
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = _colorSurface,
+                    ForeColor = _colorLightText,
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    SelectionBackColor = _colorSelectedBg,
+                    SelectionForeColor = Color.FromArgb(30, 64, 175),
+                    Padding = new Padding(2, 0, 2, 0)
+                },
+                RowTemplate = new DataGridViewRow { Height = 24 }
             };
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
-            dgv.CellDoubleClick += OnCellDoubleClick; // 双击编辑
+            dgv.CellDoubleClick += OnCellDoubleClick;
             return dgv;
         }
 
@@ -3067,6 +3395,13 @@ namespace wxd.files.winforms
                 _dataTable = dataTable;
                 _headerTable = dataTable.Clone();
 
+                // 初始化列选中状态（默认全选，第一列始终选中）
+                _columnCheckStates = new bool[_dataTable.Columns.Count];
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    _columnCheckStates[i] = true;
+
+                UpdateColumnSelectorButton();
+
                 _lblInfo.Text = $"行数: {_dataTable.Rows.Count} | 列数: {_dataTable.Columns.Count}";
 
                 if (_frozenRows > 0)
@@ -3097,8 +3432,7 @@ namespace wxd.files.winforms
 
             if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
             {
-                var headerFilter = _txtHeaderFilter.Text.Trim();
-                _visibleColumnIndices = GetVisibleColumnIndices(headerFilter);
+                _visibleColumnIndices = GetVisibleColumnIndices();
 
                 _headerTable = new DataTable();
                 foreach (var colIndex in _visibleColumnIndices)
@@ -3137,7 +3471,7 @@ namespace wxd.files.winforms
                 }
 
                 var contentFilter = _txtContentFilter.Text.Trim();
-                var visibleRows = GetVisibleRows(contentFilter, headerFilter);
+                var visibleRows = GetVisibleRows(contentFilter);
                 RefreshFilteredDisplay(visibleRows);
             }
             else
@@ -3154,7 +3488,7 @@ namespace wxd.files.winforms
             }
         }
 
-        private List<int> GetVisibleColumnIndices(string headerFilter)
+        private List<int> GetVisibleColumnIndices()
         {
             var visibleIndices = new List<int>();
 
@@ -3163,41 +3497,9 @@ namespace wxd.files.winforms
                 visibleIndices.Add(0);
             }
 
-            if (string.IsNullOrEmpty(headerFilter))
-            {
-                for (int i = 1; i < _dataTable.Columns.Count; i++)
-                {
-                    visibleIndices.Add(i);
-                }
-                return visibleIndices;
-            }
-
-            var processedFilter = headerFilter.Replace("||", " | ").Replace("&&", " & ");
-
             for (int i = 1; i < _dataTable.Columns.Count; i++)
             {
-                bool isMatch = false;
-
-                var colName = _dataTable.Columns[i].ColumnName;
-                if (MatchesFilter(colName, processedFilter))
-                {
-                    isMatch = true;
-                }
-
-                if (!isMatch && _frozenRows > 0)
-                {
-                    for (int row = 0; row < Math.Min(_frozenRows, _dataTable.Rows.Count); row++)
-                    {
-                        var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
-                        if (MatchesFilter(cellValue, processedFilter))
-                        {
-                            isMatch = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (isMatch)
+                if (i < _columnCheckStates.Length && _columnCheckStates[i])
                 {
                     visibleIndices.Add(i);
                 }
@@ -3206,7 +3508,32 @@ namespace wxd.files.winforms
             return visibleIndices;
         }
 
-        private List<DataRow> GetVisibleRows(string contentFilter, string headerFilter)
+        private void OnSelectColumnsClick(object? sender, EventArgs e)
+        {
+            if (_dataTable.Columns.Count == 0) return;
+
+            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0);
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _columnCheckStates = dialog.GetCheckedStates();
+                UpdateColumnSelectorButton();
+                RefreshGridLayout();
+            }
+        }
+
+        private void UpdateColumnSelectorButton()
+        {
+            if (_dataTable.Columns.Count == 0) return;
+            int checkedCount = 0;
+            for (int i = 0; i < _columnCheckStates.Length; i++)
+                if (_columnCheckStates[i]) checkedCount++;
+
+            int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
+            int checkedData = Math.Max(0, checkedCount - 1);
+            _btnSelectColumns.Text = $"选择列 ({checkedData}/{dataColumns})";
+        }
+
+        private List<DataRow> GetVisibleRows(string contentFilter)
         {
             var visibleRows = new List<DataRow>();
             var advFilter = _txtAdvancedFilter.Text.Trim();
@@ -3220,11 +3547,8 @@ namespace wxd.files.winforms
                 if (!contentMatch)
                 {
                     var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
-                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                        : _visibleColumnIndices;
 
-                    foreach (var colIndex in columnsToSearch)
+                    foreach (var colIndex in _visibleColumnIndices)
                     {
                         var cellValue = row[colIndex]?.ToString() ?? "";
                         if (MatchesFilter(cellValue, processedFilter))
@@ -3239,10 +3563,7 @@ namespace wxd.files.winforms
                 bool advMatch = string.IsNullOrEmpty(advFilter);
                 if (!advMatch)
                 {
-                    var columnsToSearch = string.IsNullOrEmpty(headerFilter)
-                        ? Enumerable.Range(0, _dataTable.Columns.Count).ToList()
-                        : _visibleColumnIndices;
-                    advMatch = EvaluateExpression(row, advFilter, columnsToSearch);
+                    advMatch = EvaluateExpression(row, advFilter, _visibleColumnIndices);
                 }
 
                 // AND 逻辑
@@ -3708,6 +4029,323 @@ namespace wxd.files.winforms
             } while (index >= 0);
 
             return result.ToString();
+        }
+    }
+
+    /// <summary>列选择对话框 — ListView展示冻结行数据，复选框选择列</summary>
+    public class ColumnSelectorDialog : Form
+    {
+        private ListView _lvColumns = new();
+        private Button _btnSelectAll = new();
+        private Button _btnDeselectAll = new();
+        private Button _btnOK = new();
+        private Button _btnCancel = new();
+        private int _lockedColumnIndex = -1;
+        private bool[] _checkedStates;
+
+        public ColumnSelectorDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex)
+        {
+            _lockedColumnIndex = lockedColumnIndex;
+            _checkedStates = (bool[])checkedStates.Clone();
+            InitializeComponent();
+            PopulateList(dataTable, frozenRows);
+        }
+
+        public bool[] GetCheckedStates() => _checkedStates;
+
+        private void PopulateList(DataTable dataTable, int frozenRows)
+        {
+            _lvColumns.BeginUpdate();
+            _lvColumns.Items.Clear();
+            _lvColumns.Columns.Clear();
+
+            int frozenCount = Math.Min(frozenRows, dataTable.Rows.Count);
+
+            // 列头：选择 + 每行冻结行的内容
+            _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
+            for (int r = 0; r < frozenCount; r++)
+            {
+                _lvColumns.Columns.Add($"行{r + 1}", 160, System.Windows.Forms.HorizontalAlignment.Left);
+            }
+
+            for (int col = 0; col < dataTable.Columns.Count; col++)
+            {
+                var item = new ListViewItem("")
+                {
+                    Tag = col,
+                    Checked = _checkedStates[col]
+                };
+
+                for (int r = 0; r < frozenCount; r++)
+                {
+                    var val = dataTable.Rows[r][col]?.ToString() ?? "";
+                    item.SubItems.Add(val);
+                }
+
+                _lvColumns.Items.Add(item);
+            }
+
+            _lvColumns.EndUpdate();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+
+            Text = "选择显示列";
+            ClientSize = new Size(800, 520);
+            MinimumSize = new Size(600, 300);
+            StartPosition = FormStartPosition.CenterParent;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = Color.FromArgb(248, 249, 251);
+            MinimizeBox = false;
+            MaximizeBox = false;
+
+            // 全选/取消按钮
+            _btnSelectAll = new Button
+            {
+                Text = "全选",
+                Location = new Point(10, 8),
+                Size = new Size(70, 26),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) },
+                BackColor = Color.FromArgb(243, 244, 246),
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
+            _btnSelectAll.Click += (s, e) => SetAllChecked(true);
+
+            _btnDeselectAll = new Button
+            {
+                Text = "取消全选",
+                Location = new Point(88, 8),
+                Size = new Size(80, 26),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) },
+                BackColor = Color.FromArgb(243, 244, 246),
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
+            _btnDeselectAll.Click += (s, e) => SetAllChecked(false);
+
+            // ListView — 使用原生 CheckBoxes
+            _lvColumns = new ListView
+            {
+                Location = new Point(10, 42),
+                Size = new Size(780, 420),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(31, 41, 55),
+                View = View.Details,
+                FullRowSelect = true,
+                HideSelection = false,
+                GridLines = true,
+                CheckBoxes = true,
+                HeaderStyle = ColumnHeaderStyle.Nonclickable
+            };
+            // 阻止第一列取消选中
+            _lvColumns.ItemCheck += (s, e) =>
+            {
+                if (e.Index == _lockedColumnIndex && e.NewValue == CheckState.Unchecked)
+                {
+                    e.NewValue = CheckState.Checked;
+                }
+            };
+            // 同步选中状态
+            _lvColumns.ItemChecked += (s, e) =>
+            {
+                if (e.Item.Index < _checkedStates.Length)
+                    _checkedStates[e.Item.Index] = e.Item.Checked;
+            };
+
+            // OK 按钮
+            _btnOK = new Button
+            {
+                Text = "确定",
+                Location = new Point(612, 468),
+                Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.OK,
+                BackColor = Color.FromArgb(37, 99, 235),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 }
+            };
+
+            // 取消按钮
+            _btnCancel = new Button
+            {
+                Text = "取消",
+                Location = new Point(700, 468),
+                Size = new Size(70, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel,
+                BackColor = Color.FromArgb(240, 242, 245),
+                ForeColor = Color.FromArgb(55, 65, 81),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) }
+            };
+
+            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _lvColumns, _btnOK, _btnCancel });
+            AcceptButton = _btnOK;
+            CancelButton = _btnCancel;
+
+            ResumeLayout(false);
+        }
+
+        private void SetAllChecked(bool check)
+        {
+            for (int i = 0; i < _lvColumns.Items.Count; i++)
+            {
+                if (i == _lockedColumnIndex)
+                {
+                    _lvColumns.Items[i].Checked = true;
+                    _checkedStates[i] = true;
+                }
+                else
+                {
+                    _lvColumns.Items[i].Checked = check;
+                    _checkedStates[i] = check;
+                }
+            }
+        }
+    }
+
+    /// <summary>关联表选择对话框 — 展示左侧已加载的文件列表，带搜索筛选</summary>
+    public class LinkTableSelectorDialog : Form
+    {
+        private ListView _lstFiles = new();
+        private TextBox _txtFilter = new();
+        private Button _btnOK = new();
+        private Button _btnCancel = new();
+        private List<(string display, string fullPath)> _fileEntries = new();
+        private List<(string display, string fullPath)> _filteredEntries = new();
+
+        public string SelectedFilePath { get; private set; } = "";
+
+        public LinkTableSelectorDialog(List<(string display, string fullPath)> fileEntries)
+        {
+            _fileEntries = fileEntries;
+            InitializeComponent();
+            PopulateList("");
+        }
+
+        private void PopulateList(string filter)
+        {
+            _lstFiles.BeginUpdate();
+            _lstFiles.Items.Clear();
+            _filteredEntries.Clear();
+
+            var query = string.IsNullOrEmpty(filter)
+                ? _fileEntries
+                : _fileEntries.Where(f => f.display.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+
+            foreach (var entry in query.OrderBy(f => f.display))
+            {
+                _filteredEntries.Add(entry);
+                var item = new ListViewItem(entry.display)
+                {
+                    Tag = entry.fullPath,
+                    ToolTipText = entry.fullPath
+                };
+                _lstFiles.Items.Add(item);
+            }
+
+            _lstFiles.EndUpdate();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+
+            Text = "选择关联表";
+            ClientSize = new Size(500, 400);
+            StartPosition = FormStartPosition.CenterParent;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = Color.FromArgb(248, 249, 251);
+            MinimizeBox = false;
+            MaximizeBox = false;
+
+            // 筛选框
+            _txtFilter = new TextBox
+            {
+                Location = new Point(10, 10),
+                Size = new Size(480, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                PlaceholderText = "输入关键字筛选文件..."
+            };
+            _txtFilter.TextChanged += (s, e) => PopulateList(_txtFilter.Text.Trim());
+
+            // 文件列表
+            _lstFiles = new ListView
+            {
+                Location = new Point(10, 40),
+                Size = new Size(480, 310),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                View = View.Details,
+                FullRowSelect = true,
+                HideSelection = false,
+                GridLines = false,
+                HeaderStyle = ColumnHeaderStyle.None,
+                MultiSelect = false
+            };
+            _lstFiles.Columns.Add("文件", 460);
+            _lstFiles.DoubleClick += (s, e) =>
+            {
+                if (_lstFiles.SelectedItems.Count > 0)
+                {
+                    SelectedFilePath = _lstFiles.SelectedItems[0].Tag as string ?? "";
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+            };
+
+            // OK 按钮
+            _btnOK = new Button
+            {
+                Text = "确定",
+                Location = new Point(320, 360),
+                Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(37, 99, 235),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 }
+            };
+            _btnOK.Click += (s, e) =>
+            {
+                if (_lstFiles.SelectedItems.Count > 0)
+                {
+                    SelectedFilePath = _lstFiles.SelectedItems[0].Tag as string ?? "";
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+            };
+
+            // 取消按钮
+            _btnCancel = new Button
+            {
+                Text = "取消",
+                Location = new Point(408, 360),
+                Size = new Size(70, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel,
+                BackColor = Color.FromArgb(240, 242, 245),
+                ForeColor = Color.FromArgb(55, 65, 81),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) }
+            };
+
+            Controls.AddRange(new Control[] { _txtFilter, _lstFiles, _btnOK, _btnCancel });
+            AcceptButton = _btnOK;
+            CancelButton = _btnCancel;
+
+            ResumeLayout(false);
         }
     }
 }

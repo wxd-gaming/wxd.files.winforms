@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -646,27 +647,68 @@ namespace wxd.files.winforms
                 {
                     var tabPage = _tabContent.TabPages[e.Index];
                     var tabRect = _tabContent.GetTabRect(e.Index);
-
                     bool isSelected = _tabContent.SelectedIndex == e.Index;
-                    using (var brush = new SolidBrush(isSelected ? Color.White : Color.FromArgb(240, 240, 240)))
+
+                    int bottomExtra = isSelected ? 2 : 0;
+                    var roundRect = new Rectangle(
+                        tabRect.X + 2, tabRect.Y + 2,
+                        tabRect.Width - 4, tabRect.Height - 2 + bottomExtra);
+                    int radius = 6;
+
+                    using (var path = new GraphicsPath())
                     {
-                        e.Graphics.FillRectangle(brush, tabRect);
+                        path.AddArc(roundRect.X, roundRect.Y, radius * 2, radius * 2, 180, 90);
+                        path.AddArc(roundRect.Right - radius * 2, roundRect.Y, radius * 2, radius * 2, 270, 90);
+                        path.AddLine(roundRect.Right, roundRect.Y + radius, roundRect.Right, roundRect.Bottom);
+                        path.AddLine(roundRect.Right, roundRect.Bottom, roundRect.X, roundRect.Bottom);
+                        path.AddLine(roundRect.X, roundRect.Bottom, roundRect.X, roundRect.Y + radius);
+                        path.CloseFigure();
+
+                        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+                        Color bgColor, borderColor;
+                        if (isSelected)
+                        {
+                            bgColor = Color.FromArgb(37, 99, 235);
+                            borderColor = Color.FromArgb(37, 99, 235);
+                        }
+                        else
+                        {
+                            bgColor = Color.FromArgb(219, 234, 254);
+                            borderColor = Color.FromArgb(191, 219, 254);
+                        }
+
+                        using (var brush = new SolidBrush(bgColor))
+                        {
+                            e.Graphics.FillPath(brush, path);
+                        }
+                        using (var pen = new Pen(borderColor, 1f))
+                        {
+                            e.Graphics.DrawPath(pen, path);
+                        }
                     }
 
-                    var textRect = new Rectangle(tabRect.X + 4, tabRect.Y + 4, tabRect.Width - 24, tabRect.Height - 8);
-                    TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, _colorLightText,
+                    var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
+                    Color textColor = isSelected ? Color.White : Color.FromArgb(30, 64, 175);
+                    TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-                    var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 6, 10, 10);
-                    using (var pen = new Pen(_colorLightTextSecondary, 1.5f))
+                    var closeRect = new Rectangle(tabRect.Right - 18, tabRect.Top + 6, 12, 12);
+                    Color closeColor = isSelected ? Color.FromArgb(200, 220, 255) : Color.FromArgb(107, 114, 128);
+                    using (var pen = new Pen(closeColor, 1.5f))
                     {
-                        e.Graphics.DrawLine(pen, closeRect.Left, closeRect.Top, closeRect.Right, closeRect.Bottom);
-                        e.Graphics.DrawLine(pen, closeRect.Right, closeRect.Top, closeRect.Left, closeRect.Bottom);
+                        e.Graphics.DrawLine(pen, closeRect.Left + 2, closeRect.Top + 2, closeRect.Right - 2, closeRect.Bottom - 2);
+                        e.Graphics.DrawLine(pen, closeRect.Right - 2, closeRect.Top + 2, closeRect.Left + 2, closeRect.Bottom - 2);
                     }
 
-                    using (var pen = new Pen(_colorLightBorder))
+                    if (isSelected)
                     {
-                        e.Graphics.DrawLine(pen, tabRect.Left, tabRect.Bottom - 1, tabRect.Right, tabRect.Bottom - 1);
+                        using (var coverPen = new Pen(Color.FromArgb(37, 99, 235), 2f))
+                        {
+                            e.Graphics.DrawLine(coverPen,
+                                roundRect.X + 1, roundRect.Bottom,
+                                roundRect.Right - 1, roundRect.Bottom);
+                        }
                     }
                 };
             }
