@@ -15,6 +15,9 @@
     <PackageId>wxd-gaming</PackageId>
     <Copyright>wxd-gaming</Copyright>
     <Description>wxd-gaming</Description>
+    <AssemblyVersion>1.0.0.4</AssemblyVersion>
+    <FileVersion>1.0.0.4</FileVersion>
+    <Version>1.0.0.4</Version>
   </PropertyGroup>
 
   <ItemGroup>

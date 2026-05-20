@@ -1039,7 +1039,7 @@ namespace wxd.files.winforms
         {
             try
             {
-                var csvForm = new CsvReaderForm(_currentDir);
+                var csvForm = new CsvReaderForm(_currentDir, PanelIndex);
                 csvForm.Show();
             }
             catch (Exception ex)

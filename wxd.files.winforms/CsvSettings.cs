@@ -148,6 +148,38 @@ namespace wxd.files.winforms
 
         #endregion
 
+        #region 各窗格CSV/Excel固定行记录（独立存储）
+
+        /// <summary>获取指定窗格的CSV固定行数</summary>
+        public static int GetPaneCsvFrozenRows(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}CsvFrozenRows";
+            return GetIntValue(key, DefaultValue, 0, 8);
+        }
+
+        /// <summary>设置指定窗格的CSV固定行数</summary>
+        public static void SetPaneCsvFrozenRows(int paneIndex, int value)
+        {
+            var key = $"Pane{paneIndex}CsvFrozenRows";
+            SetIntValue(key, Math.Max(0, Math.Min(8, value)));
+        }
+
+        /// <summary>获取指定窗格的Excel固定行数</summary>
+        public static int GetPaneExcelFrozenRows(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}ExcelFrozenRows";
+            return GetIntValue(key, DefaultValue, 0, 8);
+        }
+
+        /// <summary>设置指定窗格的Excel固定行数</summary>
+        public static void SetPaneExcelFrozenRows(int paneIndex, int value)
+        {
+            var key = $"Pane{paneIndex}ExcelFrozenRows";
+            SetIntValue(key, Math.Max(0, Math.Min(8, value)));
+        }
+
+        #endregion
+
         #region 基础配置方法
 
         private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
@@ -273,7 +305,7 @@ namespace wxd.files.winforms
 
         private const string RecentPathsKey = "RecentPaths";
 
-        /// <summary>获取最近访问的路径列表（最多5条）</summary>
+        /// <summary>获取最近访问的路径列表（最多15条）</summary>
         public static List<string> GetRecentPaths()
         {
             try
@@ -288,7 +320,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>添加一条路径到最近访问记录，保留最近5条</summary>
+        /// <summary>添加一条路径到最近访问记录，保留最近15条</summary>
         public static void AddRecentPath(string path)
         {
             try
@@ -298,9 +330,9 @@ namespace wxd.files.winforms
                 list.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
                 // 插入到最前面
                 list.Insert(0, path);
-                // 只保留5条
-                if (list.Count > 5)
-                    list.RemoveRange(5, list.Count - 5);
+                // 只保留15条
+                if (list.Count > 15)
+                    list.RemoveRange(15, list.Count - 15);
                 var json = System.Text.Json.JsonSerializer.Serialize(list);
                 SetStringValue(RecentPathsKey, json);
             }

@@ -47,6 +47,10 @@ namespace wxd.files.winforms
         public Form1()
         {
             InitializeComponent();
+            // 在标题栏追加程序集版本号
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            if (ver != null)
+                Text = $"{Text} v{ver}";
             CreateTopBar();
             InitControlPanel();
 

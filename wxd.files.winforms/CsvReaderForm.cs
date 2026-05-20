@@ -37,6 +37,7 @@ namespace wxd.files.winforms
         private CancellationTokenSource? _loadingCts;
         private readonly object _lockObj = new();
         private System.Windows.Forms.Timer? _filterDebounceTimer;
+        private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -94,12 +95,13 @@ namespace wxd.files.winforms
         private const uint SHGFI_SMALLICON = 0x000000001;
         private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
 
-        public CsvReaderForm(string? initialDir = null)
+        public CsvReaderForm(string? initialDir = null, int paneIndex = -1)
         {
             // 注册ExcelDataReader的编码支持
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
             _currentDir = initialDir ?? "";
+            _paneIndex = paneIndex;
             InitializeComponent();
             CreateControls();
             ApplyTheme();
@@ -757,71 +759,32 @@ namespace wxd.files.winforms
 
         private void OpenFile(string filePath, FileType fileType)
         {
-            OpenFile(filePath, fileType, null, false);
-        }
-
-        private void OpenFile(string filePath, FileType fileType, TabPage? existingTab, bool linkMode)
-        {
-            // 检查是否已经打开（非关联模式）
-            if (!linkMode)
+            // 检查是否已经打开
+            foreach (TabPage tab in _tabContent.TabPages)
             {
-                foreach (TabPage tab in _tabContent.TabPages)
+                if (tab.Tag is string path && path.Equals(filePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (tab.Tag is string path && path.Equals(filePath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _tabContent.SelectedTab = tab;
-                        return;
-                    }
+                    _tabContent.SelectedTab = tab;
+                    return;
                 }
             }
 
             Control viewer;
             if (fileType == FileType.Excel)
-                viewer = new ExcelViewerControl(filePath) { Dock = DockStyle.Fill };
+                viewer = new ExcelViewerControl(filePath, _paneIndex) { Dock = DockStyle.Fill };
             else
-                viewer = new CsvViewerControl(filePath) { Dock = DockStyle.Fill };
+                viewer = new CsvViewerControl(filePath, _paneIndex) { Dock = DockStyle.Fill };
 
-            if (linkMode && existingTab != null)
+            // 创建新标签页
+            var tabPage = new TabPage(Path.GetFileName(filePath))
             {
-                // 关联模式：在当前标签页内使用横向 SplitContainer，左右对比
-                var existingViewer = existingTab.Controls[0] as UserControl;
-                if (existingViewer == null)
-                {
-                    viewer.Dispose();
-                    return;
-                }
-
-                existingTab.Controls.Clear();
-
-                var linkSplit = new SplitContainer
-                {
-                    Dock = DockStyle.Fill,
-                    Orientation = Orientation.Vertical,
-                    SplitterDistance = existingTab.Width / 2,
-                    BackColor = Color.FromArgb(224, 228, 234),
-                    SplitterWidth = 2
-                };
-
-                existingViewer.Dock = DockStyle.Fill;
-                linkSplit.Panel1.Controls.Add(existingViewer);
-                linkSplit.Panel2.Controls.Add(viewer);
-
-                existingTab.Controls.Add(linkSplit);
-                existingTab.Tag = filePath; // 更新 tag 为关联后的主文件
-            }
-            else
-            {
-                // 普通模式：创建新标签页
-                var tabPage = new TabPage(Path.GetFileName(filePath))
-                {
-                    Tag = filePath,
-                    ToolTipText = filePath
-                };
-                tabPage.Controls.Add(viewer);
-                _tabContent.TabPages.Add(tabPage);
-                _tabContent.SelectedTab = tabPage;
-                AddCloseButtonToTab(tabPage);
-            }
+                Tag = filePath,
+                ToolTipText = filePath
+            };
+            tabPage.Controls.Add(viewer);
+            _tabContent.TabPages.Add(tabPage);
+            _tabContent.SelectedTab = tabPage;
+            AddCloseButtonToTab(tabPage);
 
             // 注册关联表事件
             if (viewer is CsvViewerControl csvViewer)
@@ -830,25 +793,9 @@ namespace wxd.files.winforms
                 excelViewer.LinkTableRequested += OnViewerLinkTableRequested;
         }
 
-        /// <summary>处理查看控件的关联表请求 — 弹出左侧文件列表供选择</summary>
+        /// <summary>处理查看控件的关联表请求 — 以独立新窗口打开关联文件</summary>
         private void OnViewerLinkTableRequested(object? sender, EventArgs e)
         {
-            // 找到发出请求的 TabPage
-            TabPage? targetTab = null;
-            var senderCtrl = sender as Control;
-            foreach (TabPage tab in _tabContent.TabPages)
-            {
-                if (senderCtrl != null &&
-                    (tab.Controls.Contains(senderCtrl) ||
-                     (tab.Controls.Count == 1 && tab.Controls[0] is SplitContainer sc &&
-                      (sc.Panel1.Contains(senderCtrl) || sc.Panel2.Contains(senderCtrl)))))
-                {
-                    targetTab = tab;
-                    break;
-                }
-            }
-            if (targetTab == null) return;
-
             using var dialog = new LinkTableSelectorDialog(
                 _allFiles.Select(f => (f.RelativePath, f.FullPath)).ToList());
             if (dialog.ShowDialog(this) == DialogResult.OK)
@@ -856,21 +803,9 @@ namespace wxd.files.winforms
                 var linkedPath = dialog.SelectedFilePath;
                 if (string.IsNullOrEmpty(linkedPath) || !File.Exists(linkedPath)) return;
 
-                // 检查是否已在同一个 TabPage 中打开
-                if (targetTab.Controls.Count == 1 && targetTab.Controls[0] is SplitContainer sc2)
-                {
-                    foreach (Control c in sc2.Panel2.Controls)
-                    {
-                        if (c is CsvViewerControl csvv && csvv.FilePath == linkedPath)
-                            return;
-                        if (c is ExcelViewerControl excv && excv.FilePath == linkedPath)
-                            return;
-                    }
-                }
-
-                var ext = Path.GetExtension(linkedPath).ToLowerInvariant();
-                var fileType = ext == ".csv" ? FileType.Csv : FileType.Excel;
-                OpenFile(linkedPath, fileType, targetTab, true);
+                // 在新独立窗口中打开关联文件
+                var standaloneForm = new CsvReaderStandaloneForm(linkedPath);
+                standaloneForm.Show(this);
             }
         }
 
@@ -1027,6 +962,7 @@ namespace wxd.files.winforms
         public string FilePath => _filePath;
         private char _delimiter = ',';
         private int _frozenRows = 0;                   // 冻结行数
+        private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
 
         /// <summary>请求关联打开另一张表事件</summary>
@@ -1053,9 +989,10 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
         private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
 
-        public CsvViewerControl(string filePath)
+        public CsvViewerControl(string filePath, int paneIndex = -1)
         {
             _filePath = filePath;
+            _paneIndex = paneIndex;
             InitializeComponent();
             LoadCsvAsync();
         }
@@ -1114,14 +1051,17 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            // 从设置中读取默认冻结行数，默认为2
-            _frozenRows = CsvSettings.DefaultFrozenRows;
+            // 从设置中读取冻结行数（窗格独立记录）
+            _frozenRows = _paneIndex >= 0 ? CsvSettings.GetPaneCsvFrozenRows(_paneIndex) : CsvSettings.DefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
                 _frozenRows = cboFrozenRows.SelectedIndex;
-                // 保存设置
-                CsvSettings.DefaultFrozenRows = _frozenRows;
+                // 保存设置（窗格独立记录）
+                if (_paneIndex >= 0)
+                    CsvSettings.SetPaneCsvFrozenRows(_paneIndex, _frozenRows);
+                else
+                    CsvSettings.DefaultFrozenRows = _frozenRows;
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
@@ -2775,6 +2715,7 @@ namespace wxd.files.winforms
         /// <summary>当前文件完整路径</summary>
         public string FilePath => _filePath;
         private int _frozenRows = 0;
+        private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private List<int> _visibleColumnIndices = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
 
@@ -2802,9 +2743,10 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
         private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
 
-        public ExcelViewerControl(string filePath)
+        public ExcelViewerControl(string filePath, int paneIndex = -1)
         {
             _filePath = filePath;
+            _paneIndex = paneIndex;
             InitializeComponent();
             LoadExcelAsync();
         }
@@ -2845,12 +2787,15 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            _frozenRows = CsvSettings.ExcelDefaultFrozenRows;
+            _frozenRows = _paneIndex >= 0 ? CsvSettings.GetPaneExcelFrozenRows(_paneIndex) : CsvSettings.ExcelDefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
                 _frozenRows = cboFrozenRows.SelectedIndex;
-                CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
+                if (_paneIndex >= 0)
+                    CsvSettings.SetPaneExcelFrozenRows(_paneIndex, _frozenRows);
+                else
+                    CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
