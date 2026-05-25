@@ -20,7 +20,7 @@ namespace wxd.files.winforms
     {
         // ==================== 控件声明 ====================
         private SplitContainer _splitContainer = new();
-        private ListView _lstFiles = new();
+        private TreeView _treeFiles = new();
         private TextBox _txtFileFilter = new();
         private TabControl _tabContent = new();
         private Panel _pnlLeft = new();
@@ -54,26 +54,26 @@ namespace wxd.files.winforms
             Excel
         }
 
-        // ==================== 配色方案（简洁清晰的Office风格）====================
-        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
-        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        // ==================== 配色方案（浅色天蓝色调 · 1px圆角边框）====================
+        private static readonly Color _colorBg = Color.FromArgb(235, 248, 255);
+        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
         private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
-        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
-        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
-        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
-        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
-        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorPanelBg = Color.FromArgb(245, 250, 255);
+        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightBorder = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(130, 180, 220);
+        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
+        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(30, 136, 229);
         private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
-        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
+        private static readonly Color _colorAltRow = Color.FromArgb(248, 252, 255);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
         // ==================== Win32 API（系统图标）====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -106,26 +106,14 @@ namespace wxd.files.winforms
             CreateControls();
             ApplyTheme();
 
-            // 窗体加载完成后设置列宽
+            // 窗体加载完成后设置splitter距离
             this.Shown += async (s, e) =>
             {
-                // 延迟设置，确保布局已完成
                 await Task.Delay(200);
-
-                // 强制设置SplitContainer宽度
                 if (_splitContainer.SplitterDistance < 300)
                 {
                     _splitContainer.SplitterDistance = 300;
                 }
-
-                // 强制设置列宽
-                if (_lstFiles.Columns.Count > 0)
-                {
-                    _lstFiles.Columns[0].Width = 280;
-                }
-
-                // 强制刷新
-                _lstFiles.Refresh();
             };
 
             // 如果有初始目录，自动加载
@@ -177,7 +165,7 @@ namespace wxd.files.winforms
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 0, MouseOverBackColor = _colorPrimaryDark }
+                FlatAppearance = { BorderSize = 1, BorderColor = _colorPrimaryDark, MouseOverBackColor = _colorPrimaryDark }
             };
             _btnSelectFolder.Click += OnSelectFolderClick;
 
@@ -192,7 +180,7 @@ namespace wxd.files.winforms
                 ForeColor = _colorLightTextSecondary,
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(224, 228, 234) }
+                FlatAppearance = { BorderSize = 1, BorderColor = _colorLightBorder, MouseOverBackColor = Color.FromArgb(200, 225, 245) }
             };
             _btnRefresh.Click += OnRefreshClick;
 
@@ -215,7 +203,7 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.FixedSingle,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 PlaceholderText = "支持 || 或 && 运算符",
-                BackColor = Color.FromArgb(248, 249, 251)
+                BackColor = Color.FromArgb(242, 249, 255)
             };
             // 创建过滤防抖定时器（300ms 延迟）
             _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
@@ -242,46 +230,43 @@ namespace wxd.files.winforms
             _imgList = new ImageList();
             _imgList.ImageSize = new Size(16, 16);
             _imgList.ColorDepth = ColorDepth.Depth32Bit;
-            // 使用系统文件图标作为默认图标
+            // 添加默认文件夹图标（使用系统图标）
+            var folderShfi = default(SHFILEINFO);
+            SHGetFileInfo("folder", FILE_ATTRIBUTE_DIRECTORY, out folderShfi, (uint)Marshal.SizeOf(folderShfi),
+                          SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
+            if (folderShfi.hIcon != IntPtr.Zero)
+                _imgList.Images.Add("folder", Icon.FromHandle(folderShfi.hIcon));
+            // 添加默认CSV文件图标
             var csvShfi = default(SHFILEINFO);
             SHGetFileInfo(".csv", 0, out csvShfi, (uint)Marshal.SizeOf(csvShfi),
                           SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-            _imgList.Images.Add("default", Icon.FromHandle(csvShfi.hIcon));
+            if (csvShfi.hIcon != IntPtr.Zero)
+                _imgList.Images.Add("default", Icon.FromHandle(csvShfi.hIcon));
 
-            _lstFiles = new ListView
+            _treeFiles = new TreeView
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Microsoft YaHei UI", 9f),
-                View = View.Details,
                 FullRowSelect = true,
-                GridLines = false,
                 HideSelection = false,
-                SmallImageList = _imgList,
-                MultiSelect = false,
+                ImageList = _imgList,
                 BackColor = _colorSurface,
                 ForeColor = _colorLightText,
-                OwnerDraw = true
+                ShowPlusMinus = true,
+                ShowLines = true,
+                ShowRootLines = true,
+                Indent = 19,
+                ItemHeight = 22,
+                PathSeparator = "\\"
             };
-            _lstFiles.DrawItem += OnListViewDrawItem;
-            _lstFiles.DrawSubItem += OnListViewDrawSubItem;
-            _lstFiles.DrawColumnHeader += OnListViewDrawColumnHeader;
-            _lstFiles.Columns.Add("文件", 380, System.Windows.Forms.HorizontalAlignment.Left);
-            _lstFiles.Click += OnListViewClick;
-            _lstFiles.DoubleClick += OnListViewDoubleClick;
+            // 节点展开时动态加载子目录
+            _treeFiles.BeforeExpand += OnTreeBeforeExpand;
+            _treeFiles.NodeMouseClick += OnTreeViewClick;
+            _treeFiles.NodeMouseDoubleClick += OnTreeViewDoubleClick;
 
-            // 阻止列宽被自动调整
-            _lstFiles.ColumnWidthChanging += (s, e) =>
-            {
-                if (e.ColumnIndex == 0 && e.NewWidth < 280)
-                {
-                    e.NewWidth = 280;
-                    e.Cancel = false;
-                }
-            };
-
-            // 添加ListView到左侧面板
-            _pnlLeft.Controls.Add(_lstFiles);
+            // 添加TreeView到左侧面板
+            _pnlLeft.Controls.Add(_treeFiles);
             _pnlLeft.Controls.Add(_pnlLeftTop);
 
             // ==================== 右侧标签页 ====================
@@ -306,30 +291,12 @@ namespace wxd.files.winforms
             _splitContainer.Panel1.Controls.Add(_pnlLeft);
             _splitContainer.Panel2.Controls.Add(_tabContent);
 
-            // SplitContainer调整大小时更新列宽
-            _splitContainer.SplitterMoved += (s, e) =>
-            {
-                if (_lstFiles.Columns.Count > 0)
-                {
-                    _lstFiles.Columns[0].Width = Math.Max(380, _splitContainer.Panel1.Width - 20);
-                }
-            };
-
             Controls.Add(_splitContainer);
 
             // 调整大小处理
             _pnlLeftTop.Resize += (s, e) =>
             {
                 _txtFileFilter.Width = Math.Max(100, _pnlLeftTop.Width - 16);
-            };
-
-            // ListView大小改变时保持列宽
-            _lstFiles.Resize += (s, e) =>
-            {
-                if (_lstFiles.Columns.Count > 0 && _lstFiles.ClientSize.Width > 380)
-                {
-                    _lstFiles.Columns[0].Width = _lstFiles.ClientSize.Width - 4;
-                }
             };
 
             ResumeLayout(false);
@@ -339,96 +306,157 @@ namespace wxd.files.winforms
         {
             BackColor = _colorBg;
             _pnlLeft.BackColor = _colorSurface;
-            _lstFiles.BackColor = _colorSurface;
-            _lstFiles.ForeColor = _colorLightText;
+            _treeFiles.BackColor = _colorSurface;
+            _treeFiles.ForeColor = _colorLightText;
             _tabContent.BackColor = _colorSurface;
         }
 
-        // ==================== 自定义ListView绘制（现代风格）====================
-        private void OnListViewDrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
-        {
-            using var headerBrush = new SolidBrush(_colorHeaderBg);
-            e.Graphics.FillRectangle(headerBrush, e.Bounds);
-            TextRenderer.DrawText(e.Graphics, e.Header.Text, new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                e.Bounds, _colorLightTextSecondary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            using var bottomPen = new Pen(_colorDarkBorder);
-            e.Graphics.DrawLine(bottomPen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
-            using var rightPen = new Pen(_colorLightBorder);
-            e.Graphics.DrawLine(rightPen, e.Bounds.Right - 1, e.Bounds.Top, e.Bounds.Right - 1, e.Bounds.Bottom - 1);
-        }
+        // ==================== 目录图标常量 ====================
+        private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
 
-        private void OnListViewDrawItem(object? sender, DrawListViewItemEventArgs e)
+        // ==================== 树形展开 ====================
+        /// <summary>获取系统图标的索引（返回ImageList中的索引）</summary>
+        private int GetSystemIconIndex(string path, bool isDir)
         {
-            if (e.Item.Selected)
+            var shfi = default(SHFILEINFO);
+            uint flags = SHGFI_ICON | SHGFI_SMALLICON;
+            string searchPath;
+
+            if (isDir)
             {
-                e.Graphics.FillRectangle(new SolidBrush(_colorSelectedBg), e.Bounds);
-                using var pen = new Pen(_colorPrimaryLight);
-                e.Graphics.DrawRectangle(pen, e.Bounds.X, e.Bounds.Y, e.Bounds.Width - 1, e.Bounds.Height - 1);
-            }
-            else if (e.ItemIndex % 2 == 0)
-            {
-                e.Graphics.FillRectangle(new SolidBrush(_colorAltRow), e.Bounds);
+                // 文件夹使用特殊路径 + FILE_ATTRIBUTE_DIRECTORY 获取
+                searchPath = path;
+                SHGetFileInfo(searchPath, FILE_ATTRIBUTE_DIRECTORY, out shfi, (uint)Marshal.SizeOf(shfi), flags);
             }
             else
             {
-                e.Graphics.FillRectangle(new SolidBrush(_colorSurface), e.Bounds);
+                // 文件使用扩展名获取
+                var ext = Path.GetExtension(path).ToLowerInvariant();
+                searchPath = string.IsNullOrEmpty(ext) ? ".csv" : ext;
+                SHGetFileInfo(searchPath, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags | SHGFI_USEFILEATTRIBUTES);
             }
 
-            // 绘制图标和文本（OwnerDraw 模式下需要手动绘制）
-            if (e.Item.ImageKey != null && _imgList.Images.ContainsKey(e.Item.ImageKey))
+            if (shfi.hIcon != IntPtr.Zero)
             {
-                int imgIdx = _imgList.Images.IndexOfKey(e.Item.ImageKey);
-                if (imgIdx >= 0)
-                    _imgList.Draw(e.Graphics, e.Bounds.X + 3, e.Bounds.Y + (e.Bounds.Height - 16) / 2, 16, 16, imgIdx);
+                var key = isDir ? "dir_" + path.GetHashCode() : "file_" + Path.GetExtension(path).ToLowerInvariant();
+                if (!_imgList.Images.ContainsKey(key))
+                {
+                    _imgList.Images.Add(key, Icon.FromHandle(shfi.hIcon));
+                }
+                return _imgList.Images.IndexOfKey(key);
             }
-            var textRect = new Rectangle(e.Bounds.X + 22, e.Bounds.Y + 2, e.Bounds.Width - 26, e.Bounds.Height - 4);
-            TextRenderer.DrawText(e.Graphics, e.Item.Text, _lstFiles.Font, textRect,
-                e.Item.Selected ? Color.FromArgb(30, 64, 175) : _colorLightText,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-
-            // 底部行线
-            using var linePen = new Pen(_colorLightBorder);
-            e.Graphics.DrawLine(linePen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+            return isDir ? _imgList.Images.IndexOfKey("folder") : _imgList.Images.IndexOfKey("default");
         }
 
-        private void OnListViewDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+        /// <summary>展开节点前，动态加载其子目录和文件</summary>
+        private void OnTreeBeforeExpand(object? sender, TreeViewCancelEventArgs e)
         {
-            // DrawSubItem 由 DrawItem 处理，这里留空避免重复绘制
-        }
+            var node = e.Node;
+            var fullPath = node.Tag as string ?? "";
 
-        // ==================== 目录选择 ====================
-        // ==================== 打开单个文件 ====================
-        private void OnOpenCsvClick(object? sender, EventArgs e)
-        {
-            using var dialog = new OpenFileDialog
+            // 如果节点已经有子节点且第一个子节点是占位的虚节点，则清除并真正加载
+            if (node.Nodes.Count == 1 && node.Nodes[0].Tag is string placeholder && placeholder == "__placeholder__")
             {
-                Title = "选择CSV文件",
-                Filter = "CSV文件 (*.csv)|*.csv|所有文件 (*.*)|*.*",
-                Multiselect = false
-            };
-
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                OpenFile(dialog.FileName, FileType.Csv);
+                node.Nodes.Clear();
+                LoadChildrenToNode(node, fullPath);
             }
         }
 
-        private void OnOpenExcelClick(object? sender, EventArgs e)
+        /// <summary>递归加载目录到树节点</summary>
+        private void LoadChildrenToNode(TreeNode parentNode, string dirPath)
         {
-            using var dialog = new OpenFileDialog
+            try
             {
-                Title = "选择Excel文件",
-                Filter = "Excel文件 (*.xls;*.xlsx)|*.xls;*.xlsx|所有文件 (*.*)|*.*",
-                Multiselect = false
-            };
+                // 加载子目录
+                foreach (var subDir in GetSubDirectories(dirPath))
+                {
+                    var dirName = Path.GetFileName(subDir);
+                    var dirNode = new TreeNode(dirName)
+                    {
+                        Tag = subDir,
+                        ImageKey = "folder",
+                        SelectedImageKey = "folder"
+                    };
+                    dirNode.ImageIndex = GetSystemIconIndex(subDir, true);
+                    dirNode.SelectedImageIndex = dirNode.ImageIndex;
 
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                OpenFile(dialog.FileName, FileType.Excel);
+                    // 检查子目录下是否有符合条件的文件或子目录，有则添加占位节点以实现展开箭头
+                    if (HasChildFilesOrDirectories(subDir))
+                    {
+                        dirNode.Nodes.Add(new TreeNode("__placeholder__") { Tag = "__placeholder__" });
+                    }
+
+                    parentNode.Nodes.Add(dirNode);
+                }
+
+                // 加载CSV文件
+                foreach (var file in Directory.GetFiles(dirPath, "*.csv"))
+                {
+                    var fileNode = new TreeNode(Path.GetFileName(file))
+                    {
+                        Tag = file,
+                        ImageKey = "default",
+                        SelectedImageKey = "default"
+                    };
+                    fileNode.ImageIndex = GetSystemIconIndex(file, false);
+                    fileNode.SelectedImageIndex = fileNode.ImageIndex;
+                    parentNode.Nodes.Add(fileNode);
+                }
+
+                // 加载Excel文件
+                foreach (var ext in new[] { "*.xls", "*.xlsx" })
+                {
+                    foreach (var file in Directory.GetFiles(dirPath, ext))
+                    {
+                        var fileNode = new TreeNode(Path.GetFileName(file))
+                        {
+                            Tag = file,
+                            ImageKey = "default",
+                            SelectedImageKey = "default"
+                        };
+                        fileNode.ImageIndex = GetSystemIconIndex(file, false);
+                        fileNode.SelectedImageIndex = fileNode.ImageIndex;
+                        parentNode.Nodes.Add(fileNode);
+                    }
+                }
             }
+            catch (UnauthorizedAccessException) { }
+            catch (Exception) { }
         }
 
-        // ==================== 目录选择 ====================
+        /// <summary>获取目录下的子目录，自动忽略 .svn 和 .git 等版本控制文件夹</summary>
+        private static string[] GetSubDirectories(string path)
+        {
+            if (!Directory.Exists(path)) return Array.Empty<string>();
+            return Directory.GetDirectories(path)
+                .Where(d => !IsVcsDir(Path.GetFileName(d)))
+                .ToArray();
+        }
+
+        /// <summary>检查目录名是否为版本控制目录</summary>
+        private static bool IsVcsDir(string dirName)
+        {
+            return dirName == ".svn" || dirName == ".git";
+        }
+
+        /// <summary>检查目录下是否有符合条件的文件或子目录</summary>
+        private bool HasChildFilesOrDirectories(string dirPath)
+        {
+            try
+            {
+                if (GetSubDirectories(dirPath).Length > 0)
+                    return true;
+                if (Directory.GetFiles(dirPath, "*.csv").Length > 0)
+                    return true;
+                if (Directory.GetFiles(dirPath, "*.xls").Length > 0)
+                    return true;
+                if (Directory.GetFiles(dirPath, "*.xlsx").Length > 0)
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+
         private void OnSelectFolderClick(object? sender, EventArgs e)
         {
             using var dialog = new FolderBrowserDialog
@@ -472,21 +500,27 @@ namespace wxd.files.winforms
             _loadingCts = new CancellationTokenSource();
             var token = _loadingCts.Token;
 
-            _lstFiles.Items.Clear();
+            _treeFiles.Nodes.Clear();
             _allFiles.Clear();
-
-            // 显示加载中
-            _lstFiles.Items.Add(new ListViewItem("加载中..."));
 
             try
             {
-                await Task.Run(() => ScanFiles(_currentDir, token), token);
+                await Task.Run(() =>
+                {
+                    // 扫描所有文件（保持与之前一致，用于过滤和关联表）
+                    var files = new List<FileInfo>();
+                    ScanDirectory(_currentDir, _currentDir, files, token);
+                    lock (_lockObj)
+                    {
+                        _allFiles = files;
+                    }
+                }, token);
 
                 if (!token.IsCancellationRequested)
                 {
                     this.Invoke(() =>
                     {
-                        RefreshFileList();
+                        BuildTreeFromRoot();
                         ApplyFileFilter();
                     });
                 }
@@ -508,7 +542,6 @@ namespace wxd.files.winforms
         {
             var files = new List<FileInfo>();
             ScanDirectory(rootDir, rootDir, files, token);
-
             lock (_lockObj)
             {
                 _allFiles = files;
@@ -525,7 +558,6 @@ namespace wxd.files.winforms
                 foreach (var file in Directory.GetFiles(currentDir, "*.csv"))
                 {
                     token.ThrowIfCancellationRequested();
-
                     var relativePath = GetRelativePath(rootDir, file);
                     files.Add(new FileInfo
                     {
@@ -537,36 +569,24 @@ namespace wxd.files.winforms
                 }
 
                 // 获取当前目录的Excel文件
-                foreach (var file in Directory.GetFiles(currentDir, "*.xls"))
+                foreach (var ext in new[] { "*.xls", "*.xlsx" })
                 {
-                    token.ThrowIfCancellationRequested();
-
-                    var relativePath = GetRelativePath(rootDir, file);
-                    files.Add(new FileInfo
+                    foreach (var file in Directory.GetFiles(currentDir, ext))
                     {
-                        Name = Path.GetFileName(file),
-                        FullPath = file,
-                        RelativePath = relativePath,
-                        Type = FileType.Excel
-                    });
-                }
-
-                foreach (var file in Directory.GetFiles(currentDir, "*.xlsx"))
-                {
-                    token.ThrowIfCancellationRequested();
-
-                    var relativePath = GetRelativePath(rootDir, file);
-                    files.Add(new FileInfo
-                    {
-                        Name = Path.GetFileName(file),
-                        FullPath = file,
-                        RelativePath = relativePath,
-                        Type = FileType.Excel
-                    });
+                        token.ThrowIfCancellationRequested();
+                        var relativePath = GetRelativePath(rootDir, file);
+                        files.Add(new FileInfo
+                        {
+                            Name = Path.GetFileName(file),
+                            FullPath = file,
+                            RelativePath = relativePath,
+                            Type = FileType.Excel
+                        });
+                    }
                 }
 
                 // 递归子目录
-                foreach (var subDir in Directory.GetDirectories(currentDir))
+                foreach (var subDir in GetSubDirectories(currentDir))
                 {
                     token.ThrowIfCancellationRequested();
                     ScanDirectory(subDir, rootDir, files, token);
@@ -587,52 +607,42 @@ namespace wxd.files.winforms
         }
 
         // ==================== 构建树形结构 ====================
-        // ==================== 刷新文件列表 ====================
-        private void RefreshFileList()
+        private void BuildTreeFromRoot()
         {
-            _lstFiles.BeginUpdate();
-            _lstFiles.Items.Clear();
+            _treeFiles.BeginUpdate();
+            _treeFiles.Nodes.Clear();
 
-            // 确保列宽设置正确
-            if (_lstFiles.Columns.Count > 0)
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
             {
-                _lstFiles.Columns[0].Width = 380;
-            }
-
-            if (_allFiles.Count == 0)
-            {
-                var emptyItem = new ListViewItem("未找到CSV/Excel文件")
-                {
-                    ForeColor = _colorLightTextSecondary
-                };
-                _lstFiles.Items.Add(emptyItem);
-                _lstFiles.EndUpdate();
+                _treeFiles.EndUpdate();
                 _lblFileCount.Text = "共 0 个文件";
                 return;
             }
 
-            foreach (var file in _allFiles.OrderBy(f => f.RelativePath))
+            // 创建根节点（使用目录名）
+            var rootNode = new TreeNode(Path.GetFileName(_currentDir))
             {
-                // 显示相对路径作为文件名（包含目录结构）
-                var item = new ListViewItem(file.RelativePath)
-                {
-                    Tag = file,
-                    ToolTipText = file.FullPath,
-                    ImageKey = GetFileIconKey(file.FullPath)
-                };
-                _lstFiles.Items.Add(item);
-            }
+                Tag = _currentDir,
+                ImageKey = "folder",
+                SelectedImageKey = "folder"
+            };
+            rootNode.ImageIndex = GetSystemIconIndex(_currentDir, true);
+            rootNode.SelectedImageIndex = rootNode.ImageIndex;
 
-            _lstFiles.EndUpdate();
+            // 添加占位节点以显示展开箭头（延迟加载）
+            rootNode.Nodes.Add(new TreeNode("__placeholder__") { Tag = "__placeholder__" });
 
-            // 更新文件数量标签
-            _lblFileCount.Text = $"共 {_lstFiles.Items.Count} 个文件";
+            _treeFiles.Nodes.Add(rootNode);
+            rootNode.Expand();
+
+            _treeFiles.EndUpdate();
+
+            _lblFileCount.Text = $"共 {_allFiles.Count} 个文件";
         }
 
         // ==================== 文件过滤 ====================
         private void OnFileFilterChanged(object? sender, EventArgs e)
         {
-            // 防抖：重启定时器，300ms 内无新输入才真正过滤
             _filterDebounceTimer?.Stop();
             _filterDebounceTimer?.Start();
         }
@@ -641,52 +651,105 @@ namespace wxd.files.winforms
         {
             var filter = _txtFileFilter.Text.Trim();
 
-            _lstFiles.BeginUpdate();
-            _lstFiles.Items.Clear();
-
-            // 确保列宽设置正确
-            if (_lstFiles.Columns.Count > 0)
+            if (string.IsNullOrEmpty(filter))
             {
-                _lstFiles.Columns[0].Width = 380;
+                // 无过滤：重建正常的延迟加载树
+                BuildTreeFromRoot();
             }
-
-            if (_allFiles.Count == 0)
+            else
             {
-                var emptyItem = new ListViewItem("未找到CSV/Excel文件")
-                {
-                    ForeColor = _colorLightTextSecondary
-                };
-                _lstFiles.Items.Add(emptyItem);
-                _lstFiles.EndUpdate();
-                _lblFileCount.Text = "共 0 个文件";
+                // 有过滤：根据匹配文件重建内部全展开树
+                var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
+                var matchedFiles = _allFiles
+                    .Where(f => MatchesFilter(f.RelativePath, processedFilter))
+                    .OrderBy(f => f.RelativePath)
+                    .ToList();
+
+                BuildFilteredTreeFromFiles(matchedFiles);
+            }
+        }
+
+        /// <summary>根据过滤后的文件列表构建全展开的过滤树</summary>
+        private void BuildFilteredTreeFromFiles(List<FileInfo> matchedFiles)
+        {
+            _treeFiles.BeginUpdate();
+            _treeFiles.Nodes.Clear();
+
+            if (matchedFiles.Count == 0)
+            {
+                _treeFiles.EndUpdate();
+                _lblFileCount.Text = $"共 0 个文件（总{_allFiles.Count}）";
                 return;
             }
 
-            // 处理运算符
-            var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
+            // 使用字典按目录路径组织节点，key 为目录路径
+            var dirNodes = new Dictionary<string, TreeNode>(StringComparer.OrdinalIgnoreCase);
+            var rootDir = _currentDir;
 
-            foreach (var file in _allFiles.OrderBy(f => f.RelativePath))
+            // 创建根节点
+            var rootName = Path.GetFileName(rootDir);
+            var rootNode = new TreeNode(rootName)
             {
-                // 如果有过滤条件，检查是否匹配
-                if (!string.IsNullOrEmpty(filter))
-                {
-                    if (!MatchesFilter(file.RelativePath, processedFilter))
-                        continue;
-                }
+                Tag = rootDir,
+                ImageKey = "folder",
+                SelectedImageKey = "folder"
+            };
+            rootNode.ImageIndex = GetSystemIconIndex(rootDir, true);
+            rootNode.SelectedImageIndex = rootNode.ImageIndex;
+            _treeFiles.Nodes.Add(rootNode);
+            dirNodes[rootDir] = rootNode;
 
-                var item = new ListViewItem(file.RelativePath)
+            foreach (var file in matchedFiles)
+            {
+                var dirPath = Path.GetDirectoryName(file.FullPath) ?? rootDir;
+                TreeNode parentNode = GetOrCreateParentNode(dirPath, rootDir, dirNodes);
+
+                var fileNode = new TreeNode(file.Name)
                 {
-                    Tag = file,
-                    ToolTipText = file.FullPath,
-                    ImageKey = GetFileIconKey(file.FullPath)
+                    Tag = file.FullPath,
+                    ImageKey = "default",
+                    SelectedImageKey = "default"
                 };
-                _lstFiles.Items.Add(item);
+                fileNode.ImageIndex = GetSystemIconIndex(file.FullPath, false);
+                fileNode.SelectedImageIndex = fileNode.ImageIndex;
+                parentNode.Nodes.Add(fileNode);
             }
 
-            _lstFiles.EndUpdate();
+            // 展开所有节点
+            _treeFiles.ExpandAll();
 
-            // 更新文件数量标签
-            _lblFileCount.Text = $"共 {_lstFiles.Items.Count} 个文件";
+            _treeFiles.EndUpdate();
+            _lblFileCount.Text = $"共 {matchedFiles.Count} 个文件（总{_allFiles.Count}）";
+        }
+
+        /// <summary>获取或创建文件所在的父目录节点（递归创建缺失的中间目录）</summary>
+        private TreeNode GetOrCreateParentNode(string dirPath, string rootDir, Dictionary<string, TreeNode> dirNodes)
+        {
+            if (dirNodes.TryGetValue(dirPath, out var node))
+                return node;
+
+            // 递归创建父节点
+            var parentDir = Path.GetDirectoryName(dirPath);
+            if (parentDir == null || string.Equals(dirPath, rootDir, StringComparison.OrdinalIgnoreCase))
+                return dirNodes[rootDir];
+
+            // 如果父目录不在根目录范围内，挂在根下
+            if (!parentDir.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+                return dirNodes[rootDir];
+
+            var parentNode = GetOrCreateParentNode(parentDir, rootDir, dirNodes);
+
+            var thisNode = new TreeNode(Path.GetFileName(dirPath))
+            {
+                Tag = dirPath,
+                ImageKey = "folder",
+                SelectedImageKey = "folder"
+            };
+            thisNode.ImageIndex = GetSystemIconIndex(dirPath, true);
+            thisNode.SelectedImageIndex = thisNode.ImageIndex;
+            parentNode.Nodes.Add(thisNode);
+            dirNodes[dirPath] = thisNode;
+            return thisNode;
         }
 
         private bool MatchesFilter(string text, string filter)
@@ -710,53 +773,35 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== 系统文件图标 ====================
-        private string GetFileIconKey(string filePath)
+        // ==================== 树文件选择处理 ====================
+        private void OnTreeViewClick(object? sender, TreeNodeMouseClickEventArgs e)
         {
-            try
+            var fullPath = e.Node.Tag as string ?? "";
+            if (System.IO.File.Exists(fullPath))
             {
-                var ext = Path.GetExtension(filePath).ToLowerInvariant();
-                if (!_imgList.Images.ContainsKey(ext))
-                {
-                    var shfi = default(SHFILEINFO);
-                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON);
-                    if (shfi.hIcon != IntPtr.Zero)
-                    {
-                        _imgList.Images.Add(ext, Icon.FromHandle(shfi.hIcon));
-                        return ext;
-                    }
-                }
-                else return ext;
-            }
-            catch { }
-            return "default";
-        }
-
-        // ==================== 文件选择处理 ====================
-        private void OnListViewClick(object? sender, EventArgs e)
-        {
-            if (_lstFiles.SelectedItems.Count > 0)
-            {
-                var item = _lstFiles.SelectedItems[0];
-                if (item.Tag is FileInfo fileInfo && System.IO.File.Exists(fileInfo.FullPath))
-                {
-                    OpenFile(fileInfo.FullPath, fileInfo.Type);
-                }
+                var fileType = DetectFileType(fullPath);
+                OpenFile(fullPath, fileType);
             }
         }
 
-        private void OnListViewDoubleClick(object? sender, EventArgs e)
+        private void OnTreeViewDoubleClick(object? sender, TreeNodeMouseClickEventArgs e)
         {
-            if (_lstFiles.SelectedItems.Count > 0)
+            var fullPath = e.Node.Tag as string ?? "";
+            if (System.IO.File.Exists(fullPath))
             {
-                var item = _lstFiles.SelectedItems[0];
-                if (item.Tag is FileInfo fileInfo && System.IO.File.Exists(fileInfo.FullPath))
-                {
-                    OpenFile(fileInfo.FullPath, fileInfo.Type);
-                }
+                var fileType = DetectFileType(fullPath);
+                OpenFile(fullPath, fileType);
             }
         }
 
+        private static FileType DetectFileType(string filePath)
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext == ".csv") return FileType.Csv;
+            return FileType.Excel;
+        }
+
+        // ==================== 文件打开处理 ====================
         private void OpenFile(string filePath, FileType fileType)
         {
             // 检查是否已经打开
@@ -771,9 +816,9 @@ namespace wxd.files.winforms
 
             Control viewer;
             if (fileType == FileType.Excel)
-                viewer = new ExcelViewerControl(filePath, _paneIndex) { Dock = DockStyle.Fill };
+                viewer = new ExcelViewerControl(filePath, _paneIndex, _currentDir) { Dock = DockStyle.Fill };
             else
-                viewer = new CsvViewerControl(filePath, _paneIndex) { Dock = DockStyle.Fill };
+                viewer = new CsvViewerControl(filePath, _paneIndex, _currentDir) { Dock = DockStyle.Fill };
 
             // 创建新标签页
             var tabPage = new TabPage(Path.GetFileName(filePath))
@@ -850,13 +895,13 @@ namespace wxd.files.winforms
                     Color bgColor, borderColor;
                     if (isSelected)
                     {
-                        bgColor = Color.FromArgb(37, 99, 235);
-                        borderColor = Color.FromArgb(37, 99, 235);
+                        bgColor = Color.FromArgb(66, 165, 245);
+                        borderColor = Color.FromArgb(30, 136, 229);
                     }
                     else
                     {
-                        bgColor = Color.FromArgb(219, 234, 254);
-                        borderColor = Color.FromArgb(191, 219, 254);
+                        bgColor = Color.FromArgb(227, 242, 253);
+                        borderColor = Color.FromArgb(173, 209, 237);
                     }
 
                     using (var path = new GraphicsPath())
@@ -889,7 +934,7 @@ namespace wxd.files.winforms
 
                     // 绘制文本
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Color.White : Color.FromArgb(30, 64, 175);
+                    Color textColor = isSelected ? Color.White : Color.FromArgb(20, 60, 100);
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
@@ -933,8 +978,8 @@ namespace wxd.files.winforms
 
             _tabContent.TabPages.RemoveAt(tabIndex);
 
-            // 清除ListView选中状态，允许重新打开同一文件
-            _lstFiles.SelectedItems.Clear();
+            // 清除TreeView选中状态，允许重新打开同一文件
+            _treeFiles.SelectedNode = null;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -964,38 +1009,44 @@ namespace wxd.files.winforms
         private int _frozenRows = 0;                   // 冻结行数
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
+        private List<ColumnLinkConfig> _columnLinks = new();
+        private List<(string display, string fullPath)> _fileEntries = new();
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
 
-        // 配色
-        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
-        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        // 配色（与CsvReaderForm一致的浅色天蓝色调）
+        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
         private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
-        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
-        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
-        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
-        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
-        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorPanelBg = Color.FromArgb(245, 250, 255);
+        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightBorder = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(130, 180, 220);
+        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
+        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(30, 136, 229);
         private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
-        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
+        private static readonly Color _colorAltRow = Color.FromArgb(248, 252, 255);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public CsvViewerControl(string filePath, int paneIndex = -1)
+        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
+            _rootDir = rootDir;
             InitializeComponent();
             LoadCsvAsync();
         }
+
+        private string? _rootDir;
+        /// <summary>当前浏览根目录（用于文件夹级设置存储）</summary>
+        private string FrozenDir => !string.IsNullOrEmpty(_rootDir) ? _rootDir : Path.GetDirectoryName(_filePath) ?? "";
 
         private void InitializeComponent()
         {
@@ -1051,15 +1102,15 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            // 从设置中读取冻结行数（窗格独立记录）
-            _frozenRows = _paneIndex >= 0 ? CsvSettings.GetPaneCsvFrozenRows(_paneIndex) : CsvSettings.DefaultFrozenRows;
+            // 从设置中读取冻结行数（按目录存储，子文件共享）
+            _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetCsvFrozenRowsByDirectory(FrozenDir) : CsvSettings.DefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
                 _frozenRows = cboFrozenRows.SelectedIndex;
-                // 保存设置（窗格独立记录）
-                if (_paneIndex >= 0)
-                    CsvSettings.SetPaneCsvFrozenRows(_paneIndex, _frozenRows);
+                // 保存设置（按目录存储）
+                if (!string.IsNullOrEmpty(FrozenDir))
+                    CsvSettings.SetCsvFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.DefaultFrozenRows = _frozenRows;
                 CsvSettings.Save();
@@ -1100,7 +1151,24 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns, _lblInfo });
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns });
+
+            // 重新加载按钮（保留过滤状态刷新文件内容）
+            var btnReload = new Button
+            {
+                Text = "重新加载",
+                Size = new Size(75, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            btnReload.Click += (s, e) => ReloadContentAsync();
+            flowTop.Controls.Add(btnReload);
 
             // 关联表按钮
             var btnLinkTable = new Button
@@ -1110,21 +1178,24 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(37, 99, 235),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 10, 0)
             };
             btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
             flowTop.Controls.Add(btnLinkTable);
 
+            // 信息标签放到最后
+            flowTop.Controls.Add(_lblInfo);
+
             // 第二行（分隔线）放入 topTable
             var separatorLine = new Panel
             {
                 Height = 1,
                 Dock = DockStyle.Top,
-                BackColor = Color.FromArgb(224, 228, 234),
+                BackColor = Color.FromArgb(200, 225, 245),
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
@@ -1172,7 +1243,7 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0),
-                BackColor = Color.FromArgb(248, 249, 251)
+                BackColor = Color.FromArgb(242, 249, 255)
             };
             txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
             txtAdvancedFilter.KeyDown += (s, e) =>
@@ -1261,7 +1332,7 @@ namespace wxd.files.winforms
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
-            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(245, 250, 255);
             _dataGridHeader.TabStop = false;
             _dataGridHeader.CellMouseDown += (s, e) =>
             {
@@ -1373,7 +1444,7 @@ namespace wxd.files.winforms
                     ForeColor = _colorLightText,
                     Font = new Font("Microsoft YaHei UI", 9f),
                     SelectionBackColor = _colorSelectedBg,
-                    SelectionForeColor = Color.FromArgb(30, 64, 175),
+                    SelectionForeColor = Color.FromArgb(20, 60, 100),
                     Padding = new Padding(2, 0, 2, 0)
                 },
                 RowTemplate = new DataGridViewRow { Height = 24 }
@@ -1381,6 +1452,7 @@ namespace wxd.files.winforms
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
+            dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
 
@@ -1635,6 +1707,120 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>重新加载文件内容，保留过滤条件和列选择状态</summary>
+        private async void ReloadContentAsync()
+        {
+            if (!System.IO.File.Exists(_filePath)) return;
+
+            // 保存当前过滤/选择状态
+            var savedFilter = _txtContentFilter.Text;
+            var savedAdvFilter = _txtAdvancedFilter.Text;
+            var savedColumnStates = _columnCheckStates;
+            var savedFrozenRows = _frozenRows;
+
+            try
+            {
+                if (!this.IsHandleCreated)
+                {
+                    var tcs = new TaskCompletionSource<bool>();
+                    EventHandler? handler = null;
+                    handler = (s, e) =>
+                    {
+                        this.HandleCreated -= handler;
+                        tcs.TrySetResult(true);
+                    };
+                    this.HandleCreated += handler;
+                    await tcs.Task;
+                }
+
+                await Task.Run(() => ReloadCsvFile());
+            }
+            catch (Exception ex)
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke(() =>
+                    {
+                        MessageBox.Show(this, $"重新加载CSV文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+                // 恢复状态
+                _columnCheckStates = savedColumnStates;
+                _frozenRows = savedFrozenRows;
+                _txtContentFilter.Text = savedFilter;
+                _txtAdvancedFilter.Text = savedAdvFilter;
+                UpdateColumnSelectorButton();
+                return;
+            }
+
+            // 重新应用列选择状态（如果列数未变）
+            if (savedColumnStates.Length == _dataTable.Columns.Count)
+            {
+                _columnCheckStates = savedColumnStates;
+            }
+            else
+            {
+                // 列数变化，重置为全选
+                _columnCheckStates = new bool[_dataTable.Columns.Count];
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    _columnCheckStates[i] = true;
+            }
+            _frozenRows = savedFrozenRows;
+            _txtContentFilter.Text = savedFilter;
+            _txtAdvancedFilter.Text = savedAdvFilter;
+            UpdateColumnSelectorButton();
+            RefreshGridLayout();
+        }
+
+        /// <summary>重新读取CSV文件内容（后台线程执行）</summary>
+        private void ReloadCsvFile()
+        {
+            if (!File.Exists(_filePath)) return;
+
+            string content;
+            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(fs, Encoding.UTF8, true))
+            {
+                content = reader.ReadToEnd();
+            }
+
+            var delimiter = DetectDelimiter(content);
+            var lines = SplitCsvLines(content);
+            if (lines.Count == 0) return;
+
+            var headers = ParseCsvLine(lines[0]);
+            var dataTable = new DataTable();
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var header in headers)
+            {
+                var columnName = header;
+                int suffix = 1;
+                while (usedNames.Contains(columnName))
+                {
+                    columnName = $"{header}_{suffix}";
+                    suffix++;
+                }
+                usedNames.Add(columnName);
+                dataTable.Columns.Add(columnName, typeof(string));
+            }
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var values = ParseCsvLine(lines[i]);
+                var row = dataTable.NewRow();
+                for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
+                    row[j] = values[j];
+                dataTable.Rows.Add(row);
+            }
+
+            this.Invoke(() =>
+            {
+                _delimiter = delimiter;
+                _dataTable = dataTable;
+                _headerTable = dataTable.Clone();
+            });
+        }
+
         private async void LoadCsvAsync()
         {
             try
@@ -1678,7 +1864,8 @@ namespace wxd.files.winforms
 
             // 读取文件内容以检测分隔符
             string content;
-            using (var reader = new StreamReader(_filePath, Encoding.UTF8, true))
+            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(fs, Encoding.UTF8, true))
             {
                 content = reader.ReadToEnd();
             }
@@ -1742,6 +1929,9 @@ namespace wxd.files.winforms
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
                 for (int i = 0; i < _columnCheckStates.Length; i++)
                     _columnCheckStates[i] = true;
+
+                _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
 
                 UpdateColumnSelectorButton();
 
@@ -1976,13 +2166,47 @@ namespace wxd.files.winforms
         {
             if (_dataTable.Columns.Count == 0) return;
 
-            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0);
+            EnsureFileEntriesLoaded();
+
+            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
+                _rootDir ?? "", _filePath, _fileEntries, _columnLinks);
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnCheckStates = dialog.GetCheckedStates();
+                _columnLinks = dialog.GetColumnLinks();
+                CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
                 UpdateColumnSelectorButton();
                 RefreshGridLayout();
             }
+        }
+
+        /// <summary>确保文件条目列表已加载（从 _rootDir 扫描）</summary>
+        private void EnsureFileEntriesLoaded()
+        {
+            if (_fileEntries.Count > 0) return;
+            var root = FrozenDir;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
+            _fileEntries.Clear();
+            try
+            {
+                foreach (var f in Directory.GetFiles(root, "*.csv", SearchOption.AllDirectories))
+                {
+                    var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                        ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
+                    _fileEntries.Add((rel, f));
+                }
+                foreach (var ext in new[] { "*.xls", "*.xlsx" })
+                {
+                    foreach (var f in Directory.GetFiles(root, ext, SearchOption.AllDirectories))
+                    {
+                        var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                            ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
+                        _fileEntries.Add((rel, f));
+                    }
+                }
+            }
+            catch { }
         }
 
         /// <summary>更新选择列按钮文本</summary>
@@ -2431,6 +2655,11 @@ namespace wxd.files.winforms
             {
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             }
+            // 列关联颜色检查
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+            }
         }
 
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
@@ -2557,12 +2786,14 @@ namespace wxd.files.winforms
 
         private static void SetActiveButton(Button active, Button inactive)
         {
-            active.BackColor = Color.FromArgb(0, 120, 212);
+            active.BackColor = Color.FromArgb(66, 165, 245);
             active.ForeColor = Color.White;
-            active.FlatAppearance.BorderSize = 0;
-            inactive.BackColor = Color.FromArgb(240, 242, 245);
-            inactive.ForeColor = Color.FromArgb(55, 65, 81);
-            inactive.FlatAppearance.BorderSize = 0;
+            active.FlatAppearance.BorderSize = 1;
+            active.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+            inactive.BackColor = Color.FromArgb(235, 248, 255);
+            inactive.ForeColor = Color.FromArgb(20, 60, 100);
+            inactive.FlatAppearance.BorderSize = 1;
+            inactive.FlatAppearance.BorderColor = Color.FromArgb(173, 209, 237);
         }
 
         private void InitializeComponent()
@@ -2575,14 +2806,14 @@ namespace wxd.files.winforms
             MinimizeBox = true;
             MaximizeBox = true;
             Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(248, 249, 251);
+            BackColor = Color.FromArgb(242, 249, 255);
 
             // ==================== 顶部格式切换面板 ====================
             _pnlTop = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 44,
-                BackColor = Color.FromArgb(245, 246, 248),
+                BackColor = Color.FromArgb(235, 245, 255),
                 Padding = new Padding(8, 7, 8, 7)
             };
 
@@ -2632,7 +2863,7 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Bottom,
                 Height = 52,
-                BackColor = Color.FromArgb(245, 246, 248)
+                BackColor = Color.FromArgb(235, 245, 255)
             };
 
             // 保存按钮
@@ -2641,11 +2872,11 @@ namespace wxd.files.winforms
                 Text = "保存",
                 Size = new Size(80, 30),
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                BackColor = Color.FromArgb(0, 120, 212),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.OK,
-                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(16, 110, 190) }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) }
             };
 
             // 取消按钮
@@ -2654,11 +2885,11 @@ namespace wxd.files.winforms
                 Text = "取消",
                 Size = new Size(80, 30),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(240, 242, 245),
-                ForeColor = Color.FromArgb(55, 65, 81),
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219), MouseOverBackColor = Color.FromArgb(229, 231, 235) }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237), MouseOverBackColor = Color.FromArgb(200, 225, 245) }
             };
 
             _pnlBottom.Controls.Add(_btnSave);
@@ -2718,38 +2949,44 @@ namespace wxd.files.winforms
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private List<int> _visibleColumnIndices = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
+        private List<ColumnLinkConfig> _columnLinks = new();
+        private List<(string display, string fullPath)> _fileEntries = new();
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
 
-        // 配色
-        private static readonly Color _colorBg = Color.FromArgb(240, 242, 245);
-        private static readonly Color _colorLightBg = Color.FromArgb(240, 242, 245);
+        // 配色（浅色天蓝色调）
+        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
         private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorPanelBg = Color.FromArgb(247, 248, 250);
-        private static readonly Color _colorBorder = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorLightBorder = Color.FromArgb(224, 228, 234);
-        private static readonly Color _colorDarkBorder = Color.FromArgb(179, 184, 194);
-        private static readonly Color _colorLightText = Color.FromArgb(31, 41, 55);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(107, 114, 128);
-        private static readonly Color _colorPrimary = Color.FromArgb(37, 99, 235);
-        private static readonly Color _colorPrimaryLight = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorPrimaryDark = Color.FromArgb(29, 78, 216);
+        private static readonly Color _colorPanelBg = Color.FromArgb(245, 250, 255);
+        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightBorder = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorDarkBorder = Color.FromArgb(130, 180, 220);
+        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
+        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
+        private static readonly Color _colorPrimaryLight = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorPrimaryDark = Color.FromArgb(30, 136, 229);
         private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
-        private static readonly Color _colorHoverBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(243, 244, 246);
-        private static readonly Color _colorAltRow = Color.FromArgb(249, 250, 251);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(219, 234, 254);
-        private static readonly Color _colorGridLine = Color.FromArgb(209, 213, 219);
-        private static readonly Color _colorRowNumBg = Color.FromArgb(243, 244, 246);
+        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
+        private static readonly Color _colorAltRow = Color.FromArgb(248, 252, 255);
+        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
+        private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public ExcelViewerControl(string filePath, int paneIndex = -1)
+        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
+            _rootDir = rootDir;
             InitializeComponent();
             LoadExcelAsync();
         }
+
+        private string? _rootDir;
+        /// <summary>当前浏览根目录（用于文件夹级设置存储）</summary>
+        private string FrozenDir => !string.IsNullOrEmpty(_rootDir) ? _rootDir : Path.GetDirectoryName(_filePath) ?? "";
 
         private void InitializeComponent()
         {
@@ -2787,13 +3024,13 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            _frozenRows = _paneIndex >= 0 ? CsvSettings.GetPaneExcelFrozenRows(_paneIndex) : CsvSettings.ExcelDefaultFrozenRows;
+            _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetExcelFrozenRowsByDirectory(FrozenDir) : CsvSettings.ExcelDefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
                 _frozenRows = cboFrozenRows.SelectedIndex;
-                if (_paneIndex >= 0)
-                    CsvSettings.SetPaneExcelFrozenRows(_paneIndex, _frozenRows);
+                if (!string.IsNullOrEmpty(FrozenDir))
+                    CsvSettings.SetExcelFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
                 CsvSettings.Save();
@@ -2834,7 +3071,24 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns, _lblInfo });
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns });
+
+            // 重新加载按钮（保留过滤状态刷新文件内容）
+            var btnReload = new Button
+            {
+                Text = "重新加载",
+                Size = new Size(75, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            btnReload.Click += (s, e) => ReloadContentAsync();
+            flowTop.Controls.Add(btnReload);
 
             // 关联表按钮
             var btnLinkTable = new Button
@@ -2844,21 +3098,24 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(37, 99, 235),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 10, 0)
             };
             btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
             flowTop.Controls.Add(btnLinkTable);
 
+            // 信息标签放到最后
+            flowTop.Controls.Add(_lblInfo);
+
             // ====== 第二行: 分隔线 ======
             var separatorLine = new Panel
             {
                 Height = 1,
                 Dock = DockStyle.Top,
-                BackColor = Color.FromArgb(224, 228, 234),
+                BackColor = Color.FromArgb(200, 225, 245),
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
@@ -2930,7 +3187,7 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0),
-                BackColor = Color.FromArgb(248, 249, 251)
+                BackColor = Color.FromArgb(242, 249, 255)
             };
             txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
             txtAdvancedFilter.KeyDown += (s, e) =>
@@ -3005,7 +3262,7 @@ namespace wxd.files.winforms
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
-            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(245, 250, 255);
             _dataGridHeader.TabStop = false;
             _dataGridHeader.CellMouseDown += (s, e) =>
             {
@@ -3107,7 +3364,7 @@ namespace wxd.files.winforms
                     ForeColor = _colorLightText,
                     Font = new Font("Microsoft YaHei UI", 9f),
                     SelectionBackColor = _colorSelectedBg,
-                    SelectionForeColor = Color.FromArgb(30, 64, 175),
+                    SelectionForeColor = Color.FromArgb(20, 60, 100),
                     Padding = new Padding(2, 0, 2, 0)
                 },
                 RowTemplate = new DataGridViewRow { Height = 24 }
@@ -3115,6 +3372,7 @@ namespace wxd.files.winforms
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
+            dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
 
@@ -3257,6 +3515,102 @@ namespace wxd.files.winforms
             return (displayRowIndex + _frozenRows, displayColumnIndex);
         }
 
+        /// <summary>重新加载Excel文件内容，保留过滤条件和列选择状态</summary>
+        private async void ReloadContentAsync()
+        {
+            if (!System.IO.File.Exists(_filePath)) return;
+
+            var savedFilter = _txtContentFilter.Text;
+            var savedAdvFilter = _txtAdvancedFilter.Text;
+            var savedColumnStates = _columnCheckStates;
+            var savedFrozenRows = _frozenRows;
+
+            try
+            {
+                if (!this.IsHandleCreated)
+                {
+                    var tcs = new TaskCompletionSource<bool>();
+                    EventHandler? handler = null;
+                    handler = (s, e) =>
+                    {
+                        this.HandleCreated -= handler;
+                        tcs.TrySetResult(true);
+                    };
+                    this.HandleCreated += handler;
+                    await tcs.Task;
+                }
+
+                await Task.Run(() => ReloadExcelFile());
+            }
+            catch (Exception ex)
+            {
+                if (this.IsHandleCreated)
+                {
+                    this.Invoke(() =>
+                    {
+                        MessageBox.Show(this, $"重新加载Excel文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+                _columnCheckStates = savedColumnStates;
+                _frozenRows = savedFrozenRows;
+                _txtContentFilter.Text = savedFilter;
+                _txtAdvancedFilter.Text = savedAdvFilter;
+                UpdateColumnSelectorButton();
+                return;
+            }
+
+            if (savedColumnStates.Length == _dataTable.Columns.Count)
+            {
+                _columnCheckStates = savedColumnStates;
+            }
+            else
+            {
+                _columnCheckStates = new bool[_dataTable.Columns.Count];
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    _columnCheckStates[i] = true;
+            }
+            _frozenRows = savedFrozenRows;
+            _txtContentFilter.Text = savedFilter;
+            _txtAdvancedFilter.Text = savedAdvFilter;
+            UpdateColumnSelectorButton();
+            RefreshGridLayout();
+        }
+
+        /// <summary>重新读取Excel文件内容（后台线程执行）</summary>
+        private void ReloadExcelFile()
+        {
+            if (!System.IO.File.Exists(_filePath)) return;
+
+            using var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = ExcelReaderFactory.CreateReader(fs);
+            var result = reader.AsDataSet();
+            if (result.Tables.Count == 0) return;
+
+            var table = result.Tables[0];
+            var dataTable = new DataTable();
+            for (int i = 0; i < table.Columns.Count; i++)
+            {
+                var columnName = table.Columns[i].ColumnName;
+                if (string.IsNullOrEmpty(columnName))
+                    columnName = $"Column{i + 1}";
+                dataTable.Columns.Add(columnName, typeof(string));
+            }
+
+            foreach (DataRow row in table.Rows)
+            {
+                var newRow = dataTable.NewRow();
+                for (int i = 0; i < table.Columns.Count; i++)
+                    newRow[i] = row[i]?.ToString() ?? "";
+                dataTable.Rows.Add(newRow);
+            }
+
+            this.Invoke(() =>
+            {
+                _dataTable = dataTable;
+                _headerTable = dataTable.Clone();
+            });
+        }
+
         private async void LoadExcelAsync()
         {
             try
@@ -3297,8 +3651,8 @@ namespace wxd.files.winforms
                 return;
             }
 
-            using var stream = System.IO.File.Open(_filePath, FileMode.Open, FileAccess.Read);
-            using var reader = ExcelReaderFactory.CreateReader(stream);
+            using var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = ExcelReaderFactory.CreateReader(fs);
             var result = reader.AsDataSet();
 
             if (result.Tables.Count == 0)
@@ -3344,6 +3698,9 @@ namespace wxd.files.winforms
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
                 for (int i = 0; i < _columnCheckStates.Length; i++)
                     _columnCheckStates[i] = true;
+
+                _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
 
                 UpdateColumnSelectorButton();
 
@@ -3457,13 +3814,47 @@ namespace wxd.files.winforms
         {
             if (_dataTable.Columns.Count == 0) return;
 
-            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0);
+            EnsureFileEntriesLoaded();
+
+            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
+                _rootDir ?? "", _filePath, _fileEntries, _columnLinks);
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnCheckStates = dialog.GetCheckedStates();
+                _columnLinks = dialog.GetColumnLinks();
+                CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
                 UpdateColumnSelectorButton();
                 RefreshGridLayout();
             }
+        }
+
+        /// <summary>确保文件条目列表已加载（从 _rootDir 扫描）</summary>
+        private void EnsureFileEntriesLoaded()
+        {
+            if (_fileEntries.Count > 0) return;
+            var root = FrozenDir;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
+            _fileEntries.Clear();
+            try
+            {
+                foreach (var f in Directory.GetFiles(root, "*.csv", SearchOption.AllDirectories))
+                {
+                    var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                        ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
+                    _fileEntries.Add((rel, f));
+                }
+                foreach (var ext in new[] { "*.xls", "*.xlsx" })
+                {
+                    foreach (var f in Directory.GetFiles(root, ext, SearchOption.AllDirectories))
+                    {
+                        var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                            ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
+                        _fileEntries.Add((rel, f));
+                    }
+                }
+            }
+            catch { }
         }
 
         private void UpdateColumnSelectorButton()
@@ -3918,6 +4309,11 @@ namespace wxd.files.winforms
             {
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             }
+            // 列关联颜色检查
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+            }
         }
 
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
@@ -3977,7 +4373,7 @@ namespace wxd.files.winforms
         }
     }
 
-    /// <summary>列选择对话框 — ListView展示冻结行数据，复选框选择列</summary>
+    /// <summary>列选择对话框 — ListView展示冻结行数据，复选框选择列，新增关联按钮（加宽180px）</summary>
     public class ColumnSelectorDialog : Form
     {
         private ListView _lvColumns = new();
@@ -3985,18 +4381,41 @@ namespace wxd.files.winforms
         private Button _btnDeselectAll = new();
         private Button _btnOK = new();
         private Button _btnCancel = new();
+        private Button _btnLinkManage = new();
         private int _lockedColumnIndex = -1;
         private bool[] _checkedStates;
+        private string _rootDir = "";
+        private string _currentFilePath = "";
+        private int _frozenRows = 0;
+        private List<(string display, string fullPath)> _fileEntries = new();
+        private List<ColumnLinkConfig> _columnLinks = new();
 
-        public ColumnSelectorDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex)
+        public ColumnSelectorDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex,
+            string rootDir = "", string currentFilePath = "", List<(string display, string fullPath)>? fileEntries = null,
+            List<ColumnLinkConfig>? columnLinks = null)
         {
             _lockedColumnIndex = lockedColumnIndex;
             _checkedStates = (bool[])checkedStates.Clone();
+            _rootDir = rootDir;
+            _currentFilePath = currentFilePath;
+            _frozenRows = frozenRows;
+            _fileEntries = fileEntries ?? new();
+            _columnLinks = columnLinks != null ? new List<ColumnLinkConfig>(columnLinks) : new();
             InitializeComponent();
             PopulateList(dataTable, frozenRows);
         }
 
         public bool[] GetCheckedStates() => _checkedStates;
+        public List<ColumnLinkConfig> GetColumnLinks() => _columnLinks;
+
+        private string GetRelativePath(string fullPath)
+        {
+            if (string.IsNullOrEmpty(_rootDir) || string.IsNullOrEmpty(fullPath))
+                return Path.GetFileName(fullPath);
+            if (fullPath.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase))
+                return fullPath.Substring(_rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFileName(fullPath);
+        }
 
         private void PopulateList(DataTable dataTable, int frozenRows)
         {
@@ -4006,12 +4425,14 @@ namespace wxd.files.winforms
 
             int frozenCount = Math.Min(frozenRows, dataTable.Rows.Count);
 
-            // 列头：选择 + 每行冻结行的内容
             _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
             for (int r = 0; r < frozenCount; r++)
             {
                 _lvColumns.Columns.Add($"行{r + 1}", 160, System.Windows.Forms.HorizontalAlignment.Left);
             }
+            _lvColumns.Columns.Add("关联", 100, System.Windows.Forms.HorizontalAlignment.Center);
+
+            string currentRelPath = GetRelativePath(_currentFilePath);
 
             for (int col = 0; col < dataTable.Columns.Count; col++)
             {
@@ -4027,6 +4448,11 @@ namespace wxd.files.winforms
                     item.SubItems.Add(val);
                 }
 
+                var link = _columnLinks.Find(l =>
+                    l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                    l.SourceColumnIndex == col);
+                item.SubItems.Add(link != null ? $"⚡{Path.GetFileNameWithoutExtension(link.TargetFile)}" : "");
+
                 _lvColumns.Items.Add(item);
             }
 
@@ -4038,11 +4464,11 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             Text = "选择显示列";
-            ClientSize = new Size(800, 520);
+            ClientSize = new Size(980, 520);
             MinimumSize = new Size(600, 300);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(248, 249, 251);
+            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false;
             MaximizeBox = false;
 
@@ -4054,9 +4480,9 @@ namespace wxd.files.winforms
                 Size = new Size(70, 26),
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) },
-                BackColor = Color.FromArgb(243, 244, 246),
-                ForeColor = Color.FromArgb(31, 41, 55)
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
+                BackColor = Color.FromArgb(235, 245, 255),
+                ForeColor = Color.FromArgb(20, 60, 100)
             };
             _btnSelectAll.Click += (s, e) => SetAllChecked(true);
 
@@ -4067,9 +4493,9 @@ namespace wxd.files.winforms
                 Size = new Size(80, 26),
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) },
-                BackColor = Color.FromArgb(243, 244, 246),
-                ForeColor = Color.FromArgb(31, 41, 55)
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
+                BackColor = Color.FromArgb(235, 245, 255),
+                ForeColor = Color.FromArgb(20, 60, 100)
             };
             _btnDeselectAll.Click += (s, e) => SetAllChecked(false);
 
@@ -4077,12 +4503,12 @@ namespace wxd.files.winforms
             _lvColumns = new ListView
             {
                 Location = new Point(10, 42),
-                Size = new Size(780, 420),
+                Size = new Size(960, 420),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.White,
-                ForeColor = Color.FromArgb(31, 41, 55),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 View = View.Details,
                 FullRowSelect = true,
                 HideSelection = false,
@@ -4105,39 +4531,103 @@ namespace wxd.files.winforms
                     _checkedStates[e.Item.Index] = e.Item.Checked;
             };
 
+            // 关联管理按钮
+            _btnLinkManage = new Button
+            {
+                Text = "关联设置",
+                Location = new Point(600, 468),
+                Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(22, 163, 74),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61), MouseOverBackColor = Color.FromArgb(21, 128, 61) },
+                Cursor = Cursors.Hand
+            };
+            _btnLinkManage.Click += OnLinkManageClick;
+
             // OK 按钮
             _btnOK = new Button
             {
                 Text = "确定",
-                Location = new Point(612, 468),
+                Location = new Point(690, 468),
                 Size = new Size(80, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.OK,
-                BackColor = Color.FromArgb(37, 99, 235),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
 
             // 取消按钮
             _btnCancel = new Button
             {
                 Text = "取消",
-                Location = new Point(700, 468),
+                Location = new Point(780, 468),
                 Size = new Size(70, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(240, 242, 245),
-                ForeColor = Color.FromArgb(55, 65, 81),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) }
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
 
-            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _lvColumns, _btnOK, _btnCancel });
+            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _lvColumns, _btnLinkManage, _btnOK, _btnCancel });
             AcceptButton = _btnOK;
             CancelButton = _btnCancel;
 
             ResumeLayout(false);
+        }
+
+        private void OnLinkManageClick(object? sender, EventArgs e)
+        {
+            if (_lvColumns.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "请先在列表中选择要设置关联的列（点击行选中）", "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var selectedItem = _lvColumns.SelectedItems[0];
+            int colIndex = (int)selectedItem.Tag;
+            string currentRelPath = GetRelativePath(_currentFilePath);
+
+            using var setupDialog = new ColumnLinkSetupDialog(
+                _fileEntries, currentRelPath, colIndex, _rootDir, _frozenRows,
+                _columnLinks.FindAll(l =>
+                    l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                    l.SourceColumnIndex == colIndex));
+            if (setupDialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _columnLinks.RemoveAll(l =>
+                    l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                    l.SourceColumnIndex == colIndex);
+                var newLink = setupDialog.GetResult();
+                if (newLink != null)
+                    _columnLinks.Add(newLink);
+
+                // 刷新ListView中的关联列显示
+                UpdateLinkColumnInListView();
+            }
+        }
+
+        /// <summary>刷新ListView中关联列的显示</summary>
+        private void UpdateLinkColumnInListView()
+        {
+            string currentRelPath = GetRelativePath(_currentFilePath);
+            foreach (ListViewItem item in _lvColumns.Items)
+            {
+                if (item.Tag is int col)
+                {
+                    var link = _columnLinks.Find(l =>
+                        l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                        l.SourceColumnIndex == col);
+                    // 更新关联文本（sub-items 最后一个）
+                    var linkText = item.SubItems[item.SubItems.Count - 1];
+                    linkText.Text = link != null ? $"{Path.GetFileNameWithoutExtension(link.TargetFile)}" : "";
+                }
+            }
         }
 
         private void SetAllChecked(bool check)
@@ -4155,6 +4645,461 @@ namespace wxd.files.winforms
                     _checkedStates[i] = check;
                 }
             }
+        }
+    }
+
+    /// <summary>列关联设置对话框 — 双击文件后弹出带固定行数据的单选框面板</summary>
+    public class ColumnLinkSetupDialog : Form
+    {
+        private ListView _lstFiles = new();
+        private TextBox _txtFilter = new();
+        private Button _btnOK = new();
+        private Button _btnCancel = new();
+        private Button _btnDelete = new();
+        private Label _lblSelection = new();
+        private List<(string display, string fullPath)> _fileEntries = new();
+        private string _sourceFile = "";
+        private int _sourceColumnIndex;
+        private string _rootDir = "";
+        private int _frozenRows = 0;
+        private ColumnLinkConfig? _existingLink;
+        private string _selectedTargetPath = "";
+        private int _selectedTargetColIndex = -1;
+
+        public ColumnLinkSetupDialog(
+            List<(string display, string fullPath)> fileEntries,
+            string sourceFile, int sourceColumnIndex,
+            string rootDir, int frozenRows,
+            List<ColumnLinkConfig> existingLinks)
+        {
+            _fileEntries = fileEntries;
+            _sourceFile = sourceFile;
+            _sourceColumnIndex = sourceColumnIndex;
+            _rootDir = rootDir;
+            _frozenRows = frozenRows;
+            _existingLink = existingLinks.FirstOrDefault();
+
+            if (_existingLink != null)
+            {
+                // 尝试解析为全路径
+                string resolved = _existingLink.TargetFile;
+                if (!string.IsNullOrEmpty(rootDir))
+                {
+                    string candidate = Path.Combine(rootDir, _existingLink.TargetFile);
+                    if (File.Exists(candidate))
+                    {
+                        resolved = candidate;
+                    }
+                    else
+                    {
+                        // 尝试在 fileEntries 中按文件名匹配
+                        var match = _fileEntries.FirstOrDefault(f =>
+                            Path.GetFileName(f.fullPath).Equals(Path.GetFileName(_existingLink.TargetFile), StringComparison.OrdinalIgnoreCase));
+                        if (match.fullPath != null)
+                            resolved = match.fullPath;
+                    }
+                }
+                _selectedTargetPath = resolved;
+                _selectedTargetColIndex = _existingLink.TargetColumnIndex;
+            }
+
+            InitializeComponent();
+            PopulateFiles("");
+            UpdateSelectionLabel();
+
+            if (_existingLink != null)
+            {
+                string targetRel = _existingLink.TargetFile.Replace("\\", "/");
+                foreach (ListViewItem item in _lstFiles.Items)
+                {
+                    if (item.Tag is string fp)
+                    {
+                        string fpNorm = fp.Replace("\\", "/");
+                        if (fpNorm.EndsWith(targetRel, StringComparison.OrdinalIgnoreCase) ||
+                            Path.GetFileName(fp).Equals(Path.GetFileName(_existingLink.TargetFile), StringComparison.OrdinalIgnoreCase))
+                        {
+                            item.Selected = true;
+                            _lstFiles.EnsureVisible(item.Index);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        public ColumnLinkConfig? GetResult()
+        {
+            if (string.IsNullOrEmpty(_selectedTargetPath) || _selectedTargetColIndex < 0)
+                return null;
+            string relPath;
+            if (!string.IsNullOrEmpty(_rootDir) && _selectedTargetPath.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase))
+                relPath = _selectedTargetPath.Substring(_rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            else
+                relPath = Path.GetFileName(_selectedTargetPath);
+            return new ColumnLinkConfig
+            {
+                SourceFile = _sourceFile,
+                SourceColumnIndex = _sourceColumnIndex,
+                TargetFile = relPath,
+                TargetColumnIndex = _selectedTargetColIndex
+            };
+        }
+
+        private void UpdateSelectionLabel()
+        {
+            if (!string.IsNullOrEmpty(_selectedTargetPath) && _selectedTargetColIndex >= 0)
+                _lblSelection.Text = $"已选: {_selectedTargetPath} → 列索引 {_selectedTargetColIndex}";
+            else
+                _lblSelection.Text = "未选择关联列（双击目标文件设置）";
+        }
+
+        private void PopulateFiles(string filter)
+        {
+            _lstFiles.BeginUpdate();
+            _lstFiles.Items.Clear();
+            var query = string.IsNullOrEmpty(filter)
+                ? _fileEntries
+                : _fileEntries.Where(f => f.display.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+            foreach (var entry in query.OrderBy(f => f.display))
+            {
+                _lstFiles.Items.Add(new ListViewItem(entry.display) { Tag = entry.fullPath, ToolTipText = entry.fullPath });
+            }
+            _lstFiles.EndUpdate();
+        }
+
+        /// <summary>双击文件，弹出列选择面板（带固定行数据 + 单选框）</summary>
+        private void OnFileDoubleClick(object? sender, EventArgs e)
+        {
+            if (_lstFiles.SelectedItems.Count == 0) return;
+            var fullPath = _lstFiles.SelectedItems[0].Tag as string ?? "";
+            if (!File.Exists(fullPath))
+            {
+                MessageBox.Show(this, "文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // 读取目标文件固定行数据用于展示
+            DataTable targetFrozenTable;
+            try
+            {
+                var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+                if (ext == ".csv")
+                {
+                    string contentData = File.ReadAllText(fullPath, Encoding.UTF8);
+                    var lines = SplitCsvLinesStatic(contentData);
+                    var dt = new DataTable();
+                    // 以第一行为参照确定列数
+                    if (lines.Count > 0)
+                    {
+                        var firstParts = ParseCsvLineStatic(lines[0]);
+                        for (int i = 0; i < firstParts.Length; i++)
+                            dt.Columns.Add($"Col{i}", typeof(string));
+                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, lines.Count);
+                        for (int r = 0; r < maxRows; r++)
+                        {
+                            var parts = ParseCsvLineStatic(lines[r]);
+                            var row = dt.NewRow();
+                            for (int i = 0; i < Math.Min(parts.Length, dt.Columns.Count); i++)
+                                row[i] = parts[i];
+                            dt.Rows.Add(row);
+                        }
+                    }
+                    targetFrozenTable = dt;
+                }
+                else
+                {
+                    using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = ExcelReaderFactory.CreateReader(fs);
+                    var result = reader.AsDataSet();
+                    if (result.Tables.Count > 0)
+                    {
+                        var table = result.Tables[0];
+                        var dt = new DataTable();
+                        for (int i = 0; i < table.Columns.Count; i++)
+                            dt.Columns.Add($"Col{i}", typeof(string));
+                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, table.Rows.Count);
+                        for (int r = 0; r < maxRows; r++)
+                        {
+                            var row = dt.NewRow();
+                            for (int i = 0; i < Math.Min(table.Columns.Count, dt.Columns.Count); i++)
+                                row[i] = table.Rows[r][i]?.ToString() ?? "";
+                            dt.Rows.Add(row);
+                        }
+                        targetFrozenTable = dt;
+                    }
+                    else targetFrozenTable = new DataTable();
+                }
+            }
+            catch
+            {
+                MessageBox.Show(this, "无法读取目标文件数据", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            int initialSelection = -1;
+            if (_existingLink != null)
+            {
+                string targetRel = _existingLink.TargetFile.Replace("\\", "/");
+                string fullNorm = fullPath.Replace("\\", "/");
+                if (fullNorm.EndsWith(targetRel, StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetFileName(fullPath).Equals(Path.GetFileName(_existingLink.TargetFile), StringComparison.OrdinalIgnoreCase))
+                {
+                    initialSelection = _existingLink.TargetColumnIndex;
+                }
+            }
+
+            using var colDlg = new TargetColumnSelectDialog(targetFrozenTable, _frozenRows, initialSelection);
+            if (colDlg.ShowDialog(this) == DialogResult.OK && colDlg.SelectedColumnIndex >= 0)
+            {
+                _selectedTargetPath = fullPath;
+                _selectedTargetColIndex = colDlg.SelectedColumnIndex;
+                UpdateSelectionLabel();
+            }
+        }
+
+        private void OnDeleteClick(object? sender, EventArgs e)
+        {
+            _selectedTargetPath = "";
+            _selectedTargetColIndex = -1;
+            _existingLink = null;
+            _btnDelete.Visible = false;
+            UpdateSelectionLabel();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+            Text = "列关联设置 - 列 " + _sourceColumnIndex;
+            ClientSize = new Size(500, 460);
+            StartPosition = FormStartPosition.CenterParent;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = Color.FromArgb(242, 249, 255);
+            MinimizeBox = false; MaximizeBox = false;
+
+            Controls.Add(new Label { Text = "选择关联的目标文件（双击设置列）:", Location = new Point(10, 10), Size = new Size(480, 20),
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold), ForeColor = Color.FromArgb(31, 41, 55) });
+
+            _txtFilter = new TextBox { Location = new Point(10, 32), Size = new Size(480, 23),
+                Font = new Font("Microsoft YaHei UI", 9f), BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "输入关键字筛选文件..." };
+            _txtFilter.TextChanged += (s, e) => PopulateFiles(_txtFilter.Text.Trim());
+            Controls.Add(_txtFilter);
+
+            _lstFiles = new ListView { Location = new Point(10, 62), Size = new Size(480, 200), BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Microsoft YaHei UI", 9f), View = View.Details, FullRowSelect = true, HideSelection = false,
+                HeaderStyle = ColumnHeaderStyle.None, MultiSelect = false };
+            _lstFiles.Columns.Add("文件", 460);
+            _lstFiles.DoubleClick += OnFileDoubleClick;
+            Controls.Add(_lstFiles);
+
+            _lblSelection = new Label { Text = "未选择关联列（双击目标文件设置）", Location = new Point(10, 272),
+                Size = new Size(480, 40), Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = Color.FromArgb(31, 41, 55), BackColor = Color.FromArgb(235, 248, 255),
+                BorderStyle = BorderStyle.FixedSingle, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 0, 0) };
+            Controls.Add(_lblSelection);
+
+            Controls.Add(new Label { Text = "提示: 关联基于列的位置索引。双击目标文件后在弹出面板中单选目标列。",
+                Location = new Point(10, 320), Size = new Size(480, 30), Font = new Font("Microsoft YaHei UI", 8f),
+                ForeColor = Color.FromArgb(107, 114, 128) });
+
+            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 370), Size = new Size(80, 28),
+                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(239, 68, 68), ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) }, Cursor = Cursors.Hand,
+                Visible = _existingLink != null || !string.IsNullOrEmpty(_selectedTargetPath) };
+            _btnDelete.Click += OnDeleteClick;
+            Controls.Add(_btnDelete);
+
+            _btnOK = new Button { Text = "确定", Location = new Point(330, 370), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
+            Controls.Add(_btnOK);
+
+            _btnCancel = new Button { Text = "取消", Location = new Point(420, 370), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
+            Controls.Add(_btnCancel);
+
+            AcceptButton = _btnOK; CancelButton = _btnCancel;
+            ResumeLayout(false);
+        }
+
+        private static List<string> SplitCsvLinesStatic(string data)
+        {
+            var lines = new List<string>();
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+            for (int i = 0; i < data.Length; i++)
+            {
+                char c = data[i];
+                if (c == '\u0022') inQuotes = !inQuotes;
+                else if (!inQuotes && c == '\u000A')
+                {
+                    lines.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else if (!inQuotes && c == '\u000D')
+                {
+                    if (i + 1 < data.Length && data[i + 1] == '\u000A') i++;
+                    lines.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else sb.Append(c);
+            }
+            if (sb.Length > 0) lines.Add(sb.ToString());
+            return lines;
+        }
+
+        private static string[] ParseCsvLineStatic(string line)
+        {
+            var result = new List<string>();
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '\u0022')
+                {
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '\u0022') { sb.Append('\u0022'); i++; }
+                    else inQuotes = !inQuotes;
+                }
+                else if (c == ',' && !inQuotes) { result.Add(sb.ToString().Trim()); sb.Clear(); }
+                else sb.Append(c);
+            }
+            result.Add(sb.ToString().Trim());
+            return result.ToArray();
+        }
+    }
+
+    /// <summary>目标列选择对话框 — 带固定行数据的单选面板（类似列选择面板，但使用单选框）</summary>
+    public class TargetColumnSelectDialog : Form
+    {
+        private ListView _lvColumns = new();
+        private Button _btnOK = new();
+        private Button _btnCancel = new();
+        private int _selectedIndex = -1;
+
+        public int SelectedColumnIndex => _selectedIndex;
+
+        public TargetColumnSelectDialog(DataTable frozenData, int frozenRows, int initialSelection)
+        {
+            _selectedIndex = initialSelection;
+            InitializeComponent();
+            PopulateList(frozenData, frozenRows);
+            if (_selectedIndex >= 0 && _selectedIndex < _lvColumns.Items.Count)
+            {
+                _lvColumns.Items[_selectedIndex].Selected = true;
+                _lvColumns.EnsureVisible(_selectedIndex);
+            }
+        }
+
+        private void PopulateList(DataTable frozenData, int frozenRows)
+        {
+            _lvColumns.BeginUpdate();
+            _lvColumns.Items.Clear();
+            _lvColumns.Columns.Clear();
+
+            int frozenCount = Math.Min(frozenRows > 0 ? frozenRows : 2, frozenData.Rows.Count);
+
+            _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
+            for (int r = 0; r < frozenCount; r++)
+            {
+                _lvColumns.Columns.Add($"行{r + 1}", 160, System.Windows.Forms.HorizontalAlignment.Left);
+            }
+
+            for (int col = 0; col < frozenData.Columns.Count; col++)
+            {
+                var item = new ListViewItem("")
+                {
+                    Tag = col
+                };
+
+                for (int r = 0; r < frozenCount; r++)
+                {
+                    var val = frozenData.Rows[r][col]?.ToString() ?? "";
+                    item.SubItems.Add(val);
+                }
+
+                _lvColumns.Items.Add(item);
+            }
+
+            _lvColumns.EndUpdate();
+        }
+
+        private void InitializeComponent()
+        {
+            SuspendLayout();
+            Text = "选择目标列";
+            ClientSize = new Size(560, 420);
+            StartPosition = FormStartPosition.CenterParent;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = Color.FromArgb(242, 249, 255);
+            MinimizeBox = false; MaximizeBox = false;
+
+            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(540, 20),
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold), ForeColor = Color.FromArgb(31, 41, 55) });
+
+            _lvColumns = new ListView
+            {
+                Location = new Point(10, 38),
+                Size = new Size(540, 330),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(20, 60, 100),
+                View = View.Details,
+                FullRowSelect = true,
+                HideSelection = false,
+                GridLines = true,
+                CheckBoxes = false,
+                MultiSelect = false,
+                HeaderStyle = ColumnHeaderStyle.Nonclickable
+            };
+            _lvColumns.SelectedIndexChanged += (s, e) =>
+            {
+                if (_lvColumns.SelectedItems.Count > 0)
+                    _selectedIndex = (int)_lvColumns.SelectedItems[0].Tag;
+            };
+
+            _btnOK = new Button { Text = "确定", Location = new Point(370, 378),
+                Size = new Size(80, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
+            Controls.Add(_btnOK);
+
+            _btnCancel = new Button { Text = "取消", Location = new Point(460, 378),
+                Size = new Size(70, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat, DialogResult = DialogResult.Cancel,
+                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
+            Controls.Add(_btnCancel);
+
+            Controls.Add(_lvColumns);
+            AcceptButton = _btnOK; CancelButton = _btnCancel;
+            ResumeLayout(false);
+        }
+    }
+
+    internal static class ColumnLinkChecker_SimpleCsv
+    {
+        public static string[] ParseLine(string line)
+        {
+            var result = new List<string>();
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '\u0022')
+                {
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '\u0022') { sb.Append('\u0022'); i++; }
+                    else inQuotes = !inQuotes;
+                }
+                else if (c == ',' && !inQuotes) { result.Add(sb.ToString().Trim()); sb.Clear(); }
+                else sb.Append(c);
+            }
+            result.Add(sb.ToString().Trim());
+            return result.ToArray();
         }
     }
 
@@ -4209,7 +5154,7 @@ namespace wxd.files.winforms
             ClientSize = new Size(500, 400);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(248, 249, 251);
+            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false;
             MaximizeBox = false;
 
@@ -4258,9 +5203,9 @@ namespace wxd.files.winforms
                 Size = new Size(80, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(37, 99, 235),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnOK.Click += (s, e) =>
             {
@@ -4281,9 +5226,9 @@ namespace wxd.files.winforms
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(240, 242, 245),
-                ForeColor = Color.FromArgb(55, 65, 81),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(209, 213, 219) }
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
 
             Controls.AddRange(new Control[] { _txtFilter, _lstFiles, _btnOK, _btnCancel });

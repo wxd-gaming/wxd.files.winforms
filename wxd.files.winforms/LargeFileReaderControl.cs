@@ -68,18 +68,22 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            _btnOpenFile = new Button { Text = "打开文件", Size = new Size(90, 28), Location = new Point(10, 6), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
+            _btnOpenFile = new Button { Text = "打开文件", Size = new Size(90, 28), Location = new Point(10, 6), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
+            _btnOpenFile.FlatAppearance.BorderSize = 1;
+            _btnOpenFile.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnOpenFile.Click += OnOpen;
-            _btnGotoLine = new Button { Text = "跳转", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(80, 80, 80), ForeColor = Color.White };
+            _btnGotoLine = new Button { Text = "跳转", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnGotoLine.FlatAppearance.BorderSize = 1;
+            _btnGotoLine.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnGotoLine.Click += OnGoto;
             _txtGotoLine = new TextBox { Size = new Size(120, 28), PlaceholderText = "行号" };
             _txtGotoLine.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnGoto(s, e); };
-            _lblIndexProgress = new Label { Text = "就绪", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Microsoft YaHei UI", 8F) };
+            _lblIndexProgress = new Label { Text = "就绪", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F) };
             _lblIndexProgress.Margin = new Padding(3, 7, 0, 0);
-            _lblStatus = new Label { Text = "请打开一个文本文件", AutoSize = true, ForeColor = Color.FromArgb(95, 99, 104), Font = new Font("Microsoft YaHei UI", 8.5F) };
+            _lblStatus = new Label { Text = "请打开一个文本文件", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8.5F) };
             _lblStatus.Margin = new Padding(3, 7, 0, 0);
 
-            _topPanel = new TableLayoutPanel { Dock = DockStyle.Top, Height = 88, ColumnCount = 1, RowCount = 3, BackColor = Color.FromArgb(245, 246, 247) };
+            _topPanel = new TableLayoutPanel { Dock = DockStyle.Top, Height = 88, ColumnCount = 1, RowCount = 3, BackColor = Color.FromArgb(235, 245, 255) };
             _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
             _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
             _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
@@ -87,9 +91,9 @@ namespace wxd.files.winforms
             var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
             row1.Controls.AddRange(new Control[] { _btnOpenFile, _txtGotoLine, _btnGotoLine, _lblIndexProgress, _lblStatus });
 
-            var separator = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(218, 220, 224) };
+            var separator = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(173, 209, 237) };
 
-            _txtSearch = new TextBox { Size = new Size(200, 28), PlaceholderText = "搜索..." };
+            _txtSearch = new TextBox { Size = new Size(320, 28), PlaceholderText = "搜索..." };
             _txtSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnSearch(); };
             _txtSearch.TextChanged += (s, e) => { _lastSearchKeyword = ""; };
             _chkCaseSensitive = new CheckBox { Text = "Aa", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
@@ -98,21 +102,31 @@ namespace wxd.files.winforms
             _chkRegex = new CheckBox { Text = ".*", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
             _chkRegex.Margin = new Padding(3, 6, 0, 0);
             _chkRegex.CheckedChanged += (s, e) => { _searchResults.Clear(); _searchCurrentIndex = -1; _lblSearchCount.Text = ""; _lastSearchKeyword = ""; };
-            _btnSearchFirst = new Button { Text = "|<", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(80, 80, 80), ForeColor = Color.White };
+            _btnSearchFirst = new Button { Text = "|<", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchFirst.FlatAppearance.BorderSize = 1;
+            _btnSearchFirst.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchFirst.Click += OnSearchFirst;
-            _btnSearchPrev = new Button { Text = "上一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(80, 80, 80), ForeColor = Color.White };
+            _btnSearchPrev = new Button { Text = "上一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchPrev.FlatAppearance.BorderSize = 1;
+            _btnSearchPrev.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchPrev.Click += OnSearchPrev;
-            _btnSearchNext = new Button { Text = "下一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(80, 80, 80), ForeColor = Color.White };
+            _btnSearchNext = new Button { Text = "下一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchNext.FlatAppearance.BorderSize = 1;
+            _btnSearchNext.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchNext.Click += OnSearchNext;
-            _btnSearchLast = new Button { Text = ">|", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(80, 80, 80), ForeColor = Color.White };
+            _btnSearchLast = new Button { Text = ">|", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchLast.FlatAppearance.BorderSize = 1;
+            _btnSearchLast.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchLast.Click += OnSearchLast;
-            _lblSearchCount = new Label { Text = "", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Microsoft YaHei UI", 8F), MinimumSize = new Size(180, 0) };
+            _lblSearchCount = new Label { Text = "", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F) };
             _lblSearchCount.Margin = new Padding(3, 7, 0, 0);
 
             var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            _btnExport = new Button { Text = "导出结果", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
+            _btnExport = new Button { Text = "导出结果", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
+            _btnExport.FlatAppearance.BorderSize = 1;
+            _btnExport.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnExport.Click += OnExport;
-            _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.Gray, Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
+            _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
             _lblContextLines.Margin = new Padding(8, 7, 0, 0);
             _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
             row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _lblSearchCount });
@@ -225,7 +239,7 @@ namespace wxd.files.winforms
             }
 
             bool selected = _lstContent.SelectedIndices.Contains(e.ItemIndex);
-            using var backBrush = new SolidBrush(selected ? Color.FromArgb(0x33, 0x77, 0xBB) : _lstContent.BackColor);
+            using var backBrush = new SolidBrush(selected ? Color.FromArgb(66, 165, 245) : _lstContent.BackColor);
             using var textBrush = new SolidBrush(selected ? Color.White : _lstContent.ForeColor);
 
             e.Graphics.FillRectangle(backBrush, e.Bounds);
@@ -352,16 +366,20 @@ namespace wxd.files.winforms
             };
 
             // 顶部工具栏
-            var topPanel = new Panel { Height = 44, Dock = DockStyle.Top, BackColor = Color.FromArgb(245, 246, 247) };
+            var topPanel = new Panel { Height = 44, Dock = DockStyle.Top, BackColor = Color.FromArgb(235, 245, 255) };
             var btnFormat = new Button { Text = "格式化", Size = new Size(90, 30), Location = new Point(10, 7), FlatStyle = FlatStyle.Flat };
             var btnRaw = new Button { Text = "原始", Size = new Size(90, 30), Location = new Point(110, 7), FlatStyle = FlatStyle.Flat };
 
             void SetActive(Button active, Button inactive)
             {
-                active.BackColor = Color.FromArgb(0, 122, 204);
+                active.BackColor = Color.FromArgb(66, 165, 245);
                 active.ForeColor = Color.White;
-                inactive.BackColor = Color.FromArgb(210, 210, 210);
-                inactive.ForeColor = Color.FromArgb(80, 80, 80);
+                active.FlatAppearance.BorderSize = 1;
+                active.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+                inactive.BackColor = Color.FromArgb(200, 220, 240);
+                inactive.ForeColor = Color.FromArgb(50, 80, 120);
+                inactive.FlatAppearance.BorderSize = 1;
+                inactive.FlatAppearance.BorderColor = Color.FromArgb(160, 190, 220);
             }
             SetActive(btnFormat, btnRaw);
 
@@ -1467,7 +1485,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     if (i % 500 == 0)
                     {
                         int cnt = results.Count;
-                        int pct = (i + 1) * 100 / total;
+                        int pct = (int)((i + 1L) * 100 / total);
                         BeginInvoke(() => _lblSearchCount.Text = $"搜索中... {cnt} 个 ({pct}%)");
                     }
                 }
@@ -1688,7 +1706,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     if (i % 500 == 0)
                     {
                         int cnt = results.Count;
-                        int pct = (i + 1) * 100 / total;
+                        int pct = (int)((i + 1L) * 100 / total);
                         BeginInvoke(() => _lblSearchCount.Text = $"搜索中... {cnt} 个 ({pct}%)");
                     }
                 }
@@ -1758,9 +1776,20 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 totalLines += (e - s + 1);
 
             string dir = Path.GetDirectoryName(sourcePath)!;
-            string fileName = Path.GetFileName(sourcePath);
+            string fileName = Path.GetFileName(sourcePath);        // 保留原始文件名含后缀，如 xxx.log
+            string sourceExt = Path.GetExtension(sourcePath);
+            string filterPart = SanitizeFileName(_lastSearchKeyword, 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
-            string outName = $"{fileName}-{timestamp}{Path.GetExtension(sourcePath)}";
+            
+            // 命名规则：原始文件名.过滤字符.时间戳.源文件后缀
+            // 例如 xxx.log 过滤"时长" → xxx.log.时长.20260525143000.log
+            string safeFileName;
+            if (!string.IsNullOrEmpty(filterPart))
+                safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}.{timestamp}{sourceExt}";
+            else
+                safeFileName = $"{SanitizeFileName(fileName, 200)}.{timestamp}{sourceExt}";
+            
+            string outName = safeFileName;
             string outPath = Path.Combine(dir, outName);
 
             // 后台线程导出，防止卡 UI
@@ -1798,6 +1827,39 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     });
                 }
             });
+        }
+
+        /// <summary>过滤文件名中的非法字符，避免文件创建失败</summary>
+        private static string SanitizeFileName(string name, int maxLength = 255)
+        {
+            if (string.IsNullOrEmpty(name))
+                return "";
+            
+            // Windows 文件名禁止的字符：\/:*?"<>|
+            var invalidChars = Path.GetInvalidFileNameChars();
+            var sb = new StringBuilder(name.Length);
+            foreach (char c in name)
+            {
+                if (!invalidChars.Contains(c) && !char.IsControl(c))
+                    sb.Append(c);
+                else
+                    sb.Append('_'); // 非法字符替换为下划线
+            }
+            
+            string result = sb.ToString();
+            
+            // 去除开头和结尾的空格或点号（Windows 限制）
+            result = result.TrimStart(' ', '.').TrimEnd(' ', '.');
+            
+            // 空或全是空格/点的情况
+            if (string.IsNullOrEmpty(result))
+                return "_";
+            
+            // 截断到最大长度，但保留结尾的结构
+            if (result.Length > maxLength)
+                result = result.Substring(0, maxLength).TrimEnd(' ', '.');
+            
+            return result;
         }
 
         public void Cleanup()

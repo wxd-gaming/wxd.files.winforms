@@ -20,11 +20,12 @@ namespace wxd.files.winforms
             BackColor = Color.FromArgb(240, 242, 245);
 
             var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            var dir = Path.GetDirectoryName(filePath) ?? "";
             Control viewer;
             if (ext == ".csv")
-                viewer = new CsvViewerControl(filePath) { Dock = DockStyle.Fill };
+                viewer = new CsvViewerControl(filePath, rootDir: dir) { Dock = DockStyle.Fill };
             else
-                viewer = new ExcelViewerControl(filePath) { Dock = DockStyle.Fill };
+                viewer = new ExcelViewerControl(filePath, rootDir: dir) { Dock = DockStyle.Fill };
 
             Controls.Add(viewer);
         }

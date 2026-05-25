@@ -223,11 +223,11 @@ namespace wxd.files.winforms
         private static readonly Guid IID_IShellFolder = new Guid("000214e6-0000-0000-c000-000000000046");
         private static readonly Guid CLSID_ShellFolder = new Guid("00021400-0000-0000-c000-000000000046");
 
-        // ==================== 浅色配色方案 ====================
-        private static readonly Color _colorLightToolbarBg     = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorLightBorder        = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorLightTextPrimary   = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
+        // ==================== 浅色天蓝配色方案 ====================
+        private static readonly Color _colorLightToolbarBg     = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorLightBorder        = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightTextPrimary   = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
         private static readonly Color _colorLightBackColor     = Color.White;
 
         // ==================== 深色配色方案 (VS风格) ====================
@@ -432,7 +432,7 @@ namespace wxd.files.winforms
             }
 
             // 更新按钮（上级按钮和打开目录按钮统一使用深色模式的蓝色）
-            var btnBackColor = Color.FromArgb(0, 122, 204);  // 始终使用深色模式的蓝色
+            var btnBackColor = Color.FromArgb(66, 165, 245);  // 天蓝色按钮
             var btnForeColor = Color.White;                   // 始终使用白色文字
 
             if (_btnUp != null)
@@ -512,10 +512,10 @@ namespace wxd.files.winforms
                 Size     = new Size(50, 24),
                 Font     = new Font("Microsoft YaHei UI", 9f),
                 Cursor   = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 122, 204),  // 统一使用深色模式的蓝色
-                ForeColor = Color.White,                   // 白色文字
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 Anchor   = AnchorStyles.Top | AnchorStyles.Right
             };
             _btnUp.Click += (s, e) => GoUp();
@@ -595,10 +595,10 @@ namespace wxd.files.winforms
                 Text        = "阅读器",
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 Cursor      = Cursors.Hand,
-                BackColor   = Color.FromArgb(0, 122, 204),   // 统一使用深色模式的蓝色
-                ForeColor   = Color.White,                   // 白色文字
+                BackColor   = Color.FromArgb(66, 165, 245),
+                ForeColor   = Color.White,
                 FlatStyle   = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
@@ -612,10 +612,10 @@ namespace wxd.files.winforms
                 Text        = "打开目录",
                 Font        = new Font("Microsoft YaHei UI", 9f),
                 Cursor      = Cursors.Hand,
-                BackColor   = Color.FromArgb(0, 122, 204),   // 统一使用深色模式的蓝色
-                ForeColor   = Color.White,                   // 白色文字
+                BackColor   = Color.FromArgb(66, 165, 245),
+                ForeColor   = Color.White,
                 FlatStyle   = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnOpenExplorer.Click += OnOpenExplorerClick;
 

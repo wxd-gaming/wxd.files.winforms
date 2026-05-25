@@ -148,34 +148,127 @@ namespace wxd.files.winforms
 
         #endregion
 
-        #region 各窗格CSV/Excel固定行记录（独立存储）
+        #region 文件夹CSV/Excel固定行记录（集中JSON存储，LRU淘汰，最多50条）
 
-        /// <summary>获取指定窗格的CSV固定行数</summary>
-        public static int GetPaneCsvFrozenRows(int paneIndex)
+        private const string DirFrozenConfigsKey = "DirFrozenConfigs";
+        private const int MaxDirConfigs = 50;
+
+        /// <summary>读取所有目录配置列表</summary>
+        private static List<DirectoryFrozenConfig> GetDirFrozenConfigs()
         {
-            var key = $"Pane{paneIndex}CsvFrozenRows";
-            return GetIntValue(key, DefaultValue, 0, 8);
+            var json = GetStringValue(DirFrozenConfigsKey, "[]");
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<DirectoryFrozenConfig>>(json)
+                       ?? new List<DirectoryFrozenConfig>();
+            }
+            catch
+            {
+                return new List<DirectoryFrozenConfig>();
+            }
         }
 
-        /// <summary>设置指定窗格的CSV固定行数</summary>
-        public static void SetPaneCsvFrozenRows(int paneIndex, int value)
+        /// <summary>保存目录配置列表（按最近访问降序，超50条淘汰末尾）</summary>
+        private static void SetDirFrozenConfigs(List<DirectoryFrozenConfig> configs)
         {
-            var key = $"Pane{paneIndex}CsvFrozenRows";
-            SetIntValue(key, Math.Max(0, Math.Min(8, value)));
+            configs.Sort((a, b) => b.LastAccessed.CompareTo(a.LastAccessed));
+            if (configs.Count > MaxDirConfigs)
+                configs.RemoveRange(MaxDirConfigs, configs.Count - MaxDirConfigs);
+            var json = System.Text.Json.JsonSerializer.Serialize(configs);
+            SetStringValue(DirFrozenConfigsKey, json);
         }
 
-        /// <summary>获取指定窗格的Excel固定行数</summary>
-        public static int GetPaneExcelFrozenRows(int paneIndex)
+        /// <summary>查找或创建目录配置项</summary>
+        private static DirectoryFrozenConfig FindOrCreateDirConfig(List<DirectoryFrozenConfig> configs, string directoryPath)
         {
-            var key = $"Pane{paneIndex}ExcelFrozenRows";
-            return GetIntValue(key, DefaultValue, 0, 8);
+            var idx = configs.FindIndex(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                configs[idx].LastAccessed = DateTime.UtcNow;
+                return configs[idx];
+            }
+            var newCfg = new DirectoryFrozenConfig
+            {
+                DirectoryPath = directoryPath,
+                CsvFrozenRows = DefaultValue,
+                ExcelFrozenRows = DefaultValue,
+                LastModified = DateTime.UtcNow,
+                LastAccessed = DateTime.UtcNow
+            };
+            configs.Add(newCfg);
+            return newCfg;
         }
 
-        /// <summary>设置指定窗格的Excel固定行数</summary>
-        public static void SetPaneExcelFrozenRows(int paneIndex, int value)
+        /// <summary>获取指定目录的CSV冻结行数</summary>
+        public static int GetCsvFrozenRowsByDirectory(string directoryPath)
         {
-            var key = $"Pane{paneIndex}ExcelFrozenRows";
-            SetIntValue(key, Math.Max(0, Math.Min(8, value)));
+            if (string.IsNullOrEmpty(directoryPath)) return DefaultValue;
+            var configs = GetDirFrozenConfigs();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg == null) return DefaultValue;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+            return cfg.CsvFrozenRows;
+        }
+
+        /// <summary>设置指定目录的CSV冻结行数</summary>
+        public static void SetCsvFrozenRowsByDirectory(string directoryPath, int value)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var configs = GetDirFrozenConfigs();
+            var cfg = FindOrCreateDirConfig(configs, directoryPath);
+            cfg.CsvFrozenRows = Math.Max(0, Math.Min(8, value));
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+        }
+
+        /// <summary>获取指定目录的Excel冻结行数</summary>
+        public static int GetExcelFrozenRowsByDirectory(string directoryPath)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return DefaultValue;
+            var configs = GetDirFrozenConfigs();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg == null) return DefaultValue;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+            return cfg.ExcelFrozenRows;
+        }
+
+        /// <summary>设置指定目录的Excel冻结行数</summary>
+        public static void SetExcelFrozenRowsByDirectory(string directoryPath, int value)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var configs = GetDirFrozenConfigs();
+            var cfg = FindOrCreateDirConfig(configs, directoryPath);
+            cfg.ExcelFrozenRows = Math.Max(0, Math.Min(8, value));
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+        }
+
+        /// <summary>获取指定目录的列关联列表</summary>
+        public static List<ColumnLinkConfig> GetColumnLinksByDirectory(string directoryPath)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return new();
+            var configs = GetDirFrozenConfigs();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg == null) return new();
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+            return cfg.ColumnLinks ?? new();
+        }
+
+        /// <summary>设置指定目录的列关联列表</summary>
+        public static void SetColumnLinksByDirectory(string directoryPath, List<ColumnLinkConfig> links)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var configs = GetDirFrozenConfigs();
+            var cfg = FindOrCreateDirConfig(configs, directoryPath);
+            cfg.ColumnLinks = links ?? new();
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
         }
 
         #endregion

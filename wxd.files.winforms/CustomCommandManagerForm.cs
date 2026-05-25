@@ -194,10 +194,10 @@ public class CustomCommandManagerForm : Form
             Width = 90,
             Height = 28,
             DialogResult = DialogResult.OK,
-            BackColor = Color.FromArgb(0, 122, 204),
+            BackColor = Color.FromArgb(66, 165, 245),
             ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
-            FlatAppearance = { BorderSize = 0 }
+            FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
         };
 
         _btnCancel = new Button

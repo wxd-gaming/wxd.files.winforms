@@ -62,12 +62,12 @@ namespace wxd.files.winforms
             public string RelativePath { get; set; } = "";
         }
 
-        // ==================== 配色 ====================
-        private static readonly Color _colorLightBg = Color.FromArgb(250, 250, 250);
-        private static readonly Color _colorLightBorder = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorLightText = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorBtnBg = Color.FromArgb(0, 122, 204);
+        // ==================== 配色（浅色天蓝色调）====================
+        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
+        private static readonly Color _colorLightBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
+        private static readonly Color _colorBtnBg = Color.FromArgb(66, 165, 245);
 
         public LargeFileViewer(string? initialDir = null)
         {
@@ -101,6 +101,7 @@ namespace wxd.files.winforms
             Text = "大文件阅读器";
             MinimumSize = new Size(800, 600);
             StartPosition = FormStartPosition.CenterScreen;
+            WindowState = FormWindowState.Maximized;
             Font = new Font("Microsoft YaHei UI", 9f);
             try { Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico")); } catch { }
             ResumeLayout(false);
@@ -133,7 +134,8 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
-            _btnSelectFolder.FlatAppearance.BorderSize = 0;
+            _btnSelectFolder.FlatAppearance.BorderSize = 1;
+            _btnSelectFolder.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnSelectFolder.Click += OnSelectFolderClick;
 
             // 刷新按钮
@@ -148,7 +150,8 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
-            _btnRefresh.FlatAppearance.BorderSize = 0;
+            _btnRefresh.FlatAppearance.BorderSize = 1;
+            _btnRefresh.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnRefresh.Click += OnRefreshClick;
 
             // 过滤文本框
@@ -669,13 +672,13 @@ namespace wxd.files.winforms
                         Color bgColor, borderColor;
                         if (isSelected)
                         {
-                            bgColor = Color.FromArgb(37, 99, 235);
-                            borderColor = Color.FromArgb(37, 99, 235);
+                            bgColor = Color.FromArgb(66, 165, 245);
+                            borderColor = Color.FromArgb(30, 136, 229);
                         }
                         else
                         {
-                            bgColor = Color.FromArgb(219, 234, 254);
-                            borderColor = Color.FromArgb(191, 219, 254);
+                            bgColor = Color.FromArgb(227, 242, 253);
+                            borderColor = Color.FromArgb(173, 209, 237);
                         }
 
                         using (var brush = new SolidBrush(bgColor))
@@ -689,7 +692,7 @@ namespace wxd.files.winforms
                     }
 
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Color.White : Color.FromArgb(30, 64, 175);
+                    Color textColor = isSelected ? Color.White : Color.FromArgb(20, 60, 100);
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
@@ -703,7 +706,7 @@ namespace wxd.files.winforms
 
                     if (isSelected)
                     {
-                        using (var coverPen = new Pen(Color.FromArgb(37, 99, 235), 2f))
+                        using (var coverPen = new Pen(Color.FromArgb(66, 165, 245), 2f))
                         {
                             e.Graphics.DrawLine(coverPen,
                                 roundRect.X + 1, roundRect.Bottom,

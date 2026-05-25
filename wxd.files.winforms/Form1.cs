@@ -27,12 +27,12 @@ namespace wxd.files.winforms
         private enum LayoutMode { Horizontal, Vertical, Flow }
         private enum ThemeMode { Dark, Light }
 
-        // ==================== 浅色配色 ====================
-        private static readonly Color _colorLightTopBg = Color.FromArgb(245, 246, 247);
-        private static readonly Color _colorLightTopBorder = Color.FromArgb(218, 220, 224);
-        private static readonly Color _colorLightTitleFg = Color.FromArgb(32, 33, 36);
-        private static readonly Color _colorLightLabelFg = Color.FromArgb(95, 99, 104);
-        private static readonly Color _colorLightFormBg = Color.FromArgb(250, 250, 250);
+        // ==================== 浅色天蓝配色 ====================
+        private static readonly Color _colorLightTopBg = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorLightTopBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightTitleFg = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightLabelFg = Color.FromArgb(90, 130, 170);
+        private static readonly Color _colorLightFormBg = Color.FromArgb(235, 248, 255);
 
         // ==================== 深色配色 (VS风格) ====================
         private static readonly Color _colorDarkTopBg = Color.FromArgb(37, 37, 38);      // VS顶部栏
@@ -162,10 +162,10 @@ namespace wxd.files.winforms
                 Size = new Size(32, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(160, 160, 160),
+                BackColor = Color.FromArgb(144, 180, 210),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(120, 160, 200) },
                 Margin = new Padding(0, 3, 4, 0)
             };
             _btnSettings.Click += OnSettingsClick;
@@ -243,10 +243,10 @@ namespace wxd.files.winforms
                 Size = new Size(70, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 150, 80),
+                BackColor = Color.FromArgb(76, 175, 80),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(56, 142, 60) },
                 Margin = new Padding(4, 2, 2, 0)
             };
             _btnSaveState.Click += (s, e) => SaveAllState();
@@ -258,10 +258,10 @@ namespace wxd.files.winforms
                 Size = new Size(75, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 150, 136),
+                BackColor = Color.FromArgb(38, 166, 154),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(26, 130, 120) },
                 Margin = new Padding(2, 2, 4, 0)
             };
             _btnCmdManager.Click += OnCmdManagerClick;
@@ -273,10 +273,10 @@ namespace wxd.files.winforms
                 Size = new Size(80, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(0, 122, 204),
+                BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 Margin = new Padding(4, 2, 2, 0)
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
@@ -288,10 +288,10 @@ namespace wxd.files.winforms
                 Size = new Size(80, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(156, 39, 176),
+                BackColor = Color.FromArgb(171, 71, 188),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 },
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(123, 31, 162) },
                 Margin = new Padding(2, 2, 4, 0)
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
@@ -724,7 +724,7 @@ namespace wxd.files.winforms
                     BackColor = btnColor,
                     ForeColor = Color.White,
                     FlatStyle = FlatStyle.Flat,
-                    FlatAppearance = { BorderSize = 0 },
+                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(100, 30, 140) },
                     Margin = new Padding(2, 2, 2, 0),
                     Tag = cmd
                 };
