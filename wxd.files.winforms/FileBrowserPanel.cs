@@ -312,7 +312,14 @@ namespace wxd.files.winforms
         // ==================== 构造 & 初始化 ====================
         public FileBrowserPanel() : this(-1) { }
 
-        public FileBrowserPanel(int panelIndex)
+        public FileBrowserPanel(int panelIndex) : this(panelIndex, skipAutoNavigate: false) { }
+
+        /// <summary>
+        /// 完整构造函数
+        /// </summary>
+        /// <param name="panelIndex">面板索引</param>
+        /// <param name="skipAutoNavigate">是否跳过自动导航到上次目录（用于启动优化，先显示UI再加载数据）</param>
+        public FileBrowserPanel(int panelIndex, bool skipAutoNavigate)
         {
             PanelIndex = panelIndex;
             // 默认使用浅色主题
@@ -344,8 +351,24 @@ namespace wxd.files.winforms
                 }
             }
 
-            // ==== 第三步：导航到上次目录（触发异步加载 → PopulateListView） ====
-            var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+            // ==== 第三步：导航到上次目录（可被跳过） ====
+            if (!skipAutoNavigate)
+            {
+                var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+                if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
+                    NavigateTo(startPath, restoreFilter: false, saveState: false);
+                else
+                    NavigateTo(GetFirstDrive(), restoreFilter: false, saveState: false);
+            }
+        }
+
+        /// <summary>
+        /// 延迟初始化：在面板UI已显示后，异步恢复导航到保存的目录。
+        /// 配合 skipAutoNavigate=true 使用，实现启动时先显示主界面再加载数据的效果。
+        /// </summary>
+        public void InitializeDeferred()
+        {
+            var startPath = CsvSettings.GetPaneDirectory(PanelIndex);
             if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
                 NavigateTo(startPath, restoreFilter: false, saveState: false);
             else

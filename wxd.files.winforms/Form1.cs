@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms
@@ -23,6 +24,12 @@ namespace wxd.files.winforms
         private FlowLayoutPanel? _flowPanel;                  // 顶部流式布局面板
         private bool _showSettings = false;                   // 是否显示设置界面
         private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
+
+        // ==================== 启动Loading相关 ====================
+        private Panel? _pnlLoadingOverlay;                    // Loading全屏遮罩
+        private Label? _lblLoadingText;                       // Loading文字
+        private ProgressBar? _progressLoading;                // Loading进度条
+        private bool _isInitialLoadingComplete = false;       // 初始加载是否完成
 
         private enum LayoutMode { Horizontal, Vertical, Flow }
         private enum ThemeMode { Dark, Light }
@@ -63,21 +70,250 @@ namespace wxd.files.winforms
             _cboLayout!.SelectedIndex = Math.Min(layoutIndex, _cboLayout.Items.Count - 1);
             _cboTheme!.SelectedIndex = Math.Min(themeIndex, _cboTheme.Items.Count - 1);
 
-            CreatePanels(_cboCount.SelectedIndex + 1);
-            // 应用主题
+            // 应用主题（面板创建后再应用到面板）
             ApplyTheme();
-            // 首次可见时执行布局（此时 ClientRectangle 已是最终尺寸）
+
+            // 显示Loading遮罩
+            ShowLoadingOverlay();
+
+            // 首次可见时异步加载所有面板（此时 ClientRectangle 已是最终尺寸）
             VisibleChanged += OnFirstVisible;
         }
 
-        /// <summary>仅在首次变为可见时触发一次布局</summary>
+        /// <summary>仅在首次变为可见时触发一次异步加载</summary>
         private void OnFirstVisible(object? sender, EventArgs e)
         {
             if (Visible)
             {
                 VisibleChanged -= OnFirstVisible;
                 // 用 BeginInvoke 确保在当前消息处理完后执行，此时布局已完成
-                BeginInvoke(() => ApplyLayout(GetCurrentLayout()));
+                BeginInvoke(AsyncInitializePanels);
+            }
+        }
+
+        /// <summary>显示Loading全屏遮罩层（直接覆盖整个Form）</summary>
+        private void ShowLoadingOverlay()
+        {
+            // 直接加到Form上而非_pnlContainer上，确保始终覆盖全部区域
+            _pnlLoadingOverlay = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = _currentTheme == ThemeMode.Dark
+                    ? Color.FromArgb(30, 30, 30)
+                    : Color.FromArgb(235, 248, 255),
+            };
+
+            // 居中的Loading容器
+            var pnlCenter = new Panel
+            {
+                Size = new Size(320, 100),
+                BackColor = _currentTheme == ThemeMode.Dark
+                    ? Color.FromArgb(45, 45, 48)
+                    : Color.FromArgb(255, 255, 255),
+                Padding = new Padding(20)
+            };
+
+            // Loading文字
+            _lblLoadingText = new Label
+            {
+                Text = "正在初始化文件管理器...",
+                AutoSize = false,
+                Size = new Size(280, 28),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Microsoft YaHei UI", 11f),
+                ForeColor = _currentTheme == ThemeMode.Dark
+                    ? Color.FromArgb(241, 241, 241)
+                    : Color.FromArgb(20, 60, 100),
+                Location = new Point(0, 12),
+                BackColor = Color.Transparent
+            };
+
+            // 进度条
+            _progressLoading = new ProgressBar
+            {
+                Size = new Size(280, 8),
+                Location = new Point(0, 50),
+                Style = ProgressBarStyle.Continuous,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0
+            };
+
+            // 动画圆点（让用户看到"活着"的加载效果）
+            var pnlDots = new Panel
+            {
+                Size = new Size(280, 16),
+                Location = new Point(0, 68),
+                BackColor = Color.Transparent
+            };
+            var dotLabels = new Label[3];
+            for (int d = 0; d < 3; d++)
+            {
+                dotLabels[d] = new Label
+                {
+                    Text = "●",
+                    AutoSize = true,
+                    Font = new Font("Segoe UI", 10f),
+                    ForeColor = Color.FromArgb(66, 165, 245),
+                    Location = new Point(110 + d * 22, 0),
+                    BackColor = Color.Transparent
+                };
+                pnlDots.Controls.Add(dotLabels[d]);
+            }
+
+            pnlCenter.Controls.Add(_lblLoadingText);
+            pnlCenter.Controls.Add(_progressLoading);
+            pnlCenter.Controls.Add(pnlDots);
+
+            // 居中定位（使用Resize事件自适应）
+            Action centerIt = () =>
+            {
+                if (pnlCenter.IsDisposed || _pnlLoadingOverlay?.IsDisposed != false) return;
+                pnlCenter.Location = new Point(
+                    (_pnlLoadingOverlay.ClientSize.Width - pnlCenter.Width) / 2,
+                    (_pnlLoadingOverlay.ClientSize.Height - pnlCenter.Height) / 2);
+            };
+            _pnlLoadingOverlay.Resize += (_, _) => centerIt();
+            centerIt();
+
+            _pnlLoadingOverlay.Controls.Add(pnlCenter);
+
+            // 关键：加到Form.Controls的最顶层（在所有子控件之上）
+            Controls.Add(_pnlLoadingOverlay);
+            _pnlLoadingOverlay.BringToFront();
+
+            // 启动跳动动画定时器
+            var dotTimer = new System.Windows.Forms.Timer { Interval = 350 };
+            int dotStep = 0;
+            dotTimer.Tick += (_, _) =>
+            {
+                dotStep = (dotStep + 1) % 4;
+                for (int d = 0; d < 3; d++)
+                    dotLabels[d].ForeColor = (d == dotStep % 3)
+                        ? Color.FromArgb(100, 181, 246)
+                        : Color.FromArgb(180, 200, 220);
+            };
+            dotTimer.Start();
+            // 将timer存到Tag中，关闭时停止
+            _pnlLoadingOverlay.Tag = dotTimer;
+        }
+
+        /// <summary>隐藏Loading遮罩层（带淡出效果），同时一次性显示所有面板</summary>
+        private async Task HideLoadingOverlayAsync()
+        {
+            if (_pnlLoadingOverlay == null) return;
+
+            // 停止跳动动画定时器
+            if (_pnlLoadingOverlay.Tag is System.Windows.Forms.Timer dotTimer)
+            {
+                dotTimer.Stop();
+                dotTimer.Dispose();
+            }
+
+            // 短暂延迟让用户看到"加载完成"
+            await Task.Delay(300);
+
+            // 先一次性显示所有面板（此时还在遮罩后面，用户看不到面板绘制过程）
+            SuspendLayout();
+            foreach (var panel in _panels)
+            {
+                if (!panel.IsDisposed)
+                    panel.Visible = true;
+            }
+            ResumeLayout(false);
+
+            // 强制刷新，确保面板绘制完成后再开始淡出
+            Refresh();
+
+            // 简单的透明度渐隐效果
+            for (int i = 10; i >= 0; i--)
+            {
+                if (_pnlLoadingOverlay.IsDisposed) return;
+                var alpha = (int)(255 * i / 10.0);
+                bool isDark = _currentTheme == ThemeMode.Dark;
+                _pnlLoadingOverlay.BackColor = Color.FromArgb(alpha,
+                    isDark ? 30 : 235,
+                    isDark ? 30 : 248,
+                    isDark ? 30 : 255);
+                await Task.Delay(20);
+            }
+
+            // 移除遮罩（从Form.Controls移除）
+            _pnlLoadingOverlay.Visible = false;
+            Controls.Remove(_pnlLoadingOverlay);
+            _pnlLoadingOverlay.Dispose();
+            _pnlLoadingOverlay = null;
+        }
+
+        /// <summary>异步初始化所有面板：先创建空面板做布局，再逐个异步加载数据</summary>
+        private async void AsyncInitializePanels()
+        {
+            int panelCount = _cboCount!.SelectedIndex + 1;
+
+            try
+            {
+                // ===== 第一步：创建轻量级面板（只建UI，不加载数据）=====
+                CreatePanelsLightweight(panelCount);
+                ApplyLayout(GetCurrentLayout());
+
+                // 强制刷新UI，确保Loading遮罩和进度文字已经绘制出来
+                Application.DoEvents();
+
+                // ===== 第二步：分批异步导航到保存的目录 ======
+                for (int i = 0; i < _panels.Length; i++)
+                {
+                    // 更新进度文字
+                    if (_lblLoadingText != null && _progressLoading != null)
+                    {
+                        _lblLoadingText.Text = $"正在加载窗格 {i + 1}/{_panels.Length}...";
+                        _progressLoading.Value = (i * 100) / _panels.Length;
+                    }
+
+                    // 给UI线程一个喘息机会，处理绘制消息（让进度更新可见）
+                    await Task.Delay(20);
+
+                    // 异步初始化单个面板（恢复目录+过滤条件）
+                    // 注意：InitializeDeferred 内部会调用 NavigateTo → LoadFileListAsync（后台异步）
+                    // 所以这里不会阻塞太久
+                    _panels[i].InitializeDeferred();
+
+                    // 每加载完一个面板后短暂等待，避免阻塞UI渲染
+                    if ((i + 1) % 2 == 0)
+                        await Task.Delay(30);
+
+                    // 定期刷新UI，确保Loading动画流畅
+                    Application.DoEvents();
+                }
+
+                // 更新进度到100%
+                if (_progressLoading != null)
+                    _progressLoading.Value = 100;
+                if (_lblLoadingText != null)
+                    _lblLoadingText.Text = "初始化完成！";
+
+                // 刷新最终状态
+                Application.DoEvents();
+                await Task.Delay(200);
+
+                _isInitialLoadingComplete = true;
+
+                // 隐藏Loading遮罩
+                await HideLoadingOverlayAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"AsyncInitializePanels error: {ex}");
+                // 即使出错也要隐藏loading，并显示面板
+                foreach (var panel in _panels)
+                    if (!panel.IsDisposed) panel.Visible = true;
+                if (_pnlLoadingOverlay != null)
+                {
+                    if (_pnlLoadingOverlay.Tag is System.Windows.Forms.Timer dt) { dt.Stop(); dt.Dispose(); }
+                    _pnlLoadingOverlay.Visible = false;
+                    Controls.Remove(_pnlLoadingOverlay);
+                    _pnlLoadingOverlay?.Dispose();
+                    _pnlLoadingOverlay = null;
+                }
             }
         }
 
@@ -490,6 +726,8 @@ namespace wxd.files.winforms
         };
 
         // ==================== 创建/销毁窗格 ====================
+
+        /// <summary>创建面板并立即导航到保存的目录（运行时切换数量时使用）</summary>
         private void CreatePanels(int count)
         {
             foreach (var p in _panels) p.Dispose();
@@ -503,6 +741,29 @@ namespace wxd.files.winforms
                     Dock = DockStyle.None,
                     BorderStyle = BorderStyle.FixedSingle,
                     Padding = new Padding(0)
+                };
+                // 应用当前主题到新面板
+                _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
+                _pnlContainer.Controls.Add(_panels[i]);
+            }
+        }
+
+        /// <summary>创建轻量级面板（只建UI，不触发导航，用于启动时快速显示）</summary>
+        private void CreatePanelsLightweight(int count)
+        {
+            foreach (var p in _panels) p.Dispose();
+            _pnlContainer.Controls.Clear();
+
+            _panels = new FileBrowserPanel[count];
+            for (int i = 0; i < count; i++)
+            {
+                // 使用轻量构造模式：skipAutoNavigate=true 跳过构造函数中的自动导航
+                _panels[i] = new FileBrowserPanel(i, skipAutoNavigate: true)
+                {
+                    Dock = DockStyle.None,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Padding = new Padding(0),
+                    Visible = false  // 初始隐藏，避免空白闪烁
                 };
                 // 应用当前主题到新面板
                 _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
