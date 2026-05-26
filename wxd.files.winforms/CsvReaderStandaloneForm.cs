@@ -8,7 +8,7 @@ namespace wxd.files.winforms
     /// <summary>独立表格查看窗体（用于关联打开，不包含左侧文件列表和目录树）</summary>
     public class CsvReaderStandaloneForm : Form
     {
-        public CsvReaderStandaloneForm(string filePath)
+        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1)
         {
             var fileName = Path.GetFileName(filePath);
             Text = fileName;
@@ -21,13 +21,18 @@ namespace wxd.files.winforms
 
             var ext = Path.GetExtension(filePath).ToLowerInvariant();
             var dir = Path.GetDirectoryName(filePath) ?? "";
-            Control viewer;
             if (ext == ".csv")
-                viewer = new CsvViewerControl(filePath, rootDir: dir) { Dock = DockStyle.Fill };
+            {
+                var viewer = new CsvViewerControl(filePath, rootDir: dir, frozenRows: frozenRows) { Dock = DockStyle.Fill };
+                viewer.SetHighlight(highlightColumnIndex, highlightValue);
+                Controls.Add(viewer);
+            }
             else
-                viewer = new ExcelViewerControl(filePath, rootDir: dir) { Dock = DockStyle.Fill };
-
-            Controls.Add(viewer);
+            {
+                var viewer = new ExcelViewerControl(filePath, rootDir: dir, frozenRows: frozenRows) { Dock = DockStyle.Fill };
+                viewer.SetHighlight(highlightColumnIndex, highlightValue);
+                Controls.Add(viewer);
+            }
         }
     }
 }

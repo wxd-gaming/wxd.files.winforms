@@ -100,6 +100,29 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>检查指定值在目标表中是否存在（用于右键菜单置灰判断）</summary>
+        /// <returns>true=值有效可打开，false=值无效或不存在</returns>
+        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex, string cellValue)
+        {
+            if (string.IsNullOrEmpty(cellValue) || _loadedSources.Count == 0) return false;
+            
+            string currentRel;
+            if (!string.IsNullOrEmpty(rootDir) && filePath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+                currentRel = filePath.Substring(rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            else
+                currentRel = Path.GetFileName(filePath);
+
+            string prefix = currentRel + "|" + originalColumnIndex + "->";
+            foreach (var kvp in _linkLookups)
+            {
+                if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return kvp.Value.Contains(cellValue);
+                }
+            }
+            return false;
+        }
+
         /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认；跳过冻结行</summary>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows)

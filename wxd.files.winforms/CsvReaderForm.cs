@@ -132,6 +132,7 @@ namespace wxd.files.winforms
             Text = "CSV/Excel阅读器";
             MinimumSize = new Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
+            WindowState = FormWindowState.Maximized;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = _colorBg;
             Padding = new Padding(0);
@@ -999,6 +1000,7 @@ namespace wxd.files.winforms
         private TextBox _txtContentFilter = new();     // 内容过滤框
         private TextBox _txtAdvancedFilter = new();    // 高级表达式过滤框
         private Label _lblInfo = new();
+        private Label _lblCellPos = new();             // 当前编辑单元格行列提示
         private Panel _pnlTop = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();        // 冻结的表头数据
@@ -1007,6 +1009,7 @@ namespace wxd.files.winforms
         public string FilePath => _filePath;
         private char _delimiter = ',';
         private int _frozenRows = 0;                   // 冻结行数
+        private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
         private List<ColumnLinkConfig> _columnLinks = new();
@@ -1014,6 +1017,18 @@ namespace wxd.files.winforms
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
+
+        // 关联表跳转高亮
+        private int _highlightColumnIndex = -1;
+        private string _highlightValue = "";
+        private HashSet<int> _highlightRows = new();
+        private bool _highlightsReady = false;
+
+        public void SetHighlight(int colIndex, string value)
+        {
+            _highlightColumnIndex = colIndex;
+            _highlightValue = value ?? "";
+        }
 
         // 配色（与CsvReaderForm一致的浅色天蓝色调）
         private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
@@ -1035,11 +1050,12 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null)
+        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
+            if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             InitializeComponent();
             LoadCsvAsync();
         }
@@ -1102,8 +1118,9 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            // 从设置中读取冻结行数（按目录存储，子文件共享）
-            _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetCsvFrozenRowsByDirectory(FrozenDir) : CsvSettings.DefaultFrozenRows;
+            // 从设置中读取冻结行数（按目录存储，子文件共享），若构造函数已强制指定则跳过
+            if (!_frozenRowsOverridden)
+                _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetCsvFrozenRowsByDirectory(FrozenDir) : CsvSettings.DefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
@@ -1186,6 +1203,18 @@ namespace wxd.files.winforms
             };
             btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
             flowTop.Controls.Add(btnLinkTable);
+
+            // 行列位置标签
+            var lblCellPos = new Label
+            {
+                Text = "",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                ForeColor = _colorPrimary,
+                Margin = new Padding(10, 5, 10, 0)
+            };
+            flowTop.Controls.Add(lblCellPos);
+            _lblCellPos = lblCellPos;
 
             // 信息标签放到最后
             flowTop.Controls.Add(_lblInfo);
@@ -1347,6 +1376,7 @@ namespace wxd.files.winforms
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
             };
             _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick;
+            _dataGridHeader.CellClick += OnCellClick;
 
             // 数据表格（主表格）
             _dataGrid = CreateDataGridView();
@@ -1354,6 +1384,7 @@ namespace wxd.files.winforms
             _dataGrid.RowHeadersWidth = 50;
             _dataGrid.RowPostPaint += OnRowPostPaint;
             _dataGrid.ColumnHeadersVisible = false;
+            _dataGrid.CellMouseDown += OnGridCellMouseDown;
 
             // 同步水平滚动
             _dataGrid.Scroll += (s, e) =>
@@ -1452,96 +1483,72 @@ namespace wxd.files.winforms
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
+            dgv.CellClick += OnCellClick;
             dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
 
-        // ==================== 双击编辑功能 ====================
-        private bool _editingFromFrozen = false; // 标记是否来自冻结表格
-        private bool _isEditing = false; // 防止重复触发编辑
+        // ==================== 点击行列提示 + 双击弹窗编辑 ====================
+        private bool _editingFromFrozen = false;
 
-        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (_isEditing) return; // 防止重复触发
-            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
-            {
-                var dgv = sender as DataGridView;
-                if (dgv == null) return;
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var dgv = (DataGridView)sender!;
 
-                // 如果双击的是冻结表格，不处理（由 OnFrozenCellDoubleClick 处理）
-                if (dgv == _dataGridHeader) return;
+            int rowOff = (dgv == _dataGridHeader) ? 0 : _frozenRows;
+            int colIdx = e.ColumnIndex;
+            if (dgv != _dataGridHeader && dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
+                colIdx = Math.Max(0, colIdx - 1);
 
-                // 获取双击的单元格
-                var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                _editingFromFrozen = false;
-
-                // 打开编辑对话框
-                EditCell(cell);
-            }
+            string colName = colIdx >= 0 && colIdx < 26
+                ? ((char)('A' + colIdx)).ToString()
+                : $"Col{colIdx}";
+            _lblCellPos.Text = $"行 {e.RowIndex + 1 + rowOff}  列 {colName}({colIdx})";
         }
 
-        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        private void EditCell(DataGridViewCell cell, DataGridView dgv)
         {
-            if (_isEditing) return; // 防止重复触发
-            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            var rowIndex = cell.RowIndex;
+            var columnIndex = cell.ColumnIndex;
+            var currentValue = cell.Value?.ToString() ?? "";
+            var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
+
+            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex);
+            dialog.FormClosed += (s, args) =>
             {
-                // 获取冻结表格的双击单元格
-                var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                _editingFromFrozen = true;
-
-                // 打开编辑对话框
-                EditCell(cell);
-            }
-        }
-
-        private void EditCell(DataGridViewCell cell)
-        {
-            _isEditing = true; // 设置编辑标志，防止重复触发
-
-            try
-            {
-                var rowIndex = cell.RowIndex;
-                var columnIndex = cell.ColumnIndex;
-                var currentValue = cell.Value?.ToString() ?? "";
-
-                // 获取原始数据表中的行列索引
-                var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
-
-                using var dialog = new CellEditDialog(currentValue);
-                if (dialog.ShowDialog(this) == DialogResult.OK)
+                if (dialog.DialogResult == DialogResult.OK)
                 {
                     var newValue = dialog.CellValue;
-
-                    // 更新原始数据表
                     if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                         originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                     {
                         _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
-
-                        // 保存到文件
                         SaveCsvFile();
-
-                        // 刷新显示
                         RefreshGridLayout();
                     }
                 }
-            }
-            finally
-            {
-                // 使用延迟重置标志，确保双击事件完全处理完毕
-                var timer = new System.Windows.Forms.Timer();
-                timer.Interval = 200;
-                timer.Tick += (s, e) =>
-                {
-                    timer.Stop();
-                    timer.Dispose();
-                    _isEditing = false;
-                    _editingFromFrozen = false; // 重置冻结行编辑标志
-                };
-                timer.Start();
-            }
+            };
+            dialog.Show(this);
         }
 
+        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var dgv = (DataGridView)sender!;
+            if (dgv == _dataGridHeader) return;
+            var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            _editingFromFrozen = false;
+            EditCell(cell, dgv);
+        }
+
+        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            _editingFromFrozen = true;
+            EditCell(cell, _dataGridHeader);
+        }
 
 
         /// <summary>获取原始数据表中的行列索引</summary>
@@ -1934,6 +1941,7 @@ namespace wxd.files.winforms
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
 
                 UpdateColumnSelectorButton();
+                RebuildHighlightRows();
 
                 // 更新信息
                 _lblInfo.Text = $"分隔符: '{_delimiter}' | 行数: {_dataTable.Rows.Count} | 列数: {_dataTable.Columns.Count}";
@@ -2659,7 +2667,59 @@ namespace wxd.files.winforms
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
                 ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+                // 关联表跳转高亮 — 整行变色
+                if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                }
             }
+        }
+
+        /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
+        private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            int adjCol = e.ColumnIndex;
+            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+                adjCol = e.ColumnIndex - 1;
+            int origCol = adjCol;
+            if (adjCol >= 0 && adjCol < _visibleColumnIndices.Count)
+                origCol = _visibleColumnIndices[adjCol];
+
+            string currentRel = GetCurrentRelativePath();
+            var link = _columnLinks.FirstOrDefault(l =>
+                l.SourceFile.Equals(currentRel, StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == origCol);
+            if (link == null) return;
+
+            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString()?.Trim() ?? "";
+            var ctx = new ContextMenuStrip();
+            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            var menuItem = new ToolStripMenuItem("打开关联表");
+            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue);
+            menuItem.Enabled = isValid;
+            menuItem.Click += (s, args) =>
+            {
+                string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
+                if (!File.Exists(targetFullPath))
+                {
+                    MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows);
+                standaloneForm.Show(this);
+            };
+            ctx.Items.Add(menuItem);
+            ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
+        }
+
+        private string GetCurrentRelativePath()
+        {
+            if (!string.IsNullOrEmpty(FrozenDir) && _filePath.StartsWith(FrozenDir, StringComparison.OrdinalIgnoreCase))
+                return _filePath.Substring(FrozenDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFileName(_filePath);
         }
 
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
@@ -2723,6 +2783,30 @@ namespace wxd.files.winforms
 
             return result.ToString();
         }
+
+        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行</summary>
+        private void RebuildHighlightRows()
+        {
+            _highlightRows.Clear();
+            if (_highlightColumnIndex < 0 || string.IsNullOrEmpty(_highlightValue) || _dataTable.Columns.Count == 0)
+            {
+                _highlightsReady = false;
+                return;
+            }
+            for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
+            {
+                if (_highlightColumnIndex < _dataTable.Columns.Count)
+                {
+                    var val = _dataTable.Rows[i][_highlightColumnIndex]?.ToString()?.Trim() ?? "";
+                    if (val.Equals(_highlightValue, StringComparison.OrdinalIgnoreCase))
+                        _highlightRows.Add(i);
+                }
+            }
+            _highlightsReady = true;
+            // 自动填过滤框只显示关联行+固定行
+            if (_highlightRows.Count > 0)
+                _txtContentFilter.Text = _highlightValue;
+        }
     }
 
     /// <summary>自然字符串比较器，支持数字排序</summary>
@@ -2764,6 +2848,7 @@ namespace wxd.files.winforms
         private Button _btnRaw = new();
         private Panel _pnlBottom = new();
         private Panel _pnlTop = new();
+        private Label _lblSaveTime = new();  // 保存时间标签
 
         public string CellValue => _txtValue.Text.Replace("\r\n", "\n");
 
@@ -2778,10 +2863,15 @@ namespace wxd.files.winforms
             return text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
         }
 
-        public CellEditDialog(string initialValue)
+        public CellEditDialog(string initialValue, int row, int col)
         {
             InitializeComponent();
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
+
+            string colName = col >= 0 && col < 26
+                ? ((char)('A' + col)).ToString()
+                : $"Col{col}";
+            Text = $"编辑单元格 — 行 {row + 1}  列 {colName}({col})";
         }
 
         private static void SetActiveButton(Button active, Button inactive)
@@ -2878,6 +2968,20 @@ namespace wxd.files.winforms
                 DialogResult = DialogResult.OK,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) }
             };
+            _btnSave.Click += (s, e) =>
+            {
+                _lblSaveTime.Text = $"已保存 {DateTime.Now:HH:mm:ss}";
+            };
+
+            // 保存时间标签
+            _lblSaveTime = new Label
+            {
+                Text = "",
+                Size = new Size(140, 28),
+                Font = new Font("Microsoft YaHei UI", 8.5f),
+                ForeColor = Color.FromArgb(76, 175, 80),
+                TextAlign = ContentAlignment.MiddleRight
+            };
 
             // 取消按钮
             _btnCancel = new Button
@@ -2892,6 +2996,7 @@ namespace wxd.files.winforms
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237), MouseOverBackColor = Color.FromArgb(200, 225, 245) }
             };
 
+            _pnlBottom.Controls.Add(_lblSaveTime);
             _pnlBottom.Controls.Add(_btnSave);
             _pnlBottom.Controls.Add(_btnCancel);
 
@@ -2900,6 +3005,8 @@ namespace wxd.files.winforms
             {
                 _btnCancel.Left = _pnlBottom.Width - _btnCancel.Width - 10;
                 _btnSave.Left = _btnCancel.Left - _btnSave.Width - 8;
+                _lblSaveTime.Left = _btnSave.Left - _lblSaveTime.Width - 8;
+                _lblSaveTime.Top = 12;
                 _btnSave.Top = 10;
                 _btnCancel.Top = 10;
             }
@@ -2939,6 +3046,7 @@ namespace wxd.files.winforms
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
         private Label _lblInfo = new();
+        private Label _lblCellPos = new();             // 当前编辑单元格行列提示
         private Panel _pnlTop = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
@@ -2946,6 +3054,7 @@ namespace wxd.files.winforms
         /// <summary>当前文件完整路径</summary>
         public string FilePath => _filePath;
         private int _frozenRows = 0;
+        private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private List<int> _visibleColumnIndices = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
@@ -2954,6 +3063,18 @@ namespace wxd.files.winforms
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
+
+        // 关联表跳转高亮
+        private int _highlightColumnIndex = -1;
+        private string _highlightValue = "";
+        private HashSet<int> _highlightRows = new();
+        private bool _highlightsReady = false;
+
+        public void SetHighlight(int colIndex, string value)
+        {
+            _highlightColumnIndex = colIndex;
+            _highlightValue = value ?? "";
+        }
 
         // 配色（浅色天蓝色调）
         private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
@@ -2975,11 +3096,12 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null)
+        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
+            if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             InitializeComponent();
             LoadExcelAsync();
         }
@@ -3024,7 +3146,8 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
-            _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetExcelFrozenRowsByDirectory(FrozenDir) : CsvSettings.ExcelDefaultFrozenRows;
+            if (!_frozenRowsOverridden)
+                _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetExcelFrozenRowsByDirectory(FrozenDir) : CsvSettings.ExcelDefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
             {
@@ -3106,6 +3229,18 @@ namespace wxd.files.winforms
             };
             btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
             flowTop.Controls.Add(btnLinkTable);
+
+            // 行列位置标签
+            var lblCellPos = new Label
+            {
+                Text = "",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                ForeColor = _colorPrimary,
+                Margin = new Padding(10, 5, 10, 0)
+            };
+            flowTop.Controls.Add(lblCellPos);
+            _lblCellPos = lblCellPos;
 
             // 信息标签放到最后
             flowTop.Controls.Add(_lblInfo);
@@ -3276,7 +3411,8 @@ namespace wxd.files.winforms
                 if (_dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
             };
-            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick; // 双击编辑
+            _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick;
+            _dataGridHeader.CellClick += OnCellClick; // 双击编辑
 
             // 数据表格（主表格）
             _dataGrid = CreateDataGridView();
@@ -3284,6 +3420,7 @@ namespace wxd.files.winforms
             _dataGrid.RowHeadersWidth = 50;
             _dataGrid.RowPostPaint += OnRowPostPaint;
             _dataGrid.ColumnHeadersVisible = false;
+            _dataGrid.CellMouseDown += OnGridCellMouseDown;
 
             // 同步水平滚动
             _dataGrid.Scroll += (s, e) =>
@@ -3372,91 +3509,70 @@ namespace wxd.files.winforms
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
+            dgv.CellClick += OnCellClick;
             dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
 
-        // ==================== 双击编辑功能 ====================
-        private bool _editingFromFrozen = false; // 标记是否来自冻结表格
-        private bool _isEditing = false; // 防止重复触发编辑
+        // ==================== 点击行列提示 + 双击弹窗编辑 ====================
+        private bool _editingFromFrozen = false;
 
-        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (_isEditing) return; // 防止重复触发
-            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
-            {
-                var dgv = sender as DataGridView;
-                if (dgv == null) return;
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var dgv = (DataGridView)sender!;
 
-                // 如果双击的是冻结表格，不处理（由 OnFrozenCellDoubleClick 处理）
-                if (dgv == _dataGridHeader) return;
+            int rowOff = (dgv == _dataGridHeader) ? 0 : _frozenRows;
+            int colIdx = e.ColumnIndex;
+            if (dgv != _dataGridHeader && dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
+                colIdx = Math.Max(0, colIdx - 1);
 
-                // 获取双击的单元格
-                var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                _editingFromFrozen = false;
-
-                // 打开编辑对话框
-                EditCell(cell);
-            }
+            string colName = colIdx >= 0 && colIdx < 26
+                ? ((char)('A' + colIdx)).ToString()
+                : $"Col{colIdx}";
+            _lblCellPos.Text = $"行 {e.RowIndex + 1 + rowOff}  列 {colName}({colIdx})";
         }
 
-        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        private void EditCell(DataGridViewCell cell, DataGridView dgv)
         {
-            if (_isEditing) return; // 防止重复触发
-            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            var rowIndex = cell.RowIndex;
+            var columnIndex = cell.ColumnIndex;
+            var currentValue = cell.Value?.ToString() ?? "";
+            var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
+
+            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex);
+            dialog.FormClosed += (s, args) =>
             {
-                // 获取冻结表格的双击单元格
-                var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                _editingFromFrozen = true;
-
-                // 打开编辑对话框
-                EditCell(cell);
-            }
-        }
-
-        private void EditCell(DataGridViewCell cell)
-        {
-            _isEditing = true; // 设置编辑标志，防止重复触发
-
-            try
-            {
-                var rowIndex = cell.RowIndex;
-                var columnIndex = cell.ColumnIndex;
-                var currentValue = cell.Value?.ToString() ?? "";
-
-                // 获取原始数据表中的行列索引
-                var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
-
-                using var dialog = new CellEditDialog(currentValue);
-                if (dialog.ShowDialog(this) == DialogResult.OK)
+                if (dialog.DialogResult == DialogResult.OK)
                 {
                     var newValue = dialog.CellValue;
-
-                    // 更新原始数据表
                     if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                         originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                     {
                         _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
-
-                        // 刷新显示
                         RefreshGridLayout();
                     }
                 }
-            }
-            finally
-            {
-                // 使用延迟重置标志，确保双击事件完全处理完毕
-                var timer = new System.Windows.Forms.Timer();
-                timer.Interval = 200;
-                timer.Tick += (s, e) =>
-                {
-                    timer.Stop();
-                    timer.Dispose();
-                    _isEditing = false;
-                    _editingFromFrozen = false; // 重置冻结行编辑标志
-                };
-                timer.Start();
-            }
+            };
+            dialog.Show(this);
+        }
+
+        private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var dgv = (DataGridView)sender!;
+            if (dgv == _dataGridHeader) return;
+            var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            _editingFromFrozen = false;
+            EditCell(cell, dgv);
+        }
+
+        private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            _editingFromFrozen = true;
+            EditCell(cell, _dataGridHeader);
         }
 
         /// <summary>获取原始数据表中的行列索引</summary>
@@ -3703,6 +3819,7 @@ namespace wxd.files.winforms
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
 
                 UpdateColumnSelectorButton();
+                RebuildHighlightRows();
 
                 _lblInfo.Text = $"行数: {_dataTable.Rows.Count} | 列数: {_dataTable.Columns.Count}";
 
@@ -4313,7 +4430,59 @@ namespace wxd.files.winforms
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
                 ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+                // 关联表跳转高亮 — 整行变色
+                if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                }
             }
+        }
+
+        /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
+        private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            int adjCol = e.ColumnIndex;
+            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+                adjCol = e.ColumnIndex - 1;
+            int origCol = adjCol;
+            if (adjCol >= 0 && adjCol < _visibleColumnIndices.Count)
+                origCol = _visibleColumnIndices[adjCol];
+
+            string currentRel = GetCurrentRelativePath();
+            var link = _columnLinks.FirstOrDefault(l =>
+                l.SourceFile.Equals(currentRel, StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == origCol);
+            if (link == null) return;
+
+            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString()?.Trim() ?? "";
+            var ctx = new ContextMenuStrip();
+            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            var menuItem = new ToolStripMenuItem("打开关联表");
+            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue);
+            menuItem.Enabled = isValid;
+            menuItem.Click += (s, args) =>
+            {
+                string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
+                if (!File.Exists(targetFullPath))
+                {
+                    MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows);
+                standaloneForm.Show(this);
+            };
+            ctx.Items.Add(menuItem);
+            ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
+        }
+
+        private string GetCurrentRelativePath()
+        {
+            if (!string.IsNullOrEmpty(FrozenDir) && _filePath.StartsWith(FrozenDir, StringComparison.OrdinalIgnoreCase))
+                return _filePath.Substring(FrozenDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFileName(_filePath);
         }
 
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
@@ -4370,6 +4539,30 @@ namespace wxd.files.winforms
             } while (index >= 0);
 
             return result.ToString();
+        }
+
+        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行</summary>
+        private void RebuildHighlightRows()
+        {
+            _highlightRows.Clear();
+            if (_highlightColumnIndex < 0 || string.IsNullOrEmpty(_highlightValue) || _dataTable.Columns.Count == 0)
+            {
+                _highlightsReady = false;
+                return;
+            }
+            for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
+            {
+                if (_highlightColumnIndex < _dataTable.Columns.Count)
+                {
+                    var val = _dataTable.Rows[i][_highlightColumnIndex]?.ToString()?.Trim() ?? "";
+                    if (val.Equals(_highlightValue, StringComparison.OrdinalIgnoreCase))
+                        _highlightRows.Add(i);
+                }
+            }
+            _highlightsReady = true;
+            // 自动填过滤框只显示关联行+固定行
+            if (_highlightRows.Count > 0)
+                _txtContentFilter.Text = _highlightValue;
         }
     }
 
@@ -4748,7 +4941,14 @@ namespace wxd.files.winforms
         private void UpdateSelectionLabel()
         {
             if (!string.IsNullOrEmpty(_selectedTargetPath) && _selectedTargetColIndex >= 0)
-                _lblSelection.Text = $"已选: {_selectedTargetPath} → 列索引 {_selectedTargetColIndex}";
+            {
+                string displayPath = _selectedTargetPath;
+                if (!string.IsNullOrEmpty(_rootDir) && _selectedTargetPath.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase))
+                    displayPath = _selectedTargetPath.Substring(_rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+                else
+                    displayPath = Path.GetFileName(_selectedTargetPath);
+                _lblSelection.Text = $"已选: {displayPath} → 列索引 {_selectedTargetColIndex}";
+            }
             else
                 _lblSelection.Text = "未选择关联列（双击目标文件设置）";
         }
@@ -5028,19 +5228,21 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             Text = "选择目标列";
-            ClientSize = new Size(560, 420);
+            ClientSize = new Size(780, 520);
+            MinimumSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false; MaximizeBox = false;
+            AutoScaleMode = AutoScaleMode.Font;
 
-            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(540, 20),
+            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(760, 20),
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold), ForeColor = Color.FromArgb(31, 41, 55) });
 
             _lvColumns = new ListView
             {
                 Location = new Point(10, 38),
-                Size = new Size(540, 330),
+                Size = new Size(760, 430),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Microsoft YaHei UI", 9f),
@@ -5060,14 +5262,14 @@ namespace wxd.files.winforms
                     _selectedIndex = (int)_lvColumns.SelectedItems[0].Tag;
             };
 
-            _btnOK = new Button { Text = "确定", Location = new Point(370, 378),
+            _btnOK = new Button { Text = "确定", Location = new Point(590, 478),
                 Size = new Size(80, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
             Controls.Add(_btnOK);
 
-            _btnCancel = new Button { Text = "取消", Location = new Point(460, 378),
+            _btnCancel = new Button { Text = "取消", Location = new Point(680, 478),
                 Size = new Size(70, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat, DialogResult = DialogResult.Cancel,
                 BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
