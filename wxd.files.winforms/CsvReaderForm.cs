@@ -265,6 +265,7 @@ namespace wxd.files.winforms
             _treeFiles.BeforeExpand += OnTreeBeforeExpand;
             _treeFiles.NodeMouseClick += OnTreeViewClick;
             _treeFiles.NodeMouseDoubleClick += OnTreeViewDoubleClick;
+            _treeFiles.MouseDown += OnTreeViewMouseDown;
 
             // 添加TreeView到左侧面板
             _pnlLeft.Controls.Add(_treeFiles);
@@ -777,6 +778,9 @@ namespace wxd.files.winforms
         // ==================== 树文件选择处理 ====================
         private void OnTreeViewClick(object? sender, TreeNodeMouseClickEventArgs e)
         {
+            // 只响应左键点击，右键由 OnTreeViewMouseDown 处理
+            if (e.Button != MouseButtons.Left) return;
+
             var fullPath = e.Node.Tag as string ?? "";
             if (System.IO.File.Exists(fullPath))
             {
@@ -787,12 +791,96 @@ namespace wxd.files.winforms
 
         private void OnTreeViewDoubleClick(object? sender, TreeNodeMouseClickEventArgs e)
         {
+            // 只响应左键双击
+            if (e.Button != MouseButtons.Left) return;
+
             var fullPath = e.Node.Tag as string ?? "";
             if (System.IO.File.Exists(fullPath))
             {
                 var fileType = DetectFileType(fullPath);
                 OpenFile(fullPath, fileType);
             }
+        }
+
+        /// <summary>文件树节点右键菜单</summary>
+        private void OnTreeViewMouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var hitInfo = _treeFiles.HitTest(e.X, e.Y);
+            if (hitInfo?.Node == null) return;
+            var node = hitInfo.Node;
+            var fullPath = node.Tag as string ?? "";
+
+            // 选中当前右键点击的节点
+            _treeFiles.SelectedNode = node;
+
+            var ctx = new ContextMenuStrip();
+            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+
+            // 1. 打开文件（和左键单击一样）
+            var mnuOpen = new ToolStripMenuItem("打开文件");
+            mnuOpen.Enabled = System.IO.File.Exists(fullPath);
+            mnuOpen.Click += (s, args) =>
+            {
+                if (System.IO.File.Exists(fullPath))
+                    OpenFile(fullPath, DetectFileType(fullPath));
+            };
+
+            // 2. 编辑文件（用系统默认编辑器打开）
+            var mnuEdit = new ToolStripMenuItem("编辑文件");
+            mnuEdit.Enabled = System.IO.File.Exists(fullPath);
+            mnuEdit.Click += (s, args) =>
+            {
+                if (System.IO.File.Exists(fullPath))
+                {
+                    try
+                    {
+                        // 直接用系统默认程序打开文件（无cmd窗口闪烁）
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = fullPath,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(this, $"无法打开文件: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            };
+
+            // 3. 打开文件夹（定位到该文件）
+            var mnuOpenFolder = new ToolStripMenuItem("打开所在文件夹");
+            mnuOpenFolder.Enabled = !string.IsNullOrEmpty(fullPath);
+            mnuOpenFolder.Click += (s, args) =>
+            {
+                try
+                {
+                    string folderPath = System.IO.File.Exists(fullPath)
+                        ? System.IO.Path.GetDirectoryName(fullPath) ?? ""
+                        : fullPath;
+                    if (!string.IsNullOrEmpty(folderPath) && System.IO.Directory.Exists(folderPath))
+                    {
+                        // explorer /select,"filepath" 可定位到具体文件
+                        string arg = System.IO.File.Exists(fullPath)
+                            ? $"/select,\"{fullPath}\""
+                            : $"\"{folderPath}\"";
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "explorer",
+                            Arguments = arg,
+                            UseShellExecute = true
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"无法打开文件夹: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuOpenFolder });
+            ctx.Show(_treeFiles, e.Location);
         }
 
         private static FileType DetectFileType(string filePath)
@@ -1484,6 +1572,7 @@ namespace wxd.files.winforms
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
             dgv.CellClick += OnCellClick;
+            dgv.CellToolTipTextNeeded += OnCellToolTipTextNeeded;
             dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
@@ -2676,6 +2765,14 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因</summary>
+        private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows);
+        }
+
         /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
@@ -3510,6 +3607,7 @@ namespace wxd.files.winforms
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
             dgv.CellClick += OnCellClick;
+            dgv.CellToolTipTextNeeded += OnCellToolTipTextNeeded;
             dgv.SelectionChanged += (s, e) => dgv.Invalidate();
             return dgv;
         }
@@ -4437,6 +4535,14 @@ namespace wxd.files.winforms
                     e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
                 }
             }
+        }
+
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因</summary>
+        private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows);
         }
 
         /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>

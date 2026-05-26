@@ -123,6 +123,55 @@ namespace wxd.files.winforms
             return false;
         }
 
+        /// <summary>获取关联字段无效的提示信息（用于 CellToolTipTextNeeded）</summary>
+        /// <returns>提示文本，若单元格无关联或值有效则返回 null</returns>
+        public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
+            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows)
+        {
+            // 冻结行不提示
+            if (rowIndex >= 0 && rowIndex < frozenRows) return null;
+            if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
+
+            // 获取当前文件的相对路径
+            string currentRel;
+            if (!string.IsNullOrEmpty(rootDir) && filePath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+                currentRel = filePath.Substring(rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            else
+                currentRel = Path.GetFileName(filePath);
+
+            // 计算原始列索引
+            int originalColIndex = columnIndex;
+            if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
+            {
+                int adjustedCol = columnIndex;
+                if (dataGrid.Columns.Count > 0 && dataGrid.Columns[0].Name == "__RowNum__")
+                    adjustedCol = columnIndex - 1;
+                if (adjustedCol >= 0 && adjustedCol < visibleColumnIndices.Count)
+                    originalColIndex = visibleColumnIndices[adjustedCol];
+            }
+
+            // 获取单元格值
+            var cellVal = dataGrid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(cellVal)) return null;
+
+            // 查找匹配的关联配置
+            string prefix = currentRel + "|" + originalColIndex + "->";
+            foreach (var kvp in _linkLookups)
+            {
+                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                var keyAfterArrow = kvp.Key.Substring(prefix.Length); // "targetRel:targetCol"
+                if (!kvp.Value.Contains(cellVal))
+                {
+                    var colonIdx = keyAfterArrow.LastIndexOf(':');
+                    string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
+                    string targetCol = colonIdx > 0 ? keyAfterArrow.Substring(colonIdx + 1) : "";
+                    return $"关联表 [{Path.GetFileName(targetFile)}] 的关联列中未找到该数据: \"{cellVal}\"";
+                }
+                break; // 值存在，不需要提示
+            }
+            return null;
+        }
+
         /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认；跳过冻结行</summary>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows)
