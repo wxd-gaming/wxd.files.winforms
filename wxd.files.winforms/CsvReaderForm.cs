@@ -2976,7 +2976,7 @@ namespace wxd.files.winforms
                 _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
         }
 
-        /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
+        /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
@@ -2992,26 +2992,46 @@ namespace wxd.files.winforms
             var link = _columnLinks.FirstOrDefault(l =>
                 l.SourceFile.Equals(currentRel, StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == origCol);
-            if (link == null) return;
 
-            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString()?.Trim() ?? "";
+            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
-            var menuItem = new ToolStripMenuItem("打开关联表");
-            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
-            menuItem.Enabled = isValid;
-            menuItem.Click += (s, args) =>
+
+            // 1. 复制当前单元格的全部内容
+            var copyItem = new ToolStripMenuItem("复制");
+            copyItem.Click += (s, args) =>
             {
-                string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
-                if (!File.Exists(targetFullPath))
+                if (!string.IsNullOrEmpty(cellValue))
                 {
-                    MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
+                    Clipboard.SetText(cellValue);
                 }
-                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
-                standaloneForm.Show(this);
             };
-            ctx.Items.Add(menuItem);
+            ctx.Items.Add(copyItem);
+
+            // 2. 打开关联表（有链接才显示，但根据值有效性决定是否可用）
+            var linkItem = new ToolStripMenuItem("打开关联表");
+            if (link == null)
+            {
+                linkItem.Enabled = false;
+            }
+            else
+            {
+                bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
+                linkItem.Enabled = isValid;
+                linkItem.Click += (s, args) =>
+                {
+                    string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
+                    if (!File.Exists(targetFullPath))
+                    {
+                        MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
+                    standaloneForm.Show(this);
+                };
+            }
+            ctx.Items.Add(linkItem);
+
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
 
@@ -4856,7 +4876,7 @@ namespace wxd.files.winforms
                 _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
         }
 
-        /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
+        /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
@@ -4872,26 +4892,46 @@ namespace wxd.files.winforms
             var link = _columnLinks.FirstOrDefault(l =>
                 l.SourceFile.Equals(currentRel, StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == origCol);
-            if (link == null) return;
 
-            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString()?.Trim() ?? "";
+            var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
-            var menuItem = new ToolStripMenuItem("打开关联表");
-            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
-            menuItem.Enabled = isValid;
-            menuItem.Click += (s, args) =>
+
+            // 1. 复制当前单元格的全部内容
+            var copyItem = new ToolStripMenuItem("复制");
+            copyItem.Click += (s, args) =>
             {
-                string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
-                if (!File.Exists(targetFullPath))
+                if (!string.IsNullOrEmpty(cellValue))
                 {
-                    MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
+                    Clipboard.SetText(cellValue);
                 }
-                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
-                standaloneForm.Show(this);
             };
-            ctx.Items.Add(menuItem);
+            ctx.Items.Add(copyItem);
+
+            // 2. 打开关联表（有链接才显示，但根据值有效性决定是否可用）
+            var linkItem = new ToolStripMenuItem("打开关联表");
+            if (link == null)
+            {
+                linkItem.Enabled = false;
+            }
+            else
+            {
+                bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
+                linkItem.Enabled = isValid;
+                linkItem.Click += (s, args) =>
+                {
+                    string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
+                    if (!File.Exists(targetFullPath))
+                    {
+                        MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
+                    standaloneForm.Show(this);
+                };
+            }
+            ctx.Items.Add(linkItem);
+
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
 
