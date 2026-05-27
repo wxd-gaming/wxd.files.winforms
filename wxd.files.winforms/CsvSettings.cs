@@ -271,6 +271,54 @@ namespace wxd.files.winforms
             SetDirFrozenConfigs(configs);
         }
 
+        /// <summary>获取指定目录的CSV表头行索引</summary>
+        public static int GetCsvHeaderRowIndexByDirectory(string directoryPath)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return -1;
+            var configs = GetDirFrozenConfigs();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg == null) return -1;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+            return cfg.CsvHeaderRowIndex;
+        }
+
+        /// <summary>设置指定目录的CSV表头行索引</summary>
+        public static void SetCsvHeaderRowIndexByDirectory(string directoryPath, int value)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var configs = GetDirFrozenConfigs();
+            var cfg = FindOrCreateDirConfig(configs, directoryPath);
+            cfg.CsvHeaderRowIndex = value;
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+        }
+
+        /// <summary>获取指定目录的Excel表头行索引</summary>
+        public static int GetExcelHeaderRowIndexByDirectory(string directoryPath)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return -1;
+            var configs = GetDirFrozenConfigs();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg == null) return -1;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+            return cfg.ExcelHeaderRowIndex;
+        }
+
+        /// <summary>设置指定目录的Excel表头行索引</summary>
+        public static void SetExcelHeaderRowIndexByDirectory(string directoryPath, int value)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var configs = GetDirFrozenConfigs();
+            var cfg = FindOrCreateDirConfig(configs, directoryPath);
+            cfg.ExcelHeaderRowIndex = value;
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            SetDirFrozenConfigs(configs);
+        }
+
         #endregion
 
         #region 基础配置方法

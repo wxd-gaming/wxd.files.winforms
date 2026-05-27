@@ -239,9 +239,42 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ItemSize = new Size(200, 28),
-                SizeMode = TabSizeMode.Fixed
+                SizeMode = TabSizeMode.Fixed,
+                Multiline = true
             };
             _tabContent.SelectedIndexChanged += OnTabSelectedChanged;
+
+            // ▼ 下拉按钮（列出所有打开的标签页）
+            var btnTabMenu = new Button
+            {
+                Text = "▼",
+                Size = new Size(24, 24),
+                Location = new Point(0, 2),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(107, 114, 128),
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Padding = new Padding(0),
+                Margin = new Padding(0),
+                FlatAppearance = { BorderSize = 0 }
+            };
+            btnTabMenu.Click += (s, e) => ShowTabMenu(btnTabMenu);
+
+            // 标签页面板：TabControl + ▼按钮（覆盖在右上角）
+            var tabPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.White
+            };
+            tabPanel.SizeChanged += (s, e) =>
+            {
+                btnTabMenu.Location = new Point(tabPanel.Width - 28, 2);
+            };
+            tabPanel.Controls.Add(_tabContent);
+            tabPanel.Controls.Add(btnTabMenu);
+            btnTabMenu.BringToFront();
 
             // 初始空白页
             var welcomePage = new TabPage("欢迎")
@@ -268,7 +301,7 @@ namespace wxd.files.winforms
                 BackColor = _colorLightBorder
             };
             _splitContainer.Panel1.Controls.Add(_pnlLeft);
-            _splitContainer.Panel2.Controls.Add(_tabContent);
+            _splitContainer.Panel2.Controls.Add(tabPanel);
 
             _splitContainer.SplitterMoved += (s, e) =>
             {
@@ -637,9 +670,14 @@ namespace wxd.files.winforms
                         var tabRect = _tabContent.GetTabRect(i);
                         var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 4, 12, 12);
 
-                        if (closeRect.Contains(e.Location))
+                        if (e.Button == MouseButtons.Left && closeRect.Contains(e.Location))
                         {
                             CloseTab(i);
+                            return;
+                        }
+                        if (e.Button == MouseButtons.Right && tabRect.Contains(e.Location))
+                        {
+                            ShowTabContextMenu(_tabContent.PointToScreen(e.Location), i);
                             return;
                         }
                     }
@@ -754,6 +792,68 @@ namespace wxd.files.winforms
                 welcomePage.Controls.Add(welcomeLabel);
                 _tabContent.TabPages.Add(welcomePage);
             }
+        }
+
+        /// <summary>▼按钮下拉菜单 — 列出所有打开的标签页</summary>
+        private void ShowTabMenu(Button btn)
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            for (int i = 0; i < _tabContent.TabPages.Count; i++)
+            {
+                var tp = _tabContent.TabPages[i];
+                bool isCurrent = (i == _tabContent.SelectedIndex);
+                var item = new ToolStripMenuItem(tp.Text)
+                {
+                    Tag = i,
+                    Checked = isCurrent,
+                    CheckState = isCurrent ? CheckState.Checked : CheckState.Unchecked,
+                    Font = new Font("Microsoft YaHei UI", 9f, isCurrent ? FontStyle.Bold : FontStyle.Regular)
+                };
+                item.Click += (s, e) =>
+                {
+                    if (s is ToolStripMenuItem mi && mi.Tag is int idx)
+                        _tabContent.SelectedIndex = idx;
+                };
+                menu.Items.Add(item);
+            }
+            menu.Show(btn, new Point(0, btn.Height));
+        }
+
+        /// <summary>右键菜单 — 关闭页签</summary>
+        private void ShowTabContextMenu(Point screenPoint, int tabIndex)
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = new Font("Microsoft YaHei UI", 9f);
+
+            var itemClose = new ToolStripMenuItem("关闭当前页签");
+            itemClose.Click += (s, e) => CloseTab(tabIndex);
+            menu.Items.Add(itemClose);
+
+            var itemCloseOthers = new ToolStripMenuItem("关闭其它页签");
+            itemCloseOthers.Enabled = _tabContent.TabPages.Count > 1;
+            itemCloseOthers.Click += (s, e) =>
+            {
+                for (int i = _tabContent.TabPages.Count - 1; i >= 0; i--)
+                {
+                    if (i != tabIndex)
+                        CloseTab(i);
+                }
+            };
+            menu.Items.Add(itemCloseOthers);
+
+            var itemCloseAll = new ToolStripMenuItem("关闭全部页签");
+            itemCloseAll.Enabled = _tabContent.TabPages.Count > 0;
+            itemCloseAll.Click += (s, e) => CloseAllTabs();
+            menu.Items.Add(itemCloseAll);
+
+            menu.Show(screenPoint);
+        }
+
+        private void CloseAllTabs()
+        {
+            while (_tabContent.TabPages.Count > 0)
+                CloseTab(0);
         }
 
         private void OnTabSelectedChanged(object? sender, EventArgs e)

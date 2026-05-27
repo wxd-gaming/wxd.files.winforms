@@ -15,6 +15,12 @@ public class DirectoryFrozenConfig
     /// <summary>Excel冻结行数</summary>
     public int ExcelFrozenRows { get; set; } = 2;
 
+    /// <summary>CSV表头行索引（0-based，-1表示未设置/默认第一行为表头），必须 < CsvFrozenRows</summary>
+    public int CsvHeaderRowIndex { get; set; } = -1;
+
+    /// <summary>Excel表头行索引（0-based，-1表示未设置/默认第一行为表头），必须 < ExcelFrozenRows</summary>
+    public int ExcelHeaderRowIndex { get; set; } = -1;
+
     /// <summary>最后修改时间</summary>
     public DateTime LastModified { get; set; } = DateTime.UtcNow;
 

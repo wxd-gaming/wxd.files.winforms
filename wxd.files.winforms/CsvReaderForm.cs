@@ -278,9 +278,42 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ItemSize = new Size(200, 28),
                 SizeMode = TabSizeMode.Fixed,
+                Multiline = true,
                 BackColor = _colorSurface,
                 Padding = new Point(12, 4)
             };
+
+            // ▼ 下拉按钮（列出所有打开的标签页）
+            var btnTabMenu = new Button
+            {
+                Text = "▼",
+                Size = new Size(24, 24),
+                Location = new Point(0, 2),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = _colorSurface,
+                ForeColor = Color.FromArgb(107, 114, 128),
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Padding = new Padding(0),
+                Margin = new Padding(0),
+                FlatAppearance = { BorderSize = 0 }
+            };
+            btnTabMenu.Click += (s, e) => ShowTabMenu(btnTabMenu);
+
+            // 标签页面板：TabControl + ▼按钮（覆盖在右上角）
+            var tabPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = _colorSurface
+            };
+            tabPanel.SizeChanged += (s, e) =>
+            {
+                btnTabMenu.Location = new Point(tabPanel.Width - 28, 2);
+            };
+            tabPanel.Controls.Add(_tabContent);
+            tabPanel.Controls.Add(btnTabMenu);
+            btnTabMenu.BringToFront();
 
             // ==================== 分割容器 ====================
             _splitContainer = new SplitContainer
@@ -291,7 +324,7 @@ namespace wxd.files.winforms
                 BackColor = _colorLightBorder
             };
             _splitContainer.Panel1.Controls.Add(_pnlLeft);
-            _splitContainer.Panel2.Controls.Add(_tabContent);
+            _splitContainer.Panel2.Controls.Add(tabPanel);
 
             Controls.Add(_splitContainer);
 
@@ -950,7 +983,7 @@ namespace wxd.files.winforms
             {
                 _tabCloseHandlerAdded = true;
 
-                // 使用TabControl的MouseDown事件处理关闭
+                // 使用TabControl的MouseDown事件处理关闭与右键菜单
                 _tabContent.MouseDown += (s, e) =>
                 {
                     for (int i = 0; i < _tabContent.TabPages.Count; i++)
@@ -958,9 +991,14 @@ namespace wxd.files.winforms
                         var tabRect = _tabContent.GetTabRect(i);
                         var closeRect = new Rectangle(tabRect.Right - 16, tabRect.Top + 4, 12, 12);
 
-                        if (closeRect.Contains(e.Location))
+                        if (e.Button == MouseButtons.Left && closeRect.Contains(e.Location))
                         {
                             CloseTab(i);
+                            return;
+                        }
+                        if (e.Button == MouseButtons.Right && tabRect.Contains(e.Location))
+                        {
+                            ShowTabContextMenu(_tabContent.PointToScreen(e.Location), i);
                             return;
                         }
                     }
@@ -1071,6 +1109,68 @@ namespace wxd.files.winforms
             _treeFiles.SelectedNode = null;
         }
 
+        /// <summary>▼按钮下拉菜单 — 列出所有打开的标签页</summary>
+        private void ShowTabMenu(Button btn)
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            for (int i = 0; i < _tabContent.TabPages.Count; i++)
+            {
+                var tp = _tabContent.TabPages[i];
+                bool isCurrent = (i == _tabContent.SelectedIndex);
+                var item = new ToolStripMenuItem(tp.Text)
+                {
+                    Tag = i,
+                    Checked = isCurrent,
+                    CheckState = isCurrent ? CheckState.Checked : CheckState.Unchecked,
+                    Font = new Font("Microsoft YaHei UI", 9f, isCurrent ? FontStyle.Bold : FontStyle.Regular)
+                };
+                item.Click += (s, e) =>
+                {
+                    if (s is ToolStripMenuItem mi && mi.Tag is int idx)
+                        _tabContent.SelectedIndex = idx;
+                };
+                menu.Items.Add(item);
+            }
+            menu.Show(btn, new Point(0, btn.Height));
+        }
+
+        /// <summary>右键菜单 — 关闭页签</summary>
+        private void ShowTabContextMenu(Point screenPoint, int tabIndex)
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = new Font("Microsoft YaHei UI", 9f);
+
+            var itemClose = new ToolStripMenuItem("关闭当前页签");
+            itemClose.Click += (s, e) => CloseTab(tabIndex);
+            menu.Items.Add(itemClose);
+
+            var itemCloseOthers = new ToolStripMenuItem("关闭其它页签");
+            itemCloseOthers.Enabled = _tabContent.TabPages.Count > 1;
+            itemCloseOthers.Click += (s, e) =>
+            {
+                for (int i = _tabContent.TabPages.Count - 1; i >= 0; i--)
+                {
+                    if (i != tabIndex)
+                        CloseTab(i);
+                }
+            };
+            menu.Items.Add(itemCloseOthers);
+
+            var itemCloseAll = new ToolStripMenuItem("关闭全部页签");
+            itemCloseAll.Enabled = _tabContent.TabPages.Count > 0;
+            itemCloseAll.Click += (s, e) => CloseAllTabs();
+            menu.Items.Add(itemCloseAll);
+
+            menu.Show(screenPoint);
+        }
+
+        private void CloseAllTabs()
+        {
+            while (_tabContent.TabPages.Count > 0)
+                CloseTab(0);
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _loadingCts?.Cancel();
@@ -1098,6 +1198,7 @@ namespace wxd.files.winforms
         private char _delimiter = ',';
         private int _frozenRows = 0;                   // 冻结行数
         private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
+        private int _headerRowIndex = -1;               // 表头行索引（-1=未设置，0-based，必须 < frozenRows）
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
         private List<ColumnLinkConfig> _columnLinks = new();
@@ -1109,13 +1210,15 @@ namespace wxd.files.winforms
         // 关联表跳转高亮
         private int _highlightColumnIndex = -1;
         private string _highlightValue = "";
+        private string _highlightColumnName = "";
         private HashSet<int> _highlightRows = new();
         private bool _highlightsReady = false;
 
-        public void SetHighlight(int colIndex, string value)
+        public void SetHighlight(int colIndex, string value, string colName = "")
         {
             _highlightColumnIndex = colIndex;
             _highlightValue = value ?? "";
+            _highlightColumnName = colName ?? "";
         }
 
         // 配色（与CsvReaderForm一致的浅色天蓝色调）
@@ -1138,12 +1241,13 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1)
+        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
+            if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
             InitializeComponent();
             LoadCsvAsync();
         }
@@ -1218,9 +1322,53 @@ namespace wxd.files.winforms
                     CsvSettings.SetCsvFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.DefaultFrozenRows = _frozenRows;
+                // 联动：如果表头行索引超出新的冻结行范围，自动调整
+                if (_headerRowIndex >= _frozenRows)
+                {
+                    _headerRowIndex = _frozenRows > 0 ? 0 : -1;
+                    UpdateHeaderRowCombo();
+                    if (!string.IsNullOrEmpty(FrozenDir))
+                        CsvSettings.SetCsvHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
+                    else
+                        CsvSettings.DefaultFrozenRows = _headerRowIndex; // 复用保存机制
+                }
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
+
+            // 表头行选择（从固定行中选择哪一行是字段名列）
+            var lblHeaderRow = new Label
+            {
+                Text = "表头行:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var cboHeaderRow = new ComboBox
+            {
+                Size = new Size(70, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            // 从设置读取表头行索引
+            if (!_frozenRowsOverridden && !string.IsNullOrEmpty(FrozenDir))
+                _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(FrozenDir);
+            PopulateHeaderRowCombo(cboHeaderRow);
+            cboHeaderRow.SelectedIndexChanged += (s, e) =>
+            {
+                _headerRowIndex = cboHeaderRow.SelectedIndex >= 0 ? cboHeaderRow.SelectedIndex : -1; // selectedIndex 0=第1行
+                // 保存设置（按目录存储）
+                if (!string.IsNullOrEmpty(FrozenDir))
+                    CsvSettings.SetCsvHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
+                CsvSettings.Save();
+                RefreshGridLayout();
+            };
+            // 引用保持，供联动使用
+            Tag = new { HeaderRowCombo = cboHeaderRow };
 
             // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
@@ -1256,7 +1404,7 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns });
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow, lblHeaderFilter, _btnSelectColumns });
 
             // 重新加载按钮（保留过滤状态刷新文件内容）
             var btnReload = new Button
@@ -1275,22 +1423,7 @@ namespace wxd.files.winforms
             btnReload.Click += (s, e) => ReloadContentAsync();
             flowTop.Controls.Add(btnReload);
 
-            // 关联表按钮
-            var btnLinkTable = new Button
-            {
-                Text = "关联表",
-                Size = new Size(60, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 10, 0)
-            };
-            btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
-            flowTop.Controls.Add(btnLinkTable);
+            // 关联表按钮（已移除）
 
             // 行列位置标签
             var lblCellPos = new Label
@@ -1603,7 +1736,12 @@ namespace wxd.files.winforms
             var currentValue = cell.Value?.ToString() ?? "";
             var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
 
-            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex);
+            // 获取列名
+            string colName = "";
+            if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                colName = _dataTable.Rows[_headerRowIndex][originalColumnIndex]?.ToString() ?? "";
+
+            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName);
             dialog.FormClosed += (s, args) =>
             {
                 if (dialog.DialogResult == DialogResult.OK)
@@ -1726,6 +1864,58 @@ namespace wxd.files.winforms
             {
                 MessageBox.Show(this, $"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        /// <summary>填充表头行下拉框选项（根据当前冻结行数动态生成）</summary>
+        private void PopulateHeaderRowCombo(ComboBox cbo)
+        {
+            cbo.Items.Clear();
+            if (_frozenRows > 0)
+            {
+                for (int i = 0; i < _frozenRows; i++)
+                    cbo.Items.Add($"第{i + 1}行");
+                // 设置选中项
+                if (_headerRowIndex >= 0 && _headerRowIndex < _frozenRows)
+                    cbo.SelectedIndex = _headerRowIndex;
+                else
+                    cbo.SelectedIndex = -1;
+            }
+        }
+
+        /// <summary>更新表头行下拉框（联动调用，供冻结行变更时使用）</summary>
+        private void UpdateHeaderRowCombo()
+        {
+            // 通过 Tag 获取 ComboBox 引用
+            if (Tag is ComboBox cboHdr)
+            {
+                PopulateHeaderRowCombo(cboHdr);
+            }
+        }
+
+        /// <summary>获取表头行的列名列表（用于过滤、关联等场景）</summary>
+        public List<string> GetHeaderColumnNames()
+        {
+            var names = new List<string>();
+            if (_headerRowIndex < 0 || _headerRowIndex >= _dataTable.Rows.Count)
+                return names;
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                names.Add(_dataTable.Rows[_headerRowIndex][i]?.ToString() ?? $"Col{i}");
+            }
+            return names;
+        }
+
+        /// <summary>根据字段名查找对应的原始列索引</summary>
+        public int FindColumnIndexByHeaderName(string headerName)
+        {
+            if (_headerRowIndex < 0 || _headerRowIndex >= _dataTable.Rows.Count) return -1;
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                var val = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? "";
+                if (val.Equals(headerName, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
         }
 
         private void RefreshGridLayout()
@@ -2266,7 +2456,7 @@ namespace wxd.files.winforms
             EnsureFileEntriesLoaded();
 
             using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
-                _rootDir ?? "", _filePath, _fileEntries, _columnLinks);
+                _rootDir ?? "", _filePath, _fileEntries, _columnLinks, _headerRowIndex);
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnCheckStates = dialog.GetCheckedStates();
@@ -2615,10 +2805,10 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>根据列名字符串解析对应的列索引，优先匹配 ColumnName，再匹配冻结行范围内的单元格内容</summary>
+        /// <summary>根据列名字符串解析对应的列索引，优先匹配表头行，再匹配冻结行范围内的单元格内容</summary>
         private int ResolveColumnIndex(string columnName)
         {
-            // 1. 尝试精确匹配 ColumnName
+            // 1. 尝试精确匹配 ColumnName（DataTable 的原始列名）
             for (int i = 0; i < _dataTable.Columns.Count; i++)
             {
                 if (_dataTable.Columns[i].ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
@@ -2627,13 +2817,26 @@ namespace wxd.files.winforms
                 }
             }
 
-            // 2. 在冻结行范围内的各列单元格值中搜索列名
-            // 因为用户设置的冻结行已经包含了表头行
+            // 2. 如果设置了表头行，优先在表头行搜索
+            if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+            {
+                for (int i = 0; i < _dataTable.Columns.Count; i++)
+                {
+                    var cellValue = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? "";
+                    if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            // 3. 回退：在冻结行范围内所有行搜索
             int maxHeaderScan = Math.Min(_frozenRows, _dataTable.Rows.Count);
             for (int i = 0; i < _dataTable.Columns.Count; i++)
             {
                 for (int row = 0; row < maxHeaderScan; row++)
                 {
+                    if (row == _headerRowIndex) continue; // 已在上面搜索过
                     var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
                     if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
                     {
@@ -2755,7 +2958,7 @@ namespace wxd.files.winforms
             // 列关联颜色检查
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows, _columnLinks);
                 // 关联表跳转高亮 — 整行变色
                 if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                 {
@@ -2770,7 +2973,7 @@ namespace wxd.files.winforms
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
             e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
         }
 
         /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
@@ -2795,7 +2998,7 @@ namespace wxd.files.winforms
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
             var menuItem = new ToolStripMenuItem("打开关联表");
-            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue);
+            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
             menuItem.Enabled = isValid;
             menuItem.Click += (s, args) =>
             {
@@ -2805,7 +3008,7 @@ namespace wxd.files.winforms
                     MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
-                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows);
+                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
                 standaloneForm.Show(this);
             };
             ctx.Items.Add(menuItem);
@@ -2900,9 +3103,14 @@ namespace wxd.files.winforms
                 }
             }
             _highlightsReady = true;
-            // 自动填过滤框只显示关联行+固定行
+            // 自动填入高级过滤：列名=值 进行精准匹配
             if (_highlightRows.Count > 0)
-                _txtContentFilter.Text = _highlightValue;
+            {
+                if (!string.IsNullOrEmpty(_highlightColumnName))
+                    _txtAdvancedFilter.Text = $"{_highlightColumnName}='{_highlightValue}'";
+                else
+                    _txtAdvancedFilter.Text = $"Col{_highlightColumnIndex}='{_highlightValue}'";
+            }
         }
     }
 
@@ -2960,15 +3168,18 @@ namespace wxd.files.winforms
             return text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
         }
 
-        public CellEditDialog(string initialValue, int row, int col)
+        public CellEditDialog(string initialValue, int row, int col, string fileName = "", string colName = "")
         {
             InitializeComponent();
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
 
-            string colName = col >= 0 && col < 26
-                ? ((char)('A' + col)).ToString()
-                : $"Col{col}";
-            Text = $"编辑单元格 — 行 {row + 1}  列 {colName}({col})";
+            string colDisplay = string.IsNullOrEmpty(colName)
+                ? (col >= 0 && col < 26 ? ((char)('A' + col)).ToString() : $"Col{col}")
+                : colName;
+            if (!string.IsNullOrEmpty(fileName))
+                Text = $"单元格编辑 — {Path.GetFileName(fileName)} — 列：{colDisplay}，第 {row + 1} 行";
+            else
+                Text = $"编辑单元格 — 行 {row + 1}  列 {colDisplay}({col})";
         }
 
         private static void SetActiveButton(Button active, Button inactive)
@@ -3080,10 +3291,10 @@ namespace wxd.files.winforms
                 TextAlign = ContentAlignment.MiddleRight
             };
 
-            // 取消按钮
+            // 取消（关闭）按钮
             _btnCancel = new Button
             {
-                Text = "取消",
+                Text = "关闭",
                 Size = new Size(80, 30),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(235, 248, 255),
@@ -3092,6 +3303,7 @@ namespace wxd.files.winforms
                 DialogResult = DialogResult.Cancel,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237), MouseOverBackColor = Color.FromArgb(200, 225, 245) }
             };
+            _btnCancel.Click += (s, e) => { Close(); };
 
             _pnlBottom.Controls.Add(_lblSaveTime);
             _pnlBottom.Controls.Add(_btnSave);
@@ -3152,6 +3364,7 @@ namespace wxd.files.winforms
         public string FilePath => _filePath;
         private int _frozenRows = 0;
         private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
+        private int _headerRowIndex = -1;               // 表头行索引（-1=未设置，0-based，必须 < frozenRows）
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private List<int> _visibleColumnIndices = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
@@ -3164,13 +3377,15 @@ namespace wxd.files.winforms
         // 关联表跳转高亮
         private int _highlightColumnIndex = -1;
         private string _highlightValue = "";
+        private string _highlightColumnName = "";
         private HashSet<int> _highlightRows = new();
         private bool _highlightsReady = false;
 
-        public void SetHighlight(int colIndex, string value)
+        public void SetHighlight(int colIndex, string value, string colName = "")
         {
             _highlightColumnIndex = colIndex;
             _highlightValue = value ?? "";
+            _highlightColumnName = colName ?? "";
         }
 
         // 配色（浅色天蓝色调）
@@ -3193,12 +3408,13 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1)
+        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
+            if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
             InitializeComponent();
             LoadExcelAsync();
         }
@@ -3253,9 +3469,47 @@ namespace wxd.files.winforms
                     CsvSettings.SetExcelFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
+                // 联动：如果表头行索引超出新的冻结行范围，自动调整
+                if (_headerRowIndex >= _frozenRows)
+                    _headerRowIndex = _frozenRows > 0 ? 0 : -1;
+                UpdateHeaderRowCombo();
+                if (!string.IsNullOrEmpty(FrozenDir))
+                    CsvSettings.SetExcelHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
+
+            // 表头行选择（从固定行中选择哪一行是字段名列）
+            var lblHeaderRow = new Label
+            {
+                Text = "表头行:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+
+            var cboHeaderRow = new ComboBox
+            {
+                Size = new Size(70, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            // 从设置读取表头行索引
+            if (!_frozenRowsOverridden && !string.IsNullOrEmpty(FrozenDir))
+                _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(FrozenDir);
+            PopulateHeaderRowCombo(cboHeaderRow);
+            cboHeaderRow.SelectedIndexChanged += (s, e) =>
+            {
+                _headerRowIndex = cboHeaderRow.SelectedIndex >= 0 ? cboHeaderRow.SelectedIndex : -1;
+                if (!string.IsNullOrEmpty(FrozenDir))
+                    CsvSettings.SetExcelHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
+                CsvSettings.Save();
+                RefreshGridLayout();
+            };
+            this.Tag = cboHeaderRow; // 保持引用
 
             // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
@@ -3291,7 +3545,7 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderFilter, _btnSelectColumns });
+            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow, lblHeaderFilter, _btnSelectColumns });
 
             // 重新加载按钮（保留过滤状态刷新文件内容）
             var btnReload = new Button
@@ -3310,22 +3564,7 @@ namespace wxd.files.winforms
             btnReload.Click += (s, e) => ReloadContentAsync();
             flowTop.Controls.Add(btnReload);
 
-            // 关联表按钮
-            var btnLinkTable = new Button
-            {
-                Text = "关联表",
-                Size = new Size(60, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 10, 0)
-            };
-            btnLinkTable.Click += (s, e) => LinkTableRequested?.Invoke(this, EventArgs.Empty);
-            flowTop.Controls.Add(btnLinkTable);
+            // 关联表按钮（已移除）
 
             // 行列位置标签
             var lblCellPos = new Label
@@ -3638,7 +3877,12 @@ namespace wxd.files.winforms
             var currentValue = cell.Value?.ToString() ?? "";
             var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(rowIndex, columnIndex);
 
-            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex);
+            // 获取列名
+            string colName = "";
+            if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                colName = _dataTable.Rows[_headerRowIndex][originalColumnIndex]?.ToString() ?? "";
+
+            var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName);
             dialog.FormClosed += (s, args) =>
             {
                 if (dialog.DialogResult == DialogResult.OK)
@@ -3940,6 +4184,58 @@ namespace wxd.files.winforms
             });
         }
 
+        /// <summary>填充表头行下拉框选项（根据当前冻结行数动态生成）</summary>
+        private void PopulateHeaderRowCombo(ComboBox cbo)
+        {
+            cbo.Items.Clear();
+            if (_frozenRows > 0)
+            {
+                for (int i = 0; i < _frozenRows; i++)
+                    cbo.Items.Add($"第{i + 1}行");
+                // 设置选中项
+                if (_headerRowIndex >= 0 && _headerRowIndex < _frozenRows)
+                    cbo.SelectedIndex = _headerRowIndex;
+                else
+                    cbo.SelectedIndex = -1;
+            }
+        }
+
+        /// <summary>更新表头行下拉框（联动调用，供冻结行变更时使用）</summary>
+        private void UpdateHeaderRowCombo()
+        {
+            // 通过 Tag 获取 ComboBox 引用
+            if (Tag is ComboBox cboHdr)
+            {
+                PopulateHeaderRowCombo(cboHdr);
+            }
+        }
+
+        /// <summary>获取表头行的列名列表（用于过滤、关联等场景）</summary>
+        public List<string> GetHeaderColumnNames()
+        {
+            var names = new List<string>();
+            if (_headerRowIndex < 0 || _headerRowIndex >= _dataTable.Rows.Count)
+                return names;
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                names.Add(_dataTable.Rows[_headerRowIndex][i]?.ToString() ?? $"Col{i}");
+            }
+            return names;
+        }
+
+        /// <summary>根据字段名查找对应的原始列索引</summary>
+        public int FindColumnIndexByHeaderName(string headerName)
+        {
+            if (_headerRowIndex < 0 || _headerRowIndex >= _dataTable.Rows.Count) return -1;
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+            {
+                var val = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? "";
+                if (val.Equals(headerName, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
         private void RefreshGridLayout()
         {
             if (_dataTable.Columns.Count == 0)
@@ -4032,7 +4328,7 @@ namespace wxd.files.winforms
             EnsureFileEntriesLoaded();
 
             using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
-                _rootDir ?? "", _filePath, _fileEntries, _columnLinks);
+                _rootDir ?? "", _filePath, _fileEntries, _columnLinks, _headerRowIndex);
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnCheckStates = dialog.GetCheckedStates();
@@ -4346,9 +4642,10 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>根据列名字符串解析对应的列索引，优先匹配 ColumnName，再匹配冻结行范围内的单元格内容</summary>
+        /// <summary>根据列名字符串解析对应的列索引，优先匹配表头行，再匹配冻结行范围内的单元格内容</summary>
         private int ResolveColumnIndex(string columnName)
         {
+            // 1. 尝试精确匹配 ColumnName（DataTable 的原始列名）
             for (int i = 0; i < _dataTable.Columns.Count; i++)
             {
                 if (_dataTable.Columns[i].ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
@@ -4356,13 +4653,27 @@ namespace wxd.files.winforms
                     return i;
                 }
             }
-            // 在冻结行范围内的各列单元格值中搜索列名
-            // 因为用户设置的冻结行已经包含了表头行
+
+            // 2. 如果设置了表头行，优先在表头行搜索
+            if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+            {
+                for (int i = 0; i < _dataTable.Columns.Count; i++)
+                {
+                    var cellValue = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? "";
+                    if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            // 3. 回退：在冻结行范围内所有行搜索
             int maxHeaderScan = Math.Min(_frozenRows, _dataTable.Rows.Count);
             for (int i = 0; i < _dataTable.Columns.Count; i++)
             {
                 for (int row = 0; row < maxHeaderScan; row++)
                 {
+                    if (row == _headerRowIndex) continue; // 已在上面搜索过
                     var cellValue = _dataTable.Rows[row][i]?.ToString() ?? "";
                     if (cellValue.Equals(columnName, StringComparison.OrdinalIgnoreCase))
                     {
@@ -4527,7 +4838,7 @@ namespace wxd.files.winforms
             // 列关联颜色检查
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows);
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows, _columnLinks);
                 // 关联表跳转高亮 — 整行变色
                 if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                 {
@@ -4542,7 +4853,7 @@ namespace wxd.files.winforms
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
             e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
         }
 
         /// <summary>右键菜单 — 对有链接的列显示「打开关联表」</summary>
@@ -4567,7 +4878,7 @@ namespace wxd.files.winforms
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
             var menuItem = new ToolStripMenuItem("打开关联表");
-            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue);
+            bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
             menuItem.Enabled = isValid;
             menuItem.Click += (s, args) =>
             {
@@ -4577,7 +4888,7 @@ namespace wxd.files.winforms
                     MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
-                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows);
+                var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
                 standaloneForm.Show(this);
             };
             ctx.Items.Add(menuItem);
@@ -4666,9 +4977,14 @@ namespace wxd.files.winforms
                 }
             }
             _highlightsReady = true;
-            // 自动填过滤框只显示关联行+固定行
+            // 自动填入高级过滤：列名=值 进行精准匹配
             if (_highlightRows.Count > 0)
-                _txtContentFilter.Text = _highlightValue;
+            {
+                if (!string.IsNullOrEmpty(_highlightColumnName))
+                    _txtAdvancedFilter.Text = $"{_highlightColumnName}='{_highlightValue}'";
+                else
+                    _txtAdvancedFilter.Text = $"Col{_highlightColumnIndex}='{_highlightValue}'";
+            }
         }
     }
 
@@ -4686,18 +5002,20 @@ namespace wxd.files.winforms
         private string _rootDir = "";
         private string _currentFilePath = "";
         private int _frozenRows = 0;
+        private int _headerRowIndex = -1;              // 表头行索引（-1=未设置）
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<ColumnLinkConfig> _columnLinks = new();
 
         public ColumnSelectorDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex,
             string rootDir = "", string currentFilePath = "", List<(string display, string fullPath)>? fileEntries = null,
-            List<ColumnLinkConfig>? columnLinks = null)
+            List<ColumnLinkConfig>? columnLinks = null, int headerRowIndex = -1)
         {
             _lockedColumnIndex = lockedColumnIndex;
             _checkedStates = (bool[])checkedStates.Clone();
             _rootDir = rootDir;
             _currentFilePath = currentFilePath;
             _frozenRows = frozenRows;
+            _headerRowIndex = headerRowIndex;  // 接收表头行索引
             _fileEntries = fileEntries ?? new();
             _columnLinks = columnLinks != null ? new List<ColumnLinkConfig>(columnLinks) : new();
             InitializeComponent();
@@ -4724,11 +5042,21 @@ namespace wxd.files.winforms
 
             int frozenCount = Math.Min(frozenRows, dataTable.Rows.Count);
 
+            // 第一列：选择
             _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
+
+            // 表头名列：显示表头行对应的字段名（如果有设置表头行）
+            if (_headerRowIndex >= 0 && _headerRowIndex < dataTable.Rows.Count && _headerRowIndex < frozenCount)
+                _lvColumns.Columns.Add($"字段名(行{_headerRowIndex + 1})", 140, System.Windows.Forms.HorizontalAlignment.Left);
+
+            // 其余冻结行
             for (int r = 0; r < frozenCount; r++)
             {
-                _lvColumns.Columns.Add($"行{r + 1}", 160, System.Windows.Forms.HorizontalAlignment.Left);
+                if (r == _headerRowIndex) continue; // 已作为字段名列显示
+                _lvColumns.Columns.Add($"行{r + 1}", 130, System.Windows.Forms.HorizontalAlignment.Left);
             }
+
+            // 关联列
             _lvColumns.Columns.Add("关联", 100, System.Windows.Forms.HorizontalAlignment.Center);
 
             string currentRelPath = GetRelativePath(_currentFilePath);
@@ -4741,8 +5069,17 @@ namespace wxd.files.winforms
                     Checked = _checkedStates[col]
                 };
 
+                // 先添加字段名（如果设置了表头行）
+                if (_headerRowIndex >= 0 && _headerRowIndex < dataTable.Rows.Count && _headerRowIndex < frozenCount)
+                {
+                    var headerVal = dataTable.Rows[_headerRowIndex][col]?.ToString() ?? "";
+                    item.SubItems.Add(headerVal);
+                }
+
+                // 添加其余冻结行的值
                 for (int r = 0; r < frozenCount; r++)
                 {
+                    if (r == _headerRowIndex) continue;
                     var val = dataTable.Rows[r][col]?.ToString() ?? "";
                     item.SubItems.Add(val);
                 }
@@ -4755,6 +5092,8 @@ namespace wxd.files.winforms
                 _lvColumns.Items.Add(item);
             }
 
+            // 高亮标记表头行所在的列头（ColumnHeader 不支持 BackColor，跳过）
+            
             _lvColumns.EndUpdate();
         }
 
@@ -4896,7 +5235,8 @@ namespace wxd.files.winforms
                 _fileEntries, currentRelPath, colIndex, _rootDir, _frozenRows,
                 _columnLinks.FindAll(l =>
                     l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
-                    l.SourceColumnIndex == colIndex));
+                    l.SourceColumnIndex == colIndex),
+                _headerRowIndex);
             if (setupDialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnLinks.RemoveAll(l =>
@@ -4924,7 +5264,17 @@ namespace wxd.files.winforms
                         l.SourceColumnIndex == col);
                     // 更新关联文本（sub-items 最后一个）
                     var linkText = item.SubItems[item.SubItems.Count - 1];
-                    linkText.Text = link != null ? $"{Path.GetFileNameWithoutExtension(link.TargetFile)}" : "";
+
+                    // 构建关联显示文本：优先显示表头名称
+                    string displayText = "";
+                    if (link != null)
+                    {
+                        if (!string.IsNullOrEmpty(link.TargetColumnName))
+                            displayText = $"{Path.GetFileNameWithoutExtension(link.TargetFile)} [{link.TargetColumnName}]";
+                        else
+                            displayText = $"{Path.GetFileNameWithoutExtension(link.TargetFile)}";
+                    }
+                    linkText.Text = displayText;
                 }
             }
         }
@@ -4961,21 +5311,33 @@ namespace wxd.files.winforms
         private int _sourceColumnIndex;
         private string _rootDir = "";
         private int _frozenRows = 0;
+        private int _targetHeaderRowIndex = -1;       // 目标文件的表头行索引
         private ColumnLinkConfig? _existingLink;
         private string _selectedTargetPath = "";
         private int _selectedTargetColIndex = -1;
+        private string _selectedTargetColumnName = "";  // 目标列的表头名称（用于显示）
+        public int SelectedColumnIndex => _selectedTargetColIndex;
+        public string SelectedColumnName => _selectedTargetColumnName ?? "";
+        // 值提取规则控件
+        private CheckBox _chkExtractEnabled = new();
+        private Label _lblDelimiter = new();
+        private TextBox _txtDelimiter = new();
+        private Label _lblPartIndex = new();
+        private NumericUpDown _nudPartIndex = new();
 
         public ColumnLinkSetupDialog(
             List<(string display, string fullPath)> fileEntries,
             string sourceFile, int sourceColumnIndex,
             string rootDir, int frozenRows,
-            List<ColumnLinkConfig> existingLinks)
+            List<ColumnLinkConfig> existingLinks,
+            int targetHeaderRowIndex = -1)
         {
             _fileEntries = fileEntries;
             _sourceFile = sourceFile;
             _sourceColumnIndex = sourceColumnIndex;
             _rootDir = rootDir;
             _frozenRows = frozenRows;
+            _targetHeaderRowIndex = targetHeaderRowIndex;
             _existingLink = existingLinks.FirstOrDefault();
 
             if (_existingLink != null)
@@ -5000,6 +5362,15 @@ namespace wxd.files.winforms
                 }
                 _selectedTargetPath = resolved;
                 _selectedTargetColIndex = _existingLink.TargetColumnIndex;
+
+                // 加载提取规则设置
+                _chkExtractEnabled.Checked = _existingLink.ValueExtractionEnabled;
+                _txtDelimiter.Text = _existingLink.ExtractDelimiter ?? "";
+                _nudPartIndex.Value = Math.Max(0, _existingLink.ExtractPartIndex);
+
+                // 恢复目标列的表头名称（如果有保存）
+                if (!string.IsNullOrEmpty(_existingLink.TargetColumnName))
+                    _selectedTargetColumnName = _existingLink.TargetColumnName;
             }
 
             InitializeComponent();
@@ -5040,7 +5411,12 @@ namespace wxd.files.winforms
                 SourceFile = _sourceFile,
                 SourceColumnIndex = _sourceColumnIndex,
                 TargetFile = relPath,
-                TargetColumnIndex = _selectedTargetColIndex
+                TargetColumnIndex = _selectedTargetColIndex,
+                TargetColumnName = _selectedTargetColumnName,  // 保存表头名称
+                // 值提取规则
+                ValueExtractionEnabled = _chkExtractEnabled.Checked,
+                ExtractDelimiter = _txtDelimiter.Text.Trim(),
+                ExtractPartIndex = (int)_nudPartIndex.Value
             };
         }
 
@@ -5053,7 +5429,9 @@ namespace wxd.files.winforms
                     displayPath = _selectedTargetPath.Substring(_rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
                 else
                     displayPath = Path.GetFileName(_selectedTargetPath);
-                _lblSelection.Text = $"已选: {displayPath} → 列索引 {_selectedTargetColIndex}";
+                _lblSelection.Text = !string.IsNullOrEmpty(_selectedTargetColumnName)
+                    ? $"已选: {displayPath} → [{_selectedTargetColumnName}]"
+                    : $"已选: {displayPath} → 列{_selectedTargetColIndex}";
             }
             else
                 _lblSelection.Text = "未选择关联列（双击目标文件设置）";
@@ -5154,11 +5532,13 @@ namespace wxd.files.winforms
                 }
             }
 
-            using var colDlg = new TargetColumnSelectDialog(targetFrozenTable, _frozenRows, initialSelection);
+            using var colDlg = new TargetColumnSelectDialog(targetFrozenTable, _frozenRows, initialSelection,
+                _targetHeaderRowIndex >= 0 ? _targetHeaderRowIndex : GetTargetHeaderRowIndexStatic(fullPath));
             if (colDlg.ShowDialog(this) == DialogResult.OK && colDlg.SelectedColumnIndex >= 0)
             {
                 _selectedTargetPath = fullPath;
                 _selectedTargetColIndex = colDlg.SelectedColumnIndex;
+                _selectedTargetColumnName = colDlg.SelectedColumnName;  // 保存表头名称
                 UpdateSelectionLabel();
             }
         }
@@ -5176,7 +5556,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             Text = "列关联设置 - 列 " + _sourceColumnIndex;
-            ClientSize = new Size(500, 460);
+            ClientSize = new Size(500, 530);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.FromArgb(242, 249, 255);
@@ -5207,19 +5587,69 @@ namespace wxd.files.winforms
                 Location = new Point(10, 320), Size = new Size(480, 30), Font = new Font("Microsoft YaHei UI", 8f),
                 ForeColor = Color.FromArgb(107, 114, 128) });
 
-            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 370), Size = new Size(80, 28),
+            // ===== 值提取规则区域 =====
+            var grpExtract = new GroupBox
+            {
+                Text = "值提取规则（可选）— 用于从复合格式中提取部分内容匹配",
+                Location = new Point(10, 355), Size = new Size(480, 75),
+                Font = new Font("Microsoft YaHei UI", 8f), ForeColor = Color.FromArgb(55, 65, 81)
+            };
+
+            _chkExtractEnabled = new CheckBox
+            {
+                Text = "启用提取（如 \"4002#1\" → 提取 \"4002\" 匹配）",
+                Location = new Point(10, 20), Size = new Size(300, 22),
+                Font = new Font("Microsoft YaHei UI", 8f), Checked = false,
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
+            _chkExtractEnabled.CheckedChanged += (s, e) =>
+            {
+                _lblDelimiter.Enabled = _chkExtractEnabled.Checked;
+                _txtDelimiter.Enabled = _chkExtractEnabled.Checked;
+                _lblPartIndex.Enabled = _chkExtractEnabled.Checked;
+                _nudPartIndex.Enabled = _chkExtractEnabled.Checked;
+            };
+            grpExtract.Controls.Add(_chkExtractEnabled);
+
+            _lblDelimiter = new Label { Text = "分隔符:", Location = new Point(10, 46), Size = new Size(50, 18),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
+            grpExtract.Controls.Add(_lblDelimiter);
+
+            _txtDelimiter = new TextBox { Text = "#", Location = new Point(62, 44), Size = new Size(40, 21),
+                Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
+                Enabled = false, PlaceholderText = "# - | ..." };
+            grpExtract.Controls.Add(_txtDelimiter);
+
+            _lblPartIndex = new Label { Text = "取第几段(0起):", Location = new Point(110, 46), Size = new Size(85, 18),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
+            grpExtract.Controls.Add(_lblPartIndex);
+
+            _nudPartIndex = new NumericUpDown { Value = 0, Minimum = 0, Maximum = 99, Location = new Point(198, 44),
+                Size = new Size(45, 21), Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                TextAlign = System.Windows.Forms.HorizontalAlignment.Right };
+            grpExtract.Controls.Add(_nudPartIndex);
+
+            var lblExample = new Label { Text = "例: \"4002#1\" 用 # 分隔 → 取段0得 \"4002\"",
+                Location = new Point(250, 45), Size = new Size(220, 20),
+                Font = new Font("Microsoft YaHei UI", 7.5f), ForeColor = Color.FromArgb(140, 145, 150) };
+            grpExtract.Controls.Add(lblExample);
+            // ===== 结束提取规则区域 =====
+
+            Controls.Add(grpExtract);
+
+            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 440), Size = new Size(80, 28),
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(239, 68, 68), ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) }, Cursor = Cursors.Hand,
                 Visible = _existingLink != null || !string.IsNullOrEmpty(_selectedTargetPath) };
             _btnDelete.Click += OnDeleteClick;
             Controls.Add(_btnDelete);
 
-            _btnOK = new Button { Text = "确定", Location = new Point(330, 370), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
+            _btnOK = new Button { Text = "确定", Location = new Point(330, 440), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
             Controls.Add(_btnOK);
 
-            _btnCancel = new Button { Text = "取消", Location = new Point(420, 370), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
+            _btnCancel = new Button { Text = "取消", Location = new Point(420, 440), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
             Controls.Add(_btnCancel);
@@ -5273,21 +5703,40 @@ namespace wxd.files.winforms
             result.Add(sb.ToString().Trim());
             return result.ToArray();
         }
+
+        /// <summary>根据目标文件路径获取其表头行索引（从设置中读取）</summary>
+        private static int GetTargetHeaderRowIndexStatic(string targetFullPath)
+        {
+            if (string.IsNullOrEmpty(targetFullPath)) return -1;
+            string targetDir = Path.GetDirectoryName(targetFullPath) ?? "";
+            // 如果在同一目录下，使用该目录的设置
+            var ext = Path.GetExtension(targetFullPath).ToLowerInvariant();
+            if (ext == ".csv")
+                return CsvSettings.GetCsvHeaderRowIndexByDirectory(targetDir);
+            else if (ext == ".xls" || ext == ".xlsx")
+                return CsvSettings.GetExcelHeaderRowIndexByDirectory(targetDir);
+            return -1;
+        }
     }
 
-    /// <summary>目标列选择对话框 — 带固定行数据的单选面板（类似列选择面板，但使用单选框）</summary>
+    /// <summary>目标列选择对话框 — 带固定行数据的单选面板（类似列选择面板，但使用单选框，支持表头行显示）</summary>
     public class TargetColumnSelectDialog : Form
     {
         private ListView _lvColumns = new();
         private Button _btnOK = new();
         private Button _btnCancel = new();
         private int _selectedIndex = -1;
+        private string _selectedColumnName = "";        // 选中的列的表头名称
+        private int _headerRowIndex = -1;              // 表头行索引
+        private bool _hasHeaderRow = false;
 
         public int SelectedColumnIndex => _selectedIndex;
+        public string SelectedColumnName => _selectedColumnName ?? "";
 
-        public TargetColumnSelectDialog(DataTable frozenData, int frozenRows, int initialSelection)
+        public TargetColumnSelectDialog(DataTable frozenData, int frozenRows, int initialSelection, int headerRowIndex = -1)
         {
             _selectedIndex = initialSelection;
+            _headerRowIndex = headerRowIndex;
             InitializeComponent();
             PopulateList(frozenData, frozenRows);
             if (_selectedIndex >= 0 && _selectedIndex < _lvColumns.Items.Count)
@@ -5305,10 +5754,21 @@ namespace wxd.files.winforms
 
             int frozenCount = Math.Min(frozenRows > 0 ? frozenRows : 2, frozenData.Rows.Count);
 
+            // 表头行标志：如果有设置表头行，用于显示和获取列名
+            _hasHeaderRow = (_headerRowIndex >= 0 && _headerRowIndex < frozenData.Rows.Count && _headerRowIndex < frozenCount);
+
+            // 第一列：选择
             _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
+
+            // 表头名列：如果有设置表头行，优先显示字段名
+            if (_hasHeaderRow)
+                _lvColumns.Columns.Add($"字段名(行{_headerRowIndex + 1})", 160, System.Windows.Forms.HorizontalAlignment.Left);
+
+            // 其余冻结行
             for (int r = 0; r < frozenCount; r++)
             {
-                _lvColumns.Columns.Add($"行{r + 1}", 160, System.Windows.Forms.HorizontalAlignment.Left);
+                if (r == _headerRowIndex) continue; // 已作为字段名列显示
+                _lvColumns.Columns.Add($"行{r + 1}", 140, System.Windows.Forms.HorizontalAlignment.Left);
             }
 
             for (int col = 0; col < frozenData.Columns.Count; col++)
@@ -5318,8 +5778,17 @@ namespace wxd.files.winforms
                     Tag = col
                 };
 
+                // 先添加字段名（如果设置了表头行）
+                if (_hasHeaderRow)
+                {
+                    var headerVal = frozenData.Rows[_headerRowIndex][col]?.ToString() ?? "";
+                    item.SubItems.Add(headerVal);
+                }
+
+                // 添加其余冻结行的值
                 for (int r = 0; r < frozenCount; r++)
                 {
+                    if (r == _headerRowIndex) continue;
                     var val = frozenData.Rows[r][col]?.ToString() ?? "";
                     item.SubItems.Add(val);
                 }
@@ -5327,11 +5796,14 @@ namespace wxd.files.winforms
                 _lvColumns.Items.Add(item);
             }
 
+            // 高亮标记表头行所在的列头（ColumnHeader 不支持 BackColor，跳过）
+            
             _lvColumns.EndUpdate();
         }
 
         private void InitializeComponent()
         {
+            SuspendLayout();
             SuspendLayout();
             Text = "选择目标列";
             ClientSize = new Size(780, 520);
@@ -5365,7 +5837,15 @@ namespace wxd.files.winforms
             _lvColumns.SelectedIndexChanged += (s, e) =>
             {
                 if (_lvColumns.SelectedItems.Count > 0)
-                    _selectedIndex = (int)_lvColumns.SelectedItems[0].Tag;
+                {
+                    var selectedItem = _lvColumns.SelectedItems[0];
+                    _selectedIndex = (int)selectedItem.Tag;
+                    // 获取选中的列的显示名称：有表头行用表头名称，否则用第一行数据作为列名
+                    if (selectedItem.SubItems.Count > 1)
+                        _selectedColumnName = selectedItem.SubItems[1]?.Text ?? "";
+                    else
+                        _selectedColumnName = "";
+                }
             };
 
             _btnOK = new Button { Text = "确定", Location = new Point(590, 478),
@@ -5408,6 +5888,20 @@ namespace wxd.files.winforms
             }
             result.Add(sb.ToString().Trim());
             return result.ToArray();
+        }
+
+        /// <summary>根据目标文件路径获取其表头行索引（从设置中读取）</summary>
+        private static int GetTargetHeaderRowIndexStatic(string targetFullPath)
+        {
+            if (string.IsNullOrEmpty(targetFullPath)) return -1;
+            string targetDir = Path.GetDirectoryName(targetFullPath) ?? "";
+            // 如果在同一目录下，使用该目录的设置
+            var ext = Path.GetExtension(targetFullPath).ToLowerInvariant();
+            if (ext == ".csv")
+                return CsvSettings.GetCsvHeaderRowIndexByDirectory(targetDir);
+            else if (ext == ".xls" || ext == ".xlsx")
+                return CsvSettings.GetExcelHeaderRowIndexByDirectory(targetDir);
+            return -1;
         }
     }
 

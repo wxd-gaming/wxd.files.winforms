@@ -29,34 +29,34 @@ namespace wxd.files.winforms
         }
 
         // ==================== 控件声明 ====================
-        private ComboBox?  _cboPath;      // 路径选择下拉框（替代原先的 TextBox 路径 + 磁盘下拉框）
-        private Button?   _btnUp;
-        private ListView  _lstFiles = new();
-        private TextBox?  _txtFilter;
+        private ComboBox? _cboPath;      // 路径选择下拉框（替代原先的 TextBox 路径 + 磁盘下拉框）
+        private Button? _btnUp;
+        private ListView _lstFiles = new();
+        private TextBox? _txtFilter;
         private ImageList _imgList = new();
-        private Panel?    _pnlToolbar;
-        private Panel?    _pnlBottom;
-        private Button?   _btnOpenExplorer;
-        private Button?   _btnOpenCsvReader;
+        private Panel? _pnlToolbar;
+        private Panel? _pnlBottom;
+        private Button? _btnOpenExplorer;
+        private Button? _btnOpenCsvReader;
         private ComboBox? _cboViewMode;
 
         // ==================== 状态字段 ====================
-        private string          _currentDir     = "";
-        private string          _filterText     = "";
-        private List<FileInfo>  _allFiles       = new();
-        private List<DirInfo>   _allDirs        = new();
-        private bool            _suppressEvents = false;
-        private bool            _isLoading      = false;
-        private bool            _isDark         = false;
-        private Label?          _lblLoading;
-        private Label?          _lblFileCount;
+        private string _currentDir = "";
+        private string _filterText = "";
+        private List<FileInfo> _allFiles = new();
+        private List<DirInfo> _allDirs = new();
+        private bool _suppressEvents = false;
+        private bool _isLoading = false;
+        private bool _isDark = false;
+        private Label? _lblLoading;
+        private Label? _lblFileCount;
         private FileListViewMode _viewMode = FileListViewMode.Details;
-        private ImageList       _imgListLarge = new();
-        private ToolTip         _pathToolTip  = new();
+        private ImageList _imgListLarge = new();
+        private ToolTip _pathToolTip = new();
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private System.Windows.Forms.Timer? _saveDebounceTimer;
-        private bool            _hasUnsavedChanges = false;
-        private string          _savedFilterForCompare = "";
+        private bool _hasUnsavedChanges = false;
+        private string _savedFilterForCompare = "";
 
         // ==================== Win32 API ====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -101,8 +101,8 @@ namespace wxd.files.winforms
         private struct SHFILEINFO
         {
             public IntPtr hIcon;
-            public int    iIcon;
-            public uint   dwAttributes;
+            public int iIcon;
+            public uint dwAttributes;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szDisplayName;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string szTypeName;
         }
@@ -110,20 +110,20 @@ namespace wxd.files.winforms
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct SHELLEXECUTEINFO
         {
-            public int     cbSize;
-            public uint    fMask;
-            public IntPtr  hwnd;
+            public int cbSize;
+            public uint fMask;
+            public IntPtr hwnd;
             [MarshalAs(UnmanagedType.LPTStr)] public string lpVerb;
             [MarshalAs(UnmanagedType.LPTStr)] public string lpFile;
             [MarshalAs(UnmanagedType.LPTStr)] public string lpParameters;
             [MarshalAs(UnmanagedType.LPTStr)] public string lpDirectory;
-            public int     nShow;
-            public IntPtr  hInstApp;
-            public IntPtr  lpIDList;
+            public int nShow;
+            public IntPtr hInstApp;
+            public IntPtr lpIDList;
             [MarshalAs(UnmanagedType.LPTStr)] public string lpClass;
-            public IntPtr  hkeyClass;
-            public uint    dwHotKey;
-            public IntPtr  hIconMonitorOrProcess;
+            public IntPtr hkeyClass;
+            public uint dwHotKey;
+            public IntPtr hIconMonitorOrProcess;
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -172,17 +172,17 @@ namespace wxd.files.winforms
 
 
         // ==================== 常量 ====================
-        private const uint SHGFI_ICON              = 0x100;
-        private const uint SHGFI_SMALLICON         = 0x000000001;
+        private const uint SHGFI_ICON = 0x100;
+        private const uint SHGFI_SMALLICON = 0x000000001;
         private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
         private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
-        private const uint SEE_MASK_INVOKEIDLIST   = 0xC;
-        private const uint SEE_MASK_FLAG_NO_UI     = 0x400;
-        private const uint LVM_ARRANGE             = 0x1016;
+        private const uint SEE_MASK_INVOKEIDLIST = 0xC;
+        private const uint SEE_MASK_FLAG_NO_UI = 0x400;
+        private const uint LVM_ARRANGE = 0x1016;
 
         // 文件操作常量
-        private const uint FO_DELETE        = 3;
-        private const uint FOF_ALLOWUNDO    = 0x40;
+        private const uint FO_DELETE = 3;
+        private const uint FOF_ALLOWUNDO = 0x40;
         private const uint FOF_NOCONFIRMATION = 0x10;
         private const uint FOF_SIMPLEPROGRESS = 0x100;   // 显示进度对话框
         private const uint FOF_WANTNUKEWARNING = 0x4000; // 删除大文件时显示警告
@@ -224,18 +224,18 @@ namespace wxd.files.winforms
         private static readonly Guid CLSID_ShellFolder = new Guid("00021400-0000-0000-c000-000000000046");
 
         // ==================== 浅色天蓝配色方案 ====================
-        private static readonly Color _colorLightToolbarBg     = Color.FromArgb(235, 245, 255);
-        private static readonly Color _colorLightBorder        = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightTextPrimary   = Color.FromArgb(20, 60, 100);
+        private static readonly Color _colorLightToolbarBg = Color.FromArgb(235, 245, 255);
+        private static readonly Color _colorLightBorder = Color.FromArgb(173, 209, 237);
+        private static readonly Color _colorLightTextPrimary = Color.FromArgb(20, 60, 100);
         private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorLightBackColor     = Color.White;
+        private static readonly Color _colorLightBackColor = Color.White;
 
         // ==================== 深色配色方案 (VS风格) ====================
-        private static readonly Color _colorDarkToolbarBg      = Color.FromArgb(51, 51, 55);       // VS工具栏
-        private static readonly Color _colorDarkBorder         = Color.FromArgb(62, 62, 66);       // VS边框
-        private static readonly Color _colorDarkTextPrimary    = Color.FromArgb(241, 241, 241);    // VS白色文字
-        private static readonly Color _colorDarkTextSecondary  = Color.FromArgb(180, 180, 180);    // VS灰色文字
-        private static readonly Color _colorDarkBackColor      = Color.FromArgb(37, 37, 38);       // VS编辑器背景
+        private static readonly Color _colorDarkToolbarBg = Color.FromArgb(51, 51, 55);       // VS工具栏
+        private static readonly Color _colorDarkBorder = Color.FromArgb(62, 62, 66);       // VS边框
+        private static readonly Color _colorDarkTextPrimary = Color.FromArgb(241, 241, 241);    // VS白色文字
+        private static readonly Color _colorDarkTextSecondary = Color.FromArgb(180, 180, 180);    // VS灰色文字
+        private static readonly Color _colorDarkBackColor = Color.FromArgb(37, 37, 38);       // VS编辑器背景
 
         // 当前配色
         private Color _colorToolbarBg;
@@ -501,26 +501,26 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            BackColor    = _colorLightBackColor; // 默认浅色背景
+            BackColor = _colorLightBackColor; // 默认浅色背景
             BorderStyle = BorderStyle.FixedSingle;
-            Padding      = new Padding(1);
+            Padding = new Padding(1);
 
             // ===== 工具栏面板（顶部）=====
             _pnlToolbar = new Panel
             {
-                Dock     = DockStyle.Top,
-                Height   = 36,
+                Dock = DockStyle.Top,
+                Height = 36,
                 BackColor = _colorToolbarBg,
-                Padding  = new Padding(6, 4, 6, 4)
+                Padding = new Padding(6, 4, 6, 4)
             };
 
             _cboPath = new ComboBox
             {
-                Location    = new Point(6, 6),
-                Width       = 200,
-                Height      = 23,
-                Font        = new Font("Microsoft YaHei UI", 9f),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Location = new Point(6, 6),
+                Width = 200,
+                Height = 23,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 DropDownStyle = ComboBoxStyle.DropDown,
                 AutoCompleteMode = AutoCompleteMode.SuggestAppend,
                 AutoCompleteSource = AutoCompleteSource.FileSystem
@@ -530,16 +530,16 @@ namespace wxd.files.winforms
 
             _btnUp = new Button
             {
-                Text     = "上级",
+                Text = "上级",
                 Location = new Point(332, 5),
-                Size     = new Size(50, 24),
-                Font     = new Font("Microsoft YaHei UI", 9f),
-                Cursor   = Cursors.Hand,
+                Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
                 BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Anchor   = AnchorStyles.Top | AnchorStyles.Right
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             _btnUp.Click += (s, e) => GoUp();
 
@@ -547,17 +547,17 @@ namespace wxd.files.winforms
             _cboViewMode = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location      = new Point(386, 5),
-                Size          = new Size(90, 24),
-                Font          = new Font("Microsoft YaHei UI", 9f),
-                Anchor        = AnchorStyles.Top | AnchorStyles.Right
+                Location = new Point(386, 5),
+                Size = new Size(90, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             _cboViewMode.Items.AddRange(new object[] { "详细信息", "列表", "小图标", "大图标", "平铺" });
             _cboViewMode.SelectedIndex = (int)_viewMode;
             _cboViewMode.SelectedIndexChanged += OnViewModeChanged;
 
             _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnUp, _cboViewMode });
-            
+
             // 工具栏大小改变时调整路径下拉框宽度
             _pnlToolbar.Resize += (s, e) =>
             {
@@ -573,14 +573,14 @@ namespace wxd.files.winforms
             };
 
             // ===== 文件列表（中间区域）=====
-            _lstFiles.Dock           = DockStyle.Fill;
-            _lstFiles.View           = View.Details;
-            _lstFiles.FullRowSelect  = true;
-            _lstFiles.GridLines      = false; // 去掉网格线
-            _lstFiles.HeaderStyle    = ColumnHeaderStyle.Clickable;
+            _lstFiles.Dock = DockStyle.Fill;
+            _lstFiles.View = View.Details;
+            _lstFiles.FullRowSelect = true;
+            _lstFiles.GridLines = false; // 去掉网格线
+            _lstFiles.HeaderStyle = ColumnHeaderStyle.Clickable;
             _lstFiles.SmallImageList = _imgList;
-            _lstFiles.Font           = new Font("Microsoft YaHei UI", 9.5f);
-            _lstFiles.MultiSelect    = true;
+            _lstFiles.Font = new Font("Microsoft YaHei UI", 9.5f);
+            _lstFiles.MultiSelect = true;
             _lstFiles.ShowItemToolTips = true;
 
             // 添加列：名称列自适应宽度，其他列固定宽度
@@ -588,13 +588,13 @@ namespace wxd.files.winforms
             _lstFiles.Columns.Add("修改日期", 130, HorizontalAlignment.Left);
             _lstFiles.Columns.Add("类型", 100, HorizontalAlignment.Left);
             _lstFiles.Columns.Add("大小", 70, HorizontalAlignment.Right);
-            
+
             // 监听列宽调整事件，保持名称列自适应
             _lstFiles.ColumnWidthChanged += OnColumnWidthChanged;
             _lstFiles.Resize += OnListViewResize;
 
-            _lstFiles.DoubleClick         += OnFileDoubleClick;
-            _lstFiles.MouseUp             += OnListViewMouseUp;
+            _lstFiles.DoubleClick += OnFileDoubleClick;
+            _lstFiles.MouseUp += OnListViewMouseUp;
             _lstFiles.SelectedIndexChanged += (s, e) =>
             {
                 if (_lstFiles.SelectedItems.Count > 0) _lstFiles.Focus();
@@ -604,23 +604,23 @@ namespace wxd.files.winforms
             _pnlBottom = new Panel
             {
                 Height = 36,
-                Dock   = DockStyle.Bottom,
+                Dock = DockStyle.Bottom,
                 BackColor = _colorToolbarBg
             };
 
             // 打开CSV阅读器按钮 - 使用 Anchor 定位在右侧
             _btnOpenCsvReader = new Button
             {
-                Width       = 90,
-                Height      = 26,
-                Location    = new Point(_pnlBottom.Width - 180, 5),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Right,
-                Text        = "阅读器",
-                Font        = new Font("Microsoft YaHei UI", 9f),
-                Cursor      = Cursors.Hand,
-                BackColor   = Color.FromArgb(66, 165, 245),
-                ForeColor   = Color.White,
-                FlatStyle   = FlatStyle.Flat,
+                Width = 90,
+                Height = 26,
+                Location = new Point(_pnlBottom.Width - 180, 5),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Text = "阅读器",
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
@@ -628,16 +628,16 @@ namespace wxd.files.winforms
             // 打开资源管理器按钮 - 使用 Anchor 定位在右侧
             _btnOpenExplorer = new Button
             {
-                Width       = 80,
-                Height      = 26,
-                Location    = new Point(_pnlBottom.Width - 84, 5),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Right,
-                Text        = "打开目录",
-                Font        = new Font("Microsoft YaHei UI", 9f),
-                Cursor      = Cursors.Hand,
-                BackColor   = Color.FromArgb(66, 165, 245),
-                ForeColor   = Color.White,
-                FlatStyle   = FlatStyle.Flat,
+                Width = 80,
+                Height = 26,
+                Location = new Point(_pnlBottom.Width - 84, 5),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Text = "打开目录",
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnOpenExplorer.Click += OnOpenExplorerClick;
@@ -645,25 +645,25 @@ namespace wxd.files.winforms
             // 文件/文件夹数量标签
             _lblFileCount = new Label
             {
-                Width       = 130,
-                Height      = 26,
-                Location    = new Point(4, 5),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Left,
-                Text        = "文件夹: 0  文件: 0",
-                TextAlign   = ContentAlignment.MiddleLeft,
-                Font        = new Font("Microsoft YaHei UI", 9f),
-                ForeColor   = _colorTextSecondary,
-                BackColor   = _colorToolbarBg
+                Width = 130,
+                Height = 26,
+                Location = new Point(4, 5),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                Text = "文件夹: 0  文件: 0",
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorTextSecondary,
+                BackColor = _colorToolbarBg
             };
 
             // 过滤框 - 使用 Anchor 填充剩余空间
             _txtFilter = new TextBox
             {
-                Height      = 29,
-                Location    = new Point(136, 4),
-                Size        = new Size(_pnlBottom.Width - 328, 29),
-                Anchor      = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                Font        = new Font("Microsoft YaHei UI", 9f),
+                Height = 29,
+                Location = new Point(136, 4),
+                Size = new Size(_pnlBottom.Width - 328, 29),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle
             };
 
@@ -1339,21 +1339,21 @@ namespace wxd.files.winforms
         private void OnListViewResize(object? sender, EventArgs e)
         {
             if (_lstFiles.Columns.Count < 4) return;
-            
+
             // 计算其他列的总宽度
             int otherColumnsWidth = 0;
             for (int i = 1; i < _lstFiles.Columns.Count; i++)
             {
                 otherColumnsWidth += _lstFiles.Columns[i].Width;
             }
-            
+
             // 名称列宽度 = 列表宽度 - 其他列宽度 - 滚动条宽度(如果有)
             int newWidth = _lstFiles.ClientSize.Width - otherColumnsWidth - 4;
             if (newWidth < 100) newWidth = 100; // 最小宽度
-            
+
             _lstFiles.Columns[0].Width = newWidth;
         }
-        
+
         /// <summary>处理列宽手动调整，保持名称列自适应</summary>
         private void OnColumnWidthChanged(object? sender, ColumnWidthChangedEventArgs e)
         {
@@ -1368,12 +1368,12 @@ namespace wxd.files.winforms
         private void OnListViewMouseUp(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Right) return;
-            
+
             Debug.WriteLine($"MouseUp事件触发: X={e.X}, Y={e.Y}");
-            
+
             // 直接使用 MouseUp 事件处理右键，避免 MouseClick 在空白处不触发的问题
             var hit = _lstFiles.HitTest(e.Location);
-            
+
             // 检测列头区域
             if (IsPointOnColumnHeader(e.Location))
             {
@@ -1381,14 +1381,14 @@ namespace wxd.files.winforms
                 ShowSystemContextMenuForPaths(new[] { _currentDir });
                 return;
             }
-            
+
             // 如果点击的是列表项
             if (hit.Item != null)
             {
                 int columnIndex = 0;
                 if (hit.SubItem != null)
                     columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
-                
+
                 // 如果点击的项未选中，则只选中它（取消其他选择）
                 if (!hit.Item.Selected)
                 {
@@ -1396,7 +1396,7 @@ namespace wxd.files.winforms
                     hit.Item.Selected = true;
                 }
                 // 如果点击的项已选中，则保持当前多选状态不变
-                
+
                 ShowContextMenuForSelectedItems();
             }
             else
@@ -1408,7 +1408,7 @@ namespace wxd.files.winforms
                     ShowSystemContextMenuForPaths(new[] { _currentDir });
             }
         }
-        
+
         /// <summary>获取当前选中项的完整路径列表</summary>
         private List<string> GetSelectedFullPaths()
         {
@@ -1420,7 +1420,7 @@ namespace wxd.files.winforms
             }
             return paths;
         }
-        
+
         /// <summary>为当前选中项显示右键菜单</summary>
         private void ShowContextMenuForSelectedItems()
         {
@@ -1431,7 +1431,7 @@ namespace wxd.files.winforms
                     ShowSystemContextMenuForPaths(new[] { _currentDir });
                 return;
             }
-            
+
             if (paths.Count == 1)
             {
                 // 单个文件/文件夹：使用系统原生右键菜单
@@ -1473,9 +1473,9 @@ namespace wxd.files.winforms
         {
             // 检查控件状态，防止在已释放状态下处理事件
             if (this.IsDisposed || !this.IsHandleCreated) return;
-            
+
             Debug.WriteLine($"ShowSystemContextMenu: path='{itemPath}', exists={Directory.Exists(itemPath) || File.Exists(itemPath)}");
-            
+
             try
             {
                 // 使用 Windows Shell API 显示系统右键菜单
@@ -1488,13 +1488,13 @@ namespace wxd.files.winforms
                 ShowFallbackContextMenu(itemPath);
             }
         }
-        
+
         /// <summary>显示系统右键上下文菜单（支持多路径——仅当仅一个路径时使用 Shell API）</summary>
         private void ShowSystemContextMenuForPaths(string[] paths)
         {
             if (this.IsDisposed || !this.IsHandleCreated) return;
             if (paths.Length == 0) return;
-            
+
             if (paths.Length == 1)
             {
                 ShowSystemContextMenu(paths[0]);
@@ -1504,7 +1504,7 @@ namespace wxd.files.winforms
                 ShowMultiSelectContextMenu(new List<string>(paths));
             }
         }
-        
+
         /// <summary>多选右键菜单：复制、剪切、删除、复制路径</summary>
         private void ShowMultiSelectContextMenu(List<string> paths)
         {
@@ -1512,19 +1512,19 @@ namespace wxd.files.winforms
             {
                 var menu = new ContextMenuStrip();
                 menu.Font = new Font("Microsoft YaHei UI", 9f);
-                
+
                 ToolStripMenuItem itemCopy = new ToolStripMenuItem("复制", null, (s, e) => CopyFilesToClipboard(paths, false));
                 ToolStripMenuItem itemCut = new ToolStripMenuItem("剪切", null, (s, e) => CopyFilesToClipboard(paths, true));
                 ToolStripMenuItem itemDelete = new ToolStripMenuItem("删除", null, (s, e) => DeleteFiles(paths));
                 ToolStripMenuItem itemCopyPath = new ToolStripMenuItem("复制路径", null, (s, e) => CopyPathsToClipboard(paths));
-                
+
                 menu.Items.Add(itemCopy);
                 menu.Items.Add(itemCut);
                 menu.Items.Add("-");
                 menu.Items.Add(itemDelete);
                 menu.Items.Add("-");
                 menu.Items.Add(itemCopyPath);
-                
+
                 menu.Show(Cursor.Position);
             }
             catch
@@ -1532,7 +1532,7 @@ namespace wxd.files.winforms
                 // 忽略
             }
         }
-        
+
         /// <summary>复制或剪切文件到剪贴板</summary>
         private void CopyFilesToClipboard(List<string> paths, bool cut)
         {
@@ -1560,7 +1560,7 @@ namespace wxd.files.winforms
                 MessageBox.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
-        
+
         /// <summary>复制路径列表到剪贴板</summary>
         private void CopyPathsToClipboard(List<string> paths)
         {
@@ -1570,25 +1570,25 @@ namespace wxd.files.winforms
             }
             catch { }
         }
-        
+
         /// <summary>删除选中文件/文件夹（使用系统 Shell API，显示原生进度对话框）</summary>
         private void DeleteFiles(List<string> paths)
         {
             if (paths.Count == 0) return;
-            
+
             string msg = paths.Count == 1
                 ? $"确定要删除 \"{Path.GetFileName(paths[0])}\" 吗？"
                 : $"确定要删除选中的 {paths.Count} 个项目吗？";
-            
+
             var result = MessageBox.Show(this.FindForm(), msg, "确认删除",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
             if (result != DialogResult.Yes) return;
-            
+
             try
             {
                 // 用 \0 分隔文件路径，最后以 \0\0 结尾
                 var fromBuf = string.Join("\0", paths) + "\0\0";
-                
+
                 var fileOp = new SHFILEOPSTRUCT
                 {
                     hwnd = this.Handle,
@@ -1596,7 +1596,7 @@ namespace wxd.files.winforms
                     pFrom = fromBuf,
                     fFlags = FOF_ALLOWUNDO | FOF_SIMPLEPROGRESS | FOF_WANTNUKEWARNING
                 };
-                
+
                 int ret = SHFileOperation(ref fileOp);
                 if (ret != 0)
                 {
@@ -1635,28 +1635,28 @@ namespace wxd.files.winforms
                 });
                 return;
             }
-            
+
             // 完成后刷新
             RefreshCurrent();
         }
-        
+
         /// <summary>显示备用右键菜单</summary>
         private void ShowFallbackContextMenu(string itemPath)
         {
             try
             {
                 if (!File.Exists(itemPath) && !Directory.Exists(itemPath)) return;
-                
+
                 var menu = new ContextMenuStrip();
                 var isDir = Directory.Exists(itemPath);
-                
+
                 // 基本操作
                 menu.Items.Add("打开", null, (s, e) => OpenWithShell(itemPath, "open"));
                 if (isDir)
                     menu.Items.Add("在资源管理器中打开", null, (s, e) => OpenWithShell(itemPath, "explore"));
-                
+
                 menu.Items.Add("-");
-                menu.Items.Add("属性", null, (s, e) => 
+                menu.Items.Add("属性", null, (s, e) =>
                 {
                     var info = new SHELLEXECUTEINFO
                     {
@@ -1670,7 +1670,7 @@ namespace wxd.files.winforms
                     ShellExecuteEx(ref info);
                 });
                 menu.Items.Add("复制路径", null, (s, e) => Clipboard.SetText(itemPath));
-                
+
                 // 显示菜单
                 menu.Show(Cursor.Position);
             }
@@ -1715,11 +1715,11 @@ namespace wxd.files.winforms
                     var info = new SHELLEXECUTEINFO
                     {
                         cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
-                        fMask  = SEE_MASK_FLAG_NO_UI,
-                        hwnd   = this.Handle,
+                        fMask = SEE_MASK_FLAG_NO_UI,
+                        hwnd = this.Handle,
                         lpVerb = verb,
                         lpFile = filePath,
-                        nShow  = 1
+                        nShow = 1
                     };
                     ShellExecuteEx(ref info);
                 }
@@ -1923,14 +1923,14 @@ namespace wxd.files.winforms
                 SavePanelState();
                 _hasUnsavedChanges = false;
             }
-            if (disposing) 
-            { 
+            if (disposing)
+            {
                 _filterDebounceTimer?.Dispose();
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
-                _imgList?.Dispose(); 
+                _imgList?.Dispose();
                 _imgListLarge?.Dispose();
-                _lstFiles?.Dispose(); 
+                _lstFiles?.Dispose();
             }
             base.Dispose(disposing);
         }

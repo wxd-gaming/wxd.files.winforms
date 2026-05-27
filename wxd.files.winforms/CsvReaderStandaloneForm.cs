@@ -8,12 +8,20 @@ namespace wxd.files.winforms
     /// <summary>独立表格查看窗体（用于关联打开，不包含左侧文件列表和目录树）</summary>
     public class CsvReaderStandaloneForm : Form
     {
-        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1)
+        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1, string highlightColumnName = "", int headerRowIndex = -1, bool isLinkedFromCell = false)
         {
             var fileName = Path.GetFileName(filePath);
             Text = fileName;
-            ClientSize = new Size(1200, 800);
-            MinimumSize = new Size(600, 400);
+            if (isLinkedFromCell)
+            {
+                ClientSize = new Size(1300, 350);
+                MinimumSize = new Size(300, 200);
+            }
+            else
+            {
+                ClientSize = new Size(1060, 620);
+                MinimumSize = new Size(560, 350);
+            }
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
             try { Icon = Icon.ExtractAssociatedIcon(filePath); } catch { }
@@ -23,14 +31,14 @@ namespace wxd.files.winforms
             var dir = Path.GetDirectoryName(filePath) ?? "";
             if (ext == ".csv")
             {
-                var viewer = new CsvViewerControl(filePath, rootDir: dir, frozenRows: frozenRows) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue);
+                var viewer = new CsvViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
+                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName);
                 Controls.Add(viewer);
             }
             else
             {
-                var viewer = new ExcelViewerControl(filePath, rootDir: dir, frozenRows: frozenRows) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue);
+                var viewer = new ExcelViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
+                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName);
                 Controls.Add(viewer);
             }
         }

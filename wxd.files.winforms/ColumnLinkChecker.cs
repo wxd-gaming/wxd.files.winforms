@@ -93,7 +93,14 @@ namespace wxd.files.winforms
                     }
 
                     // key 格式: "{sourceRel}|{sourceColIndex}->{targetRel}:{targetColIndex}"
+                    // 如果启用了值提取，在 key 中附加提取规则标识
                     string key = string.Format("{0}|{1}->{2}:{3}", sourceRel, link.SourceColumnIndex, link.TargetFile, link.TargetColumnIndex);
+                    if (link.ValueExtractionEnabled)
+                    {
+                        key += string.Format("|extract:{0}:{1}",
+                            string.IsNullOrEmpty(link.ExtractDelimiter) ? "_pos_" : link.ExtractDelimiter,
+                            link.ExtractPartIndex);
+                    }
                     _linkLookups[key] = values;
                 }
                 catch { }
@@ -101,8 +108,10 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查指定值在目标表中是否存在（用于右键菜单置灰判断）</summary>
+        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         /// <returns>true=值有效可打开，false=值无效或不存在</returns>
-        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex, string cellValue)
+        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex,
+            string cellValue, List<ColumnLinkConfig>? columnLinks = null)
         {
             if (string.IsNullOrEmpty(cellValue) || _loadedSources.Count == 0) return false;
             
@@ -112,21 +121,32 @@ namespace wxd.files.winforms
             else
                 currentRel = Path.GetFileName(filePath);
 
+            // 查找当前列的提取规则
+            var linkConfig = columnLinks?.FirstOrDefault(l =>
+                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == originalColumnIndex);
+            
+            // 如果有提取规则，先提取实际匹配值
+            string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValue(cellValue) : cellValue;
+
             string prefix = currentRel + "|" + originalColumnIndex + "->";
             foreach (var kvp in _linkLookups)
             {
                 if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    return kvp.Value.Contains(cellValue);
+                    return kvp.Value.Contains(matchValue);
                 }
             }
             return false;
         }
 
         /// <summary>获取关联字段无效的提示信息（用于 CellToolTipTextNeeded）</summary>
+        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         /// <returns>提示文本，若单元格无关联或值有效则返回 null</returns>
         public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
-            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows)
+            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows,
+            List<ColumnLinkConfig>? columnLinks = null)
         {
             // 冻结行不提示
             if (rowIndex >= 0 && rowIndex < frozenRows) return null;
@@ -154,18 +174,34 @@ namespace wxd.files.winforms
             var cellVal = dataGrid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
             if (string.IsNullOrEmpty(cellVal)) return null;
 
+            // 查找当前列的提取规则
+            var linkConfig = columnLinks?.FirstOrDefault(l =>
+                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == originalColIndex);
+
+            // 如果有提取规则，提取实际匹配值
+            string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValue(cellVal) : cellVal;
+
             // 查找匹配的关联配置
             string prefix = currentRel + "|" + originalColIndex + "->";
             foreach (var kvp in _linkLookups)
             {
                 if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-                var keyAfterArrow = kvp.Key.Substring(prefix.Length); // "targetRel:targetCol"
-                if (!kvp.Value.Contains(cellVal))
+                var keyAfterArrow = kvp.Key.Substring(prefix.Length); // "targetRel:targetCol" 或带 extract 后缀
+                // 去掉可能的 extract 后缀（"|extract:..."）
+                int extractIdx = keyAfterArrow.IndexOf("|extract:", StringComparison.Ordinal);
+                if (extractIdx >= 0)
+                    keyAfterArrow = keyAfterArrow.Substring(0, extractIdx);
+                
+                if (!kvp.Value.Contains(matchValue))
                 {
                     var colonIdx = keyAfterArrow.LastIndexOf(':');
                     string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
                     string targetCol = colonIdx > 0 ? keyAfterArrow.Substring(colonIdx + 1) : "";
-                    return $"关联表 [{Path.GetFileName(targetFile)}] 的关联列中未找到该数据: \"{cellVal}\"";
+                    string displayValue = linkConfig?.ValueExtractionEnabled == true
+                        ? $"{cellVal} (提取: {matchValue})" : cellVal;
+                    return $"关联表 [{Path.GetFileName(targetFile)}] 的关联列中未找到该数据: \"{displayValue}\"";
                 }
                 break; // 值存在，不需要提示
             }
@@ -173,8 +209,10 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认；跳过冻结行</summary>
+        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
-            List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows)
+            List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows,
+            List<ColumnLinkConfig>? columnLinks = null)
         {
             // 冻结行不标红
             if (e.RowIndex >= 0 && e.RowIndex < frozenRows) return;
@@ -199,22 +237,32 @@ namespace wxd.files.winforms
 
             if (_linkLookups.Count == 0) return;
 
+            // 查找当前列的提取规则
+            var linkConfig = columnLinks?.FirstOrDefault(l =>
+                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == originalColIndex);
+
             foreach (var kvp in _linkLookups)
             {
-                // key 格式: "{sourceRel}|{srcCol}->{targetRel}:{targetCol}"
+                // key 格式: "{sourceRel}|{srcCol}->{targetRel}:{targetCol}" 或带 "|extract:..." 后缀
                 var pipeIdx = kvp.Key.IndexOf('|');
                 if (pipeIdx < 0) continue;
                 // 只匹配当前文件的关联，排除其他文件的缓存
                 var keySourceRel = kvp.Key.Substring(0, pipeIdx);
                 if (!keySourceRel.Equals(currentRel, StringComparison.OrdinalIgnoreCase)) continue;
-                var afterPipe = kvp.Key.Substring(pipeIdx + 1); // "{srcCol}->{targetRel}:{targetCol}"
+                var afterPipe = kvp.Key.Substring(pipeIdx + 1); // "{srcCol}->{targetRel}:{targetCol}..."
                 var arrowIdx = afterPipe.IndexOf("->", StringComparison.Ordinal);
                 if (arrowIdx < 0) continue;
                 var colStr = afterPipe.Substring(0, arrowIdx);
                 if (int.TryParse(colStr, out int srcCol) && srcCol == originalColIndex)
                 {
                     var cellValue = e.Value?.ToString()?.Trim() ?? "";
-                    if (!string.IsNullOrEmpty(cellValue) && !kvp.Value.Contains(cellValue))
+                    
+                    // 如果有提取规则，提取实际匹配值
+                    string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                        ? linkConfig.ExtractValue(cellValue) : cellValue;
+                    
+                    if (!string.IsNullOrEmpty(cellValue) && !kvp.Value.Contains(matchValue))
                     {
                         e.CellStyle.ForeColor = Color.Red;
                         e.CellStyle.SelectionForeColor = Color.Red;
