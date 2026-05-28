@@ -1247,12 +1247,51 @@ namespace wxd.files.winforms
         private string _highlightColumnName = "";
         private HashSet<int> _highlightRows = new();
         private bool _highlightsReady = false;
+        private List<string> _highlightValues = new(); // 多值高亮（支持 OR 匹配）
 
-        public void SetHighlight(int colIndex, string value, string colName = "")
+        public void SetHighlight(int colIndex, string value, string colName = "", ColumnLinkConfig? linkConfig = null)
         {
             _highlightColumnIndex = colIndex;
             _highlightValue = value ?? "";
             _highlightColumnName = colName ?? "";
+            // 根据 linkConfig 提取多值用于 OR 匹配
+            _highlightValues.Clear();
+            if (linkConfig != null && linkConfig.ValueExtractionEnabled && !string.IsNullOrEmpty(value))
+            {
+                _highlightValues = linkConfig.ExtractValues(value);
+                // 兜底：如果提取后只有一个值，但原始值中包含多值分隔符，尝试手动按多值分隔符拆分
+                if (_highlightValues.Count == 1 && !string.IsNullOrEmpty(linkConfig.MultiValueDelimiter) && value.Contains(linkConfig.MultiValueDelimiter))
+                {
+                    var groups = value.Split(new[] { linkConfig.MultiValueDelimiter }, StringSplitOptions.RemoveEmptyEntries);
+                    var fallback = new List<string>();
+                    foreach (var g in groups)
+                    {
+                        var trimmed = g.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                        {
+                            // 对每组也用 ExtractDelimiter 提取
+                            if (!string.IsNullOrEmpty(linkConfig.ExtractDelimiter))
+                            {
+                                var parts = trimmed.Split(new[] { linkConfig.ExtractDelimiter }, StringSplitOptions.None);
+                                if (linkConfig.ExtractPartIndex >= 0 && linkConfig.ExtractPartIndex < parts.Length)
+                                    fallback.Add(parts[linkConfig.ExtractPartIndex].Trim());
+                                else
+                                    fallback.Add(trimmed);
+                            }
+                            else
+                            {
+                                fallback.Add(trimmed);
+                            }
+                        }
+                    }
+                    if (fallback.Count > 1)
+                        _highlightValues = fallback.Distinct().ToList();
+                }
+            }
+            else if (!string.IsNullOrEmpty(value))
+            {
+                _highlightValues = new List<string> { value };
+            }
         }
 
         // 配色（与CsvReaderForm一致的浅色天蓝色调）
@@ -3072,7 +3111,7 @@ namespace wxd.files.winforms
                         MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link);
                     standaloneForm.Show(this);
                 };
             }
@@ -3150,11 +3189,11 @@ namespace wxd.files.winforms
             return result.ToString();
         }
 
-        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行</summary>
+        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行（支持多值 OR 匹配）</summary>
         private void RebuildHighlightRows()
         {
             _highlightRows.Clear();
-            if (_highlightColumnIndex < 0 || string.IsNullOrEmpty(_highlightValue) || _dataTable.Columns.Count == 0)
+            if (_highlightColumnIndex < 0 || _highlightValues.Count == 0 || _dataTable.Columns.Count == 0)
             {
                 _highlightsReady = false;
                 return;
@@ -3164,18 +3203,20 @@ namespace wxd.files.winforms
                 if (_highlightColumnIndex < _dataTable.Columns.Count)
                 {
                     var val = _dataTable.Rows[i][_highlightColumnIndex]?.ToString()?.Trim() ?? "";
-                    if (val.Equals(_highlightValue, StringComparison.OrdinalIgnoreCase))
+                    if (_highlightValues.Any(v => val.Equals(v, StringComparison.OrdinalIgnoreCase)))
                         _highlightRows.Add(i);
                 }
             }
             _highlightsReady = true;
-            // 自动填入高级过滤：列名=值 进行精准匹配
+            // 自动填入高级过滤：列名=值 进行精准匹配（支持多值 OR）
             if (_highlightRows.Count > 0)
             {
-                if (!string.IsNullOrEmpty(_highlightColumnName))
-                    _txtAdvancedFilter.Text = $"{_highlightColumnName}='{_highlightValue}'";
-                else
-                    _txtAdvancedFilter.Text = $"Col{_highlightColumnIndex}='{_highlightValue}'";
+                string colRef = !string.IsNullOrEmpty(_highlightColumnName)
+                    ? _highlightColumnName : $"Col{_highlightColumnIndex}";
+                string filterValue = _highlightValues.Count == 1
+                    ? $"{colRef}='{_highlightValues[0]}'"
+                    : string.Join(" or ", _highlightValues.Select(v => $"{colRef}='{v}'"));
+                _txtAdvancedFilter.Text = filterValue;
             }
         }
 
@@ -3531,12 +3572,51 @@ namespace wxd.files.winforms
         private string _highlightColumnName = "";
         private HashSet<int> _highlightRows = new();
         private bool _highlightsReady = false;
+        private List<string> _highlightValues = new(); // 多值高亮（支持 OR 匹配）
 
-        public void SetHighlight(int colIndex, string value, string colName = "")
+        public void SetHighlight(int colIndex, string value, string colName = "", ColumnLinkConfig? linkConfig = null)
         {
             _highlightColumnIndex = colIndex;
             _highlightValue = value ?? "";
             _highlightColumnName = colName ?? "";
+            // 根据 linkConfig 提取多值用于 OR 匹配
+            _highlightValues.Clear();
+            if (linkConfig != null && linkConfig.ValueExtractionEnabled && !string.IsNullOrEmpty(value))
+            {
+                _highlightValues = linkConfig.ExtractValues(value);
+                // 兜底：如果提取后只有一个值，但原始值中包含多值分隔符，尝试手动按多值分隔符拆分
+                if (_highlightValues.Count == 1 && !string.IsNullOrEmpty(linkConfig.MultiValueDelimiter) && value.Contains(linkConfig.MultiValueDelimiter))
+                {
+                    var groups = value.Split(new[] { linkConfig.MultiValueDelimiter }, StringSplitOptions.RemoveEmptyEntries);
+                    var fallback = new List<string>();
+                    foreach (var g in groups)
+                    {
+                        var trimmed = g.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                        {
+                            // 对每组也用 ExtractDelimiter 提取
+                            if (!string.IsNullOrEmpty(linkConfig.ExtractDelimiter))
+                            {
+                                var parts = trimmed.Split(new[] { linkConfig.ExtractDelimiter }, StringSplitOptions.None);
+                                if (linkConfig.ExtractPartIndex >= 0 && linkConfig.ExtractPartIndex < parts.Length)
+                                    fallback.Add(parts[linkConfig.ExtractPartIndex].Trim());
+                                else
+                                    fallback.Add(trimmed);
+                            }
+                            else
+                            {
+                                fallback.Add(trimmed);
+                            }
+                        }
+                    }
+                    if (fallback.Count > 1)
+                        _highlightValues = fallback.Distinct().ToList();
+                }
+            }
+            else if (!string.IsNullOrEmpty(value))
+            {
+                _highlightValues = new List<string> { value };
+            }
         }
 
         // 配色（浅色天蓝色调）
@@ -5005,7 +5085,7 @@ namespace wxd.files.winforms
                         MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true);
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link);
                     standaloneForm.Show(this);
                 };
             }
@@ -5077,11 +5157,11 @@ namespace wxd.files.winforms
             return result.ToString();
         }
 
-        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行</summary>
+        /// <summary>重建高亮行集合 — 扫描数据表找出关联列匹配的行，并自动滚动到首行（支持多值 OR 匹配）</summary>
         private void RebuildHighlightRows()
         {
             _highlightRows.Clear();
-            if (_highlightColumnIndex < 0 || string.IsNullOrEmpty(_highlightValue) || _dataTable.Columns.Count == 0)
+            if (_highlightColumnIndex < 0 || _highlightValues.Count == 0 || _dataTable.Columns.Count == 0)
             {
                 _highlightsReady = false;
                 return;
@@ -5091,18 +5171,20 @@ namespace wxd.files.winforms
                 if (_highlightColumnIndex < _dataTable.Columns.Count)
                 {
                     var val = _dataTable.Rows[i][_highlightColumnIndex]?.ToString()?.Trim() ?? "";
-                    if (val.Equals(_highlightValue, StringComparison.OrdinalIgnoreCase))
+                    if (_highlightValues.Any(v => val.Equals(v, StringComparison.OrdinalIgnoreCase)))
                         _highlightRows.Add(i);
                 }
             }
             _highlightsReady = true;
-            // 自动填入高级过滤：列名=值 进行精准匹配
+            // 自动填入高级过滤：列名=值 进行精准匹配（支持多值 OR）
             if (_highlightRows.Count > 0)
             {
-                if (!string.IsNullOrEmpty(_highlightColumnName))
-                    _txtAdvancedFilter.Text = $"{_highlightColumnName}='{_highlightValue}'";
-                else
-                    _txtAdvancedFilter.Text = $"Col{_highlightColumnIndex}='{_highlightValue}'";
+                string colRef = !string.IsNullOrEmpty(_highlightColumnName)
+                    ? _highlightColumnName : $"Col{_highlightColumnIndex}";
+                string filterValue = _highlightValues.Count == 1
+                    ? $"{colRef}='{_highlightValues[0]}'"
+                    : string.Join(" or ", _highlightValues.Select(v => $"{colRef}='{v}'"));
+                _txtAdvancedFilter.Text = filterValue;
             }
         }
 
@@ -5512,6 +5594,9 @@ namespace wxd.files.winforms
         private TextBox _txtDelimiter = new();
         private Label _lblPartIndex = new();
         private NumericUpDown _nudPartIndex = new();
+        // 多值分隔符控件
+        private Label _lblMultiValueDelimiter = new();
+        private TextBox _txtMultiValueDelimiter = new();
 
         public ColumnLinkSetupDialog(
             List<(string display, string fullPath)> fileEntries,
@@ -5551,11 +5636,6 @@ namespace wxd.files.winforms
                 _selectedTargetPath = resolved;
                 _selectedTargetColIndex = _existingLink.TargetColumnIndex;
 
-                // 加载提取规则设置
-                _chkExtractEnabled.Checked = _existingLink.ValueExtractionEnabled;
-                _txtDelimiter.Text = _existingLink.ExtractDelimiter ?? "";
-                _nudPartIndex.Value = Math.Max(0, _existingLink.ExtractPartIndex);
-
                 // 恢复目标列的表头名称（如果有保存）
                 if (!string.IsNullOrEmpty(_existingLink.TargetColumnName))
                     _selectedTargetColumnName = _existingLink.TargetColumnName;
@@ -5564,6 +5644,15 @@ namespace wxd.files.winforms
             InitializeComponent();
             PopulateFiles("");
             UpdateSelectionLabel();
+
+            // 加载已有配置（必须在 InitializeComponent 之后，否则控件会被重新创建覆盖）
+            if (_existingLink != null)
+            {
+                _chkExtractEnabled.Checked = _existingLink.ValueExtractionEnabled;
+                _txtDelimiter.Text = _existingLink.ExtractDelimiter ?? "";
+                _nudPartIndex.Value = Math.Max(0, _existingLink.ExtractPartIndex);
+                _txtMultiValueDelimiter.Text = _existingLink.MultiValueDelimiter ?? "";
+            }
 
             if (_existingLink != null)
             {
@@ -5604,7 +5693,8 @@ namespace wxd.files.winforms
                 // 值提取规则
                 ValueExtractionEnabled = _chkExtractEnabled.Checked,
                 ExtractDelimiter = _txtDelimiter.Text.Trim(),
-                ExtractPartIndex = (int)_nudPartIndex.Value
+                ExtractPartIndex = (int)_nudPartIndex.Value,
+                MultiValueDelimiter = _txtMultiValueDelimiter.Text.Trim()
             };
         }
 
@@ -5758,7 +5848,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             Text = "列关联设置 - 列 " + _sourceColumnIndex;
-            ClientSize = new Size(500, 530);
+            ClientSize = new Size(500, 560);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.FromArgb(242, 249, 255);
@@ -5793,7 +5883,7 @@ namespace wxd.files.winforms
             var grpExtract = new GroupBox
             {
                 Text = "值提取规则（可选）— 用于从复合格式中提取部分内容匹配",
-                Location = new Point(10, 355), Size = new Size(480, 75),
+                Location = new Point(10, 355), Size = new Size(480, 105),
                 Font = new Font("Microsoft YaHei UI", 8f), ForeColor = Color.FromArgb(55, 65, 81)
             };
 
@@ -5810,6 +5900,8 @@ namespace wxd.files.winforms
                 _txtDelimiter.Enabled = _chkExtractEnabled.Checked;
                 _lblPartIndex.Enabled = _chkExtractEnabled.Checked;
                 _nudPartIndex.Enabled = _chkExtractEnabled.Checked;
+                _lblMultiValueDelimiter.Enabled = _chkExtractEnabled.Checked;
+                _txtMultiValueDelimiter.Enabled = _chkExtractEnabled.Checked;
             };
             grpExtract.Controls.Add(_chkExtractEnabled);
 
@@ -5835,23 +5927,38 @@ namespace wxd.files.winforms
                 Location = new Point(250, 45), Size = new Size(220, 20),
                 Font = new Font("Microsoft YaHei UI", 7.5f), ForeColor = Color.FromArgb(140, 145, 150) };
             grpExtract.Controls.Add(lblExample);
+
+            // 多值分隔符
+            _lblMultiValueDelimiter = new Label { Text = "多值分隔符:", Location = new Point(10, 72), Size = new Size(72, 18),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
+            grpExtract.Controls.Add(_lblMultiValueDelimiter);
+
+            _txtMultiValueDelimiter = new TextBox { Text = "|", Location = new Point(85, 70), Size = new Size(40, 21),
+                Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
+                Enabled = false };
+            grpExtract.Controls.Add(_txtMultiValueDelimiter);
+
+            var lblMultiExample = new Label { Text = "例: \"100500201#1|100500202#1\" 先用 | 切分多组 → 各组再用分隔符提取",
+                Location = new Point(130, 71), Size = new Size(340, 20),
+                Font = new Font("Microsoft YaHei UI", 7.5f), ForeColor = Color.FromArgb(140, 145, 150) };
+            grpExtract.Controls.Add(lblMultiExample);
             // ===== 结束提取规则区域 =====
 
             Controls.Add(grpExtract);
 
-            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 440), Size = new Size(80, 28),
+            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 470), Size = new Size(80, 28),
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(239, 68, 68), ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) }, Cursor = Cursors.Hand,
                 Visible = _existingLink != null || !string.IsNullOrEmpty(_selectedTargetPath) };
             _btnDelete.Click += OnDeleteClick;
             Controls.Add(_btnDelete);
 
-            _btnOK = new Button { Text = "确定", Location = new Point(330, 440), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
+            _btnOK = new Button { Text = "确定", Location = new Point(330, 470), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
             Controls.Add(_btnOK);
 
-            _btnCancel = new Button { Text = "取消", Location = new Point(420, 440), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
+            _btnCancel = new Button { Text = "取消", Location = new Point(420, 470), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
             Controls.Add(_btnCancel);

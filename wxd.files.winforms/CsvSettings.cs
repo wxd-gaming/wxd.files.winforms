@@ -236,6 +236,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"CsvSettings.WriteDirConfigToFile Error: {ex.Message}");
+                System.Diagnostics.Trace.WriteLine($"CsvSettings.WriteDirConfigToFile Error: {ex.Message}");
             }
         }
 
@@ -487,6 +488,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
+                System.Diagnostics.Trace.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
             }
         }
 

@@ -8,7 +8,7 @@ namespace wxd.files.winforms
     /// <summary>独立表格查看窗体（用于关联打开，不包含左侧文件列表和目录树）</summary>
     public class CsvReaderStandaloneForm : Form
     {
-        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1, string highlightColumnName = "", int headerRowIndex = -1, bool isLinkedFromCell = false)
+        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1, string highlightColumnName = "", int headerRowIndex = -1, bool isLinkedFromCell = false, ColumnLinkConfig? linkConfig = null)
         {
             var fileName = Path.GetFileName(filePath);
             Text = fileName;
@@ -32,13 +32,13 @@ namespace wxd.files.winforms
             if (ext == ".csv")
             {
                 var viewer = new CsvViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName);
+                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName, linkConfig);
                 Controls.Add(viewer);
             }
             else
             {
                 var viewer = new ExcelViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName);
+                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName, linkConfig);
                 Controls.Add(viewer);
             }
         }

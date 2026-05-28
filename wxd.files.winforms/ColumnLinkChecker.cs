@@ -131,16 +131,16 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColumnIndex);
             
-            // 如果有提取规则，先提取实际匹配值
-            string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                ? linkConfig.ExtractValue(cellValue) : cellValue;
+            // 如果有提取规则，先提取实际匹配值（支持多值）
+            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
 
             string prefix = currentRel + "|" + originalColumnIndex + "->";
             foreach (var kvp in _linkLookups)
             {
                 if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    return kvp.Value.Contains(matchValue);
+                    return matchValues.Any(v => kvp.Value.Contains(v));
                 }
             }
             return false;
@@ -184,9 +184,9 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
-            // 如果有提取规则，提取实际匹配值
-            string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                ? linkConfig.ExtractValue(cellVal) : cellVal;
+            // 如果有提取规则，提取实际匹配值（支持多值）
+            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
 
             // 查找匹配的关联配置
             string prefix = currentRel + "|" + originalColIndex + "->";
@@ -199,13 +199,13 @@ namespace wxd.files.winforms
                 if (extractIdx >= 0)
                     keyAfterArrow = keyAfterArrow.Substring(0, extractIdx);
                 
-                if (!kvp.Value.Contains(matchValue))
+                if (!matchValues.Any(v => kvp.Value.Contains(v)))
                 {
                     var colonIdx = keyAfterArrow.LastIndexOf(':');
                     string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
                     string targetCol = colonIdx > 0 ? keyAfterArrow.Substring(colonIdx + 1) : "";
                     string displayValue = linkConfig?.ValueExtractionEnabled == true
-                        ? $"{cellVal} (提取: {matchValue})" : cellVal;
+                        ? $"{cellVal} (提取: {string.Join(", ", matchValues)})" : cellVal;
                     return $"关联表 [{Path.GetFileName(targetFile)}] 的关联列中未找到该数据: \"{displayValue}\"";
                 }
                 break; // 值存在，不需要提示
@@ -263,11 +263,11 @@ namespace wxd.files.winforms
                 {
                     var cellValue = e.Value?.ToString()?.Trim() ?? "";
                     
-                    // 如果有提取规则，提取实际匹配值
-                    string matchValue = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                        ? linkConfig.ExtractValue(cellValue) : cellValue;
+                    // 如果有提取规则，提取实际匹配值（支持多值）
+                    var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                        ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
                     
-                    if (!string.IsNullOrEmpty(cellValue) && !kvp.Value.Contains(matchValue))
+                    if (!string.IsNullOrEmpty(cellValue) && !matchValues.Any(v => kvp.Value.Contains(v)))
                     {
                         e.CellStyle.ForeColor = Color.Red;
                         e.CellStyle.SelectionForeColor = Color.Red;

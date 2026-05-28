@@ -29,38 +29,77 @@ namespace wxd.files.winforms
         /// <summary>提取的分段索引（0-based），例如 "4002#1" 用 "#" 分隔后，取 index=0 得到 "4002"</summary>
         public int ExtractPartIndex { get; set; } = 0;
 
+        /// <summary>多值分隔符（如 "|"），用于将整个值拆分为多组再各自提取。为空表示不启用多值模式</summary>
+        public string MultiValueDelimiter { get; set; } = "";
+
         /// <summary>
-        /// 从原始值中提取用于关联匹配的实际值
+        /// 从原始值中提取用于关联匹配的实际值（单个值，向后兼容）
         /// </summary>
-        /// <param name="originalValue">原始单元格值</param>
-        /// <returns>提取后的值（未启用提取或失败时返回原值）</returns>
         public string ExtractValue(string originalValue)
         {
+            var values = ExtractValues(originalValue);
+            return values.Count > 0 ? values[0] : originalValue;
+        }
+
+        /// <summary>
+        /// 从原始值中提取用于关联匹配的所有实际值（支持多值切割）
+        /// 流程：先按 MultiValueDelimiter 拆分为多组，每组再按 ExtractDelimiter 提取 ExtractPartIndex
+        /// 例如 "100500201#1|100500202#1" 先按 "|" 拆分，每组按 "#" 取 index=0，得到 ["100500201", "100500202"]
+        /// </summary>
+        public List<string> ExtractValues(string originalValue)
+        {
+            var result = new List<string>();
             if (!ValueExtractionEnabled || string.IsNullOrEmpty(originalValue))
-                return originalValue;
+            {
+                result.Add(originalValue);
+                return result;
+            }
 
             try
             {
-                if (string.IsNullOrEmpty(ExtractDelimiter))
+                // 第一步：按多值分隔符拆分
+                var groups = string.IsNullOrEmpty(MultiValueDelimiter)
+                    ? new[] { originalValue }
+                    : originalValue.Split(new[] { MultiValueDelimiter }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var group in groups)
                 {
-                    // 无分隔符模式：按字符位置截取
-                    if (ExtractPartIndex >= 0 && ExtractPartIndex < originalValue.Length)
-                        return originalValue.Substring(0, ExtractPartIndex + 1);
-                    return originalValue;
+                    var trimmedGroup = group.Trim();
+                    if (string.IsNullOrEmpty(trimmedGroup)) continue;
+
+                    string extracted;
+                    if (string.IsNullOrEmpty(ExtractDelimiter))
+                    {
+                        // 无分隔符模式：按字符位置截取
+                        if (ExtractPartIndex >= 0 && ExtractPartIndex < trimmedGroup.Length)
+                            extracted = trimmedGroup.Substring(0, ExtractPartIndex + 1);
+                        else
+                            extracted = trimmedGroup;
+                    }
+                    else
+                    {
+                        // 有分隔符模式：按分隔符拆分后取指定段
+                        var parts = trimmedGroup.Split(new[] { ExtractDelimiter }, StringSplitOptions.None);
+                        if (ExtractPartIndex >= 0 && ExtractPartIndex < parts.Length)
+                            extracted = parts[ExtractPartIndex].Trim();
+                        else
+                            extracted = trimmedGroup;
+                    }
+
+                    if (!string.IsNullOrEmpty(extracted) && !result.Contains(extracted))
+                        result.Add(extracted);
                 }
-                else
-                {
-                    // 有分隔符模式：按分隔符拆分后取指定段
-                    var parts = originalValue.Split(new[] { ExtractDelimiter }, StringSplitOptions.None);
-                    if (ExtractPartIndex >= 0 && ExtractPartIndex < parts.Length)
-                        return parts[ExtractPartIndex].Trim();
-                    return originalValue;
-                }
+
+                if (result.Count == 0)
+                    result.Add(originalValue);
             }
             catch
             {
-                return originalValue;
+                result.Clear();
+                result.Add(originalValue);
             }
+
+            return result;
         }
 
         #endregion
