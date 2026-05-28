@@ -6,7 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using ExcelDataReader;
+using NPOI.XSSF.UserModel;
+using NPOI.HSSF.UserModel;
 
 namespace wxd.files.winforms
 {
@@ -74,22 +75,26 @@ namespace wxd.files.winforms
                     }
                     else if (ext == ".xls" || ext == ".xlsx")
                     {
-                        using var fs = new FileStream(targetFullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                        using var reader = ExcelReaderFactory.CreateReader(fs);
-                        var result = reader.AsDataSet();
-                        if (result.Tables.Count > 0)
+                        try
                         {
-                            var table = result.Tables[0];
-                            foreach (DataRow row in table.Rows)
+                            using var fs = new FileStream(targetFullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                            NPOI.SS.UserModel.IWorkbook workbook = ext == ".xls" ? new HSSFWorkbook(fs) : new XSSFWorkbook(fs);
+                            if (workbook.NumberOfSheets > 0)
                             {
-                                if (link.TargetColumnIndex >= 0 && link.TargetColumnIndex < table.Columns.Count)
+                                var sheet = workbook.GetSheetAt(0);
+                                for (int r = 0; r <= sheet.LastRowNum; r++)
                                 {
-                                    var val = row[link.TargetColumnIndex]?.ToString()?.Trim() ?? "";
+                                    var sheetRow = sheet.GetRow(r);
+                                    if (sheetRow == null) continue;
+                                    var cell = sheetRow.GetCell(link.TargetColumnIndex);
+                                    var val = GetNpoiCellStringValue(cell).Trim();
                                     if (!string.IsNullOrEmpty(val))
                                         values.Add(val);
                                 }
                             }
+                            workbook.Close();
                         }
+                        catch { }
                     }
 
                     // key 格式: "{sourceRel}|{sourceColIndex}->{targetRel}:{targetColIndex}"
@@ -316,6 +321,52 @@ namespace wxd.files.winforms
             }
             result.Add(sb.ToString().Trim());
             return result.ToArray();
+        }
+
+        /// <summary>获取NPOI单元格的字符串值（仅用于关联值读取，简化版）</summary>
+        private static string GetNpoiCellStringValue(NPOI.SS.UserModel.ICell? cell)
+        {
+            if (cell == null) return "";
+
+            switch (cell.CellType)
+            {
+                case NPOI.SS.UserModel.CellType.String:
+                    return cell.StringCellValue ?? "";
+                case NPOI.SS.UserModel.CellType.Numeric:
+                    if (NPOI.SS.UserModel.DateUtil.IsCellDateFormatted(cell))
+                    {
+                        try { return $"{cell.DateCellValue:yyyy-MM-dd HH:mm:ss}"; }
+                        catch { return cell.NumericCellValue.ToString(); }
+                    }
+                    var numVal = cell.NumericCellValue;
+                    if (numVal == Math.Floor(numVal) && numVal >= long.MinValue && numVal <= long.MaxValue)
+                        return ((long)numVal).ToString();
+                    return numVal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                case NPOI.SS.UserModel.CellType.Boolean:
+                    return cell.BooleanCellValue ? "TRUE" : "FALSE";
+                case NPOI.SS.UserModel.CellType.Formula:
+                    try
+                    {
+                        switch (cell.CachedFormulaResultType)
+                        {
+                            case NPOI.SS.UserModel.CellType.Numeric:
+                                var nv = cell.NumericCellValue;
+                                if (nv == Math.Floor(nv) && nv >= long.MinValue && nv <= long.MaxValue)
+                                    return ((long)nv).ToString();
+                                return nv.ToString("G");
+                            case NPOI.SS.UserModel.CellType.String:
+                                return cell.StringCellValue ?? "";
+                            case NPOI.SS.UserModel.CellType.Boolean:
+                                return cell.BooleanCellValue ? "TRUE" : "FALSE";
+                        }
+                    }
+                    catch { }
+                    return cell.ToString() ?? "";
+                case NPOI.SS.UserModel.CellType.Blank:
+                    return "";
+                default:
+                    return cell.ToString() ?? "";
+            }
         }
     }
 }
