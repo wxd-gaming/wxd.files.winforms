@@ -425,8 +425,13 @@ namespace wxd.files.winforms
                 }
 
                 // 加载CSV文件
+                var showHidden = CsvSettings.ShowHiddenFiles;
                 foreach (var file in Directory.GetFiles(dirPath, "*.csv"))
                 {
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
                     var fileNode = new TreeNode(Path.GetFileName(file))
                     {
                         Tag = file,
@@ -443,6 +448,10 @@ namespace wxd.files.winforms
                 {
                     foreach (var file in Directory.GetFiles(dirPath, ext))
                     {
+                        if (!showHidden)
+                        {
+                            try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                        }
                         var fileNode = new TreeNode(Path.GetFileName(file))
                         {
                             Tag = file,
@@ -459,12 +468,23 @@ namespace wxd.files.winforms
             catch (Exception) { }
         }
 
-        /// <summary>获取目录下的子目录，自动忽略 .svn 和 .git 等版本控制文件夹</summary>
+        /// <summary>获取目录下的子目录，自动忽略 .svn 和 .git 等版本控制文件夹，并根据全局设置过滤隐藏文件夹</summary>
         private static string[] GetSubDirectories(string path)
         {
             if (!Directory.Exists(path)) return Array.Empty<string>();
+            var showHidden = CsvSettings.ShowHiddenFiles;
             return Directory.GetDirectories(path)
-                .Where(d => !IsVcsDir(Path.GetFileName(d)))
+                .Where(d =>
+                {
+                    var name = Path.GetFileName(d);
+                    if (IsVcsDir(name)) return false;
+                    if (!showHidden)
+                    {
+                        try { return (File.GetAttributes(d) & FileAttributes.Hidden) != FileAttributes.Hidden; }
+                        catch { return true; }
+                    }
+                    return true;
+                })
                 .ToArray();
         }
 
@@ -481,15 +501,22 @@ namespace wxd.files.winforms
             {
                 if (GetSubDirectories(dirPath).Length > 0)
                     return true;
-                if (Directory.GetFiles(dirPath, "*.csv").Length > 0)
+                var showHidden = CsvSettings.ShowHiddenFiles;
+                if (Directory.GetFiles(dirPath, "*.csv").Any(f => showHidden || !IsFileHidden(f)))
                     return true;
-                if (Directory.GetFiles(dirPath, "*.xls").Length > 0)
+                if (Directory.GetFiles(dirPath, "*.xls").Any(f => showHidden || !IsFileHidden(f)))
                     return true;
-                if (Directory.GetFiles(dirPath, "*.xlsx").Length > 0)
+                if (Directory.GetFiles(dirPath, "*.xlsx").Any(f => showHidden || !IsFileHidden(f)))
                     return true;
             }
             catch { }
             return false;
+        }
+
+        private static bool IsFileHidden(string path)
+        {
+            try { return (File.GetAttributes(path) & FileAttributes.Hidden) == FileAttributes.Hidden; }
+            catch { return false; }
         }
 
         private void OnSelectFolderClick(object? sender, EventArgs e)
@@ -589,10 +616,16 @@ namespace wxd.files.winforms
 
             try
             {
+                var showHidden = CsvSettings.ShowHiddenFiles;
+
                 // 获取当前目录的CSV文件
                 foreach (var file in Directory.GetFiles(currentDir, "*.csv"))
                 {
                     token.ThrowIfCancellationRequested();
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
                     var relativePath = GetRelativePath(rootDir, file);
                     files.Add(new FileInfo
                     {
@@ -609,6 +642,10 @@ namespace wxd.files.winforms
                     foreach (var file in Directory.GetFiles(currentDir, ext))
                     {
                         token.ThrowIfCancellationRequested();
+                        if (!showHidden)
+                        {
+                            try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                        }
                         var relativePath = GetRelativePath(rootDir, file);
                         files.Add(new FileInfo
                         {
@@ -620,7 +657,7 @@ namespace wxd.files.winforms
                     }
                 }
 
-                // 递归子目录
+                // 递归子目录（GetSubDirectories 已内置隐藏过滤）
                 foreach (var subDir in GetSubDirectories(currentDir))
                 {
                     token.ThrowIfCancellationRequested();
@@ -2477,8 +2514,13 @@ namespace wxd.files.winforms
             _fileEntries.Clear();
             try
             {
+                var showHidden = CsvSettings.ShowHiddenFiles;
                 foreach (var f in Directory.GetFiles(root, "*.csv", SearchOption.AllDirectories))
                 {
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(f) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
                     var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                         ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
                     _fileEntries.Add((rel, f));
@@ -2487,6 +2529,10 @@ namespace wxd.files.winforms
                 {
                     foreach (var f in Directory.GetFiles(root, ext, SearchOption.AllDirectories))
                     {
+                        if (!showHidden)
+                        {
+                            try { if ((File.GetAttributes(f) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                        }
                         var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                             ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
                         _fileEntries.Add((rel, f));
@@ -4369,8 +4415,13 @@ namespace wxd.files.winforms
             _fileEntries.Clear();
             try
             {
+                var showHidden = CsvSettings.ShowHiddenFiles;
                 foreach (var f in Directory.GetFiles(root, "*.csv", SearchOption.AllDirectories))
                 {
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(f) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
                     var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                         ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
                     _fileEntries.Add((rel, f));
@@ -4379,6 +4430,10 @@ namespace wxd.files.winforms
                 {
                     foreach (var f in Directory.GetFiles(root, ext, SearchOption.AllDirectories))
                     {
+                        if (!showHidden)
+                        {
+                            try { if ((File.GetAttributes(f) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                        }
                         var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                             ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
                         _fileEntries.Add((rel, f));

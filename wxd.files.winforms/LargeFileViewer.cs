@@ -435,9 +435,16 @@ namespace wxd.files.winforms
 
             try
             {
+                var showHidden = CsvSettings.ShowHiddenFiles;
+
                 foreach (var file in Directory.GetFiles(currentDir))
                 {
                     token.ThrowIfCancellationRequested();
+
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
 
                     if (!IsTextFile(file))
                         continue;
@@ -454,6 +461,10 @@ namespace wxd.files.winforms
                 foreach (var subDir in Directory.GetDirectories(currentDir))
                 {
                     token.ThrowIfCancellationRequested();
+                    if (!showHidden)
+                    {
+                        try { if ((File.GetAttributes(subDir) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                    }
                     ScanDirectory(subDir, rootDir, files, token);
                 }
             }

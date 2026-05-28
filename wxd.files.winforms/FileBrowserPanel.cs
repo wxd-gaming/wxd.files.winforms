@@ -957,9 +957,15 @@ namespace wxd.files.winforms
 
                     try
                     {
+                        var showHidden = CsvSettings.ShowHiddenFiles;
                         foreach (var dir in Directory.GetDirectories(_currentDir))
                         {
                             if (token.IsCancellationRequested) return;
+                            // 不显示隐藏文件夹时，跳过隐藏属性的目录
+                            if (!showHidden)
+                            {
+                                try { if ((File.GetAttributes(dir) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                            }
                             try { dirs.Add(new DirInfo { Name = Path.GetFileName(dir), FullName = dir }); } catch { }
                         }
                         dirs.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
@@ -969,6 +975,11 @@ namespace wxd.files.winforms
                         foreach (var file in Directory.GetFiles(_currentDir))
                         {
                             if (token.IsCancellationRequested) return;
+                            // 不显示隐藏文件时，跳过隐藏属性的文件
+                            if (!showHidden)
+                            {
+                                try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
+                            }
                             try { files.Add(new FileInfo(file)); } catch { }
                         }
                         files.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
@@ -1880,10 +1891,16 @@ namespace wxd.files.winforms
         }
 
         // ==================== 公共接口 & 状态持久化 ====================
-        public void RefreshCurrent()
+        /// <summary>刷新当前目录（通常用于显示隐藏设置变更后重新加载）</summary>
+        public void RefreshCurrentDirectory()
         {
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
                 NavigateTo(_currentDir, restoreFilter: false);
+        }
+
+        public void RefreshCurrent()
+        {
+            RefreshCurrentDirectory();
         }
 
         private void SavePanelState()

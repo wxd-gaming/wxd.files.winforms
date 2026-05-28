@@ -20,6 +20,7 @@ namespace wxd.files.winforms
         private Panel? _pnlTopBar;
         private Button? _btnCmdManager;                      // 命令管理按钮
         private Button? _btnSettings;                         // ≡ 设置按钮
+        private CheckBox? _chkShowHidden;                     // 显示隐藏文件夹复选框
         private Button? _btnSaveState;                        // 保存状态按钮
         private FlowLayoutPanel? _flowPanel;                  // 顶部流式布局面板
         private bool _showSettings = false;                   // 是否显示设置界面
@@ -406,6 +407,27 @@ namespace wxd.files.winforms
             };
             _btnSettings.Click += OnSettingsClick;
 
+            // 显示隐藏文件夹复选框（在设置按钮前面，始终可见）
+            _chkShowHidden = new CheckBox
+            {
+                Text = "显示隐藏",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightLabelFg,
+                Margin = new Padding(4, 6, 4, 0),
+                Checked = CsvSettings.ShowHiddenFiles
+            };
+            _chkShowHidden.CheckedChanged += (s, e) =>
+            {
+                CsvSettings.ShowHiddenFiles = _chkShowHidden.Checked;
+                // 通知所有面板刷新
+                foreach (var panel in _panels)
+                {
+                    if (!panel.IsDisposed)
+                        panel.RefreshCurrentDirectory();
+                }
+            };
+
             _lblCount = new Label
             {
                 Text = "窗格数量",
@@ -533,9 +555,9 @@ namespace wxd.files.winforms
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
             // 按顺序添加到流式布局面板：
-            // 标题 → ≡按钮 → 配置项(默认隐藏) → 保存状态 → 命令管理(默认隐藏) → 阅读器 → 大文件阅读
+            // 标题 → 显示隐藏复选框 → ≡按钮 → 配置项(默认隐藏) → 保存状态 → 命令管理(默认隐藏) → 阅读器 → 大文件阅读
             _flowPanel.Controls.AddRange(new Control[] {
-                lblTitle, _btnSettings,
+                lblTitle, _chkShowHidden, _btnSettings,
                 _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme,
                 _btnSaveState, _btnCmdManager,
                 _btnOpenCsvReader, btnLargeFileViewer

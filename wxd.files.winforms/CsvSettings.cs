@@ -1,5 +1,6 @@
 using System;
 using System.Configuration;
+using System.IO;
 
 namespace wxd.files.winforms
 {
@@ -148,15 +149,114 @@ namespace wxd.files.winforms
 
         #endregion
 
-        #region 文件夹CSV/Excel固定行记录（集中JSON存储，LRU淘汰，最多50条）
+        #region 显示隐藏文件夹设置
 
-        private const string DirFrozenConfigsKey = "DirFrozenConfigs";
+        private const string ShowHiddenFilesKey = "ShowHiddenFiles";
+
+        /// <summary>
+        /// 是否显示隐藏文件夹和文件，默认 false
+        /// </summary>
+        public static bool ShowHiddenFiles
+        {
+            get => GetStringValue(ShowHiddenFilesKey, "false") == "true";
+            set => SetStringValue(ShowHiddenFilesKey, value ? "true" : "false");
+        }
+
+        #endregion
+
+        #region 文件夹感知数据（.wxd-work/config.json 文件存储，可随文件夹移植）
+
+        private const string WxdWorkDirName = ".wxd-work";
+        private const string WxdConfigFileName = "config.json";
         private const int MaxDirConfigs = 50;
 
-        /// <summary>读取所有目录配置列表</summary>
-        private static List<DirectoryFrozenConfig> GetDirFrozenConfigs()
+        /// <summary>.wxd-work 配置文件夹路径</summary>
+        private static string GetWxdWorkDir(string directoryPath)
         {
-            var json = GetStringValue(DirFrozenConfigsKey, "[]");
+            return Path.Combine(directoryPath, WxdWorkDirName);
+        }
+
+        /// <summary>.wxd-work/config.json 文件路径</summary>
+        private static string GetWxdConfigFilePath(string directoryPath)
+        {
+            return Path.Combine(GetWxdWorkDir(directoryPath), WxdConfigFileName);
+        }
+
+        /// <summary>确保 .wxd-work 隐藏文件夹存在</summary>
+        private static void EnsureWxdWorkDir(string directoryPath)
+        {
+            var dir = GetWxdWorkDir(directoryPath);
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+                // 设为隐藏文件夹
+                File.SetAttributes(dir, File.GetAttributes(dir) | FileAttributes.Hidden);
+            }
+        }
+
+        /// <summary>从 .wxd-work/config.json 读取配置</summary>
+        private static DirectoryFrozenConfig? ReadDirConfigFromFile(string directoryPath)
+        {
+            var configPath = GetWxdConfigFilePath(directoryPath);
+            if (!File.Exists(configPath)) return null;
+            try
+            {
+                var json = File.ReadAllText(configPath);
+                var cfg = System.Text.Json.JsonSerializer.Deserialize<DirectoryFrozenConfig>(json);
+                if (cfg == null) return null;
+                cfg.DirectoryPath = directoryPath;
+                cfg.LastAccessed = DateTime.UtcNow;
+                return cfg;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>将配置写入 .wxd-work/config.json（序列化前清除运行时字段，保持文件干净）</summary>
+        private static void WriteDirConfigToFile(string directoryPath, DirectoryFrozenConfig cfg)
+        {
+            try
+            {
+                EnsureWxdWorkDir(directoryPath);
+                var configPath = GetWxdConfigFilePath(directoryPath);
+                // 复制一份用于序列化，清除运行时字段，避免绝对路径写入文件
+                var fileCfg = new DirectoryFrozenConfig
+                {
+                    CsvFrozenRows = cfg.CsvFrozenRows,
+                    ExcelFrozenRows = cfg.ExcelFrozenRows,
+                    CsvHeaderRowIndex = cfg.CsvHeaderRowIndex,
+                    ExcelHeaderRowIndex = cfg.ExcelHeaderRowIndex,
+                    ColumnLinks = cfg.ColumnLinks
+                };
+                var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(configPath, json);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CsvSettings.WriteDirConfigToFile Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>删除 .wxd-work/config.json（回退到默认值时调用）</summary>
+        private static void DeleteDirConfigFile(string directoryPath)
+        {
+            try
+            {
+                var configPath = GetWxdConfigFilePath(directoryPath);
+                if (File.Exists(configPath))
+                    File.Delete(configPath);
+            }
+            catch { }
+        }
+
+        // ---- 以下方法向后兼容 ConfigurationManager（旧数据），但优先使用文件 ----
+
+        /// <summary>读取所有目录配置列表（仅从 ConfigurationManager，作为回退）</summary>
+        private static List<DirectoryFrozenConfig> GetDirConfigsFromConfigManager()
+        {
+            var json = GetStringValue("DirFrozenConfigs", "[]");
             try
             {
                 return System.Text.Json.JsonSerializer.Deserialize<List<DirectoryFrozenConfig>>(json)
@@ -168,155 +268,158 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>保存目录配置列表（按最近访问降序，超50条淘汰末尾）</summary>
-        private static void SetDirFrozenConfigs(List<DirectoryFrozenConfig> configs)
+        /// <summary>保存目录配置列表到 ConfigurationManager（作为回退/缓存）</summary>
+        private static void SetDirConfigsToConfigManager(List<DirectoryFrozenConfig> configs)
         {
             configs.Sort((a, b) => b.LastAccessed.CompareTo(a.LastAccessed));
             if (configs.Count > MaxDirConfigs)
                 configs.RemoveRange(MaxDirConfigs, configs.Count - MaxDirConfigs);
             var json = System.Text.Json.JsonSerializer.Serialize(configs);
-            SetStringValue(DirFrozenConfigsKey, json);
+            SetStringValue("DirFrozenConfigs", json);
         }
 
-        /// <summary>查找或创建目录配置项</summary>
-        private static DirectoryFrozenConfig FindOrCreateDirConfig(List<DirectoryFrozenConfig> configs, string directoryPath)
+        /// <summary>
+        /// 获取目录配置：优先从 .wxd-work/config.json 读取，
+        /// 不存在则从 ConfigurationManager 读取（旧数据兼容），
+        /// 仍不存在则返回默认值。
+        /// </summary>
+        private static DirectoryFrozenConfig? TryGetDirConfig(string directoryPath)
         {
-            var idx = configs.FindIndex(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0)
+            if (string.IsNullOrEmpty(directoryPath)) return null;
+
+            // 1. 优先从文件读取
+            var fileCfg = ReadDirConfigFromFile(directoryPath);
+            if (fileCfg != null) return fileCfg;
+
+            // 2. 回退到 ConfigurationManager（旧数据兼容）
+            var configs = GetDirConfigsFromConfigManager();
+            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (cfg != null)
             {
-                configs[idx].LastAccessed = DateTime.UtcNow;
-                return configs[idx];
+                cfg.LastAccessed = DateTime.UtcNow;
+                // 同步写到文件，下次直接读文件
+                WriteDirConfigToFile(directoryPath, cfg);
+                SetDirConfigsToConfigManager(configs);
+                return cfg;
             }
-            var newCfg = new DirectoryFrozenConfig
+
+            return null;
+        }
+
+        /// <summary>
+        /// 获取或创建目录配置：优先从文件读取，不存在则创建默认值并写回文件。
+        /// </summary>
+        private static DirectoryFrozenConfig GetOrCreateDirConfig(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            if (cfg != null) return cfg;
+
+            // 3. 创建默认配置
+            cfg = new DirectoryFrozenConfig
             {
                 DirectoryPath = directoryPath,
                 CsvFrozenRows = DefaultValue,
                 ExcelFrozenRows = DefaultValue,
+                CsvHeaderRowIndex = -1,
+                ExcelHeaderRowIndex = -1,
+                ColumnLinks = new(),
                 LastModified = DateTime.UtcNow,
                 LastAccessed = DateTime.UtcNow
             };
-            configs.Add(newCfg);
-            return newCfg;
+            // 写入文件
+            WriteDirConfigToFile(directoryPath, cfg);
+            // 也写入 ConfigurationManager 缓存
+            var configs = GetDirConfigsFromConfigManager();
+            configs.Add(cfg);
+            SetDirConfigsToConfigManager(configs);
+            return cfg;
+        }
+
+        /// <summary>
+        /// 保存目录配置：写入 .wxd-work/config.json 并同步到 ConfigurationManager 缓存。
+        /// </summary>
+        private static void SaveDirConfig(string directoryPath, Action<DirectoryFrozenConfig> updateAction)
+        {
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var cfg = GetOrCreateDirConfig(directoryPath);
+            updateAction(cfg);
+            cfg.LastModified = DateTime.UtcNow;
+            cfg.LastAccessed = DateTime.UtcNow;
+            // 写入文件
+            WriteDirConfigToFile(directoryPath, cfg);
+            // 同步到 ConfigurationManager 缓存
+            var configs = GetDirConfigsFromConfigManager();
+            var idx = configs.FindIndex(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+                configs[idx] = cfg;
+            else
+                configs.Add(cfg);
+            SetDirConfigsToConfigManager(configs);
         }
 
         /// <summary>获取指定目录的CSV冻结行数</summary>
         public static int GetCsvFrozenRowsByDirectory(string directoryPath)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return DefaultValue;
-            var configs = GetDirFrozenConfigs();
-            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (cfg == null) return DefaultValue;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
-            return cfg.CsvFrozenRows;
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.CsvFrozenRows ?? DefaultValue;
         }
 
         /// <summary>设置指定目录的CSV冻结行数</summary>
         public static void SetCsvFrozenRowsByDirectory(string directoryPath, int value)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-            var configs = GetDirFrozenConfigs();
-            var cfg = FindOrCreateDirConfig(configs, directoryPath);
-            cfg.CsvFrozenRows = Math.Max(0, Math.Min(8, value));
-            cfg.LastModified = DateTime.UtcNow;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
+            SaveDirConfig(directoryPath, cfg => cfg.CsvFrozenRows = Math.Max(0, Math.Min(8, value)));
         }
 
         /// <summary>获取指定目录的Excel冻结行数</summary>
         public static int GetExcelFrozenRowsByDirectory(string directoryPath)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return DefaultValue;
-            var configs = GetDirFrozenConfigs();
-            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (cfg == null) return DefaultValue;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
-            return cfg.ExcelFrozenRows;
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.ExcelFrozenRows ?? DefaultValue;
         }
 
         /// <summary>设置指定目录的Excel冻结行数</summary>
         public static void SetExcelFrozenRowsByDirectory(string directoryPath, int value)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-            var configs = GetDirFrozenConfigs();
-            var cfg = FindOrCreateDirConfig(configs, directoryPath);
-            cfg.ExcelFrozenRows = Math.Max(0, Math.Min(8, value));
-            cfg.LastModified = DateTime.UtcNow;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
+            SaveDirConfig(directoryPath, cfg => cfg.ExcelFrozenRows = Math.Max(0, Math.Min(8, value)));
         }
 
         /// <summary>获取指定目录的列关联列表</summary>
         public static List<ColumnLinkConfig> GetColumnLinksByDirectory(string directoryPath)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return new();
-            var configs = GetDirFrozenConfigs();
-            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (cfg == null) return new();
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
-            return cfg.ColumnLinks ?? new();
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.ColumnLinks ?? new();
         }
 
         /// <summary>设置指定目录的列关联列表</summary>
         public static void SetColumnLinksByDirectory(string directoryPath, List<ColumnLinkConfig> links)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-            var configs = GetDirFrozenConfigs();
-            var cfg = FindOrCreateDirConfig(configs, directoryPath);
-            cfg.ColumnLinks = links ?? new();
-            cfg.LastModified = DateTime.UtcNow;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
+            SaveDirConfig(directoryPath, cfg => cfg.ColumnLinks = links ?? new());
         }
 
         /// <summary>获取指定目录的CSV表头行索引</summary>
         public static int GetCsvHeaderRowIndexByDirectory(string directoryPath)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return -1;
-            var configs = GetDirFrozenConfigs();
-            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (cfg == null) return -1;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
-            return cfg.CsvHeaderRowIndex;
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.CsvHeaderRowIndex ?? -1;
         }
 
         /// <summary>设置指定目录的CSV表头行索引</summary>
         public static void SetCsvHeaderRowIndexByDirectory(string directoryPath, int value)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-            var configs = GetDirFrozenConfigs();
-            var cfg = FindOrCreateDirConfig(configs, directoryPath);
-            cfg.CsvHeaderRowIndex = value;
-            cfg.LastModified = DateTime.UtcNow;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
+            SaveDirConfig(directoryPath, cfg => cfg.CsvHeaderRowIndex = value);
         }
 
         /// <summary>获取指定目录的Excel表头行索引</summary>
         public static int GetExcelHeaderRowIndexByDirectory(string directoryPath)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return -1;
-            var configs = GetDirFrozenConfigs();
-            var cfg = configs.Find(c => c.DirectoryPath.Equals(directoryPath, StringComparison.OrdinalIgnoreCase));
-            if (cfg == null) return -1;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
-            return cfg.ExcelHeaderRowIndex;
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.ExcelHeaderRowIndex ?? -1;
         }
 
         /// <summary>设置指定目录的Excel表头行索引</summary>
         public static void SetExcelHeaderRowIndexByDirectory(string directoryPath, int value)
         {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-            var configs = GetDirFrozenConfigs();
-            var cfg = FindOrCreateDirConfig(configs, directoryPath);
-            cfg.ExcelHeaderRowIndex = value;
-            cfg.LastModified = DateTime.UtcNow;
-            cfg.LastAccessed = DateTime.UtcNow;
-            SetDirFrozenConfigs(configs);
+            SaveDirConfig(directoryPath, cfg => cfg.ExcelHeaderRowIndex = value);
         }
 
         #endregion
