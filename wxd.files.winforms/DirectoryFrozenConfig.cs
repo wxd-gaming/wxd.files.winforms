@@ -29,4 +29,7 @@ public class DirectoryFrozenConfig
 
     /// <summary>列关联配置列表（按目录存储）</summary>
     public List<ColumnLinkConfig> ColumnLinks { get; set; } = new();
+
+    /// <summary>文件备注名映射（key: 相对路径, value: 备注名）</summary>
+    public Dictionary<string, string> FileRemarks { get; set; } = new();
 }

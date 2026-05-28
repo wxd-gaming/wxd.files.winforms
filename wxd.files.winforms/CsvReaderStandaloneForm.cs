@@ -8,10 +8,9 @@ namespace wxd.files.winforms
     /// <summary>独立表格查看窗体（用于关联打开，不包含左侧文件列表和目录树）</summary>
     public class CsvReaderStandaloneForm : Form
     {
-        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1, string highlightColumnName = "", int headerRowIndex = -1, bool isLinkedFromCell = false, ColumnLinkConfig? linkConfig = null)
+        public CsvReaderStandaloneForm(string filePath, int highlightColumnIndex = -1, string highlightValue = "", int frozenRows = -1, string highlightColumnName = "", int headerRowIndex = -1, bool isLinkedFromCell = false, ColumnLinkConfig? linkConfig = null, string displayName = "")
         {
-            var fileName = Path.GetFileName(filePath);
-            Text = fileName;
+            Text = string.IsNullOrEmpty(displayName) ? Path.GetFileName(filePath) : displayName;
             if (isLinkedFromCell)
             {
                 ClientSize = new Size(1300, 350);

@@ -38,6 +38,7 @@ namespace wxd.files.winforms
         private readonly object _lockObj = new();
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
+        private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -394,6 +395,16 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>获取文件在树中的显示文本（有备注时显示"备注名 (文件名)"）</summary>
+        private string GetFileDisplayText(string fileFullPath)
+        {
+            var fileName = Path.GetFileName(fileFullPath);
+            var relativePath = GetRelativePath(_currentDir, fileFullPath);
+            if (_fileRemarks.TryGetValue(relativePath, out var remark) && !string.IsNullOrEmpty(remark))
+                return remark + " (" + fileName + ")";
+            return fileName;
+        }
+
         /// <summary>递归加载目录到树节点</summary>
         private void LoadChildrenToNode(TreeNode parentNode, string dirPath)
         {
@@ -429,7 +440,7 @@ namespace wxd.files.winforms
                     {
                         try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
                     }
-                    var fileNode = new TreeNode(Path.GetFileName(file))
+                    var fileNode = new TreeNode(GetFileDisplayText(file))
                     {
                         Tag = file,
                         ImageKey = "default",
@@ -449,7 +460,7 @@ namespace wxd.files.winforms
                         {
                             try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
                         }
-                        var fileNode = new TreeNode(Path.GetFileName(file))
+                        var fileNode = new TreeNode(GetFileDisplayText(file))
                         {
                             Tag = file,
                             ImageKey = "default",
@@ -579,6 +590,7 @@ namespace wxd.files.winforms
                 {
                     this.Invoke(() =>
                     {
+                        _fileRemarks = CsvSettings.GetFileRemarksByDirectory(_currentDir);
                         BuildTreeFromRoot();
                         ApplyFileFilter();
                     });
@@ -727,10 +739,15 @@ namespace wxd.files.winforms
             }
             else
             {
-                // 有过滤：根据匹配文件重建内部全展开树
+                // 有过滤：根据匹配文件重建内部全展开树（同时匹配文件名和备注名）
                 var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
                 var matchedFiles = _allFiles
-                    .Where(f => MatchesFilter(f.RelativePath, processedFilter))
+                    .Where(f =>
+                    {
+                        var remark = _fileRemarks.TryGetValue(f.RelativePath, out var r) ? r : "";
+                        return MatchesFilter(f.RelativePath, processedFilter) ||
+                               (!string.IsNullOrEmpty(remark) && MatchesFilter(remark, processedFilter));
+                    })
                     .OrderBy(f => f.RelativePath)
                     .ToList();
 
@@ -773,7 +790,7 @@ namespace wxd.files.winforms
                 var dirPath = Path.GetDirectoryName(file.FullPath) ?? rootDir;
                 TreeNode parentNode = GetOrCreateParentNode(dirPath, rootDir, dirNodes);
 
-                var fileNode = new TreeNode(file.Name)
+                var fileNode = new TreeNode(GetFileDisplayText(file.FullPath))
                 {
                     Tag = file.FullPath,
                     ImageKey = "default",
@@ -946,7 +963,82 @@ namespace wxd.files.winforms
                 }
             };
 
-            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuOpenFolder });
+            // 4. 设置备注名（仅文件节点可用）
+            var mnuRemark = new ToolStripMenuItem("设置备注名");
+            var isFile = System.IO.File.Exists(fullPath);
+            mnuRemark.Enabled = isFile;
+            mnuRemark.Click += (s, args) =>
+            {
+                if (!isFile) return;
+                var relativePath = GetRelativePath(_currentDir, fullPath);
+                var currentRemark = _fileRemarks.TryGetValue(relativePath, out var r) ? r : "";
+                using var inputForm = new Form
+                {
+                    Text = "设置备注名",
+                    ClientSize = new Size(380, 150),
+                    StartPosition = FormStartPosition.CenterParent,
+                    FormBorderStyle = FormBorderStyle.FixedDialog,
+                    MaximizeBox = false,
+                    MinimizeBox = false,
+                    Font = new Font("Microsoft YaHei UI", 9f)
+                };
+                var lbl = new Label
+                {
+                    Text = "为文件 \"" + Path.GetFileName(fullPath) + "\" 设置备注名：（留空则清除备注）",
+                    Location = new Point(12, 12), Size = new Size(356, 36),
+                    AutoSize = false
+                };
+                var txt = new TextBox
+                {
+                    Text = currentRemark,
+                    Location = new Point(12, 54), Size = new Size(260, 23),
+                    BorderStyle = BorderStyle.FixedSingle
+                };
+                var btnOk = new Button
+                {
+                    Text = "确定", DialogResult = DialogResult.OK,
+                    Location = new Point(282, 53), Size = new Size(80, 25),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White
+                };
+                var btnCancel = new Button
+                {
+                    Text = "取消", DialogResult = DialogResult.Cancel,
+                    Location = new Point(282, 84), Size = new Size(80, 25),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100)
+                };
+                inputForm.Controls.AddRange(new Control[] { lbl, txt, btnOk, btnCancel });
+                inputForm.AcceptButton = btnOk;
+                inputForm.CancelButton = btnCancel;
+                if (inputForm.ShowDialog(this) == DialogResult.OK)
+                {
+                    var trimmed = txt.Text.Trim();
+                    if (trimmed != currentRemark)
+                    {
+                        CsvSettings.SetFileRemark(_currentDir, relativePath, trimmed);
+                        if (string.IsNullOrEmpty(trimmed))
+                            _fileRemarks.Remove(relativePath);
+                        else
+                            _fileRemarks[relativePath] = trimmed;
+                        // 刷新树显示
+                        _treeFiles.BeginUpdate();
+                        node.Text = GetFileDisplayText(fullPath);
+                        _treeFiles.EndUpdate();
+                        // 同步更新已打开的页签标题
+                        foreach (TabPage tab in _tabContent.TabPages)
+                        {
+                            if (tab.Tag is string tabPath && tabPath.Equals(fullPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                tab.Text = GetFileDisplayText(fullPath);
+                                break;
+                            }
+                        }
+                    }
+                }
+            };
+
+            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuOpenFolder, mnuRemark });
             ctx.Show(_treeFiles, e.Location);
         }
 
@@ -976,8 +1068,8 @@ namespace wxd.files.winforms
             else
                 viewer = new CsvViewerControl(filePath, _paneIndex, _currentDir) { Dock = DockStyle.Fill };
 
-            // 创建新标签页
-            var tabPage = new TabPage(Path.GetFileName(filePath))
+            // 创建新标签页（有备注时显示"备注名 (文件名)"）
+            var tabPage = new TabPage(GetFileDisplayText(filePath))
             {
                 Tag = filePath,
                 ToolTipText = filePath
@@ -998,14 +1090,19 @@ namespace wxd.files.winforms
         private void OnViewerLinkTableRequested(object? sender, EventArgs e)
         {
             using var dialog = new LinkTableSelectorDialog(
-                _allFiles.Select(f => (f.RelativePath, f.FullPath)).ToList());
+                _allFiles.Select(f =>
+                {
+                    var display = GetFileDisplayText(f.FullPath);
+                    return (display, f.FullPath);
+                }).ToList());
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 var linkedPath = dialog.SelectedFilePath;
                 if (string.IsNullOrEmpty(linkedPath) || !File.Exists(linkedPath)) return;
 
-                // 在新独立窗口中打开关联文件
-                var standaloneForm = new CsvReaderStandaloneForm(linkedPath);
+                // 在新独立窗口中打开关联文件，标题栏也使用备注名显示
+                var displayName = GetFileDisplayText(linkedPath);
+                var standaloneForm = new CsvReaderStandaloneForm(linkedPath, displayName: displayName);
                 standaloneForm.Show(this);
             }
         }
@@ -1234,6 +1331,7 @@ namespace wxd.files.winforms
         private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
         private int _headerRowIndex = -1;               // 表头行索引（-1=未设置，0-based，必须 < frozenRows）
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
+        private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
         private List<ColumnLinkConfig> _columnLinks = new();
         private List<(string display, string fullPath)> _fileEntries = new();
@@ -3111,7 +3209,11 @@ namespace wxd.files.winforms
                         MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link);
+                    var remarks = CsvSettings.GetFileRemarksByDirectory(FrozenDir);
+                    var displayName = Path.GetFileName(targetFullPath);
+                    if (remarks.TryGetValue(link.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                        displayName = remark + " (" + Path.GetFileName(targetFullPath) + ")";
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link, displayName: displayName);
                     standaloneForm.Show(this);
                 };
             }
@@ -3558,6 +3660,7 @@ namespace wxd.files.winforms
         private bool _frozenRowsOverridden = false;     // 是否通过构造函数强制指定了冻结行数
         private int _headerRowIndex = -1;               // 表头行索引（-1=未设置，0-based，必须 < frozenRows）
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
+        private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
         private List<int> _visibleColumnIndices = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
         private List<ColumnLinkConfig> _columnLinks = new();
@@ -5085,7 +5188,11 @@ namespace wxd.files.winforms
                         MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link);
+                    var remarks = CsvSettings.GetFileRemarksByDirectory(FrozenDir);
+                    var displayName = Path.GetFileName(targetFullPath);
+                    if (remarks.TryGetValue(link.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                        displayName = remark + " (" + Path.GetFileName(targetFullPath) + ")";
+                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link, displayName: displayName);
                     standaloneForm.Show(this);
                 };
             }

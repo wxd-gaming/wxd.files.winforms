@@ -228,7 +228,8 @@ namespace wxd.files.winforms
                     ExcelFrozenRows = cfg.ExcelFrozenRows,
                     CsvHeaderRowIndex = cfg.CsvHeaderRowIndex,
                     ExcelHeaderRowIndex = cfg.ExcelHeaderRowIndex,
-                    ColumnLinks = cfg.ColumnLinks
+                    ColumnLinks = cfg.ColumnLinks,
+                    FileRemarks = cfg.FileRemarks
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, json);
@@ -324,6 +325,7 @@ namespace wxd.files.winforms
                 CsvHeaderRowIndex = -1,
                 ExcelHeaderRowIndex = -1,
                 ColumnLinks = new(),
+                FileRemarks = new(),
                 LastModified = DateTime.UtcNow,
                 LastAccessed = DateTime.UtcNow
             };
@@ -395,6 +397,25 @@ namespace wxd.files.winforms
         public static void SetColumnLinksByDirectory(string directoryPath, List<ColumnLinkConfig> links)
         {
             SaveDirConfig(directoryPath, cfg => cfg.ColumnLinks = links ?? new());
+        }
+
+        /// <summary>获取指定目录的文件备注映射表</summary>
+        public static Dictionary<string, string> GetFileRemarksByDirectory(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.FileRemarks ?? new();
+        }
+
+        /// <summary>设置指定目录中某个文件的备注名</summary>
+        public static void SetFileRemark(string directoryPath, string relativePath, string remark)
+        {
+            SaveDirConfig(directoryPath, cfg =>
+            {
+                if (string.IsNullOrEmpty(remark))
+                    cfg.FileRemarks.Remove(relativePath);
+                else
+                    cfg.FileRemarks[relativePath] = remark;
+            });
         }
 
         /// <summary>获取指定目录的CSV表头行索引</summary>
