@@ -11,9 +11,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using NPOI.XSSF.UserModel;
-using NPOI.HSSF.UserModel;
-using NPOI.SS.Util;
+using ExcelDataReader;
 
 namespace wxd.files.winforms
 {
@@ -3181,82 +3179,48 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>使用NPOI读取Excel文件(.xls/.xlsx)为DataTable</summary>
+        /// <summary>使用ExcelDataReader读取Excel文件(.xls/.xlsx)为DataTable</summary>
         private static DataTable? ReadExcelToDataTable(string filePath)
         {
             try
             {
+                // 注册编码提供者（ExcelDataReader 需要）
+                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                NPOI.SS.UserModel.IWorkbook workbook;
-                var ext = Path.GetExtension(filePath).ToLowerInvariant();
-                if (ext == ".xls")
-                    workbook = new HSSFWorkbook(fs);
-                else
-                    workbook = new XSSFWorkbook(fs);
-
-                if (workbook.NumberOfSheets == 0)
+                using var reader = ExcelReaderFactory.CreateReader(fs);
+                var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
                 {
-                    workbook.Close();
-                    return null;
-                }
+                    ConfigureDataTable = _ => new ExcelDataTableConfiguration
+                    {
+                        UseHeaderRow = false
+                    }
+                });
 
-                var sheet = workbook.GetSheetAt(0);
+                if (dataSet.Tables.Count == 0)
+                    return null;
+
+                var sheet = dataSet.Tables[0];
                 var dataTable = new DataTable();
 
-                // 确定列数：以最大列为准
-                int maxCols = 0;
-                for (int r = 0; r <= sheet.LastRowNum; r++)
-                {
-                    var row = sheet.GetRow(r);
-                    if (row != null && row.LastCellNum > maxCols)
-                        maxCols = row.LastCellNum;
-                }
-
-                // 添加列
+                int maxCols = sheet.Columns.Count;
                 for (int i = 0; i < maxCols; i++)
                 {
-                    var columnName = CellReference.ConvertNumToColString(i);
+                    var columnName = ConvertToColumnLetter(i);
                     dataTable.Columns.Add(columnName, typeof(string));
                 }
 
                 // 读取行数据
-                var formulaEvaluator = workbook.GetCreationHelper().CreateFormulaEvaluator();
-                for (int r = 0; r <= sheet.LastRowNum; r++)
+                for (int r = 0; r < sheet.Rows.Count; r++)
                 {
-                    var sheetRow = sheet.GetRow(r);
-                    if (sheetRow == null)
-                    {
-                        var emptyRow = dataTable.NewRow();
-                        dataTable.Rows.Add(emptyRow);
-                        continue;
-                    }
-
                     var newRow = dataTable.NewRow();
                     for (int c = 0; c < maxCols; c++)
                     {
-                        var cell = sheetRow.GetCell(c);
-                        if (cell == null)
-                        {
-                            newRow[c] = "";
-                            continue;
-                        }
-
-                        string cellValue;
-                        try
-                        {
-                            var evaluated = formulaEvaluator.EvaluateInCell(cell);
-                            cellValue = GetCellStringValue(evaluated);
-                        }
-                        catch
-                        {
-                            cellValue = GetCellStringValue(cell);
-                        }
-                        newRow[c] = cellValue;
+                        newRow[c] = sheet.Rows[r][c]?.ToString() ?? "";
                     }
                     dataTable.Rows.Add(newRow);
                 }
 
-                workbook.Close();
                 return dataTable;
             }
             catch
@@ -3265,51 +3229,23 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>获取NPOI单元格的字符串值</summary>
-        private static string GetCellStringValue(NPOI.SS.UserModel.ICell cell)
+        /// <summary>将数字索引转换为Excel列字母（A, B, ..., Z, AA, AB, ...）</summary>
+        private static string ConvertToColumnLetter(int index)
         {
-            if (cell == null) return "";
-
-            switch (cell.CellType)
+            var result = new StringBuilder();
+            int num = index;
+            do
             {
-                case NPOI.SS.UserModel.CellType.String:
-                    return cell.StringCellValue ?? "";
-                case NPOI.SS.UserModel.CellType.Numeric:
-                    if (NPOI.SS.UserModel.DateUtil.IsCellDateFormatted(cell))
-                    {
-                        try { return $"{cell.DateCellValue:yyyy-MM-dd HH:mm:ss}"; }
-                        catch { return cell.NumericCellValue.ToString(); }
-                    }
-                    var numVal = cell.NumericCellValue;
-                    if (numVal == Math.Floor(numVal) && numVal >= long.MinValue && numVal <= long.MaxValue)
-                        return ((long)numVal).ToString();
-                    return numVal.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                case NPOI.SS.UserModel.CellType.Boolean:
-                    return cell.BooleanCellValue ? "TRUE" : "FALSE";
-                case NPOI.SS.UserModel.CellType.Formula:
-                    try
-                    {
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.Numeric)
-                        {
-                            var nv = cell.NumericCellValue;
-                            if (nv == Math.Floor(nv) && nv >= long.MinValue && nv <= long.MaxValue)
-                                return ((long)nv).ToString();
-                            return nv.ToString("G");
-                        }
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.String)
-                            return cell.StringCellValue ?? "";
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.Boolean)
-                            return cell.BooleanCellValue ? "TRUE" : "FALSE";
-                    }
-                    catch { }
-                    return cell.ToString() ?? "";
-                case NPOI.SS.UserModel.CellType.Blank:
-                    return "";
-                case NPOI.SS.UserModel.CellType.Error:
-                    return $"#ERROR:{cell.ErrorCellValue}";
-                default:
-                    return cell.ToString() ?? "";
-            }
+                result.Insert(0, (char)('A' + (num % 26)));
+                num = num / 26 - 1;
+            } while (num >= 0);
+            return result.ToString();
+        }
+
+        /// <summary>获取ExcelDataReader单元格的字符串值（已弃用，保留以保持兼容）</summary>
+        private static string GetCellStringValue(object cell)
+        {
+            return cell?.ToString() ?? "";
         }
     }
 
@@ -3353,6 +3289,7 @@ namespace wxd.files.winforms
         private Panel _pnlBottom = new();
         private Panel _pnlTop = new();
         private Label _lblSaveTime = new();  // 保存时间标签
+        private Label _lblReadOnlyHint = new(); // 只读提示标签
         private readonly Action<string>? _onSave;
 
         public string CellValue => _txtValue.Text.Replace("\r\n", "\n");
@@ -3369,10 +3306,10 @@ namespace wxd.files.winforms
         }
 
         public CellEditDialog(string initialValue, int row, int col, string fileName = "", string colName = "",
-            Action<string>? onSave = null)
+            Action<string>? onSave = null, bool readOnly = false, string readOnlyMessage = "")
         {
             _onSave = onSave;
-            InitializeComponent();
+            InitializeComponent(readOnly, readOnlyMessage);
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
 
             string colDisplay = string.IsNullOrEmpty(colName)
@@ -3382,9 +3319,6 @@ namespace wxd.files.winforms
                 Text = $"单元格编辑 — {Path.GetFileName(fileName)} — 列：{colDisplay}，第 {row + 1} 行";
             else
                 Text = $"编辑单元格 — 行 {row + 1}  列 {colDisplay}({col})";
-
-            if (_onSave == null)
-                _btnSave.Visible = false;
         }
 
         private static void SetActiveButton(Button active, Button inactive)
@@ -3399,7 +3333,7 @@ namespace wxd.files.winforms
             inactive.FlatAppearance.BorderColor = Color.FromArgb(173, 209, 237);
         }
 
-        private void InitializeComponent()
+        private void InitializeComponent(bool readOnly = false, string readOnlyMessage = "")
         {
             SuspendLayout();
 
@@ -3469,6 +3403,16 @@ namespace wxd.files.winforms
                 BackColor = Color.FromArgb(235, 245, 255)
             };
 
+            // 只读提示标签（左侧）
+            _lblReadOnlyHint = new Label
+            {
+                Text = readOnly ? readOnlyMessage : "",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                ForeColor = Color.Red,
+                Location = new Point(10, 14)
+            };
+
             // 保存按钮
             _btnSave = new Button
             {
@@ -3478,7 +3422,8 @@ namespace wxd.files.winforms
                 BackColor = Color.FromArgb(66, 165, 245),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) }
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) },
+                Enabled = !readOnly
             };
             _btnSave.Click += (s, e) =>
             {
@@ -3509,6 +3454,7 @@ namespace wxd.files.winforms
             };
             _btnCancel.Click += (s, e) => { Close(); };
 
+            _pnlBottom.Controls.Add(_lblReadOnlyHint);
             _pnlBottom.Controls.Add(_lblSaveTime);
             _pnlBottom.Controls.Add(_btnSave);
             _pnlBottom.Controls.Add(_btnCancel);
@@ -3522,6 +3468,7 @@ namespace wxd.files.winforms
                 _lblSaveTime.Top = 12;
                 _btnSave.Top = 10;
                 _btnCancel.Top = 10;
+                _lblReadOnlyHint.Top = 14;
             }
             LayoutButtons();
             _pnlBottom.Resize += (s, e) => LayoutButtons();
@@ -4086,17 +4033,9 @@ namespace wxd.files.winforms
             if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                 colName = _dataTable.Rows[_headerRowIndex][originalColumnIndex]?.ToString() ?? "";
 
+            // Excel文件：只读模式，保存按钮置灰并显示提示
             var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                onSave: newValue =>
-                {
-                    if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
-                        originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
-                    {
-                        _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
-                        SaveExcelFile();
-                        RefreshGridLayout();
-                    }
-                });
+                onSave: null, readOnly: true, readOnlyMessage: "不支持Excel文件修改");
             dialog.Show(this);
         }
 
@@ -4116,56 +4055,6 @@ namespace wxd.files.winforms
             var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
             _editingFromFrozen = true;
             EditCell(cell, _dataGridHeader);
-        }
-
-        /// <summary>保存Excel文件 — 将DataTable数据写回.xls/.xlsx文件</summary>
-        private void SaveExcelFile()
-        {
-            try
-            {
-                var ext = Path.GetExtension(_filePath).ToLowerInvariant();
-                NPOI.SS.UserModel.IWorkbook workbook;
-                if (ext == ".xls")
-                    workbook = new HSSFWorkbook();
-                else
-                    workbook = new XSSFWorkbook();
-
-                var sheet = workbook.CreateSheet("Sheet1");
-
-                // 写入所有行数据
-                for (int r = 0; r < _dataTable.Rows.Count; r++)
-                {
-                    var dataRow = _dataTable.Rows[r];
-                    var sheetRow = sheet.CreateRow(r);
-                    for (int c = 0; c < _dataTable.Columns.Count; c++)
-                    {
-                        var cellValue = dataRow[c]?.ToString() ?? "";
-                        var cell = sheetRow.CreateCell(c);
-
-                        // 尝试解析为数值
-                        if (double.TryParse(cellValue, System.Globalization.NumberStyles.Any,
-                            System.Globalization.CultureInfo.InvariantCulture, out double numVal))
-                        {
-                            cell.SetCellValue(numVal);
-                        }
-                        else
-                        {
-                            cell.SetCellValue(cellValue);
-                        }
-                    }
-                }
-
-                // 写回文件
-                using (var fs = new FileStream(_filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
-                {
-                    workbook.Write(fs, leaveOpen: false);
-                }
-                workbook.Close();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, $"保存Excel文件失败:{Environment.NewLine}{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
         }
 
         /// <summary>获取原始数据表中的行列索引</summary>
@@ -5217,82 +5106,48 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>使用NPOI读取Excel文件(.xls/.xlsx)为DataTable</summary>
+        /// <summary>使用ExcelDataReader读取Excel文件(.xls/.xlsx)为DataTable</summary>
         private static DataTable? ReadExcelToDataTable(string filePath)
         {
             try
             {
+                // 注册编码提供者（ExcelDataReader 需要）
+                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                NPOI.SS.UserModel.IWorkbook workbook;
-                var ext = Path.GetExtension(filePath).ToLowerInvariant();
-                if (ext == ".xls")
-                    workbook = new HSSFWorkbook(fs);
-                else
-                    workbook = new XSSFWorkbook(fs);
-
-                if (workbook.NumberOfSheets == 0)
+                using var reader = ExcelReaderFactory.CreateReader(fs);
+                var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
                 {
-                    workbook.Close();
-                    return null;
-                }
+                    ConfigureDataTable = _ => new ExcelDataTableConfiguration
+                    {
+                        UseHeaderRow = false
+                    }
+                });
 
-                var sheet = workbook.GetSheetAt(0);
+                if (dataSet.Tables.Count == 0)
+                    return null;
+
+                var sheet = dataSet.Tables[0];
                 var dataTable = new DataTable();
 
-                // 确定列数：以最大列为准
-                int maxCols = 0;
-                for (int r = 0; r <= sheet.LastRowNum; r++)
-                {
-                    var row = sheet.GetRow(r);
-                    if (row != null && row.LastCellNum > maxCols)
-                        maxCols = row.LastCellNum;
-                }
-
-                // 添加列
+                int maxCols = sheet.Columns.Count;
                 for (int i = 0; i < maxCols; i++)
                 {
-                    var columnName = CellReference.ConvertNumToColString(i);
+                    var columnName = ConvertToColumnLetter(i);
                     dataTable.Columns.Add(columnName, typeof(string));
                 }
 
                 // 读取行数据
-                var formulaEvaluator = workbook.GetCreationHelper().CreateFormulaEvaluator();
-                for (int r = 0; r <= sheet.LastRowNum; r++)
+                for (int r = 0; r < sheet.Rows.Count; r++)
                 {
-                    var sheetRow = sheet.GetRow(r);
-                    if (sheetRow == null)
-                    {
-                        var emptyRow = dataTable.NewRow();
-                        dataTable.Rows.Add(emptyRow);
-                        continue;
-                    }
-
                     var newRow = dataTable.NewRow();
                     for (int c = 0; c < maxCols; c++)
                     {
-                        var cell = sheetRow.GetCell(c);
-                        if (cell == null)
-                        {
-                            newRow[c] = "";
-                            continue;
-                        }
-
-                        string cellValue;
-                        try
-                        {
-                            var evaluated = formulaEvaluator.EvaluateInCell(cell);
-                            cellValue = GetCellStringValue(evaluated);
-                        }
-                        catch
-                        {
-                            cellValue = GetCellStringValue(cell);
-                        }
-                        newRow[c] = cellValue;
+                        newRow[c] = sheet.Rows[r][c]?.ToString() ?? "";
                     }
                     dataTable.Rows.Add(newRow);
                 }
 
-                workbook.Close();
                 return dataTable;
             }
             catch
@@ -5301,51 +5156,23 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>获取NPOI单元格的字符串值</summary>
-        private static string GetCellStringValue(NPOI.SS.UserModel.ICell cell)
+        /// <summary>将数字索引转换为Excel列字母（A, B, ..., Z, AA, AB, ...）</summary>
+        private static string ConvertToColumnLetter(int index)
         {
-            if (cell == null) return "";
-
-            switch (cell.CellType)
+            var result = new StringBuilder();
+            int num = index;
+            do
             {
-                case NPOI.SS.UserModel.CellType.String:
-                    return cell.StringCellValue ?? "";
-                case NPOI.SS.UserModel.CellType.Numeric:
-                    if (NPOI.SS.UserModel.DateUtil.IsCellDateFormatted(cell))
-                    {
-                        try { return $"{cell.DateCellValue:yyyy-MM-dd HH:mm:ss}"; }
-                        catch { return cell.NumericCellValue.ToString(); }
-                    }
-                    var numVal = cell.NumericCellValue;
-                    if (numVal == Math.Floor(numVal) && numVal >= long.MinValue && numVal <= long.MaxValue)
-                        return ((long)numVal).ToString();
-                    return numVal.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                case NPOI.SS.UserModel.CellType.Boolean:
-                    return cell.BooleanCellValue ? "TRUE" : "FALSE";
-                case NPOI.SS.UserModel.CellType.Formula:
-                    try
-                    {
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.Numeric)
-                        {
-                            var nv = cell.NumericCellValue;
-                            if (nv == Math.Floor(nv) && nv >= long.MinValue && nv <= long.MaxValue)
-                                return ((long)nv).ToString();
-                            return nv.ToString("G");
-                        }
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.String)
-                            return cell.StringCellValue ?? "";
-                        if (cell.CachedFormulaResultType == NPOI.SS.UserModel.CellType.Boolean)
-                            return cell.BooleanCellValue ? "TRUE" : "FALSE";
-                    }
-                    catch { }
-                    return cell.ToString() ?? "";
-                case NPOI.SS.UserModel.CellType.Blank:
-                    return "";
-                case NPOI.SS.UserModel.CellType.Error:
-                    return $"#ERROR:{cell.ErrorCellValue}";
-                default:
-                    return cell.ToString() ?? "";
-            }
+                result.Insert(0, (char)('A' + (num % 26)));
+                num = num / 26 - 1;
+            } while (num >= 0);
+            return result.ToString();
+        }
+
+        /// <summary>获取ExcelDataReader单元格的字符串值（已弃用，保留以保持兼容）</summary>
+        private static string GetCellStringValue(object cell)
+        {
+            return cell?.ToString() ?? "";
         }
     }
 
@@ -5855,36 +5682,33 @@ namespace wxd.files.winforms
                 {
                     try
                     {
+                        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
                         using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                        NPOI.SS.UserModel.IWorkbook workbook = ext == ".xls" ? new HSSFWorkbook(fs) : new XSSFWorkbook(fs);
-                        if (workbook.NumberOfSheets > 0)
+                        using var excelReader = ExcelReaderFactory.CreateReader(fs);
+                        var dataSet = excelReader.AsDataSet(new ExcelDataSetConfiguration
                         {
-                            var sheet = workbook.GetSheetAt(0);
-                            int maxCols = 0;
-                            for (int r = 0; r <= sheet.LastRowNum; r++)
-                            {
-                                var row = sheet.GetRow(r);
-                                if (row != null && row.LastCellNum > maxCols) maxCols = row.LastCellNum;
-                            }
+                            ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
+                        });
+                        if (dataSet.Tables.Count > 0)
+                        {
+                            var sheet = dataSet.Tables[0];
+                            int maxCols = sheet.Columns.Count;
                             var dt = new DataTable();
                             for (int i = 0; i < maxCols; i++)
                                 dt.Columns.Add($"Col{i}", typeof(string));
-                            int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, sheet.LastRowNum + 1);
+                            int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, sheet.Rows.Count);
                             for (int r = 0; r < maxRows; r++)
                             {
-                                var sheetRow = sheet.GetRow(r);
                                 var dtRow = dt.NewRow();
                                 for (int i = 0; i < maxCols; i++)
                                 {
-                                    var cell = sheetRow?.GetCell(i);
-                                    dtRow[i] = cell?.ToString() ?? "";
+                                    dtRow[i] = sheet.Rows[r][i]?.ToString() ?? "";
                                 }
                                 dt.Rows.Add(dtRow);
                             }
                             targetFrozenTable = dt;
                         }
                         else targetFrozenTable = new DataTable();
-                        workbook.Close();
                     }
                     catch
                     {
