@@ -1320,6 +1320,7 @@ namespace wxd.files.winforms
         private TextBox _txtAdvancedFilter = new();    // 高级表达式过滤框
         private Label _lblInfo = new();
         private Label _lblCellPos = new();             // 当前编辑单元格行列提示
+        private Panel _pnlLoading = new();             // 加载遮罩层
         private Panel _pnlTop = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();        // 冻结的表头数据
@@ -1634,7 +1635,7 @@ namespace wxd.files.winforms
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(400, 23),
+                Size = new Size(200, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -1660,7 +1661,7 @@ namespace wxd.files.winforms
 
             var txtAdvancedFilter = new TextBox
             {
-                Size = new Size(400, 23),
+                Size = new Size(200, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0),
@@ -1726,6 +1727,15 @@ namespace wxd.files.winforms
             _pnlTop = topTable;
             _txtContentFilter = txtContentFilter;
             _txtAdvancedFilter = txtAdvancedFilter;
+
+            // 过滤框宽度自适应：宽度 = 控件宽度 - 280px（给右侧提示文本留空间）
+            topTable.Resize += (s, e) =>
+            {
+                int w = topTable.ClientSize.Width - 280;
+                if (w < 100) w = 100;
+                txtContentFilter.Width = w;
+                txtAdvancedFilter.Width = w;
+            };
 
             // 表格容器 - 使用SplitContainer来精确控制布局
             var splitContainer = new SplitContainer
@@ -2299,10 +2309,17 @@ namespace wxd.files.winforms
                     await tcs.Task;
                 }
 
+                // 显示加载遮罩
+                ShowLoadingOverlay();
+
                 await Task.Run(() => LoadCsvFile());
+
+                // 隐藏加载遮罩
+                HideLoadingOverlay();
             }
             catch (Exception ex)
             {
+                HideLoadingOverlay();
                 if (this.IsHandleCreated)
                 {
                     this.Invoke(() =>
@@ -2311,6 +2328,47 @@ namespace wxd.files.winforms
                     });
                 }
             }
+        }
+
+        private void ShowLoadingOverlay()
+        {
+            if (!this.IsHandleCreated) return;
+            this.Invoke(() =>
+            {
+                if (_pnlLoading.IsDisposed || _pnlLoading.Parent != null) return;
+                _pnlLoading = new Panel
+                {
+                    BackColor = Color.FromArgb(180, 255, 255, 255),
+                    Dock = DockStyle.Fill,
+                    Visible = true
+                };
+                var lbl = new Label
+                {
+                    Text = "正在加载数据，请稍候...",
+                    AutoSize = false,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Microsoft YaHei UI", 14f, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(30, 136, 229),
+                    Dock = DockStyle.Fill
+                };
+                _pnlLoading.Controls.Add(lbl);
+                this.Controls.Add(_pnlLoading);
+                _pnlLoading.BringToFront();
+                Application.DoEvents();
+            });
+        }
+
+        private void HideLoadingOverlay()
+        {
+            if (!this.IsHandleCreated) return;
+            this.Invoke(() =>
+            {
+                if (_pnlLoading != null && !_pnlLoading.IsDisposed && _pnlLoading.Parent == this)
+                {
+                    this.Controls.Remove(_pnlLoading);
+                    _pnlLoading.Dispose();
+                }
+            });
         }
 
         private void LoadCsvFile()
@@ -3651,6 +3709,7 @@ namespace wxd.files.winforms
         private Label _lblInfo = new();
         private Label _lblCellPos = new();             // 当前编辑单元格行列提示
         private Panel _pnlTop = new();
+        private Panel _pnlLoading = new();             // 加载遮罩层
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
         private string _filePath = "";
@@ -3937,7 +3996,7 @@ namespace wxd.files.winforms
 
             var txtContentFilter = new TextBox
             {
-                Size = new Size(400, 23),
+                Size = new Size(200, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
@@ -3988,7 +4047,7 @@ namespace wxd.files.winforms
 
             var txtAdvancedFilter = new TextBox
             {
-                Size = new Size(400, 23),
+                Size = new Size(200, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0),
@@ -4040,6 +4099,15 @@ namespace wxd.files.winforms
             _pnlTop = topTable;
             _txtContentFilter = txtContentFilter;
             _txtAdvancedFilter = txtAdvancedFilter;
+
+            // 过滤框宽度自适应：宽度 = 控件宽度 - 280px（给右侧提示文本留空间）
+            topTable.Resize += (s, e) =>
+            {
+                int w = topTable.ClientSize.Width - 280;
+                if (w < 100) w = 100;
+                txtContentFilter.Width = w;
+                txtAdvancedFilter.Width = w;
+            };
 
             // 表格容器 - 使用SplitContainer来精确控制布局
             var splitContainer = new SplitContainer
@@ -4389,10 +4457,17 @@ namespace wxd.files.winforms
                     await tcs.Task;
                 }
 
+                // 显示加载遮罩
+                ShowLoadingOverlay();
+
                 await Task.Run(() => LoadExcelFile());
+
+                // 隐藏加载遮罩
+                HideLoadingOverlay();
             }
             catch (Exception ex)
             {
+                HideLoadingOverlay();
                 if (this.IsHandleCreated)
                 {
                     this.Invoke(() =>
@@ -4401,6 +4476,47 @@ namespace wxd.files.winforms
                     });
                 }
             }
+        }
+
+        private void ShowLoadingOverlay()
+        {
+            if (!this.IsHandleCreated) return;
+            this.Invoke(() =>
+            {
+                if (_pnlLoading.IsDisposed || _pnlLoading.Parent != null) return;
+                _pnlLoading = new Panel
+                {
+                    BackColor = Color.FromArgb(180, 255, 255, 255),
+                    Dock = DockStyle.Fill,
+                    Visible = true
+                };
+                var lbl = new Label
+                {
+                    Text = "正在加载数据，请稍候...",
+                    AutoSize = false,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Microsoft YaHei UI", 14f, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(30, 136, 229),
+                    Dock = DockStyle.Fill
+                };
+                _pnlLoading.Controls.Add(lbl);
+                this.Controls.Add(_pnlLoading);
+                _pnlLoading.BringToFront();
+                Application.DoEvents();
+            });
+        }
+
+        private void HideLoadingOverlay()
+        {
+            if (!this.IsHandleCreated) return;
+            this.Invoke(() =>
+            {
+                if (_pnlLoading != null && !_pnlLoading.IsDisposed && _pnlLoading.Parent == this)
+                {
+                    this.Controls.Remove(_pnlLoading);
+                    _pnlLoading.Dispose();
+                }
+            });
         }
 
         private void LoadExcelFile()
