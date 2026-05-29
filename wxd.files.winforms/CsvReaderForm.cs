@@ -2337,9 +2337,17 @@ namespace wxd.files.winforms
                 }
 
                 // 显示加载遮罩
+                var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
+                // 短暂延迟确保 loading 遮罩渲染到屏幕上
+                await Task.Delay(50);
 
                 await Task.Run(() => LoadCsvFile());
+
+                // 确保 loading 至少显示了 200ms，避免一闪而过
+                var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
+                if (elapsed < 200)
+                    await Task.Delay((int)(200 - elapsed));
 
                 // 隐藏加载遮罩
                 HideLoadingOverlay();
@@ -4523,9 +4531,17 @@ namespace wxd.files.winforms
                 }
 
                 // 显示加载遮罩
+                var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
+                // 短暂延迟确保 loading 遮罩渲染到屏幕上
+                await Task.Delay(50);
 
                 await Task.Run(() => LoadExcelFile());
+
+                // 确保 loading 至少显示了 200ms，避免一闪而过
+                var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
+                if (elapsed < 200)
+                    await Task.Delay((int)(200 - elapsed));
 
                 // 隐藏加载遮罩
                 HideLoadingOverlay();
