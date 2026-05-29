@@ -1770,6 +1770,33 @@ namespace wxd.files.winforms
                 // 鼠标点击时同步重置，阻止滚动偏移发生
                 if (e.RowIndex >= 0 && _dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+
+                // 右键菜单：复制 + 编辑
+                if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && e.ColumnIndex >= 0)
+                {
+                    var cellValue = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
+                    var ctx = new ContextMenuStrip();
+                    ctx.Font = new Font("Microsoft YaHei UI", 9f);
+
+                    var copyItem = new ToolStripMenuItem("复制");
+                    copyItem.Click += (s2, args) =>
+                    {
+                        if (!string.IsNullOrEmpty(cellValue))
+                            Clipboard.SetText(cellValue);
+                    };
+                    ctx.Items.Add(copyItem);
+
+                    var editItem = new ToolStripMenuItem("编辑");
+                    editItem.Click += (s2, args) =>
+                    {
+                        var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                        _editingFromFrozen = true;
+                        EditCell(cell, _dataGridHeader);
+                    };
+                    ctx.Items.Add(editItem);
+
+                    ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
+                }
             };
             _dataGridHeader.CurrentCellChanged += (s, e) =>
             {
@@ -3249,6 +3276,16 @@ namespace wxd.files.winforms
             };
             ctx.Items.Add(copyItem);
 
+            // 1.5 编辑单元格
+            var editItem = new ToolStripMenuItem("编辑");
+            editItem.Click += (s, args) =>
+            {
+                var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = false;
+                EditCell(cell, _dataGrid);
+            };
+            ctx.Items.Add(editItem);
+
             // 2. 打开关联表（有链接才显示，但根据值有效性决定是否可用）
             var linkItem = new ToolStripMenuItem("打开关联表");
             if (link == null)
@@ -4142,6 +4179,33 @@ namespace wxd.files.winforms
                 // 鼠标点击时同步重置，阻止滚动偏移发生
                 if (e.RowIndex >= 0 && _dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+
+                // 右键菜单：复制 + 编辑
+                if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && e.ColumnIndex >= 0)
+                {
+                    var cellValue = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
+                    var ctx = new ContextMenuStrip();
+                    ctx.Font = new Font("Microsoft YaHei UI", 9f);
+
+                    var copyItem = new ToolStripMenuItem("复制");
+                    copyItem.Click += (s2, args) =>
+                    {
+                        if (!string.IsNullOrEmpty(cellValue))
+                            Clipboard.SetText(cellValue);
+                    };
+                    ctx.Items.Add(copyItem);
+
+                    var editItem = new ToolStripMenuItem("编辑");
+                    editItem.Click += (s2, args) =>
+                    {
+                        var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                        _editingFromFrozen = true;
+                        EditCell(cell, _dataGridHeader);
+                    };
+                    ctx.Items.Add(editItem);
+
+                    ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
+                }
             };
             _dataGridHeader.CurrentCellChanged += (s, e) =>
             {
@@ -5285,6 +5349,16 @@ namespace wxd.files.winforms
                 }
             };
             ctx.Items.Add(copyItem);
+
+            // 1.5 编辑单元格
+            var editItem = new ToolStripMenuItem("编辑");
+            editItem.Click += (s, args) =>
+            {
+                var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                _editingFromFrozen = false;
+                EditCell(cell, _dataGrid);
+            };
+            ctx.Items.Add(editItem);
 
             // 2. 打开关联表（有链接才显示，但根据值有效性决定是否可用）
             var linkItem = new ToolStripMenuItem("打开关联表");
