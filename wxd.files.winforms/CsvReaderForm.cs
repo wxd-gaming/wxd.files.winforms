@@ -2362,7 +2362,7 @@ namespace wxd.files.winforms
             if (!this.IsHandleCreated) return;
             this.Invoke(() =>
             {
-                if (_pnlLoading.IsDisposed || _pnlLoading.Parent != null) return;
+                if (_pnlLoading?.IsDisposed != false || _pnlLoading.Parent != null) return;
                 _pnlLoading = new Panel
                 {
                     BackColor = Color.FromArgb(180, 255, 255, 255),
@@ -2394,6 +2394,7 @@ namespace wxd.files.winforms
                 {
                     this.Controls.Remove(_pnlLoading);
                     _pnlLoading.Dispose();
+                    _pnlLoading = null;
                 }
             });
         }
@@ -4547,7 +4548,7 @@ namespace wxd.files.winforms
             if (!this.IsHandleCreated) return;
             this.Invoke(() =>
             {
-                if (_pnlLoading.IsDisposed || _pnlLoading.Parent != null) return;
+                if (_pnlLoading?.IsDisposed != false || _pnlLoading.Parent != null) return;
                 _pnlLoading = new Panel
                 {
                     BackColor = Color.FromArgb(180, 255, 255, 255),
@@ -4579,6 +4580,7 @@ namespace wxd.files.winforms
                 {
                     this.Controls.Remove(_pnlLoading);
                     _pnlLoading.Dispose();
+                    _pnlLoading = null;
                 }
             });
         }
