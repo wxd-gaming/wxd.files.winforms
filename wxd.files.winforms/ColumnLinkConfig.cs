@@ -18,6 +18,12 @@ namespace wxd.files.winforms
         /// <summary>目标文件中被搜索的列的表头名称（用于显示，可选）</summary>
         public string TargetColumnName { get; set; } = "";
 
+        /// <summary>目标文件中用于显示名称的列索引（-1 表示不使用，只显示ID）</summary>
+        public int TargetDisplayColumnIndex { get; set; } = -1;
+
+        /// <summary>目标文件中显示列的表头名称（用于提示显示）</summary>
+        public string TargetDisplayColumnName { get; set; } = "";
+
         #region 值提取规则（用于处理如 "4002#1" -> 提取 "4002" 的场景）
 
         /// <summary>是否启用值提取（默认 false 表示完全匹配）</summary>

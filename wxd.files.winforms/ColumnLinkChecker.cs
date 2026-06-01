@@ -10,11 +10,26 @@ using ExcelDataReader;
 
 namespace wxd.files.winforms
 {
+    /// <summary>关联查找条目（包含ID集合和ID→显示名映射）</summary>
+    internal class LinkLookupEntry
+    {
+        /// <summary>关联列的值集合（用于快速查找）</summary>
+        public HashSet<string> Values { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>ID → 显示名映射（当配置了显示列时填充）</summary>
+        public Dictionary<string, string> DisplayNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>目标文件的相对路径</summary>
+        public string TargetFile { get; set; } = "";
+        /// <summary>目标列的表头名称</summary>
+        public string TargetColumnName { get; set; } = "";
+        /// <summary>显示列的表头名称</summary>
+        public string DisplayColumnName { get; set; } = "";
+    }
+
     /// <summary>列关联颜色检查器 — 根据跨文件列关联规则为DataGridView单元格着色（支持多文件独立缓存）</summary>
     public static class ColumnLinkChecker
     {
         /// <summary>缓存 key: "{sourceRelativePath}|{sourceColumnIndex}->{targetRelativePath}:{targetColumnIndex}"</summary>
-        private static Dictionary<string, HashSet<string>> _linkLookups = new();
+        private static Dictionary<string, LinkLookupEntry> _linkLookups = new();
         /// <summary>已加载的源文件路径集合（用于判断是否需要重建）</summary>
         private static HashSet<string> _loadedSources = new(StringComparer.OrdinalIgnoreCase);
 
@@ -56,6 +71,8 @@ namespace wxd.files.winforms
                 {
                     var ext = Path.GetExtension(targetFullPath).ToLowerInvariant();
                     var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    bool hasDisplayCol = link.TargetDisplayColumnIndex >= 0 && link.TargetDisplayColumnIndex != link.TargetColumnIndex;
 
                     if (ext == ".csv")
                     {
@@ -66,9 +83,18 @@ namespace wxd.files.winforms
                             var parts = ParseCsvLine(lines[i], ',');
                             if (link.TargetColumnIndex >= 0 && link.TargetColumnIndex < parts.Length)
                             {
-                                var val = parts[link.TargetColumnIndex].Trim();
-                                if (!string.IsNullOrEmpty(val))
-                                    values.Add(val);
+                                var idVal = parts[link.TargetColumnIndex].Trim();
+                                if (!string.IsNullOrEmpty(idVal))
+                                {
+                                    values.Add(idVal);
+                                    // 同时读取显示名列
+                                    if (hasDisplayCol && link.TargetDisplayColumnIndex < parts.Length)
+                                    {
+                                        var displayVal = parts[link.TargetDisplayColumnIndex].Trim();
+                                        if (!string.IsNullOrEmpty(displayVal) && !displayNames.ContainsKey(idVal))
+                                            displayNames[idVal] = displayVal;
+                                    }
+                                }
                             }
                         }
                     }
@@ -88,14 +114,31 @@ namespace wxd.files.winforms
                                 var sheet = dataSet.Tables[0];
                                 for (int r = 0; r < sheet.Rows.Count; r++)
                                 {
-                                    var val = sheet.Rows[r][link.TargetColumnIndex]?.ToString()?.Trim() ?? "";
-                                    if (!string.IsNullOrEmpty(val))
-                                        values.Add(val);
+                                    var idVal = sheet.Rows[r][link.TargetColumnIndex]?.ToString()?.Trim() ?? "";
+                                    if (!string.IsNullOrEmpty(idVal))
+                                    {
+                                        values.Add(idVal);
+                                        if (hasDisplayCol && link.TargetDisplayColumnIndex < sheet.Columns.Count)
+                                        {
+                                            var displayVal = sheet.Rows[r][link.TargetDisplayColumnIndex]?.ToString()?.Trim() ?? "";
+                                            if (!string.IsNullOrEmpty(displayVal) && !displayNames.ContainsKey(idVal))
+                                                displayNames[idVal] = displayVal;
+                                        }
+                                    }
                                 }
                             }
                         }
                         catch { }
                     }
+
+                    var entry = new LinkLookupEntry
+                    {
+                        Values = values,
+                        DisplayNames = displayNames,
+                        TargetFile = link.TargetFile,
+                        TargetColumnName = link.TargetColumnName,
+                        DisplayColumnName = link.TargetDisplayColumnName
+                    };
 
                     // key 格式: "{sourceRel}|{sourceColIndex}->{targetRel}:{targetColIndex}"
                     // 如果启用了值提取，在 key 中附加提取规则标识
@@ -106,7 +149,7 @@ namespace wxd.files.winforms
                             string.IsNullOrEmpty(link.ExtractDelimiter) ? "_pos_" : link.ExtractDelimiter,
                             link.ExtractPartIndex);
                     }
-                    _linkLookups[key] = values;
+                    _linkLookups[key] = entry;
                 }
                 catch { }
             }
@@ -140,7 +183,7 @@ namespace wxd.files.winforms
             {
                 if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    return matchValues.Any(v => kvp.Value.Contains(v));
+                    return matchValues.Any(v => kvp.Value.Values.Contains(v));
                 }
             }
             return false;
@@ -153,8 +196,6 @@ namespace wxd.files.winforms
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows,
             List<ColumnLinkConfig>? columnLinks = null)
         {
-            // 冻结行不提示
-            if (rowIndex >= 0 && rowIndex < frozenRows) return null;
             if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
 
             // 获取当前文件的相对路径
@@ -199,7 +240,7 @@ namespace wxd.files.winforms
                 if (extractIdx >= 0)
                     keyAfterArrow = keyAfterArrow.Substring(0, extractIdx);
                 
-                if (!matchValues.Any(v => kvp.Value.Contains(v)))
+                if (!matchValues.Any(v => kvp.Value.Values.Contains(v)))
                 {
                     var colonIdx = keyAfterArrow.LastIndexOf(':');
                     string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
@@ -213,14 +254,99 @@ namespace wxd.files.winforms
             return null;
         }
 
+        /// <summary>获取关联字段的显示提示信息（用于 CellToolTipTextNeeded，显示目标表和ID→显示名映射）</summary>
+        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
+        /// <returns>提示文本（如 "b表\n1: b2"），若单元格无关联或值无效则返回 null</returns>
+        public static string? GetLinkInfoToolTip(string filePath, string rootDir,
+            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows,
+            List<ColumnLinkConfig>? columnLinks = null, Dictionary<string, string>? fileRemarks = null)
+        {
+            if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
+
+            // 获取当前文件的相对路径
+            string currentRel;
+            if (!string.IsNullOrEmpty(rootDir) && filePath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+                currentRel = filePath.Substring(rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            else
+                currentRel = Path.GetFileName(filePath);
+
+            // 计算原始列索引
+            int originalColIndex = columnIndex;
+            if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
+            {
+                int adjustedCol = columnIndex;
+                if (dataGrid.Columns.Count > 0 && dataGrid.Columns[0].Name == "__RowNum__")
+                    adjustedCol = columnIndex - 1;
+                if (adjustedCol >= 0 && adjustedCol < visibleColumnIndices.Count)
+                    originalColIndex = visibleColumnIndices[adjustedCol];
+            }
+
+            // 获取单元格值
+            var cellVal = dataGrid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(cellVal)) return null;
+
+            // 查找当前列的提取规则
+            var linkConfig = columnLinks?.FirstOrDefault(l =>
+                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == originalColIndex);
+
+            // 如果有提取规则，提取实际匹配值（支持多值）
+            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
+
+            // 查找匹配的关联配置
+            string prefix = currentRel + "|" + originalColIndex + "->";
+            foreach (var kvp in _linkLookups)
+            {
+                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // 检查值是否存在
+                if (!matchValues.Any(v => kvp.Value.Values.Contains(v)))
+                    return null; // 值不存在，由 GetInvalidLinkToolTip 处理红色提示
+
+                // 构建显示名
+                string targetFileName = Path.GetFileName(kvp.Value.TargetFile);
+                // 优先使用文件备注名
+                string displayTableName = targetFileName;
+                if (fileRemarks != null && fileRemarks.TryGetValue(kvp.Value.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                    displayTableName = remark;
+                else if (!string.IsNullOrEmpty(kvp.Value.TargetColumnName))
+                    displayTableName = $"{targetFileName} [{kvp.Value.TargetColumnName}]";
+
+                // 构建显示行：每个匹配的ID → 显示名
+                var displayLines = new List<string>();
+                foreach (var mv in matchValues)
+                {
+                    if (kvp.Value.DisplayNames.TryGetValue(mv, out var displayName) && !string.IsNullOrEmpty(displayName))
+                    {
+                        displayLines.Add($"{mv}: {displayName}");
+                    }
+                    else
+                    {
+                        // 没有显示名时只显示ID
+                        displayLines.Add(mv);
+                    }
+                }
+
+                if (displayLines.Count == 0) return null;
+
+                var sb = new StringBuilder();
+                sb.AppendLine(displayTableName);
+                foreach (var line in displayLines.Take(10))
+                    sb.AppendLine(line);
+                if (displayLines.Count > 10)
+                    sb.AppendLine($"... 共 {displayLines.Count} 条");
+                return sb.ToString().TrimEnd('\r', '\n');
+            }
+            return null;
+        }
+
         /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认；跳过冻结行</summary>
         /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows,
             List<ColumnLinkConfig>? columnLinks = null)
         {
-            // 冻结行不标红
-            if (e.RowIndex >= 0 && e.RowIndex < frozenRows) return;
             if (_loadedSources.Count == 0) return;
 
             // 计算当前文件的相对路径，用于过滤缓存条目
@@ -267,7 +393,7 @@ namespace wxd.files.winforms
                     var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
                         ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
                     
-                    if (!string.IsNullOrEmpty(cellValue) && !matchValues.Any(v => kvp.Value.Contains(v)))
+                    if (!string.IsNullOrEmpty(cellValue) && !matchValues.Any(v => kvp.Value.Values.Contains(v)))
                     {
                         e.CellStyle.ForeColor = Color.Red;
                         e.CellStyle.SelectionForeColor = Color.Red;

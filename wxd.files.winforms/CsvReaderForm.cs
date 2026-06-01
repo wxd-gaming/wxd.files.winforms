@@ -2266,6 +2266,9 @@ namespace wxd.files.winforms
             _txtContentFilter.Text = savedFilter;
             _txtAdvancedFilter.Text = savedAdvFilter;
             UpdateColumnSelectorButton();
+            // 重建关联关系缓存（目标表数据可能已更新）
+            ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+            RebuildHighlightRows();
             RefreshGridLayout();
         }
 
@@ -3245,12 +3248,21 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>单元格提示 — 关联字段值无效时显示红色原因</summary>
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名</summary>
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
+            // 优先检查值无效（红色提示）
+            var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
                 _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
+            if (!string.IsNullOrEmpty(invalidTip))
+            {
+                e.ToolTipText = invalidTip;
+                return;
+            }
+            // 值有效时显示关联表信息（ID → 显示名）
+            e.ToolTipText = ColumnLinkChecker.GetLinkInfoToolTip(
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks, _fileRemarks);
         }
 
         /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>
@@ -4495,6 +4507,9 @@ namespace wxd.files.winforms
             _txtContentFilter.Text = savedFilter;
             _txtAdvancedFilter.Text = savedAdvFilter;
             UpdateColumnSelectorButton();
+            // 重建关联关系缓存（目标表数据可能已更新）
+            ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+            RebuildHighlightRows();
             RefreshGridLayout();
         }
 
@@ -5328,12 +5343,21 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>单元格提示 — 关联字段值无效时显示红色原因</summary>
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名</summary>
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            e.ToolTipText = ColumnLinkChecker.GetInvalidLinkToolTip(
+            // 优先检查值无效（红色提示）
+            var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
                 _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
+            if (!string.IsNullOrEmpty(invalidTip))
+            {
+                e.ToolTipText = invalidTip;
+                return;
+            }
+            // 值有效时显示关联表信息（ID → 显示名）
+            e.ToolTipText = ColumnLinkChecker.GetLinkInfoToolTip(
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks, _fileRemarks);
         }
 
         /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>
@@ -5901,6 +5925,9 @@ namespace wxd.files.winforms
         private string _selectedTargetPath = "";
         private int _selectedTargetColIndex = -1;
         private string _selectedTargetColumnName = "";  // 目标列的表头名称（用于显示）
+        private int _selectedDisplayColIndex = -1;      // 显示列的索引（-1 表示不使用）
+        private string _selectedDisplayColumnName = ""; // 显示列的表头名称
+        private Button _btnSetDisplayCol = new();       // 设置显示列的按钮
         public int SelectedColumnIndex => _selectedTargetColIndex;
         public string SelectedColumnName => _selectedTargetColumnName ?? "";
         // 值提取规则控件
@@ -5954,6 +5981,9 @@ namespace wxd.files.winforms
                 // 恢复目标列的表头名称（如果有保存）
                 if (!string.IsNullOrEmpty(_existingLink.TargetColumnName))
                     _selectedTargetColumnName = _existingLink.TargetColumnName;
+                // 恢复显示列设置
+                _selectedDisplayColIndex = _existingLink.TargetDisplayColumnIndex;
+                _selectedDisplayColumnName = _existingLink.TargetDisplayColumnName;
             }
 
             InitializeComponent();
@@ -6005,6 +6035,8 @@ namespace wxd.files.winforms
                 TargetFile = relPath,
                 TargetColumnIndex = _selectedTargetColIndex,
                 TargetColumnName = _selectedTargetColumnName,  // 保存表头名称
+                TargetDisplayColumnIndex = _selectedDisplayColIndex,
+                TargetDisplayColumnName = _selectedDisplayColumnName,
                 // 值提取规则
                 ValueExtractionEnabled = _chkExtractEnabled.Checked,
                 ExtractDelimiter = _txtDelimiter.Text.Trim(),
@@ -6022,9 +6054,13 @@ namespace wxd.files.winforms
                     displayPath = _selectedTargetPath.Substring(_rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
                 else
                     displayPath = Path.GetFileName(_selectedTargetPath);
-                _lblSelection.Text = !string.IsNullOrEmpty(_selectedTargetColumnName)
-                    ? $"已选: {displayPath} → [{_selectedTargetColumnName}]"
-                    : $"已选: {displayPath} → 列{_selectedTargetColIndex}";
+                string colInfo = !string.IsNullOrEmpty(_selectedTargetColumnName)
+                    ? $"[{_selectedTargetColumnName}]"
+                    : $"列{_selectedTargetColIndex}";
+                string displayInfo = _selectedDisplayColIndex >= 0
+                    ? (!string.IsNullOrEmpty(_selectedDisplayColumnName) ? $" (显示: {_selectedDisplayColumnName})" : $" (显示: 列{_selectedDisplayColIndex})")
+                    : "";
+                _lblSelection.Text = $"已选: {displayPath} → {colInfo}{displayInfo}";
             }
             else
                 _lblSelection.Text = "未选择关联列（双击目标文件设置）";
@@ -6154,9 +6190,105 @@ namespace wxd.files.winforms
         {
             _selectedTargetPath = "";
             _selectedTargetColIndex = -1;
+            _selectedDisplayColIndex = -1;
+            _selectedDisplayColumnName = "";
             _existingLink = null;
             _btnDelete.Visible = false;
             UpdateSelectionLabel();
+        }
+
+        /// <summary>设置显示列 — 在目标文件中再选一列作为显示名</summary>
+        private void OnSetDisplayColClick(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_selectedTargetPath) || _selectedTargetColIndex < 0)
+            {
+                MessageBox.Show(this, "请先选择关联列（双击目标文件）", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!File.Exists(_selectedTargetPath))
+            {
+                MessageBox.Show(this, "目标文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // 读取目标文件固定行数据用于展示
+            DataTable targetFrozenTable;
+            try
+            {
+                var ext = Path.GetExtension(_selectedTargetPath).ToLowerInvariant();
+                if (ext == ".csv")
+                {
+                    string contentData = File.ReadAllText(_selectedTargetPath, Encoding.UTF8);
+                    var lines = SplitCsvLinesStatic(contentData);
+                    var dt = new DataTable();
+                    if (lines.Count > 0)
+                    {
+                        var firstParts = ParseCsvLineStatic(lines[0]);
+                        for (int i = 0; i < firstParts.Length; i++)
+                            dt.Columns.Add($"Col{i}", typeof(string));
+                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, lines.Count);
+                        for (int r = 0; r < maxRows; r++)
+                        {
+                            var parts = ParseCsvLineStatic(lines[r]);
+                            var row = dt.NewRow();
+                            for (int i = 0; i < Math.Min(parts.Length, dt.Columns.Count); i++)
+                                row[i] = parts[i];
+                            dt.Rows.Add(row);
+                        }
+                    }
+                    targetFrozenTable = dt;
+                }
+                else
+                {
+                    try
+                    {
+                        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                        using var fs = new FileStream(_selectedTargetPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                        using var excelReader = ExcelReaderFactory.CreateReader(fs);
+                        var dataSet = excelReader.AsDataSet(new ExcelDataSetConfiguration
+                        {
+                            ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
+                        });
+                        if (dataSet.Tables.Count > 0)
+                        {
+                            var sheet = dataSet.Tables[0];
+                            int maxCols = sheet.Columns.Count;
+                            var dt = new DataTable();
+                            for (int i = 0; i < maxCols; i++)
+                                dt.Columns.Add($"Col{i}", typeof(string));
+                            int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, sheet.Rows.Count);
+                            for (int r = 0; r < maxRows; r++)
+                            {
+                                var dtRow = dt.NewRow();
+                                for (int i = 0; i < maxCols; i++)
+                                    dtRow[i] = sheet.Rows[r][i]?.ToString() ?? "";
+                                dt.Rows.Add(dtRow);
+                            }
+                            targetFrozenTable = dt;
+                        }
+                        else targetFrozenTable = new DataTable();
+                    }
+                    catch { targetFrozenTable = new DataTable(); }
+                }
+            }
+            catch
+            {
+                MessageBox.Show(this, "无法读取目标文件数据", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            using var colDlg = new TargetColumnSelectDialog(targetFrozenTable, _frozenRows, _selectedDisplayColIndex,
+                _targetHeaderRowIndex >= 0 ? _targetHeaderRowIndex : GetTargetHeaderRowIndexStatic(_selectedTargetPath),
+                title: "选择显示列 — 用于提示中显示中文名称");
+            if (colDlg.ShowDialog(this) == DialogResult.OK && colDlg.SelectedColumnIndex >= 0)
+            {
+                _selectedDisplayColIndex = colDlg.SelectedColumnIndex;
+                _selectedDisplayColumnName = colDlg.SelectedColumnName;
+                _btnSetDisplayCol.Text = !string.IsNullOrEmpty(_selectedDisplayColumnName)
+                    ? $"显示列: {_selectedDisplayColumnName}"
+                    : $"显示列: 列{_selectedDisplayColIndex}";
+                UpdateSelectionLabel();
+            }
         }
 
         private void InitializeComponent()
@@ -6190,8 +6322,27 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.FixedSingle, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 0, 0) };
             Controls.Add(_lblSelection);
 
+            // 设置显示列按钮
+            _btnSetDisplayCol = new Button
+            {
+                Text = _selectedDisplayColIndex >= 0
+                    ? (!string.IsNullOrEmpty(_selectedDisplayColumnName)
+                        ? $"显示列: {_selectedDisplayColumnName}"
+                        : $"显示列: 列{_selectedDisplayColIndex}")
+                    : "设置显示列（可选）",
+                Location = new Point(10, 320), Size = new Size(200, 28),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
+                Cursor = Cursors.Hand
+            };
+            _btnSetDisplayCol.Click += OnSetDisplayColClick;
+            Controls.Add(_btnSetDisplayCol);
+
             Controls.Add(new Label { Text = "提示: 关联基于列的位置索引。双击目标文件后在弹出面板中单选目标列。",
-                Location = new Point(10, 320), Size = new Size(480, 30), Font = new Font("Microsoft YaHei UI", 8f),
+                Location = new Point(220, 322), Size = new Size(270, 30), Font = new Font("Microsoft YaHei UI", 8f),
                 ForeColor = Color.FromArgb(107, 114, 128) });
 
             // ===== 值提取规则区域 =====
@@ -6353,14 +6504,16 @@ namespace wxd.files.winforms
         private string _selectedColumnName = "";        // 选中的列的表头名称
         private int _headerRowIndex = -1;              // 表头行索引
         private bool _hasHeaderRow = false;
+        private string _customTitle = "选择目标列";
 
         public int SelectedColumnIndex => _selectedIndex;
         public string SelectedColumnName => _selectedColumnName ?? "";
 
-        public TargetColumnSelectDialog(DataTable frozenData, int frozenRows, int initialSelection, int headerRowIndex = -1)
+        public TargetColumnSelectDialog(DataTable frozenData, int frozenRows, int initialSelection, int headerRowIndex = -1, string title = "选择目标列")
         {
             _selectedIndex = initialSelection;
             _headerRowIndex = headerRowIndex;
+            _customTitle = title;
             InitializeComponent();
             PopulateList(frozenData, frozenRows);
             if (_selectedIndex >= 0 && _selectedIndex < _lvColumns.Items.Count)
@@ -6429,7 +6582,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             SuspendLayout();
-            Text = "选择目标列";
+            Text = _customTitle;
             ClientSize = new Size(780, 520);
             MinimumSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;
