@@ -3230,15 +3230,18 @@ namespace wxd.files.winforms
 
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
+            // 固定行面板不执行关联检查和 tips 逻辑
+            if (sender == _dataGridHeader) return;
+
             // 确保行高一致
             if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
             {
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             }
-            // 列关联颜色检查
+            // 列关联颜色检查（_dataGrid 数据源已排除固定行，所有行都是内容行）
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows, _columnLinks);
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
                 // 关联表跳转高亮 — 整行变色
                 if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                 {
@@ -3248,13 +3251,13 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名</summary>
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名（固定行面板跳过）</summary>
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             // 优先检查值无效（红色提示）
             var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks);
             if (!string.IsNullOrEmpty(invalidTip))
             {
                 e.ToolTipText = invalidTip;
@@ -3262,7 +3265,7 @@ namespace wxd.files.winforms
             }
             // 值有效时显示关联表信息（ID → 显示名）
             e.ToolTipText = ColumnLinkChecker.GetLinkInfoToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks, _fileRemarks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
         }
 
         /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>
@@ -5326,14 +5329,17 @@ namespace wxd.files.winforms
 
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
+            // 固定行面板不执行关联检查和 tips 逻辑
+            if (sender == _dataGridHeader) return;
+
             if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
             {
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             }
-            // 列关联颜色检查
+            // 列关联颜色检查（_dataGrid 数据源已排除固定行，所有行都是内容行）
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _frozenRows, _columnLinks);
+                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
                 // 关联表跳转高亮 — 整行变色
                 if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                 {
@@ -5343,13 +5349,13 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名</summary>
+        /// <summary>单元格提示 — 关联字段值无效时显示红色原因；值有效时显示关联表和显示名（固定行面板跳过）</summary>
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             // 优先检查值无效（红色提示）
             var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks);
             if (!string.IsNullOrEmpty(invalidTip))
             {
                 e.ToolTipText = invalidTip;
@@ -5357,7 +5363,7 @@ namespace wxd.files.winforms
             }
             // 值有效时显示关联表信息（ID → 显示名）
             e.ToolTipText = ColumnLinkChecker.GetLinkInfoToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _frozenRows, _columnLinks, _fileRemarks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
         }
 
         /// <summary>右键菜单 — 复制单元格内容 + 打开关联表</summary>

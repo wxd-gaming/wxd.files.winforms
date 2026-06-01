@@ -193,7 +193,7 @@ namespace wxd.files.winforms
         /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         /// <returns>提示文本，若单元格无关联或值有效则返回 null</returns>
         public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
-            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows,
+            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
             List<ColumnLinkConfig>? columnLinks = null)
         {
             if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
@@ -258,7 +258,7 @@ namespace wxd.files.winforms
         /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         /// <returns>提示文本（如 "b表\n1: b2"），若单元格无关联或值无效则返回 null</returns>
         public static string? GetLinkInfoToolTip(string filePath, string rootDir,
-            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex, int frozenRows,
+            List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
             List<ColumnLinkConfig>? columnLinks = null, Dictionary<string, string>? fileRemarks = null)
         {
             if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
@@ -341,10 +341,10 @@ namespace wxd.files.winforms
             return null;
         }
 
-        /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认；跳过冻结行</summary>
+        /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认（调用方负责跳过固定行）</summary>
         /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
-            List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir, int frozenRows,
+            List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir,
             List<ColumnLinkConfig>? columnLinks = null)
         {
             if (_loadedSources.Count == 0) return;
