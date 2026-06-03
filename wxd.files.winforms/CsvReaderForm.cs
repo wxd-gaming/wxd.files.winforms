@@ -38,6 +38,7 @@ namespace wxd.files.winforms
         private Button _btnCancelSearch = new();
         private ProgressBar _progressBar = new();
         private Panel _pnlSearchProgress = new();
+        private RoundedPanel _pnlSearchContainer = new();
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
@@ -65,6 +66,53 @@ namespace wxd.files.winforms
         {
             Csv,
             Excel
+        }
+
+        // ==================== 圆角 Panel（用于搜索容器卡片）====================
+        private class RoundedPanel : Panel
+        {
+            private int _radius = 6;
+
+            public int Radius
+            {
+                get => _radius;
+                set { _radius = value; Invalidate(); }
+            }
+
+            public RoundedPanel()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                         ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer |
+                         ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.FromArgb(227, 242, 253);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+                using var path = GetRoundRect(rect, _radius);
+                using var brush = new SolidBrush(BackColor);
+                using var pen = new Pen(Color.FromArgb(173, 209, 237), 1);
+
+                g.FillPath(brush, path);
+                g.DrawPath(pen, path);
+            }
+
+            private static GraphicsPath GetRoundRect(Rectangle rect, int radius)
+            {
+                var path = new GraphicsPath();
+                var r = radius;
+                path.AddArc(rect.X, rect.Y, r, r, 180, 90);
+                path.AddArc(rect.Right - r, rect.Y, r, r, 270, 90);
+                path.AddArc(rect.Right - r, rect.Bottom - r, r, r, 0, 90);
+                path.AddArc(rect.X, rect.Bottom - r, r, r, 90, 90);
+                path.CloseFigure();
+                return path;
+            }
         }
 
         // ==================== 配色方案（浅色天蓝色调 · 1px圆角边框）====================
@@ -160,7 +208,7 @@ namespace wxd.files.winforms
             _pnlLeft.Padding = new Padding(0);
 
             // 左侧顶部工具栏
-            _pnlLeftTop.Height = 136;
+            _pnlLeftTop.Height = 150;
             _pnlLeftTop.Dock = DockStyle.Top;
             _pnlLeftTop.BackColor = _colorSurface;
             _pnlLeftTop.Padding = new Padding(8, 6, 8, 4);
@@ -252,10 +300,18 @@ namespace wxd.files.winforms
             btnHelp.Click += OnHelpClick;
 
             // ==================== 高级内容搜索（第三行） ====================
+            // ==================== 高级内容搜索（第三行 - 圆角容器） ====================
+            _pnlSearchContainer = new RoundedPanel
+            {
+                Location = new Point(8, 72),
+                Size = new Size(260, 70),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            };
+
             // 内容搜索输入框
             _txtContentSearch = new TextBox
             {
-                Location = new Point(8, 76),
+                Location = new Point(8, 8),
                 Size = new Size(140, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
@@ -268,7 +324,7 @@ namespace wxd.files.winforms
             _btnContentSearch = new Button
             {
                 Text = "🔍搜索",
-                Location = new Point(0, 74),
+                Location = new Point(0, 4),
                 Size = new Size(64, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = _colorPrimary,
@@ -291,10 +347,10 @@ namespace wxd.files.winforms
                 }
             };
 
-            // ==================== 搜索进度面板（第四行，进度条+取消按钮同一行，初始隐藏） ====================
+            // ==================== 搜索进度面板（进度条+取消按钮同一行，初始隐藏） ====================
             _pnlSearchProgress = new Panel
             {
-                Location = new Point(8, 106),
+                Location = new Point(8, 38),
                 Size = new Size(260, 28),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Visible = false,
@@ -329,7 +385,11 @@ namespace wxd.files.winforms
             _pnlSearchProgress.Controls.Add(_progressBar);
             _pnlSearchProgress.Controls.Add(_btnCancelSearch);
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _txtContentSearch, _btnContentSearch, _pnlSearchProgress });
+            _pnlSearchContainer.Controls.Add(_txtContentSearch);
+            _pnlSearchContainer.Controls.Add(_btnContentSearch);
+            _pnlSearchContainer.Controls.Add(_pnlSearchProgress);
+
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer });
 
             // 文件树
             // 初始化图标列表
@@ -450,15 +510,18 @@ namespace wxd.files.winforms
                 var w = _pnlLeftTop.Width - 16;
                 _txtFileFilter.Width = Math.Max(100, w);
 
-                // 搜索框和按钮靠右布局
-                var right = _pnlLeftTop.Width - 8;
-                _btnContentSearch.Location = new Point(right - 64, 74);
+                // 圆角搜索容器自适应宽度
+                _pnlSearchContainer.Width = Math.Max(180, w);
+
+                // 搜索框和按钮在容器内部靠右布局
+                var right = _pnlSearchContainer.Width - 8;
+                _btnContentSearch.Location = new Point(right - 64, 6);
                 _txtContentSearch.Width = Math.Max(60, right - 72 - 8);
 
-                // 进度条面板宽度自适应，取消按钮在面板内部右侧
-                _pnlSearchProgress.Width = Math.Max(160, w);
+                // 进度条面板在容器内部自适应
+                _pnlSearchProgress.Width = Math.Max(160, _pnlSearchContainer.Width - 16);
                 _progressBar.Width = Math.Max(60, _txtContentSearch.Width);
-                _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 66, 0);
+                _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 64, 1);
             };
 
             ResumeLayout(false);
