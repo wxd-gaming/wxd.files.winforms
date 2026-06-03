@@ -25,11 +25,19 @@ namespace wxd.files.winforms
         private TabControl _tabContent = new();
         private Panel _pnlLeft = new();
         private Panel _pnlLeftTop = new();
+        private Panel _pnlLeftBottom = new();   // 底部状态栏
         private Label _lblFilter = new();
         private Button _btnRefresh = new();
         private Button _btnSelectFolder = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
+
+        // ==================== 高级内容搜索控件 ====================
+        private TextBox _txtContentSearch = new();
+        private Button _btnContentSearch = new();
+        private Button _btnCancelSearch = new();
+        private ProgressBar _progressBar = new();
+        private Panel _pnlSearchProgress = new();
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
@@ -39,6 +47,10 @@ namespace wxd.files.winforms
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
+
+        // ==================== 高级内容搜索状态 ====================
+        private volatile bool _contentSearchCancelled;
+        private volatile bool _isContentSearching = false;
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -148,10 +160,10 @@ namespace wxd.files.winforms
             _pnlLeft.Padding = new Padding(0);
 
             // 左侧顶部工具栏
-            _pnlLeftTop.Height = 80;
+            _pnlLeftTop.Height = 136;
             _pnlLeftTop.Dock = DockStyle.Top;
             _pnlLeftTop.BackColor = _colorSurface;
-            _pnlLeftTop.Padding = new Padding(8, 6, 8, 6);
+            _pnlLeftTop.Padding = new Padding(8, 6, 8, 4);
 
             // 选择目录按钮
             _btnSelectFolder = new Button
@@ -183,14 +195,16 @@ namespace wxd.files.winforms
             };
             _btnRefresh.Click += OnRefreshClick;
 
-            // 文件数量标签（放在第一行右侧，使用说明按钮后面）
+            // 文件数量标签（放在左侧底部状态栏）
             _lblFileCount = new Label
             {
                 Text = "共 0 个文件",
-                AutoSize = true,
+                AutoSize = false,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
-                Location = new Point(206, 10)
+                TextAlign = ContentAlignment.MiddleLeft,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(8, 0, 0, 0)
             };
 
             // 过滤文本框
@@ -237,7 +251,85 @@ namespace wxd.files.winforms
             };
             btnHelp.Click += OnHelpClick;
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount, btnHelp });
+            // ==================== 高级内容搜索（第三行） ====================
+            // 内容搜索输入框
+            _txtContentSearch = new TextBox
+            {
+                Location = new Point(8, 76),
+                Size = new Size(140, 23),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                PlaceholderText = "搜索文件内容...",
+                BackColor = Color.FromArgb(242, 249, 255)
+            };
+
+            // 搜索按钮（靠右排列）
+            _btnContentSearch = new Button
+            {
+                Text = "🔍搜索",
+                Location = new Point(0, 74),
+                Size = new Size(64, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = _colorPrimary,
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                FlatAppearance = { BorderSize = 1, BorderColor = _colorPrimaryDark, MouseOverBackColor = _colorPrimaryDark }
+            };
+            _btnContentSearch.Click += OnContentSearchClick;
+
+            // 搜索框回车键触发搜索
+            _txtContentSearch.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    OnContentSearchClick(_btnContentSearch, EventArgs.Empty);
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            };
+
+            // ==================== 搜索进度面板（第四行，进度条+取消按钮同一行，初始隐藏） ====================
+            _pnlSearchProgress = new Panel
+            {
+                Location = new Point(8, 106),
+                Size = new Size(260, 28),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Visible = false,
+                BackColor = Color.Transparent
+            };
+
+            _progressBar = new ProgressBar
+            {
+                Location = new Point(0, 5),
+                Size = new Size(200, 18),
+                Style = ProgressBarStyle.Continuous,
+                ForeColor = _colorPrimary,
+                BackColor = Color.FromArgb(235, 248, 255),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            // 取消搜索按钮（默认隐藏，放在进度面板内部右侧）
+            _btnCancelSearch = new Button
+            {
+                Text = "清除",
+                Size = new Size(64, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Visible = false,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 38, 38), MouseOverBackColor = Color.FromArgb(220, 38, 38) }
+            };
+            _btnCancelSearch.Click += OnCancelSearchClick;
+
+            _pnlSearchProgress.Controls.Add(_progressBar);
+            _pnlSearchProgress.Controls.Add(_btnCancelSearch);
+
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _txtContentSearch, _btnContentSearch, _pnlSearchProgress });
 
             // 文件树
             // 初始化图标列表
@@ -280,7 +372,18 @@ namespace wxd.files.winforms
             _treeFiles.NodeMouseDoubleClick += OnTreeViewDoubleClick;
             _treeFiles.MouseDown += OnTreeViewMouseDown;
 
-            // 添加TreeView到左侧面板
+            // 左侧底部状态栏（必须先创建再添加）
+            _pnlLeftBottom = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 26,
+                BackColor = Color.FromArgb(240, 244, 248),
+                Padding = new Padding(0)
+            };
+            _pnlLeftBottom.Controls.Add(_lblFileCount);
+
+            // 添加TreeView到左侧面板（注意顺序：Top > Fill > Bottom）
+            _pnlLeft.Controls.Add(_pnlLeftBottom);
             _pnlLeft.Controls.Add(_treeFiles);
             _pnlLeft.Controls.Add(_pnlLeftTop);
 
@@ -344,7 +447,18 @@ namespace wxd.files.winforms
             // 调整大小处理
             _pnlLeftTop.Resize += (s, e) =>
             {
-                _txtFileFilter.Width = Math.Max(100, _pnlLeftTop.Width - 16);
+                var w = _pnlLeftTop.Width - 16;
+                _txtFileFilter.Width = Math.Max(100, w);
+
+                // 搜索框和按钮靠右布局
+                var right = _pnlLeftTop.Width - 8;
+                _btnContentSearch.Location = new Point(right - 64, 74);
+                _txtContentSearch.Width = Math.Max(60, right - 72 - 8);
+
+                // 进度条面板宽度自适应，取消按钮在面板内部右侧
+                _pnlSearchProgress.Width = Math.Max(160, w);
+                _progressBar.Width = Math.Max(60, _txtContentSearch.Width);
+                _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 66, 0);
             };
 
             ResumeLayout(false);
@@ -1113,7 +1227,7 @@ namespace wxd.files.winforms
                 };
                 var btnCancel = new Button
                 {
-                    Text = "取消", DialogResult = DialogResult.Cancel,
+                    Text = "清除", DialogResult = DialogResult.Cancel,
                     Location = new Point(280, 95), Size = new Size(80, 25),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100)
@@ -1415,7 +1529,195 @@ namespace wxd.files.winforms
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _loadingCts?.Cancel();
+            _contentSearchCancelled = true;
             base.OnFormClosing(e);
+        }
+
+        // ==================== 高级内容搜索 ====================
+
+        /// <summary>点击搜索按钮 — 异步遍历所有文件内容查找关键词</summary>
+        private async void OnContentSearchClick(object? sender, EventArgs e)
+        {
+            var keyword = _txtContentSearch.Text.Trim();
+            if (string.IsNullOrEmpty(keyword))
+            {
+                MessageBox.Show(this, "请输入要搜索的内容关键词", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (_allFiles.Count == 0)
+            {
+                MessageBox.Show(this, "请先选择目录加载文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (_isContentSearching) return;
+
+            _isContentSearching = true;
+            _contentSearchCancelled = false;
+
+            // 进入搜索模式：禁用搜索按钮，显示进度条和取消按钮
+            _btnContentSearch.Enabled = false;
+            _pnlSearchProgress.Visible = true;
+            _btnCancelSearch.Visible = true;
+            _progressBar.Value = 0;
+
+            var totalFiles = _allFiles.Count;
+            var matchedFiles = new List<FileInfo>();
+            var processed = 0;
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    foreach (var file in _allFiles)
+                    {
+                        if (_contentSearchCancelled) break;
+
+                        var current = Interlocked.Increment(ref processed);
+                        this.Invoke(() =>
+                        {
+                            if (!_contentSearchCancelled)
+                                UpdateSearchProgress(current, totalFiles);
+                        });
+
+                        if (FileContainsTextSimple(file.FullPath, file.Type, keyword))
+                        {
+                            lock (matchedFiles) matchedFiles.Add(file);
+                        }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"搜索出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            // 检查是否被取消
+            if (_contentSearchCancelled)
+            {
+                // OnCancelSearchClick 已处理 UI
+                _isContentSearching = false;
+                return;
+            }
+
+            // 搜索正常完成：进度条到100%，恢复搜索按钮，进度条和取消按钮保持显示
+            _progressBar.Value = 100;
+            _btnContentSearch.Enabled = true;
+
+            if (matchedFiles.Count > 0)
+            {
+                BuildFilteredTreeFromFiles(matchedFiles);
+                _lblFileCount.Text = $"内容搜索: 匹配 {matchedFiles.Count} 个（总{_allFiles.Count}）";
+            }
+            else
+            {
+                _treeFiles.BeginUpdate();
+                _treeFiles.Nodes.Clear();
+                _treeFiles.EndUpdate();
+                _lblFileCount.Text = $"内容搜索: 未找到包含\"{keyword}\"的文件（总{_allFiles.Count}）";
+                MessageBox.Show(this, $"未找到包含\"{keyword}\"的文件", "搜索结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
+            _isContentSearching = false;
+        }
+
+        /// <summary>点击取消按钮 — 取消正在进行的搜索，清空搜索框，恢复文件列表初始状态</summary>
+        private void OnCancelSearchClick(object? sender, EventArgs e)
+        {
+            _contentSearchCancelled = true;
+            // 清空搜索框
+            _txtContentSearch.Text = "";
+            // 进度条归0，进度条和取消按钮保持显示
+            _progressBar.Value = 0;
+            // 恢复搜索按钮可用
+            _btnContentSearch.Enabled = true;
+            // 恢复文件数量标签
+            _lblFileCount.Text = $"共 {_allFiles.Count} 个文件";
+            _isContentSearching = false;
+            // 文件列表还原初始状态
+            BuildTreeFromRoot();
+        }
+
+        /// <summary>更新搜索进度（仅更新进度条）</summary>
+        private void UpdateSearchProgress(int current, int total)
+        {
+            if (total <= 0) return;
+            var pct = Math.Min(100, (int)((double)current / total * 100));
+            _progressBar.Value = pct;
+        }
+
+        /// <summary>判断文件内容是否包含关键词（简化版，不依赖 CancellationToken）</summary>
+        private static bool FileContainsTextSimple(string filePath, FileType fileType, string keyword)
+        {
+            try
+            {
+                if (fileType == FileType.Csv)
+                {
+                    return SearchCsvContentSimple(filePath, keyword);
+                }
+                else if (fileType == FileType.Excel)
+                {
+                    return SearchExcelContent(filePath, keyword);
+                }
+            }
+            catch
+            {
+                // 跳过无法读取的文件
+            }
+            return false;
+        }
+
+        /// <summary>逐行搜索CSV文件内容（简化版）</summary>
+        private static bool SearchCsvContentSimple(string filePath, string keyword)
+        {
+            var encodings = new[] { Encoding.UTF8, Encoding.GetEncoding("GBK"), Encoding.Default };
+            foreach (var encoding in encodings)
+            {
+                try
+                {
+                    using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = new StreamReader(fs, encoding, true);
+                    string? line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (line.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                            return true;
+                    }
+                    return false;
+                }
+                catch { continue; }
+            }
+            return false;
+        }
+
+        /// <summary>搜索Excel文件内容</summary>
+        private static bool SearchExcelContent(string filePath, string keyword)
+        {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = ExcelReaderFactory.CreateReader(fs);
+            var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
+            {
+                ConfigureDataTable = _ => new ExcelDataTableConfiguration
+                {
+                    UseHeaderRow = false
+                }
+            });
+
+            if (dataSet.Tables.Count == 0)
+                return false;
+
+            var sheet = dataSet.Tables[0];
+            for (int r = 0; r < sheet.Rows.Count; r++)
+            {
+                for (int c = 0; c < sheet.Columns.Count; c++)
+                {
+                    var val = sheet.Rows[r][c]?.ToString() ?? "";
+                    if (val.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -5903,7 +6205,7 @@ namespace wxd.files.winforms
             // 取消按钮
             _btnCancel = new Button
             {
-                Text = "取消",
+                Text = "清除",
                 Location = new Point(780, 468),
                 Size = new Size(70, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
@@ -6892,7 +7194,7 @@ namespace wxd.files.winforms
             // 取消按钮
             _btnCancel = new Button
             {
-                Text = "取消",
+                Text = "清除",
                 Location = new Point(408, 360),
                 Size = new Size(70, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
