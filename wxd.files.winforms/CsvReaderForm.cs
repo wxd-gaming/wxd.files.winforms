@@ -183,14 +183,14 @@ namespace wxd.files.winforms
             };
             _btnRefresh.Click += OnRefreshClick;
 
-            // 文件数量标签（放在第一行右侧）
+            // 文件数量标签（放在第一行右侧，使用说明按钮后面）
             _lblFileCount = new Label
             {
                 Text = "共 0 个文件",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
-                Location = new Point(124, 10)
+                Location = new Point(206, 10)
             };
 
             // 过滤文本框
@@ -222,7 +222,22 @@ namespace wxd.files.winforms
                 }
             };
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount });
+            // 使用说明按钮（放在刷新按钮右侧）
+            var btnHelp = new Button
+            {
+                Text = "使用说明",
+                Location = new Point(122, 6),
+                Size = new Size(75, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(120, 144, 156),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(96, 125, 139) }
+            };
+            btnHelp.Click += OnHelpClick;
+
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount, btnHelp });
 
             // 文件树
             // 初始化图标列表
@@ -560,6 +575,101 @@ namespace wxd.files.winforms
             {
                 LoadFilesAsync();
             }
+        }
+
+        private void OnHelpClick(object? sender, EventArgs e)
+        {
+            const string helpText = @"📊 CSV/Excel 阅读器 - 使用说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+◆ 基本操作
+
+  · 【选择目录】—— 选择包含 CSV 或 Excel 文件的文件夹
+    （程序会自动递归扫描所有子目录中的表格文件）
+
+  · 【刷新 ↻】—— 重新加载当前目录的文件列表
+    （当目录内文件有变动时使用）
+
+  · 【过滤文件】—— 输入关键词实时筛选文件名
+    ├ 支持 || 运算符：匹配任意关键词（或）
+    ├ 支持 && 运算符：同时匹配所有关键词（与）
+    ├ 同时匹配文件名和备注名
+    └ 按 Esc 键快速清空过滤，恢复完整目录树
+
+
+◆ 文件树操作
+
+  · 以树形结构展示目录及子目录下所有 CSV/Excel 文件
+  · 展开文件夹节点时异步加载子目录（延迟加载，避免卡顿）
+  · 自动忽略 .svn / .git 等版本控制目录
+  · 单击/双击文件节点在右侧标签页中打开文件
+
+  · 右键菜单功能：
+    ├ 打开文件：在右侧标签页中打开
+    ├ 编辑文件：用系统默认程序打开（如 Excel）
+    ├ 打开所在文件夹：在资源管理器中定位文件
+    └ 设置备注名：为文件设置易识别的别名
+
+
+◆ 支持的文件格式
+
+  · CSV 文件（.csv）
+    ├ 自动识别分隔符：逗号、制表符、分号等
+    └ 集成 ExcelDataReader，支持多种编码格式
+
+  · Excel 文件（.xls / .xlsx）
+    └ 读取第一个工作表的内容
+
+
+◆ 标签页操作
+
+  · 点击标签页标题切换已打开的文件
+  · 点击标签页上的 × 关闭文件
+  · 右键标签页弹出菜单：关闭当前 / 关闭其它 / 关闭全部
+  · 点击右上角 ▼ 按钮可快速定位到任意打开的标签页
+  · 支持同时打开多个文件，无数量限制
+  · 有备注名的文件，标签页标题显示备注名
+
+
+◆ 表格操作
+
+  · 【排序】—— 点击列标题按该列升序/降序排列
+    （再次点击切换排序方向）
+
+  · 【行过滤】—— 在表格上方过滤框中输入关键词筛选行
+    ├ 支持 || 运算符（或）
+    └ 支持 && 运算符（与）
+
+  · 【行号列】—— 左侧显示数据行号，方便定位
+
+
+◆ 高级功能
+
+  · 【冻结行】
+    ├ 可冻结表头行，向下滚动时表头保持可见
+    └ 可配置冻结的行数
+
+  · 【表头行索引】
+    └ 可配置第几行作为列标题（从 0 开始）
+
+  · 【列关联】（跨文件列关联分析）
+    ├ 在当前文件中选择关联列
+    ├ 选择关联的目标文件及其列
+    ├ 自动高亮匹配/不匹配的单元格
+    └ 适用于关联表数据对比分析
+
+  · 【文件备注】
+    ├ 为文件设置别名备注，便于识别
+    └ 树形列表和标签页标题都会显示备注名
+
+
+◆ 目录级配置
+
+  · 冻结行、表头行、列关联、文件备注等配置信息
+  · 自动存储在目录下的 .wxd-work/config.json 文件中
+  · 可随文件夹一起移植到其他位置，保持配置不变";
+
+            HelpForm.ShowHelp(this, "使用说明 - CSV/Excel 阅读器", helpText, false);
         }
 
         // ==================== 异步加载文件 ====================

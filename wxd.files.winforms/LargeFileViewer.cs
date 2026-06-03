@@ -194,7 +194,23 @@ namespace wxd.files.winforms
                 }
             };
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, _lblFileCount });
+            // 使用说明按钮（放在过滤文本框右侧）
+            var btnHelp = new Button
+            {
+                Text = "使用说明",
+                Location = new Point(144, 6),
+                Size = new Size(75, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(120, 144, 156),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnHelp.FlatAppearance.BorderSize = 1;
+            btnHelp.FlatAppearance.BorderColor = Color.FromArgb(96, 125, 139);
+            btnHelp.Click += OnHelpClick;
+
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, btnHelp, _txtFileFilter, _lblFileCount });
 
             // 文件列表
             _imgList = new ImageList();
@@ -366,6 +382,88 @@ namespace wxd.files.winforms
         {
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
                 LoadFilesAsync();
+        }
+
+        private void OnHelpClick(object? sender, EventArgs e)
+        {
+            const string helpText = @"📄 大文件阅读器 - 使用说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+◆ 基本操作
+
+  · 【选择目录】—— 选择包含文本文件的文件夹
+    （程序会自动递归扫描所有子目录中的文本文件）
+
+  · 【刷新】—— 重新加载当前目录的文件列表
+    （当目录内文件有变动时使用）
+
+  · 【过滤文件】—— 在过滤框中输入关键词实时筛选
+    ├ 支持 || 运算符：匹配任意关键词（或）
+    ├ 支持 && 运算符：同时匹配所有关键词（与）
+    └ 按 Esc 键快速清空过滤
+
+
+◆ 文件列表操作
+
+  · 单击文件名 —— 在右侧标签页中预览/打开该文件
+  · 双击文件名 —— 在新标签页中打开该文件
+  · 显示文件相对路径，方便区分不同子目录下的同名文件
+  · 自动识别并显示系统文件图标
+
+
+◆ 支持的文件格式
+
+  · 常见文本格式：.txt .log .csv .json .xml .yaml .yml
+  · 配置文件：.ini .cfg .conf .config .props .targets
+  · 代码文件：.cs .cpp .c .h .py .js .ts .java .go 等
+  · Markdown：.md .rst
+  · 网页相关：.html .css .scss .less
+  · 脚本文件：.sh .bat .ps1 .sql
+  · 项目文件：.sln .csproj .vcxproj
+  · 其他短扩展名文件也会自动尝试打开
+
+
+◆ 标签页操作
+
+  · 点击标签页标题切换已打开的文件
+  · 点击标签页上的 × 关闭文件
+  · 右键标签页弹出菜单：关闭当前 / 关闭其它 / 关闭全部
+  · 点击右上角 ▼ 按钮可快速定位到任意打开的标签页
+  · 支持同时打开多个文件，无数量限制
+
+
+◆ 阅读控制（大文件阅读核心功能）
+
+  · 【虚拟滚动】
+    ├ 高性能浏览超大文件，流畅不卡顿
+    └ 支持 10GB+ 文件秒级打开
+
+  · 【行号跳转】
+    ├ 输入行号直接跳转到指定行
+    └ 支持行号输入框和回车快捷跳转
+
+  · 【全文搜索】
+    ├ 输入关键词在文件中搜索
+    ├ 区分大小写 / 正则表达式可选
+    ├ 上一条 / 下一条快速跳转搜索结果
+    └ 搜索结果高亮显示
+
+  · 【上下文行】
+    ├ 搜索时可显示匹配行的前后文内容
+    └ 便于理解匹配内容的上下文语境
+
+  · 【导出功能】
+    └ 将搜索结果或指定行范围的内容导出为新文件
+
+
+◆ 性能特点
+
+  · 流式读取：不将整个文件加载到内存
+  · 后台异步构建行偏移索引，支持快速行号定位
+  · 内存占用严格控制在合理范围内
+  · 大文件打开速度与文件大小无关，秒级响应";
+
+            HelpForm.ShowHelp(this, "使用说明 - 大文件阅读器", helpText, false);
         }
 
         private async void LoadFilesAsync()
