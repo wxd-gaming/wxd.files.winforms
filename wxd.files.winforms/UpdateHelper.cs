@@ -66,20 +66,18 @@ namespace wxd.files.winforms
                     return;
 
                 // 有更新 → 使用自定义弹窗（三个按钮：立即更新 / 跳过版本 / 取消）
+                // 注意：点击"立即更新"后，UpdateNotifyForm 内部会切换为下载进度界面并执行下载，
+                // 下载完成后自动执行 Environment.Exit(0)，所以此处不需要再调用 DoUpdateAsync
                 var isDark = CsvSettings.ThemeMode == 0;
                 var notifyForm = new UpdateNotifyForm(result, isDark);
                 notifyForm.ShowDialog();
 
-                if (notifyForm.UserChoice == 1)
-                {
-                    // 立即更新
-                    await DoUpdateAsync(result.RemoteMd5, null);
-                }
-                else if (notifyForm.UserChoice == 2)
+                if (notifyForm.UserChoice == 2)
                 {
                     // 跳过此版本
                     AddSkippedVersion(result.RemoteVersion);
                 }
+                // 1 = 立即更新 → UpdateNotifyForm 内部已处理下载和退出
                 // 3 = 取消 → 下次启动时再次提示
             }
             catch

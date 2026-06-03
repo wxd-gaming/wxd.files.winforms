@@ -350,23 +350,20 @@ namespace wxd.files.winforms
                     var skipped = UpdateHelper.GetSkippedVersions();
                     bool isSkipped = skipped.Contains(_lastCheckResult.RemoteVersion);
 
-                    // 统一使用 UpdateNotifyForm 弹窗
+                    // 统一使用 UpdateNotifyForm 弹窗（点击"立即更新"后内部切换为下载进度界面）
                     var notifyForm = new UpdateNotifyForm(_lastCheckResult, _isDark);
                     notifyForm.ShowDialog(this);
 
-                    if (notifyForm.UserChoice == 1)
-                    {
-                        await StartDownloadUpdate(_lastCheckResult);
-                    }
-                    else if (notifyForm.UserChoice == 2)
+                    if (notifyForm.UserChoice == 2)
                     {
                         UpdateHelper.AddSkippedVersion(_lastCheckResult.RemoteVersion);
                         _lblStatus.Text = $"已跳过版本 v{_lastCheckResult.RemoteVersion}";
                     }
-                    else
+                    else if (notifyForm.UserChoice == 3)
                     {
                         _lblStatus.Text = $"已忽略版本 v{_lastCheckResult.RemoteVersion}，下次启动时再次提示";
                     }
+                    // UserChoice == 1 → UpdateNotifyForm 内部已处理下载和退出
                 }
                 else
                 {
@@ -405,38 +402,11 @@ namespace wxd.files.winforms
 
             if (result != DialogResult.Yes) return;
 
-            await StartDownloadUpdate(_lastCheckResult);
-        }
-
-        private async Task StartDownloadUpdate(CheckResult checkResult)
-        {
-            _btnCheckUpdate.Enabled = false;
-            _btnForceReinstall.Visible = false;
-            _progressBar.Visible = true;
-            _progressBar.Style = ProgressBarStyle.Continuous;
-            _progressBar.Value = 0;
-            _lblStatus.Text = "正在下载更新...";
-
-            var progress = new Progress<int>(p =>
-            {
-                _progressBar.Value = p;
-                _lblProgressText.Text = $"{p}%";
-            });
-
-            try
-            {
-                UpdateHelper.SetCurrentVersion(checkResult.RemoteVersion);
-                await UpdateHelper.DoUpdateAsync(checkResult.RemoteMd5, progress);
-            }
-            catch (Exception ex)
-            {
-                _lblStatus.Text = "更新失败";
-                _progressBar.Visible = false;
-                _lblProgressText.Text = "";
-                MessageBox.Show($"更新失败：{ex.Message}", "更新错误",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                _btnCheckUpdate.Enabled = true;
-            }
+            // 用 UpdateNotifyForm 展示强制重装的下载进度
+            var notifyForm = new UpdateNotifyForm(_lastCheckResult, _isDark);
+            // 直接模拟点击"立即更新"触发下载
+            notifyForm.ShowDialog(this);
+            // UserChoice == 1 → UpdateNotifyForm 内部已处理下载和退出
         }
 
         /// <summary>便捷方法：显示更新窗体</summary>
