@@ -523,7 +523,8 @@ namespace wxd.files.winforms
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 DropDownStyle = ComboBoxStyle.DropDown,
                 AutoCompleteMode = AutoCompleteMode.SuggestAppend,
-                AutoCompleteSource = AutoCompleteSource.FileSystem
+                AutoCompleteSource = AutoCompleteSource.FileSystem,
+                FlatStyle = FlatStyle.Flat
             };
             _cboPath.KeyDown += OnPathKeyDown;
             _cboPath.SelectedIndexChanged += OnPathComboSelectedIndexChanged;
@@ -550,6 +551,7 @@ namespace wxd.files.winforms
                 Location = new Point(386, 5),
                 Size = new Size(90, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             _cboViewMode.Items.AddRange(new object[] { "详细信息", "列表", "小图标", "大图标", "平铺" });

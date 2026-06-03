@@ -442,7 +442,7 @@ namespace wxd.files.winforms
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Size = new Size(55, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System,
+                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 6, 0)
             };
             for (int i = 1; i <= 10; i++) _cboCount.Items.Add(i.ToString());
@@ -463,7 +463,7 @@ namespace wxd.files.winforms
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Size = new Size(120, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System,
+                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 6, 0)
             };
             _cboLayout.Items.Add("横向布局");
@@ -486,7 +486,7 @@ namespace wxd.files.winforms
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Size = new Size(80, ctrlHeight),
                 Font = comboFont,
-                FlatStyle = FlatStyle.System,
+                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 6, 0)
             };
             _cboTheme.Items.Add("深色");
