@@ -1,0 +1,454 @@
+using System;
+using System.Drawing;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace wxd.files.winforms
+{
+    /// <summary>更新管理窗体：使用说明 + 检查更新 + 进度条</summary>
+    public class UpdateForm : Form
+    {
+        private readonly RichTextBox _rtbContent;
+        private readonly Button _btnCheckUpdate;
+        private readonly Button _btnForceReinstall;
+        private readonly Button _btnClose;
+        private readonly Label _lblStatus;
+        private readonly ProgressBar _progressBar;
+        private readonly Label _lblProgressText;
+        private readonly Label _lblLastCheck;
+        private readonly bool _isDark;
+
+        private CheckResult? _lastCheckResult;
+
+        // 浅色配色
+        private static readonly Color _lightBg = Color.FromArgb(235, 248, 255);
+        private static readonly Color _lightTitleFg = Color.FromArgb(20, 60, 100);
+        private static readonly Color _lightBtnBg = Color.FromArgb(66, 165, 245);
+        private static readonly Color _lightBtnBorder = Color.FromArgb(30, 136, 229);
+        private static readonly Color _lightStatusFg = Color.FromArgb(90, 130, 170);
+        private static readonly Color _lightSubFg = Color.FromArgb(140, 160, 180);
+
+        // 深色配色
+        private static readonly Color _darkBg = Color.FromArgb(30, 30, 30);
+        private static readonly Color _darkTitleFg = Color.FromArgb(241, 241, 241);
+        private static readonly Color _darkBtnBg = Color.FromArgb(0, 122, 204);
+        private static readonly Color _darkBtnBorder = Color.FromArgb(0, 95, 160);
+        private static readonly Color _darkStatusFg = Color.FromArgb(200, 200, 200);
+        private static readonly Color _darkSubFg = Color.FromArgb(130, 130, 130);
+
+        private const string HelpContent = @"📂 多窗格文件管理器 - 使用说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+◆ 工具栏操作
+
+  · 【≡ 设置按钮】—— 点击展开/收起设置面板
+    ├ 窗格数量：1~10 个窗格自由设置
+    ├ 布局方式：横向、纵向、纵横交错流式三种模式
+    ├ 主题切换：深色模式 / 浅色模式
+    ├ 保存状态：手动保存当前所有窗格的目录和过滤条件
+    └ 命令管理：管理自定义命令按钮
+
+  · 【显示隐藏】—— 切换显示/隐藏系统隐藏文件和文件夹
+    （勾选后立即生效，所有面板同步刷新）
+
+  · 【阅读器】—— 打开 CSV/Excel 阅读器独立窗口
+    （需先选择包含 CSV 或 Excel 文件的目录）
+
+  · 【大文件阅读】—— 打开大文件阅读器独立窗口
+    （支持 GB 级超大文本文件，虚拟滚动高性能浏览）
+
+  · 【自定义命令】—— 通过「命令管理」添加的自定义按钮
+    （点击后执行配置的 cmd 命令，支持设置工作目录和显示控制台窗口）
+
+
+◆ 窗格文件管理
+
+  · 路径框
+    ├ 下拉选择磁盘盘符或最近访问的路径
+    ├ 直接输入路径后按回车跳转
+    └ 支持 UNC 网络路径
+
+  · 上级按钮 —— 返回当前目录的上级目录
+
+  · 文件列表
+    ├ 双击文件夹进入该目录
+    ├ 双击文件用系统默认程序打开
+    └ 右键弹出 Windows 原生右键菜单（支持多选文件）
+
+  · 视图切换 —— 点击面板顶部的视图按钮切换五种视图模式
+    ├ 详细信息（默认）
+    ├ 列表
+    ├ 大图标
+    ├ 小图标
+    └ 平铺
+
+  · 过滤框
+    ├ 输入关键词实时过滤文件列表（300ms 防抖）
+    ├ 支持 || 运算符：匹配任意关键词（或）
+    ├ 支持 && 运算符：同时匹配所有关键词（与）
+    └ 按 Esc 键快速清空过滤
+
+
+◆ 键盘快捷键
+
+  · F2      —— 重命名当前选中的文件/文件夹
+  · F5      —— 刷新当前窗格的文件列表
+  · Delete  —— 删除选中的文件/文件夹
+  · Ctrl+A  —— 全选当前窗格中的所有文件
+
+
+◆ 窗格数量与布局
+
+  · 数量范围：1~10 个窗格
+  · 横向布局：所有窗格一行等分宽度
+  · 纵向布局：所有窗格一列等分高度
+  · 纵横交错流式布局：
+    ├ 3/5/7 个窗格：左侧流式排列 + 右侧一个占满高度
+    └ 其他数量：网格流式排列
+
+
+◆ 主题切换
+
+  · 深色模式：Visual Studio 风格深色主题
+  · 浅色模式：清爽天蓝配色
+
+
+◆ 状态记忆（自动保存 & 自动恢复）
+
+  · 每个窗格的当前目录、过滤条件、视图模式
+  · 窗格数量、布局方式、主题
+  · 显示隐藏文件开关状态
+  · 自定义命令按钮配置
+  · 关闭窗口时自动保存，重启程序自动恢复所有状态";
+
+        public UpdateForm(bool isDark = false)
+        {
+            _isDark = isDark;
+            Text = "关于 - wxd.files.winforms";
+            ClientSize = new Size(700, 530);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowIcon = false;
+            Font = new Font("Microsoft YaHei UI", 9f);
+            BackColor = isDark ? _darkBg : _lightBg;
+
+            // 当前版本
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            var verStr = ver != null ? $"v{ver}" : "未知";
+
+            // 顶栏背景
+            var topPanel = new Panel
+            {
+                Location = new Point(0, 0),
+                Size = new Size(700, 52),
+                BackColor = isDark ? Color.FromArgb(40, 40, 43) : Color.FromArgb(200, 228, 245)
+            };
+
+            // 标题（版本号）
+            var lblTitle = new Label
+            {
+                Text = $"wxd.files.winforms  {verStr}",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 13f, FontStyle.Bold),
+                ForeColor = isDark ? _darkTitleFg : _lightTitleFg,
+                Location = new Point(16, 8),
+                BackColor = Color.Transparent
+            };
+
+            // 上次检测时间 + 检测频率提示
+            var lastCheckDt = UpdateHelper.GetLastCheckTimePublic();
+            string lastCheckText;
+            if (lastCheckDt == DateTime.MinValue)
+            {
+                lastCheckText = "尚未检测过更新（自动检测间隔: 7 天）";
+            }
+            else
+            {
+                var nextCheck = lastCheckDt.AddDays(7);
+                var remaining = (nextCheck - DateTime.Now).TotalDays;
+                string remainText = remaining > 0
+                    ? $"（距下次自动检测: {remaining:F0} 天）"
+                    : "（可手动检测更新）";
+                lastCheckText = $"上次检测: {lastCheckDt:yyyy-MM-dd HH:mm}  {remainText}";
+            }
+            _lblLastCheck = new Label
+            {
+                Text = lastCheckText,
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 8.5f),
+                ForeColor = isDark ? _darkSubFg : _lightSubFg,
+                Location = new Point(20, 32),
+                BackColor = Color.Transparent
+            };
+
+            topPanel.Controls.AddRange(new Control[] { lblTitle, _lblLastCheck });
+
+            // 分隔线
+            var sep = new Panel
+            {
+                Location = new Point(0, 52),
+                Size = new Size(700, 1),
+                BackColor = isDark ? Color.FromArgb(62, 62, 66) : Color.FromArgb(173, 209, 237)
+            };
+
+            // 富文本框（使用说明）
+            _rtbContent = new RichTextBox
+            {
+                Location = new Point(16, 62),
+                Size = new Size(668, 380),
+                Font = new Font("Microsoft YaHei UI", 10f),
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                ScrollBars = RichTextBoxScrollBars.Vertical,
+                DetectUrls = false,
+                WordWrap = true,
+                BackColor = isDark ? Color.FromArgb(37, 37, 38) : Color.White,
+                ForeColor = isDark ? Color.FromArgb(220, 220, 220) : Color.FromArgb(30, 60, 100)
+            };
+            _rtbContent.Text = HelpContent;
+
+            // 底栏背景
+            var bottomPanel = new Panel
+            {
+                Location = new Point(0, 450),
+                Size = new Size(700, 80),
+                BackColor = isDark ? Color.FromArgb(37, 37, 38) : Color.FromArgb(220, 238, 250)
+            };
+
+            // 状态文字
+            _lblStatus = new Label
+            {
+                Text = "就绪",
+                AutoSize = false,
+                Size = new Size(360, 22),
+                Location = new Point(16, 8),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = isDark ? _darkStatusFg : _lightStatusFg,
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            // 进度条
+            _progressBar = new ProgressBar
+            {
+                Location = new Point(16, 34),
+                Size = new Size(360, 18),
+                Visible = false,
+                Style = ProgressBarStyle.Continuous,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0
+            };
+
+            // 进度百分比文字
+            _lblProgressText = new Label
+            {
+                Text = "",
+                AutoSize = false,
+                Size = new Size(50, 18),
+                Location = new Point(380, 34),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = isDark ? _darkStatusFg : _lightStatusFg,
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            // 检查更新按钮
+            _btnCheckUpdate = new Button
+            {
+                Text = "检查更新",
+                Size = new Size(110, 30),
+                Location = new Point(440, 8),
+                Font = new Font("Microsoft YaHei UI", 10f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = isDark ? _darkBtnBg : _lightBtnBg,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            _btnCheckUpdate.FlatAppearance.BorderSize = 1;
+            _btnCheckUpdate.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
+            _btnCheckUpdate.Click += OnCheckUpdateClick;
+
+            // 强制重装按钮（默认隐藏）
+            _btnForceReinstall = new Button
+            {
+                Text = "强制重装",
+                Size = new Size(110, 30),
+                Location = new Point(440, 8),
+                Font = new Font("Microsoft YaHei UI", 10f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(255, 152, 0),
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+                Visible = false
+            };
+            _btnForceReinstall.FlatAppearance.BorderSize = 1;
+            _btnForceReinstall.FlatAppearance.BorderColor = Color.FromArgb(230, 130, 0);
+            _btnForceReinstall.Click += OnForceReinstallClick;
+
+            // 关闭按钮
+            _btnClose = new Button
+            {
+                Text = "关闭",
+                Size = new Size(100, 30),
+                Location = new Point(570, 8),
+                Font = new Font("Microsoft YaHei UI", 10f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = isDark ? _darkBtnBg : _lightBtnBg,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.OK
+            };
+            _btnClose.FlatAppearance.BorderSize = 1;
+            _btnClose.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
+            _btnClose.Click += (s, e) => Close();
+
+            bottomPanel.Controls.AddRange(new Control[] {
+                _lblStatus, _progressBar, _lblProgressText,
+                _btnCheckUpdate, _btnForceReinstall, _btnClose
+            });
+
+            Controls.AddRange(new Control[] {
+                topPanel, sep, _rtbContent, bottomPanel
+            });
+
+            AcceptButton = _btnClose;
+            CancelButton = _btnClose;
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            _rtbContent.SelectionStart = 0;
+            _rtbContent.ScrollToCaret();
+            _btnClose.Focus();
+        }
+
+        private async void OnCheckUpdateClick(object? sender, EventArgs e)
+        {
+            _btnCheckUpdate.Enabled = false;
+            _btnForceReinstall.Visible = false;
+            _lblStatus.Text = "正在检查更新...";
+            _progressBar.Visible = true;
+            _progressBar.Style = ProgressBarStyle.Marquee;
+
+            try
+            {
+                _lastCheckResult = await UpdateHelper.CheckManualAsync();
+
+                if (_lastCheckResult.HasUpdate)
+                {
+                    _lblStatus.Text = $"发现新版本 v{_lastCheckResult.RemoteVersion}！";
+
+                    // 检查是否在跳过列表里
+                    var skipped = UpdateHelper.GetSkippedVersions();
+                    bool isSkipped = skipped.Contains(_lastCheckResult.RemoteVersion);
+
+                    var msg = $"发现新版本 v{_lastCheckResult.RemoteVersion}！\n\n" +
+                              $"当前版本: v{_lastCheckResult.CurrentVersion}\n" +
+                              $"最新版本: v{_lastCheckResult.RemoteVersion}\n\n" +
+                              (isSkipped ? "（此版本已在跳过列表中）\n\n" : "") +
+                              "是否立即更新？";
+
+                    var buttons = isSkipped
+                        ? MessageBoxButtons.YesNo
+                        : MessageBoxButtons.YesNoCancel;
+
+                    var dialogResult = MessageBox.Show(msg, "软件更新", buttons, MessageBoxIcon.Information);
+
+                    if (dialogResult == DialogResult.Yes)
+                    {
+                        await StartDownloadUpdate(_lastCheckResult);
+                    }
+                    else if (dialogResult == DialogResult.Cancel)
+                    {
+                        UpdateHelper.AddSkippedVersion(_lastCheckResult.RemoteVersion);
+                        _lblStatus.Text = $"已跳过版本 v{_lastCheckResult.RemoteVersion}";
+                    }
+                    else
+                    {
+                        _lblStatus.Text = $"已忽略版本 v{_lastCheckResult.RemoteVersion}，下次启动时再次提示";
+                    }
+                }
+                else
+                {
+                    _lblStatus.Text = "已是最新版本！";
+                    _btnForceReinstall.Visible = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "检查更新失败";
+                MessageBox.Show($"检查更新失败：{ex.Message}", "网络错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _progressBar.Style = ProgressBarStyle.Continuous;
+                _progressBar.Value = 0;
+                _progressBar.Visible = false;
+                _btnCheckUpdate.Enabled = true;
+            }
+        }
+
+        private async void OnForceReinstallClick(object? sender, EventArgs e)
+        {
+            if (_lastCheckResult == null)
+            {
+                OnCheckUpdateClick(sender, e);
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"当前版本 v{_lastCheckResult.CurrentVersion}，确定要强制重装吗？\n" +
+                "将重新下载并覆盖当前程序文件。",
+                "强制重装",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result != DialogResult.Yes) return;
+
+            await StartDownloadUpdate(_lastCheckResult);
+        }
+
+        private async Task StartDownloadUpdate(CheckResult checkResult)
+        {
+            _btnCheckUpdate.Enabled = false;
+            _btnForceReinstall.Visible = false;
+            _progressBar.Visible = true;
+            _progressBar.Style = ProgressBarStyle.Continuous;
+            _progressBar.Value = 0;
+            _lblStatus.Text = "正在下载更新...";
+
+            var progress = new Progress<int>(p =>
+            {
+                _progressBar.Value = p;
+                _lblProgressText.Text = $"{p}%";
+            });
+
+            try
+            {
+                UpdateHelper.SetCurrentVersion(checkResult.RemoteVersion);
+                await UpdateHelper.DoUpdateAsync(checkResult.RemoteMd5, progress);
+            }
+            catch (Exception ex)
+            {
+                _lblStatus.Text = "更新失败";
+                _progressBar.Visible = false;
+                _lblProgressText.Text = "";
+                MessageBox.Show($"更新失败：{ex.Message}", "更新错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _btnCheckUpdate.Enabled = true;
+            }
+        }
+
+        /// <summary>便捷方法：显示更新窗体</summary>
+        public static void ShowUpdateForm(IWin32Window owner, bool isDark = false)
+        {
+            using var form = new UpdateForm(isDark);
+            form.ShowDialog(owner);
+        }
+    }
+}

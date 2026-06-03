@@ -8,9 +8,11 @@ namespace wxd.files.winforms
         [STAThread]
         static void Main()
         {
-            // To customize application configuration such as set high DPI settings or default font,
-            // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
+
+            // 启动时异步检查更新（不阻塞主界面启动）
+            _ = UpdateHelper.CheckSilentAsync();
+
             Application.Run(new Form1());
         }
     }

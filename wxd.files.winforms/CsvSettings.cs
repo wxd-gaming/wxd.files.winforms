@@ -480,7 +480,7 @@ namespace wxd.files.winforms
             catch { }
         }
 
-        private static string GetStringValue(string key, string defaultValue)
+        internal static string GetStringValue(string key, string defaultValue)
         {
             try
             {
@@ -491,7 +491,7 @@ namespace wxd.files.winforms
             return defaultValue;
         }
 
-        private static void SetStringValue(string key, string value)
+        internal static void SetStringValue(string key, string value)
         {
             try
             {
