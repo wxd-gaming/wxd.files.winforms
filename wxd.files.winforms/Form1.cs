@@ -211,9 +211,6 @@ namespace wxd.files.winforms
                 dotTimer.Dispose();
             }
 
-            // 短暂延迟让用户看到"加载完成"
-            await Task.Delay(300);
-
             // 先一次性显示所有面板（此时还在遮罩后面，用户看不到面板绘制过程）
             SuspendLayout();
             foreach (var panel in _panels)
@@ -294,12 +291,23 @@ namespace wxd.files.winforms
 
                 // 刷新最终状态
                 Application.DoEvents();
-                await Task.Delay(200);
 
                 _isInitialLoadingComplete = true;
 
                 // 隐藏Loading遮罩
                 await HideLoadingOverlayAsync();
+
+                // 界面完全就绪后，延迟 3 秒再触发更新检查
+                var updateTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+                System.Windows.Forms.Timer timerRef = updateTimer;
+                updateTimer.Tick += async (s, e) =>
+                {
+                    timerRef.Stop();
+                    timerRef.Dispose();
+                    try { await UpdateHelper.CheckSilentAsync(); }
+                    catch { /* 静默 */ }
+                };
+                timerRef.Start();
             }
             catch (Exception ex)
             {

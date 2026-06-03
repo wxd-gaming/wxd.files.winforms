@@ -134,9 +134,18 @@ namespace wxd.files.winforms
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = isDark ? _darkBg : _lightBg;
 
-            // 当前版本
-            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            var verStr = ver != null ? $"v{ver}" : "未知";
+            // 当前版本 - 优先从 config 读取（与更新检测对比用同一个版本号）
+            var configVersion = UpdateHelper.GetCurrentVersion();
+            string verStr;
+            if (!string.IsNullOrEmpty(configVersion))
+            {
+                verStr = $"v{configVersion}";
+            }
+            else
+            {
+                var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                verStr = ver != null ? $"v{ver}" : "未知";
+            }
 
             // 顶栏背景
             var topPanel = new Panel
@@ -162,15 +171,12 @@ namespace wxd.files.winforms
             string lastCheckText;
             if (lastCheckDt == DateTime.MinValue)
             {
-                lastCheckText = "尚未检测过更新（自动检测间隔: 7 天）";
+                lastCheckText = "尚未检测过更新（每天自动检测一次）";
             }
             else
             {
-                var nextCheck = lastCheckDt.AddDays(7);
-                var remaining = (nextCheck - DateTime.Now).TotalDays;
-                string remainText = remaining > 0
-                    ? $"（距下次自动检测: {remaining:F0} 天）"
-                    : "（可手动检测更新）";
+                var checkedToday = lastCheckDt.Date == DateTime.Now.Date;
+                string remainText = checkedToday ? "（今日已检测）" : "（可手动检测更新）";
                 lastCheckText = $"上次检测: {lastCheckDt:yyyy-MM-dd HH:mm}  {remainText}";
             }
             _lblLastCheck = new Label
@@ -222,7 +228,7 @@ namespace wxd.files.winforms
             {
                 Text = "就绪",
                 AutoSize = false,
-                Size = new Size(360, 22),
+                Size = new Size(300, 22),
                 Location = new Point(16, 8),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = isDark ? _darkStatusFg : _lightStatusFg,
@@ -234,7 +240,7 @@ namespace wxd.files.winforms
             _progressBar = new ProgressBar
             {
                 Location = new Point(16, 34),
-                Size = new Size(360, 18),
+                Size = new Size(300, 18),
                 Visible = false,
                 Style = ProgressBarStyle.Continuous,
                 Minimum = 0,
@@ -247,20 +253,20 @@ namespace wxd.files.winforms
             {
                 Text = "",
                 AutoSize = false,
-                Size = new Size(50, 18),
-                Location = new Point(380, 34),
+                Size = new Size(45, 18),
+                Location = new Point(320, 34),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = isDark ? _darkStatusFg : _lightStatusFg,
                 BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            // 检查更新按钮
+            // 检查更新按钮（右侧区域，不和左侧状态文字重叠）
             _btnCheckUpdate = new Button
             {
                 Text = "检查更新",
-                Size = new Size(110, 30),
-                Location = new Point(440, 8),
+                Size = new Size(85, 30),
+                Location = new Point(428, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -271,18 +277,17 @@ namespace wxd.files.winforms
             _btnCheckUpdate.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
             _btnCheckUpdate.Click += OnCheckUpdateClick;
 
-            // 强制重装按钮（默认隐藏）
+            // 强制重装按钮
             _btnForceReinstall = new Button
             {
                 Text = "强制重装",
-                Size = new Size(110, 30),
-                Location = new Point(440, 8),
+                Size = new Size(85, 30),
+                Location = new Point(517, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(255, 152, 0),
                 ForeColor = Color.White,
-                Cursor = Cursors.Hand,
-                Visible = false
+                Cursor = Cursors.Hand
             };
             _btnForceReinstall.FlatAppearance.BorderSize = 1;
             _btnForceReinstall.FlatAppearance.BorderColor = Color.FromArgb(230, 130, 0);
@@ -292,8 +297,8 @@ namespace wxd.files.winforms
             _btnClose = new Button
             {
                 Text = "关闭",
-                Size = new Size(100, 30),
-                Location = new Point(570, 8),
+                Size = new Size(80, 30),
+                Location = new Point(606, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -329,7 +334,6 @@ namespace wxd.files.winforms
         private async void OnCheckUpdateClick(object? sender, EventArgs e)
         {
             _btnCheckUpdate.Enabled = false;
-            _btnForceReinstall.Visible = false;
             _lblStatus.Text = "正在检查更新...";
             _progressBar.Visible = true;
             _progressBar.Style = ProgressBarStyle.Marquee;
@@ -346,23 +350,15 @@ namespace wxd.files.winforms
                     var skipped = UpdateHelper.GetSkippedVersions();
                     bool isSkipped = skipped.Contains(_lastCheckResult.RemoteVersion);
 
-                    var msg = $"发现新版本 v{_lastCheckResult.RemoteVersion}！\n\n" +
-                              $"当前版本: v{_lastCheckResult.CurrentVersion}\n" +
-                              $"最新版本: v{_lastCheckResult.RemoteVersion}\n\n" +
-                              (isSkipped ? "（此版本已在跳过列表中）\n\n" : "") +
-                              "是否立即更新？";
+                    // 统一使用 UpdateNotifyForm 弹窗
+                    var notifyForm = new UpdateNotifyForm(_lastCheckResult, _isDark);
+                    notifyForm.ShowDialog(this);
 
-                    var buttons = isSkipped
-                        ? MessageBoxButtons.YesNo
-                        : MessageBoxButtons.YesNoCancel;
-
-                    var dialogResult = MessageBox.Show(msg, "软件更新", buttons, MessageBoxIcon.Information);
-
-                    if (dialogResult == DialogResult.Yes)
+                    if (notifyForm.UserChoice == 1)
                     {
                         await StartDownloadUpdate(_lastCheckResult);
                     }
-                    else if (dialogResult == DialogResult.Cancel)
+                    else if (notifyForm.UserChoice == 2)
                     {
                         UpdateHelper.AddSkippedVersion(_lastCheckResult.RemoteVersion);
                         _lblStatus.Text = $"已跳过版本 v{_lastCheckResult.RemoteVersion}";
@@ -375,7 +371,6 @@ namespace wxd.files.winforms
                 else
                 {
                     _lblStatus.Text = "已是最新版本！";
-                    _btnForceReinstall.Visible = true;
                 }
             }
             catch (Exception ex)

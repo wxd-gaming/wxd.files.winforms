@@ -40,7 +40,7 @@ namespace wxd.files.winforms
 
         private static readonly HttpClient _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(15)
+            Timeout = TimeSpan.FromSeconds(8)
         };
 
         /// <summary>启动时静默检查（异步，不抛异常，不影响启动）</summary>
@@ -48,15 +48,12 @@ namespace wxd.files.winforms
         {
             try
             {
-                // 判断是否超过一周
+                // 判断是否跨天（自然日，不考虑24小时间隔）
                 var lastCheck = GetLastCheckTime();
-                if (lastCheck != DateTime.MinValue && (DateTime.Now - lastCheck).TotalDays < 7)
+                if (lastCheck != DateTime.MinValue && lastCheck.Date == DateTime.Now.Date)
                     return;
 
-                // 启动后延迟 30 秒再检查
-                await Task.Delay(TimeSpan.FromSeconds(30));
-
-                // 更新检查时间
+                // 更新检查时间（放在Fetch之前，由外部Timer控制调用时机，不阻塞启动）
                 SetLastCheckTime(DateTime.Now);
 
                 var result = await FetchCheckResultAsync();
@@ -104,7 +101,7 @@ namespace wxd.files.winforms
         /// <summary>下载并更新，带进度回调</summary>
         public static async Task DoUpdateAsync(string expectedMd5, IProgress<int>? progress)
         {
-            var currentExePath = Assembly.GetEntryAssembly()?.Location;
+            var currentExePath = Application.ExecutablePath;
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
                 throw new Exception("无法定位当前程序文件。");
 
@@ -213,7 +210,7 @@ namespace wxd.files.winforms
             // 如果版本相同但 MD5 不同，也视为需要强制重装
             if (!hasUpdate)
             {
-                var currentExePath = Assembly.GetEntryAssembly()?.Location;
+                var currentExePath = Application.ExecutablePath;
                 if (!string.IsNullOrEmpty(currentExePath) && File.Exists(currentExePath))
                 {
                     var currentMd5 = await ComputeFileMd5Async(currentExePath);
@@ -258,7 +255,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>设置上次检查时间</summary>
-        private static void SetLastCheckTime(DateTime time)
+        public static void SetLastCheckTime(DateTime time)
         {
             CsvSettings.SetStringValue(KeyLastCheckTime, time.ToString("yyyy-MM-dd HH:mm:ss"));
         }
