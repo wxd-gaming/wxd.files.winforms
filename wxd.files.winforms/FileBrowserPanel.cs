@@ -1287,37 +1287,32 @@ namespace wxd.files.winforms
             else
             {
                 var iconKey = GetFileIconKey(fullName);
+                // 小图标模式默认使用系统扩展名图标
                 item.ImageKey = iconKey;
-                // 同步加载大图标
-                if (!_imgListLarge.Images.ContainsKey(iconKey))
+
+                // ---- 大图标缩略图处理（用于 LargeIcon / Tile 模式）----
+                if (IsImageExtension(fullName))
                 {
-                    // 图片文件使用唯一 key（文件路径哈希），确保每个文件有自己的缩略图
-                    if (IsImageExtension(fullName))
+                    var thumbKey = "thumb_" + Math.Abs(fullName.GetHashCode()).ToString();
+                    if (!_imgListLarge.Images.ContainsKey(thumbKey))
                     {
-                        var thumbKey = "thumb_" + Math.Abs(fullName.GetHashCode()).ToString();
-                        if (!_imgListLarge.Images.ContainsKey(thumbKey))
-                        {
-                            var thumb = TryGetShellThumbnail(fullName, 48);
-                            if (thumb != null)
-                            {
-                                _imgListLarge.Images.Add(thumbKey, thumb);
-                            }
-                        }
-                        item.ImageKey = thumbKey;
+                        var thumb = TryGetShellThumbnail(fullName, 48);
+                        if (thumb != null)
+                            _imgListLarge.Images.Add(thumbKey, thumb);
                     }
-                    else
+                    // 大图标模式使用缩略图 key
+                    if (_viewMode is FileListViewMode.LargeIcon or FileListViewMode.Tile)
+                        item.ImageKey = thumbKey;
+                }
+                else
+                {
+                    // 非图片文件：为大图标列表准备系统图标
+                    if (!_imgListLarge.Images.ContainsKey(iconKey))
                     {
-                        // 非图片文件：使用扩展名共享系统图标
-                        var largeKey = Path.GetExtension(fullName).ToLowerInvariant();
-                        if (largeKey != iconKey) largeKey = iconKey;
-                        if (!_imgListLarge.Images.ContainsKey(largeKey))
-                        {
-                            var shfi = default(SHFILEINFO);
-                            SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
-                            if (shfi.hIcon != IntPtr.Zero)
-                                _imgListLarge.Images.Add(largeKey, Icon.FromHandle(shfi.hIcon));
-                        }
-                        item.ImageKey = iconKey;
+                        var shfi = default(SHFILEINFO);
+                        SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
+                        if (shfi.hIcon != IntPtr.Zero)
+                            _imgListLarge.Images.Add(iconKey, Icon.FromHandle(shfi.hIcon));
                     }
                 }
                 item.SubItems.Add(lastWrite == default ? "" : lastWrite.ToString("yyyy-MM-dd HH:mm"));
