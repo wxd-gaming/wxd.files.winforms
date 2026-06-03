@@ -975,7 +975,7 @@ namespace wxd.files.winforms
                 using var inputForm = new Form
                 {
                     Text = "设置备注名",
-                    ClientSize = new Size(380, 150),
+                    ClientSize = new Size(380, 170),
                     StartPosition = FormStartPosition.CenterParent,
                     FormBorderStyle = FormBorderStyle.FixedDialog,
                     MaximizeBox = false,
@@ -991,20 +991,20 @@ namespace wxd.files.winforms
                 var txt = new TextBox
                 {
                     Text = currentRemark,
-                    Location = new Point(12, 54), Size = new Size(260, 23),
+                    Location = new Point(12, 54), Size = new Size(356, 23),
                     BorderStyle = BorderStyle.FixedSingle
                 };
                 var btnOk = new Button
                 {
                     Text = "确定", DialogResult = DialogResult.OK,
-                    Location = new Point(282, 53), Size = new Size(80, 25),
+                    Location = new Point(190, 95), Size = new Size(80, 25),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White
                 };
                 var btnCancel = new Button
                 {
                     Text = "取消", DialogResult = DialogResult.Cancel,
-                    Location = new Point(282, 84), Size = new Size(80, 25),
+                    Location = new Point(280, 95), Size = new Size(80, 25),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100)
                 };
