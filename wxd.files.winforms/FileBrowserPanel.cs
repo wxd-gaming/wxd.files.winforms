@@ -53,6 +53,7 @@ namespace wxd.files.winforms
         private FileListViewMode _viewMode = FileListViewMode.Details;
         private ImageList _imgListLarge = new();
         private ToolTip _pathToolTip = new();
+        private ImagePreviewToolTip? _imagePreviewTip;
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private System.Windows.Forms.Timer? _saveDebounceTimer;
         private bool _hasUnsavedChanges = false;
@@ -756,6 +757,9 @@ namespace wxd.files.winforms
             Controls.Add(_pnlBottom);
             Controls.Add(_pnlToolbar);
 
+            // 初始化图片悬停预览
+            _imagePreviewTip = new ImagePreviewToolTip(_lstFiles);
+
             MinimumSize = new Size(280, 280);
             ResumeLayout(false);
         }
@@ -1258,7 +1262,11 @@ namespace wxd.files.winforms
         {
             var item = new ListViewItem(name);
             item.Tag = new FileItemTag { FullName = fullName, IsDir = isDir };
-            item.ToolTipText = fullName;
+            // 图片文件使用自定义图片预览，不设置 ToolTipText 避免与预览冲突
+            if (!isDir && IsImageExtension(fullName))
+                item.ToolTipText = null;
+            else
+                item.ToolTipText = fullName;
 
             if (isDir)
             {
@@ -2058,11 +2066,202 @@ namespace wxd.files.winforms
                 _filterDebounceTimer?.Dispose();
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
+                _imagePreviewTip?.Dispose();
                 _imgList?.Dispose();
                 _imgListLarge?.Dispose();
                 _lstFiles?.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    // ==================== 图片悬停预览提示控件 ====================
+    /// <summary>
+    /// 图片悬停预览提示控件 — 鼠标放在图片文件上时显示大图预览
+    /// </summary>
+    public class ImagePreviewToolTip : IDisposable
+    {
+        private readonly ListView _listView;
+        private readonly ToolStripDropDown _dropDown;
+        private readonly PictureBox _pictureBox;
+        private string? _currentImagePath;
+        private CancellationTokenSource? _loadCts;
+        private System.Windows.Forms.Timer? _hoverTimer;
+        private bool _disposed;
+
+        // 最大预览尺寸
+        private const int MaxPreviewWidth = 400;
+        private const int MaxPreviewHeight = 400;
+
+        // 常见图片扩展名
+        private static readonly HashSet<string> _imageExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".ico", ".wdp"
+        };
+
+        /// <summary>判断是否为常见图片文件</summary>
+        private static bool IsImageExtension(string filePath)
+        {
+            var ext = Path.GetExtension(filePath);
+            return !string.IsNullOrEmpty(ext) && _imageExtensions.Contains(ext);
+        }
+
+        public ImagePreviewToolTip(ListView listView)
+        {
+            _listView = listView;
+
+            _pictureBox = new PictureBox
+            {
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromKnownColor(KnownColor.Window),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            _dropDown = new ToolStripDropDown
+            {
+                AutoClose = false,
+                Padding = Padding.Empty,
+                Margin = Padding.Empty,
+            };
+
+            var host = new ToolStripControlHost(_pictureBox)
+            {
+                Margin = Padding.Empty,
+                Padding = Padding.Empty,
+                AutoSize = false
+            };
+            _dropDown.Items.Add(host);
+
+            _dropDown.MouseLeave += (s, e) => Hide();
+            _listView.MouseLeave += (s, e) => Hide();
+            _listView.MouseMove += OnListViewMouseMove;
+
+            _hoverTimer = new System.Windows.Forms.Timer { Interval = 400 };
+            _hoverTimer.Tick += OnHoverTimerTick;
+        }
+
+        private void OnListViewMouseMove(object? sender, MouseEventArgs e)
+        {
+            var hit = _listView.HitTest(e.Location);
+            var tag = hit.Item?.Tag;
+            if (tag != null)
+            {
+                // 通过反射方式获取 FullName 和 IsDir（避免依赖 FileItemTag 类型）
+                var fullName = GetTagProperty(tag, "FullName") as string;
+                var isDir = GetTagProperty(tag, "IsDir") as bool? ?? false;
+                if (!string.IsNullOrEmpty(fullName) && !isDir && IsImageExtension(fullName))
+                {
+                    if (fullName != _currentImagePath)
+                    {
+                        _currentImagePath = fullName;
+                        _hoverTimer?.Stop();
+                        _hoverTimer?.Start();
+                    }
+                    return;
+                }
+            }
+            Hide();
+        }
+
+        /// <summary>通过反射安全获取 Tag 对象的字段或属性值</summary>
+        private static object? GetTagProperty(object tag, string propName)
+        {
+            try
+            {
+                // 先查找属性
+                var prop = tag.GetType().GetProperty(propName);
+                if (prop != null) return prop.GetValue(tag);
+                // 再查找字段（FileItemTag 使用公有字段）
+                var field = tag.GetType().GetField(propName);
+                return field?.GetValue(tag);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void OnHoverTimerTick(object? sender, EventArgs e)
+        {
+            _hoverTimer?.Stop();
+            _ = ShowPreviewAsync();
+        }
+
+        private async Task ShowPreviewAsync()
+        {
+            if (string.IsNullOrEmpty(_currentImagePath) || !File.Exists(_currentImagePath))
+                return;
+
+            _loadCts?.Cancel();
+            _loadCts = new CancellationTokenSource();
+            var token = _loadCts.Token;
+
+            try
+            {
+                var image = await Task.Run(() =>
+                {
+                    if (token.IsCancellationRequested) return null;
+                    try { return Image.FromFile(_currentImagePath); }
+                    catch { return null; }
+                }, token);
+
+                if (image == null || token.IsCancellationRequested) return;
+
+                int width, height;
+                if (image.Width > image.Height)
+                {
+                    width = Math.Min(image.Width, MaxPreviewWidth);
+                    height = image.Height * width / image.Width;
+                }
+                else
+                {
+                    height = Math.Min(image.Height, MaxPreviewHeight);
+                    width = image.Width * height / image.Height;
+                }
+
+                _pictureBox.Size = new Size(width, height);
+                _pictureBox.Image = image;
+
+                var host = (ToolStripControlHost)_dropDown.Items[0];
+                host.Size = _pictureBox.Size;
+                _dropDown.Size = _pictureBox.Size;
+
+                var pos = Cursor.Position;
+                pos.Offset(10, 10);
+
+                var screen = Screen.FromPoint(pos).WorkingArea;
+                if (pos.X + _dropDown.Width > screen.Right)
+                    pos.X = screen.Right - _dropDown.Width - 5;
+                if (pos.Y + _dropDown.Height > screen.Bottom)
+                    pos.Y = screen.Bottom - _dropDown.Height - 5;
+
+                if (!_disposed && !token.IsCancellationRequested)
+                {
+                    _dropDown.Show(pos);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch { }
+        }
+
+        public void Hide()
+        {
+            _currentImagePath = null;
+            _hoverTimer?.Stop();
+            _dropDown.Close();
+            _pictureBox.Image?.Dispose();
+            _pictureBox.Image = null;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _hoverTimer?.Dispose();
+            _loadCts?.Cancel();
+            _loadCts?.Dispose();
+            _dropDown.Dispose();
+            _pictureBox.Dispose();
         }
     }
 
