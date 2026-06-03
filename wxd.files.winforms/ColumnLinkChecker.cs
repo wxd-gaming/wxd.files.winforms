@@ -194,7 +194,7 @@ namespace wxd.files.winforms
         /// <returns>提示文本，若单元格无关联或值有效则返回 null</returns>
         public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
-            List<ColumnLinkConfig>? columnLinks = null)
+            List<ColumnLinkConfig>? columnLinks = null, Dictionary<string, string>? fileRemarks = null)
         {
             if (_loadedSources.Count == 0 || _linkLookups.Count == 0) return null;
 
@@ -240,14 +240,20 @@ namespace wxd.files.winforms
                 if (extractIdx >= 0)
                     keyAfterArrow = keyAfterArrow.Substring(0, extractIdx);
                 
-                if (!matchValues.Any(v => kvp.Value.Values.Contains(v)))
+                if (matchValues.Count > 1 && matchValues.All(v => !kvp.Value.Values.Contains(v)))
                 {
                     var colonIdx = keyAfterArrow.LastIndexOf(':');
                     string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
                     string targetCol = colonIdx > 0 ? keyAfterArrow.Substring(colonIdx + 1) : "";
+                    // 获取表备注名
+                    string displayTableName = Path.GetFileName(targetFile);
+                    if (fileRemarks != null && fileRemarks.TryGetValue(targetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                        displayTableName = $"{remark} ({Path.GetFileName(targetFile)})";
+                    else if (!string.IsNullOrEmpty(targetCol))
+                        displayTableName = $"{Path.GetFileName(targetFile)} [{targetCol}]";
                     string displayValue = linkConfig?.ValueExtractionEnabled == true
                         ? $"{cellVal} (提取: {string.Join(", ", matchValues)})" : cellVal;
-                    return $"关联表 [{Path.GetFileName(targetFile)}] 的关联列中未找到该数据: \"{displayValue}\"";
+                    return $"关联表 [{displayTableName}] 的关联列中未找到该数据: \"{displayValue}\"";
                 }
                 break; // 值存在，不需要提示
             }
@@ -300,42 +306,54 @@ namespace wxd.files.winforms
             {
                 if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
 
-                // 检查值是否存在
-                if (!matchValues.Any(v => kvp.Value.Values.Contains(v)))
-                    return null; // 值不存在，由 GetInvalidLinkToolTip 处理红色提示
-
                 // 构建显示名
                 string targetFileName = Path.GetFileName(kvp.Value.TargetFile);
                 // 优先使用文件备注名
                 string displayTableName = targetFileName;
                 if (fileRemarks != null && fileRemarks.TryGetValue(kvp.Value.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
-                    displayTableName = remark;
+                    displayTableName = $"{remark} ({targetFileName})";
                 else if (!string.IsNullOrEmpty(kvp.Value.TargetColumnName))
                     displayTableName = $"{targetFileName} [{kvp.Value.TargetColumnName}]";
 
-                // 构建显示行：每个匹配的ID → 显示名
+                // 构建显示行：每个匹配的ID → 显示名（不存在的显示"关联表未找到"）
                 var displayLines = new List<string>();
                 foreach (var mv in matchValues)
                 {
-                    if (kvp.Value.DisplayNames.TryGetValue(mv, out var displayName) && !string.IsNullOrEmpty(displayName))
+                    if (kvp.Value.Values.Contains(mv))
                     {
-                        displayLines.Add($"{mv}: {displayName}");
+                        if (kvp.Value.DisplayNames.TryGetValue(mv, out var displayName) && !string.IsNullOrEmpty(displayName))
+                        {
+                            displayLines.Add($"{mv}: {displayName}");
+                        }
+                        else
+                        {
+                            // 没有显示名时也统一格式
+                            displayLines.Add($"{mv}: (无显示名)");
+                        }
                     }
                     else
                     {
-                        // 没有显示名时只显示ID
-                        displayLines.Add(mv);
+                        displayLines.Add($"{mv}: 关联表未找到");
                     }
                 }
 
                 if (displayLines.Count == 0) return null;
 
+                // 排序：未匹配在前，已匹配在后
+                var orderedLines = displayLines
+                    .Where(l => l.Contains("关联表未找到"))
+                    .Concat(displayLines.Where(l => !l.Contains("关联表未找到")))
+                    .ToList();
+
+                var matchedCount = displayLines.Count(l => !l.Contains("关联表未找到"));
                 var sb = new StringBuilder();
                 sb.AppendLine(displayTableName);
-                foreach (var line in displayLines.Take(10))
+                sb.AppendLine($"已匹配: {matchedCount}/{displayLines.Count}");
+                int maxLines = 15;
+                foreach (var line in orderedLines.Take(maxLines))
                     sb.AppendLine(line);
-                if (displayLines.Count > 10)
-                    sb.AppendLine($"... 共 {displayLines.Count} 条");
+                if (orderedLines.Count > maxLines)
+                    sb.AppendLine($"... 还有 {orderedLines.Count - maxLines} 条未显示");
                 return sb.ToString().TrimEnd('\r', '\n');
             }
             return null;

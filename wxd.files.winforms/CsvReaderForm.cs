@@ -1420,6 +1420,10 @@ namespace wxd.files.winforms
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
+            // 加载文件备注映射
+            var dir = FrozenDir;
+            if (!string.IsNullOrEmpty(dir))
+                _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
             InitializeComponent();
             LoadCsvAsync();
         }
@@ -1481,7 +1485,7 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
+            cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" });
             // 从设置中读取冻结行数（按目录存储，子文件共享），若构造函数已强制指定则跳过
             if (!_frozenRowsOverridden)
                 _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetCsvFrozenRowsByDirectory(FrozenDir) : CsvSettings.DefaultFrozenRows;
@@ -1494,16 +1498,6 @@ namespace wxd.files.winforms
                     CsvSettings.SetCsvFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.DefaultFrozenRows = _frozenRows;
-                // 联动：如果表头行索引超出新的冻结行范围，自动调整
-                if (_headerRowIndex >= _frozenRows)
-                {
-                    _headerRowIndex = _frozenRows > 0 ? 0 : -1;
-                    UpdateHeaderRowCombo();
-                    if (!string.IsNullOrEmpty(FrozenDir))
-                        CsvSettings.SetCsvHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
-                    else
-                        CsvSettings.DefaultFrozenRows = _headerRowIndex; // 复用保存机制
-                }
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
@@ -1539,8 +1533,8 @@ namespace wxd.files.winforms
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
-            // 引用保持，供联动使用
-            Tag = new { HeaderRowCombo = cboHeaderRow };
+            // 引用保持
+            Tag = cboHeaderRow;
 
             // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
@@ -2077,30 +2071,17 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>填充表头行下拉框选项（根据当前冻结行数动态生成）</summary>
+        /// <summary>填充表头行下拉框选项（固定0-10行）</summary>
         private void PopulateHeaderRowCombo(ComboBox cbo)
         {
             cbo.Items.Clear();
-            if (_frozenRows > 0)
-            {
-                for (int i = 0; i < _frozenRows; i++)
-                    cbo.Items.Add($"第{i + 1}行");
-                // 设置选中项
-                if (_headerRowIndex >= 0 && _headerRowIndex < _frozenRows)
-                    cbo.SelectedIndex = _headerRowIndex;
-                else
-                    cbo.SelectedIndex = -1;
-            }
-        }
-
-        /// <summary>更新表头行下拉框（联动调用，供冻结行变更时使用）</summary>
-        private void UpdateHeaderRowCombo()
-        {
-            // 通过 Tag 获取 ComboBox 引用
-            if (Tag is ComboBox cboHdr)
-            {
-                PopulateHeaderRowCombo(cboHdr);
-            }
+            for (int i = 0; i < 10; i++)
+                cbo.Items.Add($"第{i + 1}行");
+            // 设置选中项
+            if (_headerRowIndex >= 0 && _headerRowIndex < 10)
+                cbo.SelectedIndex = _headerRowIndex;
+            else
+                cbo.SelectedIndex = -1;
         }
 
         /// <summary>获取表头行的列名列表（用于过滤、关联等场景）</summary>
@@ -2745,6 +2726,8 @@ namespace wxd.files.winforms
             if (_fileEntries.Count > 0) return;
             var root = FrozenDir;
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
+            // 加载文件备注映射
+            _fileRemarks = CsvSettings.GetFileRemarksByDirectory(root);
             _fileEntries.Clear();
             try
             {
@@ -2757,7 +2740,9 @@ namespace wxd.files.winforms
                     }
                     var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                         ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
-                    _fileEntries.Add((rel, f));
+                    var display = _fileRemarks.TryGetValue(rel, out var remark) && !string.IsNullOrEmpty(remark)
+                        ? remark + " (" + Path.GetFileName(f) + ")" : rel;
+                    _fileEntries.Add((display, f));
                 }
                 foreach (var ext in new[] { "*.xls", "*.xlsx" })
                 {
@@ -2769,7 +2754,9 @@ namespace wxd.files.winforms
                         }
                         var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                             ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
-                        _fileEntries.Add((rel, f));
+                        var display = _fileRemarks.TryGetValue(rel, out var remark) && !string.IsNullOrEmpty(remark)
+                            ? remark + " (" + Path.GetFileName(f) + ")" : rel;
+                        _fileEntries.Add((display, f));
                     }
                 }
             }
@@ -3257,7 +3244,7 @@ namespace wxd.files.winforms
             if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             // 优先检查值无效（红色提示）
             var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
             if (!string.IsNullOrEmpty(invalidTip))
             {
                 e.ToolTipText = invalidTip;
@@ -3869,6 +3856,10 @@ namespace wxd.files.winforms
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
+            // 加载文件备注映射
+            var dir = FrozenDir;
+            if (!string.IsNullOrEmpty(dir))
+                _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
             InitializeComponent();
             LoadExcelAsync();
         }
@@ -3912,7 +3903,7 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8" });
+            cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" });
             if (!_frozenRowsOverridden)
                 _frozenRows = !string.IsNullOrEmpty(FrozenDir) ? CsvSettings.GetExcelFrozenRowsByDirectory(FrozenDir) : CsvSettings.ExcelDefaultFrozenRows;
             cboFrozenRows.SelectedIndex = _frozenRows;
@@ -3923,12 +3914,6 @@ namespace wxd.files.winforms
                     CsvSettings.SetExcelFrozenRowsByDirectory(FrozenDir, _frozenRows);
                 else
                     CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
-                // 联动：如果表头行索引超出新的冻结行范围，自动调整
-                if (_headerRowIndex >= _frozenRows)
-                    _headerRowIndex = _frozenRows > 0 ? 0 : -1;
-                UpdateHeaderRowCombo();
-                if (!string.IsNullOrEmpty(FrozenDir))
-                    CsvSettings.SetExcelHeaderRowIndexByDirectory(FrozenDir, _headerRowIndex);
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
@@ -3963,7 +3948,6 @@ namespace wxd.files.winforms
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
-            this.Tag = cboHeaderRow; // 保持引用
 
             // 表头过滤 - 列选择按钮
             var lblHeaderFilter = new Label
@@ -4673,30 +4657,17 @@ namespace wxd.files.winforms
             });
         }
 
-        /// <summary>填充表头行下拉框选项（根据当前冻结行数动态生成）</summary>
+        /// <summary>填充表头行下拉框选项（固定0-10行）</summary>
         private void PopulateHeaderRowCombo(ComboBox cbo)
         {
             cbo.Items.Clear();
-            if (_frozenRows > 0)
-            {
-                for (int i = 0; i < _frozenRows; i++)
-                    cbo.Items.Add($"第{i + 1}行");
-                // 设置选中项
-                if (_headerRowIndex >= 0 && _headerRowIndex < _frozenRows)
-                    cbo.SelectedIndex = _headerRowIndex;
-                else
-                    cbo.SelectedIndex = -1;
-            }
-        }
-
-        /// <summary>更新表头行下拉框（联动调用，供冻结行变更时使用）</summary>
-        private void UpdateHeaderRowCombo()
-        {
-            // 通过 Tag 获取 ComboBox 引用
-            if (Tag is ComboBox cboHdr)
-            {
-                PopulateHeaderRowCombo(cboHdr);
-            }
+            for (int i = 0; i < 10; i++)
+                cbo.Items.Add($"第{i + 1}行");
+            // 设置选中项
+            if (_headerRowIndex >= 0 && _headerRowIndex < 10)
+                cbo.SelectedIndex = _headerRowIndex;
+            else
+                cbo.SelectedIndex = -1;
         }
 
         /// <summary>获取表头行的列名列表（用于过滤、关联等场景）</summary>
@@ -4835,6 +4806,8 @@ namespace wxd.files.winforms
             if (_fileEntries.Count > 0) return;
             var root = FrozenDir;
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return;
+            // 加载文件备注映射
+            _fileRemarks = CsvSettings.GetFileRemarksByDirectory(root);
             _fileEntries.Clear();
             try
             {
@@ -4847,7 +4820,9 @@ namespace wxd.files.winforms
                     }
                     var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                         ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
-                    _fileEntries.Add((rel, f));
+                    var display = _fileRemarks.TryGetValue(rel, out var remark) && !string.IsNullOrEmpty(remark)
+                        ? remark + " (" + Path.GetFileName(f) + ")" : rel;
+                    _fileEntries.Add((display, f));
                 }
                 foreach (var ext in new[] { "*.xls", "*.xlsx" })
                 {
@@ -4859,7 +4834,9 @@ namespace wxd.files.winforms
                         }
                         var rel = f.StartsWith(root, StringComparison.OrdinalIgnoreCase)
                             ? f.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : Path.GetFileName(f);
-                        _fileEntries.Add((rel, f));
+                        var display = _fileRemarks.TryGetValue(rel, out var remark) && !string.IsNullOrEmpty(remark)
+                            ? remark + " (" + Path.GetFileName(f) + ")" : rel;
+                        _fileEntries.Add((display, f));
                     }
                 }
             }
@@ -5355,7 +5332,7 @@ namespace wxd.files.winforms
             if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             // 优先检查值无效（红色提示）
             var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks);
+                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
             if (!string.IsNullOrEmpty(invalidTip))
             {
                 e.ToolTipText = invalidTip;
