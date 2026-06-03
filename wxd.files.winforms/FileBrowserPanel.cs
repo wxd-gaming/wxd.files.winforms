@@ -59,6 +59,9 @@ namespace wxd.files.winforms
         private string _savedFilterForCompare = "";
 
         // ==================== Win32 API ====================
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern bool DeleteObject(IntPtr hObject);
+
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr SHGetFileInfo(
             string pszPath, uint dwFileAttributes,
@@ -96,6 +99,34 @@ namespace wxd.files.winforms
 
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
         private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
+        // ==================== IShellItemImageFactory (用于获取缩略图) ====================
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+        private static extern IShellItemImageFactory SHCreateItemFromParsingName(
+            [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
+            IntPtr pbc,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid riid);
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b")]
+        private interface IShellItemImageFactory
+        {
+            IntPtr GetImage(
+                [In, MarshalAs(UnmanagedType.Struct)] ref Size size,
+                [In] SIIGBF flags);
+        }
+
+        [Flags]
+        private enum SIIGBF
+        {
+            ResizeToFit = 0x00,
+            BiggerSizeOk = 0x01,
+            MemoryOnly = 0x02,
+            IconOnly = 0x04,
+            ThumbnailOnly = 0x08,
+            InCacheOnly = 0x10,
+        }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct SHFILEINFO
@@ -1135,11 +1166,15 @@ namespace wxd.files.winforms
                     _lstFiles.SmallImageList = _imgList;
                     break;
                 case FileListViewMode.LargeIcon:
+                    // 清理大图标缓存（保留 "folder" 基础图标）
+                    ClearLargeImageListCache();
                     _lstFiles.View = View.LargeIcon;
                     _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
                     _lstFiles.LargeImageList = _imgListLarge;
                     break;
                 case FileListViewMode.Tile:
+                    // 清理大图标缓存（保留 "folder" 基础图标）
+                    ClearLargeImageListCache();
                     _lstFiles.View = View.Tile;
                     _lstFiles.HeaderStyle = ColumnHeaderStyle.None;
                     _lstFiles.LargeImageList = _imgListLarge;
@@ -1248,14 +1283,33 @@ namespace wxd.files.winforms
                 // 同步加载大图标
                 if (!_imgListLarge.Images.ContainsKey(iconKey))
                 {
-                    var largeKey = Path.GetExtension(fullName).ToLowerInvariant();
-                    if (largeKey != iconKey) largeKey = iconKey;
-                    if (!_imgListLarge.Images.ContainsKey(largeKey))
+                    // 图片文件使用唯一 key（文件路径哈希），确保每个文件有自己的缩略图
+                    if (IsImageExtension(fullName))
                     {
-                        var shfi = default(SHFILEINFO);
-                        SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
-                        if (shfi.hIcon != IntPtr.Zero)
-                            _imgListLarge.Images.Add(largeKey, Icon.FromHandle(shfi.hIcon));
+                        var thumbKey = "thumb_" + Math.Abs(fullName.GetHashCode()).ToString();
+                        if (!_imgListLarge.Images.ContainsKey(thumbKey))
+                        {
+                            var thumb = TryGetShellThumbnail(fullName, 48);
+                            if (thumb != null)
+                            {
+                                _imgListLarge.Images.Add(thumbKey, thumb);
+                            }
+                        }
+                        item.ImageKey = thumbKey;
+                    }
+                    else
+                    {
+                        // 非图片文件：使用扩展名共享系统图标
+                        var largeKey = Path.GetExtension(fullName).ToLowerInvariant();
+                        if (largeKey != iconKey) largeKey = iconKey;
+                        if (!_imgListLarge.Images.ContainsKey(largeKey))
+                        {
+                            var shfi = default(SHFILEINFO);
+                            SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
+                            if (shfi.hIcon != IntPtr.Zero)
+                                _imgListLarge.Images.Add(largeKey, Icon.FromHandle(shfi.hIcon));
+                        }
+                        item.ImageKey = iconKey;
                     }
                 }
                 item.SubItems.Add(lastWrite == default ? "" : lastWrite.ToString("yyyy-MM-dd HH:mm"));
@@ -1314,6 +1368,63 @@ namespace wxd.files.winforms
             if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("F1") + " KB";
             if (bytes < 1024 * 1024 * 1024) return (bytes / (1024.0 * 1024)).ToString("F1") + " MB";
             return (bytes / (1024.0 * 1024 * 1024)).ToString("F2") + " GB";
+        }
+
+        // ==================== 缩略图支持 ====================
+
+        /// <summary>常见图片扩展名集合</summary>
+        private static readonly HashSet<string> _imageExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".ico", ".wdp"
+        };
+
+        /// <summary>判断是否为常见图片文件</summary>
+        private static bool IsImageExtension(string filePath)
+        {
+            var ext = Path.GetExtension(filePath);
+            return !string.IsNullOrEmpty(ext) && _imageExtensions.Contains(ext);
+        }
+
+        /// <summary>通过 Windows Shell API (IShellItemImageFactory) 获取文件缩略图</summary>
+        private static Bitmap? TryGetShellThumbnail(string filePath, int size)
+        {
+            try
+            {
+                // 只对图片文件尝试获取缩略图，避免对非图片文件产生无谓开销
+                if (!IsImageExtension(filePath)) return null;
+
+                var guid = new Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"); // IID_IShellItemImageFactory
+                var factory = SHCreateItemFromParsingName(filePath, IntPtr.Zero, guid);
+                var sz = new Size(size, size);
+                var hBitmap = factory.GetImage(ref sz, SIIGBF.ThumbnailOnly | SIIGBF.BiggerSizeOk);
+                if (hBitmap != IntPtr.Zero)
+                {
+                    var bitmap = Image.FromHbitmap(hBitmap);
+                    // 释放 GDI 对象
+                    DeleteObject(hBitmap);
+                    return bitmap;
+                }
+            }
+            catch
+            {
+                // 缩略图获取失败（文件损坏、格式不支持等），静默回退到系统图标
+            }
+            return null;
+        }
+
+        /// <summary>清理大图标列表中非基础的缓存条目（切换目录/视图时调用）</summary>
+        private void ClearLargeImageListCache()
+        {
+            var keysToRemove = _imgListLarge.Images.Keys
+                .Cast<string>()
+                .Where(k => k != "folder")
+                .ToList();
+            foreach (var key in keysToRemove)
+            {
+                if (_imgListLarge.Images[key] is IDisposable d)
+                    d.Dispose();
+                _imgListLarge.Images.RemoveByKey(key);
+            }
         }
 
         private void AutoResizeColumns()
