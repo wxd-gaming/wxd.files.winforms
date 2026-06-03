@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -73,6 +74,8 @@ namespace wxd.files.winforms
         {
             private int _radius = 6;
 
+            [DefaultValue(6)]
+            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
             public int Radius
             {
                 get => _radius;
