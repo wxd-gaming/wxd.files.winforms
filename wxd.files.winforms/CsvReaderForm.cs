@@ -53,6 +53,7 @@ namespace wxd.files.winforms
         // ==================== 高级内容搜索状态 ====================
         private volatile bool _contentSearchCancelled;
         private volatile bool _isContentSearching = false;
+        private string _lastContentSearchKeyword = "";
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -1354,9 +1355,9 @@ namespace wxd.files.winforms
 
             Control viewer;
             if (fileType == FileType.Excel)
-                viewer = new ExcelViewerControl(filePath, _paneIndex, _currentDir) { Dock = DockStyle.Fill };
+                viewer = new ExcelViewerControl(filePath, _paneIndex, _currentDir, initialContentFilter: _lastContentSearchKeyword) { Dock = DockStyle.Fill };
             else
-                viewer = new CsvViewerControl(filePath, _paneIndex, _currentDir) { Dock = DockStyle.Fill };
+                viewer = new CsvViewerControl(filePath, _paneIndex, _currentDir, initialContentFilter: _lastContentSearchKeyword) { Dock = DockStyle.Fill };
 
             // 创建新标签页（有备注时显示"备注名 (文件名)"）
             var tabPage = new TabPage(GetFileDisplayText(filePath))
@@ -1626,6 +1627,8 @@ namespace wxd.files.winforms
             _btnCancelSearch.Visible = true;
             _progressBar.Value = 0;
 
+            _lastContentSearchKeyword = keyword;
+
             var totalFiles = _allFiles.Count;
             var matchedFiles = new List<FileInfo>();
             var processed = 0;
@@ -1692,6 +1695,7 @@ namespace wxd.files.winforms
             _contentSearchCancelled = true;
             // 清空搜索框
             _txtContentSearch.Text = "";
+            _lastContentSearchKeyword = "";
             // 进度条归0，进度条和取消按钮保持显示
             _progressBar.Value = 0;
             // 恢复搜索按钮可用
@@ -1812,6 +1816,7 @@ namespace wxd.files.winforms
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
         private bool[] _columnCheckStates = Array.Empty<bool>(); // 列选中状态
+        private string _initialContentFilter = "";       // 初始内容过滤词（来自高级搜索）
         private List<ColumnLinkConfig> _columnLinks = new();
         private List<(string display, string fullPath)> _fileEntries = new();
 
@@ -1891,13 +1896,14 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1)
+        public CsvViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "")
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
+            _initialContentFilter = initialContentFilter;
             // 加载文件备注映射
             var dir = FrozenDir;
             if (!string.IsNullOrEmpty(dir))
@@ -2985,6 +2991,12 @@ namespace wxd.files.winforms
                         col.SortMode = DataGridViewColumnSortMode.Programmatic;
                         col.HeaderText = GetExcelColumnName(i);
                     }
+                }
+
+                // 设置初始内容过滤（来自高级搜索）
+                if (!string.IsNullOrEmpty(_initialContentFilter))
+                {
+                    _txtContentFilter.Text = _initialContentFilter;
                 }
             });
         }
@@ -4271,6 +4283,7 @@ namespace wxd.files.winforms
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
         private List<int> _visibleColumnIndices = new();
+        private string _initialContentFilter = "";       // 初始内容过滤词（来自高级搜索）
         private bool[] _columnCheckStates = Array.Empty<bool>();
         private List<ColumnLinkConfig> _columnLinks = new();
         private List<(string display, string fullPath)> _fileEntries = new();
@@ -4351,13 +4364,14 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
-        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1)
+        public ExcelViewerControl(string filePath, int paneIndex = -1, string? rootDir = null, int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "")
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
+            _initialContentFilter = initialContentFilter;
             // 加载文件备注映射
             var dir = FrozenDir;
             if (!string.IsNullOrEmpty(dir))
@@ -5167,6 +5181,12 @@ namespace wxd.files.winforms
                         col.SortMode = DataGridViewColumnSortMode.Programmatic;
                         col.HeaderText = GetExcelColumnName(i);
                     }
+                }
+
+                // 设置初始内容过滤（来自高级搜索）
+                if (!string.IsNullOrEmpty(_initialContentFilter))
+                {
+                    _txtContentFilter.Text = _initialContentFilter;
                 }
             });
         }
