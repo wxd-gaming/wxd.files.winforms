@@ -2026,7 +2026,7 @@ namespace wxd.files.winforms
 
             _btnSelectColumns = new Button
             {
-                Size = new Size(120, 23),
+                Size = new Size(120, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 Text = "选择列 (全部)",
@@ -2054,7 +2054,7 @@ namespace wxd.files.winforms
             var btnReload = new Button
             {
                 Text = "重新加载",
-                Size = new Size(75, 23),
+                Size = new Size(75, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -2943,8 +2943,20 @@ namespace wxd.files.winforms
 
                 // 初始化列选中状态（默认全选，第一列始终选中）
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
-                for (int i = 0; i < _columnCheckStates.Length; i++)
-                    _columnCheckStates[i] = true;
+
+                // 尝试从持久化配置恢复列显隐状态
+                var relPath = GetCurrentRelativePath();
+                var savedStates = CsvSettings.GetColumnVisibility(FrozenDir, relPath);
+                if (savedStates != null && savedStates.Length == _columnCheckStates.Length)
+                {
+                    _columnCheckStates = savedStates;
+                    _columnCheckStates[0] = true; // 第一列始终显示
+                }
+                else
+                {
+                    for (int i = 0; i < _columnCheckStates.Length; i++)
+                        _columnCheckStates[i] = true;
+                }
 
                 _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
@@ -3193,6 +3205,8 @@ namespace wxd.files.winforms
                 _columnLinks = dialog.GetColumnLinks();
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+                // 保存列显隐配置
+                CsvSettings.SetColumnVisibility(FrozenDir, GetCurrentRelativePath(), _columnCheckStates);
                 UpdateColumnSelectorButton();
                 RefreshGridLayout();
             }
@@ -3241,7 +3255,7 @@ namespace wxd.files.winforms
             catch { }
         }
 
-        /// <summary>更新选择列按钮文本</summary>
+        /// <summary>更新选择列按钮文本和颜色</summary>
         private void UpdateColumnSelectorButton()
         {
             if (_dataTable.Columns.Count == 0) return;
@@ -3253,6 +3267,16 @@ namespace wxd.files.winforms
             int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
             int checkedData = Math.Max(0, checkedCount - 1);
             _btnSelectColumns.Text = $"选择列 ({checkedData}/{dataColumns})";
+
+            // 有隐藏列时用红色字体提示
+            if (checkedData < dataColumns)
+            {
+                _btnSelectColumns.ForeColor = Color.Red;
+            }
+            else
+            {
+                _btnSelectColumns.ForeColor = _colorLightText;
+            }
         }
 
         /// <summary>获取可见的行（从冻结行之后开始）</summary>
@@ -4439,7 +4463,7 @@ namespace wxd.files.winforms
 
             _btnSelectColumns = new Button
             {
-                Size = new Size(120, 23),
+                Size = new Size(120, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 Text = "选择列 (全部)",
@@ -4467,7 +4491,7 @@ namespace wxd.files.winforms
             var btnReload = new Button
             {
                 Text = "重新加载",
-                Size = new Size(75, 23),
+                Size = new Size(75, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -5105,8 +5129,20 @@ namespace wxd.files.winforms
 
                 // 初始化列选中状态（默认全选，第一列始终选中）
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
-                for (int i = 0; i < _columnCheckStates.Length; i++)
-                    _columnCheckStates[i] = true;
+
+                // 尝试从持久化配置恢复列显隐状态
+                var relPath = GetCurrentRelativePath();
+                var savedStates = CsvSettings.GetColumnVisibility(FrozenDir, relPath);
+                if (savedStates != null && savedStates.Length == _columnCheckStates.Length)
+                {
+                    _columnCheckStates = savedStates;
+                    _columnCheckStates[0] = true; // 第一列始终显示
+                }
+                else
+                {
+                    for (int i = 0; i < _columnCheckStates.Length; i++)
+                        _columnCheckStates[i] = true;
+                }
 
                 _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
@@ -5273,6 +5309,8 @@ namespace wxd.files.winforms
                 _columnLinks = dialog.GetColumnLinks();
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+                // 保存列显隐配置
+                CsvSettings.SetColumnVisibility(FrozenDir, GetCurrentRelativePath(), _columnCheckStates);
                 UpdateColumnSelectorButton();
                 RefreshGridLayout();
             }
@@ -5331,6 +5369,16 @@ namespace wxd.files.winforms
             int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
             int checkedData = Math.Max(0, checkedCount - 1);
             _btnSelectColumns.Text = $"选择列 ({checkedData}/{dataColumns})";
+
+            // 有隐藏列时用红色字体提示
+            if (checkedData < dataColumns)
+            {
+                _btnSelectColumns.ForeColor = Color.Red;
+            }
+            else
+            {
+                _btnSelectColumns.ForeColor = _colorLightText;
+            }
         }
 
         private List<DataRow> GetVisibleRows(string contentFilter)

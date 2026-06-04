@@ -32,4 +32,7 @@ public class DirectoryFrozenConfig
 
     /// <summary>文件备注名映射（key: 相对路径, value: 备注名）</summary>
     public Dictionary<string, string> FileRemarks { get; set; } = new();
+
+    /// <summary>列显隐配置（key: 文件相对路径, value: 逗号分隔的bool字符串，如 "true,false,true,..."）</summary>
+    public Dictionary<string, string> ColumnVisibility { get; set; } = new();
 }

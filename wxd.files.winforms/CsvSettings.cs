@@ -229,7 +229,8 @@ namespace wxd.files.winforms
                     CsvHeaderRowIndex = cfg.CsvHeaderRowIndex,
                     ExcelHeaderRowIndex = cfg.ExcelHeaderRowIndex,
                     ColumnLinks = cfg.ColumnLinks,
-                    FileRemarks = cfg.FileRemarks
+                    FileRemarks = cfg.FileRemarks,
+                    ColumnVisibility = cfg.ColumnVisibility
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, json);
@@ -326,6 +327,7 @@ namespace wxd.files.winforms
                 ExcelHeaderRowIndex = -1,
                 ColumnLinks = new(),
                 FileRemarks = new(),
+                ColumnVisibility = new(),
                 LastModified = DateTime.UtcNow,
                 LastAccessed = DateTime.UtcNow
             };
@@ -415,6 +417,38 @@ namespace wxd.files.winforms
                     cfg.FileRemarks.Remove(relativePath);
                 else
                     cfg.FileRemarks[relativePath] = remark;
+            });
+        }
+
+        /// <summary>获取指定目录中某个文件的列可见性配置</summary>
+        public static bool[]? GetColumnVisibility(string directoryPath, string relativePath)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return null;
+            var cfg = TryGetDirConfig(directoryPath);
+            if (cfg == null || !cfg.ColumnVisibility.TryGetValue(relativePath, out var bitmap))
+                return null;
+            try
+            {
+                var parts = bitmap.Split(',');
+                var result = new bool[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                    result[i] = parts[i] == "true";
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>设置指定目录中某个文件的列可见性配置</summary>
+        public static void SetColumnVisibility(string directoryPath, string relativePath, bool[] states)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath) || states == null) return;
+            SaveDirConfig(directoryPath, cfg =>
+            {
+                var bitmap = string.Join(",", states.Select(b => b ? "true" : "false"));
+                cfg.ColumnVisibility[relativePath] = bitmap;
             });
         }
 
