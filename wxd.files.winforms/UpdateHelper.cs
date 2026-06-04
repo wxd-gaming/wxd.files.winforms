@@ -43,6 +43,37 @@ namespace wxd.files.winforms
             Timeout = TimeSpan.FromSeconds(8)
         };
 
+        /// <summary>统一检查更新入口（自动/手动都调用此方法）</summary>
+        /// <remarks>
+        /// 核心逻辑：
+        /// 1. MD5 相同 + 版本号相同 → 无更新
+        /// 2. MD5 相同 + 版本号不同 → 静默更新 Config 版本号，不弹窗
+        /// 3. MD5 不同 → 有更新（弹窗下载文件 + 更新版本号）
+        /// </remarks>
+        public static async Task<CheckResult?> CheckUpdateAsync()
+        {
+            var result = await FetchCheckResultAsync();
+            if (result == null)
+                return null;
+
+            // MD5 相同但版本号不同 → 静默更新版本号，不弹窗
+            if (!result.HasUpdate && !string.Equals(result.CurrentVersion, result.RemoteVersion, StringComparison.Ordinal))
+            {
+                SetCurrentVersion(result.RemoteVersion);
+                result.CurrentVersion = result.RemoteVersion;
+            }
+
+            // 检查是否在跳过列表里
+            if (result.HasUpdate)
+            {
+                var skipped = GetSkippedVersions();
+                if (skipped.Contains(result.RemoteVersion))
+                    return null; // 已跳过，不弹窗
+            }
+
+            return result;
+        }
+
         /// <summary>启动时静默检查（异步，不抛异常，不影响启动）</summary>
         public static async Task CheckSilentAsync()
         {
@@ -56,28 +87,11 @@ namespace wxd.files.winforms
                 // 更新检查时间（放在Fetch之前，由外部Timer控制调用时机，不阻塞启动）
                 SetLastCheckTime(DateTime.Now);
 
-                var result = await FetchCheckResultAsync();
-                if (result == null)
-                    return;
-
-                // MD5 相同但版本号不同 → 静默更新版本号，不弹窗
-                if (!result.HasUpdate && !string.Equals(result.CurrentVersion, result.RemoteVersion, StringComparison.Ordinal))
-                {
-                    SetCurrentVersion(result.RemoteVersion);
-                    return;
-                }
-
-                if (!result.HasUpdate)
-                    return;
-
-                // 检查是否在跳过列表里
-                var skipped = GetSkippedVersions();
-                if (skipped.Contains(result.RemoteVersion))
+                var result = await CheckUpdateAsync();
+                if (result == null || !result.HasUpdate)
                     return;
 
                 // 有更新 → 使用自定义弹窗（三个按钮：立即更新 / 跳过版本 / 取消）
-                // 注意：点击"立即更新"后，UpdateNotifyForm 内部会切换为下载进度界面并执行下载，
-                // 下载完成后自动执行 Environment.Exit(0)，所以此处不需要再调用 DoUpdateAsync
                 var isDark = CsvSettings.ThemeMode == 0;
                 var notifyForm = new UpdateNotifyForm(result, isDark);
                 notifyForm.ShowDialog();
@@ -99,16 +113,9 @@ namespace wxd.files.winforms
         /// <summary>手动检查更新（调用方处理异常和 UI 反馈）</summary>
         public static async Task<CheckResult> CheckManualAsync()
         {
-            var result = await FetchCheckResultAsync();
+            var result = await CheckUpdateAsync();
             if (result == null)
                 throw new Exception("无法获取远程版本信息，请检查网络连接。");
-
-            // MD5 相同但版本号不同 → 静默更新版本号，不提示更新
-            if (!result.HasUpdate && !string.Equals(result.CurrentVersion, result.RemoteVersion, StringComparison.Ordinal))
-            {
-                SetCurrentVersion(result.RemoteVersion);
-                result.CurrentVersion = result.RemoteVersion;
-            }
 
             return result;
         }
