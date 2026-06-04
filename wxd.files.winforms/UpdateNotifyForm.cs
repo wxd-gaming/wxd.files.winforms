@@ -163,8 +163,7 @@ namespace wxd.files.winforms
 
             try
             {
-                UpdateHelper.SetCurrentVersion(_result.RemoteVersion);
-                await UpdateHelper.DoUpdateAsync(_result.RemoteMd5, progress);
+                await UpdateHelper.DoUpdateAsync(_result.RemoteVersion, _result.RemoteMd5, progress);
                 // DoUpdateAsync 会执行 Environment.Exit(0)，不会执行到这里
             }
             catch (Exception ex)

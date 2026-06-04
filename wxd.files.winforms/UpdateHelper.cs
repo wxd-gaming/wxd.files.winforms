@@ -57,7 +57,17 @@ namespace wxd.files.winforms
                 SetLastCheckTime(DateTime.Now);
 
                 var result = await FetchCheckResultAsync();
-                if (result == null || !result.HasUpdate)
+                if (result == null)
+                    return;
+
+                // MD5 相同但版本号不同 → 静默更新版本号，不弹窗
+                if (!result.HasUpdate && !string.Equals(result.CurrentVersion, result.RemoteVersion, StringComparison.Ordinal))
+                {
+                    SetCurrentVersion(result.RemoteVersion);
+                    return;
+                }
+
+                if (!result.HasUpdate)
                     return;
 
                 // 检查是否在跳过列表里
@@ -93,11 +103,18 @@ namespace wxd.files.winforms
             if (result == null)
                 throw new Exception("无法获取远程版本信息，请检查网络连接。");
 
+            // MD5 相同但版本号不同 → 静默更新版本号，不提示更新
+            if (!result.HasUpdate && !string.Equals(result.CurrentVersion, result.RemoteVersion, StringComparison.Ordinal))
+            {
+                SetCurrentVersion(result.RemoteVersion);
+                result.CurrentVersion = result.RemoteVersion;
+            }
+
             return result;
         }
 
         /// <summary>下载并更新，带进度回调</summary>
-        public static async Task DoUpdateAsync(string expectedMd5, IProgress<int>? progress)
+        public static async Task DoUpdateAsync(string remoteVersion, string expectedMd5, IProgress<int>? progress)
         {
             var currentExePath = Application.ExecutablePath;
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
@@ -143,10 +160,11 @@ namespace wxd.files.winforms
                 }
             }
 
-            // 更新 config 中的当前版本号（从 md5.txt 中获取的最新版本）
-            // 注意：DoUpdateAsync 在调用前已经通过 FetchCheckResultAsync 获得了 remoteVersion
-            // 这里我们不直接传 remoteVersion，而是靠 ExecuteUpdate 前的 config 设置
-            // 调用方在调用 DoUpdateAsync 前应已持有 remoteVersion
+            // 下载并校验成功，更新版本号
+            if (!string.IsNullOrEmpty(remoteVersion))
+            {
+                SetCurrentVersion(remoteVersion);
+            }
 
             // 执行更新（批处理替换 + 重启）
             ExecuteUpdate(currentExePath, tempPath);
@@ -202,26 +220,35 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(configVersion))
                 currentVersion = configVersion;
 
-            // 判断是否有更新
-            var hasUpdate = !string.Equals(currentVersion, remoteVersion, StringComparison.Ordinal);
-
-            // 如果版本相同但 MD5 不同，也视为需要强制重装
-            if (!hasUpdate)
+            // 计算本地 exe 的 MD5
+            var currentExePath = Application.ExecutablePath;
+            string? currentMd5 = null;
+            if (!string.IsNullOrEmpty(currentExePath) && File.Exists(currentExePath))
             {
-                var currentExePath = Application.ExecutablePath;
-                if (!string.IsNullOrEmpty(currentExePath) && File.Exists(currentExePath))
+                currentMd5 = await ComputeFileMd5Async(currentExePath);
+            }
+
+            // 核心逻辑：以 MD5 为准判断是否需要更新文件
+            bool needUpdateFile = false;
+            if (!string.IsNullOrEmpty(currentMd5))
+            {
+                if (!string.Equals(currentMd5, remoteMd5, StringComparison.OrdinalIgnoreCase))
                 {
-                    var currentMd5 = await ComputeFileMd5Async(currentExePath);
-                    if (!string.Equals(currentMd5, remoteMd5, StringComparison.OrdinalIgnoreCase))
-                        hasUpdate = true; // 文件损坏或被人为替换，提供强制重装
+                    // MD5 不同 → 需要更新文件（无论版本号是否相同）
+                    needUpdateFile = true;
                 }
+            }
+            else
+            {
+                // 无法计算本地 MD5，保守起见标记为需要更新
+                needUpdateFile = true;
             }
 
             return new CheckResult
             {
                 RemoteVersion = remoteVersion,
                 RemoteMd5 = remoteMd5,
-                HasUpdate = hasUpdate,
+                HasUpdate = needUpdateFile,
                 CurrentVersion = currentVersion
             };
         }
