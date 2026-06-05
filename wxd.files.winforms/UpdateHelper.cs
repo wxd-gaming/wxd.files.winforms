@@ -22,6 +22,8 @@ namespace wxd.files.winforms
         public bool HasUpdate { get; set; }
         /// <summary>当前版本号</summary>
         public string CurrentVersion { get; set; } = "";
+        /// <summary>更新说明（md5.txt 第三行起的内容）</summary>
+        public string ReleaseNotes { get; set; } = "";
     }
 
     /// <summary>更新核心逻辑</summary>
@@ -219,6 +221,20 @@ namespace wxd.files.winforms
             var remoteVersion = lines[0].Trim();
             var remoteMd5 = lines[1].Trim();
 
+            // 解析第三行起的内容作为更新说明
+            string releaseNotes = "";
+            if (lines.Length > 2)
+            {
+                // 用原始行解析（保留格式）
+                var rawLines = response.Split('\n');
+                var notesBuilder = new StringBuilder();
+                for (int i = 2; i < rawLines.Length; i++)
+                {
+                    notesBuilder.AppendLine(rawLines[i].TrimEnd('\r'));
+                }
+                releaseNotes = notesBuilder.ToString().TrimEnd();
+            }
+
             // 当前程序集版本
             var currentVersion = Assembly.GetExecutingAssembly().GetName()?.Version?.ToString() ?? "0.0.0.0";
 
@@ -255,6 +271,7 @@ namespace wxd.files.winforms
             {
                 RemoteVersion = remoteVersion,
                 RemoteMd5 = remoteMd5,
+                ReleaseNotes = releaseNotes,
                 HasUpdate = needUpdateFile,
                 CurrentVersion = currentVersion
             };

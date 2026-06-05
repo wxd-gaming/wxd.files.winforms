@@ -22,6 +22,8 @@ namespace wxd.files.winforms
         private readonly Label _lblProgressText;
         private readonly ProgressBar _progressBar;
 
+        private RichTextBox? _rtbReleaseNotes;
+
         public UpdateNotifyForm(CheckResult result, bool isDark = false)
         {
             _result = result;
@@ -34,7 +36,12 @@ namespace wxd.files.winforms
             var darkBtnBg = Color.FromArgb(0, 122, 204);
 
             Text = "发现更新";
-            ClientSize = new Size(420, 200);
+
+            // 根据是否有更新内容调整窗体高度
+            bool hasNotes = !string.IsNullOrEmpty(result.ReleaseNotes);
+            int formHeight = hasNotes ? 340 : 200;
+            ClientSize = new Size(420, formHeight);
+
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -45,7 +52,7 @@ namespace wxd.files.winforms
             Font = new Font("Microsoft YaHei UI", 10f);
             BackColor = _isDark ? darkBg : lightBg;
 
-            var msg = $"发现新版本 v{result.RemoteVersion}！\n\n" +
+            var msg = $"发现新版本 v{result.RemoteVersion}！\n" +
                       $"当前版本: v{result.CurrentVersion}\n" +
                       $"最新版本: v{result.RemoteVersion}";
 
@@ -53,19 +60,54 @@ namespace wxd.files.winforms
             {
                 Text = msg,
                 AutoSize = false,
-                Size = new Size(380, 80),
-                Location = new Point(20, 20),
+                Size = new Size(380, 65),
+                Location = new Point(20, 16),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 ForeColor = _isDark ? Color.FromArgb(241, 241, 241) : Color.FromArgb(20, 60, 100),
                 BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
+            // 更新内容区域
+            int notesTop = 80;
+            if (hasNotes)
+            {
+                var notesLabel = new Label
+                {
+                    Text = "📋 更新内容：",
+                    AutoSize = true,
+                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                    Location = new Point(20, notesTop),
+                    ForeColor = _isDark ? Color.FromArgb(200, 200, 200) : Color.FromArgb(60, 100, 140),
+                    BackColor = Color.Transparent
+                };
+
+                _rtbReleaseNotes = new RichTextBox
+                {
+                    Text = result.ReleaseNotes,
+                    Location = new Point(20, notesTop + 22),
+                    Size = new Size(380, 120),
+                    ReadOnly = true,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    BackColor = _isDark ? Color.FromArgb(45, 45, 48) : Color.White,
+                    ForeColor = _isDark ? Color.FromArgb(220, 220, 220) : Color.FromArgb(30, 60, 100),
+                    ScrollBars = RichTextBoxScrollBars.Vertical,
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    TabStop = false
+                };
+
+                Controls.Add(notesLabel);
+                Controls.Add(_rtbReleaseNotes);
+            }
+
+            // 按钮布局：有更新内容时下移
+            int btnTop = hasNotes ? 230 : 100;
+
             _btnUpdate = new Button
             {
                 Text = "立即更新",
                 Size = new Size(110, 34),
-                Location = new Point(20, 120),
+                Location = new Point(20, btnTop),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = _isDark ? darkBtnBg : Color.FromArgb(76, 175, 80),
@@ -78,7 +120,7 @@ namespace wxd.files.winforms
             {
                 Text = "跳过版本",
                 Size = new Size(110, 34),
-                Location = new Point(150, 120),
+                Location = new Point(150, btnTop),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = _isDark ? darkBtnBg : Color.FromArgb(255, 152, 0),
@@ -91,7 +133,7 @@ namespace wxd.files.winforms
             {
                 Text = "取消",
                 Size = new Size(110, 34),
-                Location = new Point(280, 120),
+                Location = new Point(280, btnTop),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = _isDark ? darkBtnBg : Color.FromArgb(158, 158, 158),
@@ -100,10 +142,11 @@ namespace wxd.files.winforms
             };
             _btnCancel.FlatAppearance.BorderSize = 0;
 
-            // 进度条（在立即更新按钮下方，默认隐藏）
+            // 进度条（在按钮下方，默认隐藏）
+            int progressTop = btnTop + 42;
             _progressBar = new ProgressBar
             {
-                Location = new Point(20, 162),
+                Location = new Point(20, progressTop),
                 Size = new Size(300, 18),
                 Visible = false,
                 Style = ProgressBarStyle.Continuous,
@@ -118,7 +161,7 @@ namespace wxd.files.winforms
                 Text = "",
                 AutoSize = false,
                 Size = new Size(40, 18),
-                Location = new Point(324, 162),
+                Location = new Point(324, progressTop),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _isDark ? Color.FromArgb(200, 200, 200) : Color.FromArgb(90, 130, 170),
                 BackColor = Color.Transparent,
