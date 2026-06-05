@@ -43,6 +43,7 @@ namespace wxd.files.winforms
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<int> _visibleColumnIndices = new();
         private bool _editingFromFrozen = false;
+        private DataGridLinkToolTip? _linkToolTip;
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
@@ -768,6 +769,135 @@ namespace wxd.files.winforms
 
             if (!string.IsNullOrEmpty(_initialContentFilter))
                 _txtContentFilter.Text = _initialContentFilter;
+
+            // 初始化自定义 tooltip（只初始化一次）
+            if (_linkToolTip == null)
+            {
+                _linkToolTip = new DataGridLinkToolTip(_dataGrid);
+                _linkToolTip.RegisterGrid(_dataGridHeader);
+                _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
+            }
+        }
+
+        /// <summary>为自定义 tooltip 提供内容（grid: 当前鼠标所在的 DataGridView）</summary>
+        private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText) GetLinkToolTipContent(DataGridView grid, int rowIndex, int columnIndex)
+        {
+            if (rowIndex < 0 || columnIndex < 0)
+                return (null, new List<DataGridLinkToolTip.TipLine>(), null);
+
+            bool isHeader = grid == _dataGridHeader;
+
+            // 计算原始列索引
+            int originalColIndex = columnIndex;
+            if (_visibleColumnIndices.Count > 0 && columnIndex < grid.Columns.Count)
+            {
+                int adjustedCol = columnIndex;
+                if (grid.Columns.Count > 0 && grid.Columns[0].Name == "__RowNum__")
+                    adjustedCol = columnIndex - 1;
+                if (adjustedCol >= 0 && adjustedCol < _visibleColumnIndices.Count)
+                    originalColIndex = _visibleColumnIndices[adjustedCol];
+            }
+
+            // 获取单元格值
+            var cellVal = grid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(cellVal)) return (null, new List<DataGridLinkToolTip.TipLine>(), null);
+
+            // 计算真实行号：_dataGrid 的行索引从 _frozenRows 开始
+            int realRowIndex = isHeader ? rowIndex : rowIndex + _frozenRows;
+
+            // 固定行直接显示单元格内容，不走关联关系逻辑
+            if (isHeader)
+            {
+                string headerName = "";
+                if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+                    headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                if (string.IsNullOrEmpty(headerName))
+                    headerName = GetExcelColumnName(originalColIndex);
+
+                string cellTitle = $"{headerName}  --  第{realRowIndex + 1}行";
+                var cellLines = new List<DataGridLinkToolTip.TipLine>
+                {
+                    new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
+                };
+                return (cellTitle, cellLines, null);
+            }
+
+            // 获取当前文件相对路径
+            string currentRel = GetCurrentRelativePath();
+
+            // 查找关联配置
+            var linkConfig = _columnLinks.FirstOrDefault(l =>
+                l.SourceFile.EndsWith(Path.GetFileName(_filePath), StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == originalColIndex);
+
+            if (linkConfig == null)
+            {
+                // 无关联配置时，显示单元格内容和表头信息
+                string headerName = "";
+                if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+                    headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                if (string.IsNullOrEmpty(headerName))
+                    headerName = GetExcelColumnName(originalColIndex);
+
+                string cellTitle = $"{headerName}  --  第{realRowIndex + 1}行";
+                var cellLines = new List<DataGridLinkToolTip.TipLine>
+                {
+                    new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
+                };
+                return (cellTitle, cellLines, null);
+            }
+
+            // 提取匹配值
+            var matchValues = (linkConfig.ValueExtractionEnabled)
+                ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
+
+            // 查找缓存
+            string prefix = currentRel + "|" + originalColIndex + "->";
+            LinkLookupEntry? lookup = null;
+            foreach (var kvp in ColumnLinkChecker.GetLookups())
+            {
+                if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    lookup = kvp.Value;
+                    break;
+                }
+            }
+
+            if (lookup == null) return (null, new List<DataGridLinkToolTip.TipLine>(), null);
+
+            // 构建标题
+            string displayTableName = Path.GetFileName(lookup.TargetFile);
+            if (_fileRemarks.TryGetValue(lookup.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                displayTableName = $"{remark} ({Path.GetFileName(lookup.TargetFile)})";
+            else if (!string.IsNullOrEmpty(lookup.TargetColumnName))
+                displayTableName = $"{Path.GetFileName(lookup.TargetFile)} [{lookup.TargetColumnName}]";
+
+            string title = $"📋 {displayTableName}";
+
+            // 构建映射行
+            var lines = new List<DataGridLinkToolTip.TipLine>();
+            foreach (var mv in matchValues)
+            {
+                if (lookup.Values.Contains(mv))
+                {
+                    if (lookup.DisplayNames.TryGetValue(mv, out var displayName) && !string.IsNullOrEmpty(displayName))
+                        lines.Add(new DataGridLinkToolTip.TipLine { Text = $"  {mv}  →  {displayName}", IsWarning = false });
+                    else
+                        lines.Add(new DataGridLinkToolTip.TipLine { Text = $"  {mv}  →  (无显示名)", IsWarning = false });
+                }
+                else
+                {
+                    lines.Add(new DataGridLinkToolTip.TipLine { Text = $"  {mv}  →  ❌ 未找到", IsWarning = true });
+                }
+            }
+
+            // 排序：警告在前
+            var orderedLines = lines
+                .Where(l => l.IsWarning)
+                .Concat(lines.Where(l => !l.IsWarning))
+                .ToList();
+
+            return (title, orderedLines, null);
         }
 
         // ==================== CSV解析 ====================
@@ -1344,12 +1474,9 @@ namespace wxd.files.winforms
 
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
+            // 系统 tooltip 已由 DataGridLinkToolTip 取代，此处不再设置文本
             if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            var invalidTip = ColumnLinkChecker.GetInvalidLinkToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
-            if (!string.IsNullOrEmpty(invalidTip)) { e.ToolTipText = invalidTip; return; }
-            e.ToolTipText = ColumnLinkChecker.GetLinkInfoToolTip(
-                _filePath, FrozenDir, _visibleColumnIndices, _dataGrid, e.RowIndex, e.ColumnIndex, _columnLinks, _fileRemarks);
+            // 不设置 e.ToolTipText，保持为空（自定义 tooltip 会接管）
         }
 
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
@@ -1717,6 +1844,16 @@ namespace wxd.files.winforms
             int num = index;
             do { result.Insert(0, (char)('A' + (num % 26))); num = num / 26 - 1; } while (num >= 0);
             return result.ToString();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _linkToolTip?.Dispose();
+                _linkToolTip = null;
+            }
+            base.Dispose(disposing);
         }
     }
 }

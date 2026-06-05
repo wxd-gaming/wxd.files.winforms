@@ -11,7 +11,7 @@ using ExcelDataReader;
 namespace wxd.files.winforms
 {
     /// <summary>关联查找条目（包含ID集合和ID→显示名映射）</summary>
-    internal class LinkLookupEntry
+    public class LinkLookupEntry
     {
         /// <summary>关联列的值集合（用于快速查找）</summary>
         public HashSet<string> Values { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -38,6 +38,9 @@ namespace wxd.files.winforms
             _linkLookups.Clear();
             _loadedSources.Clear();
         }
+
+        /// <summary>获取所有已缓存的关联查找条目（供外部遍历使用）</summary>
+        public static Dictionary<string, LinkLookupEntry> GetLookups() => _linkLookups;
 
         /// <summary>构建关联查找缓存，读取目标文件指定列的所有值（不清除其他文件的缓存）</summary>
         public static void BuildLinkLookups(List<ColumnLinkConfig> columnLinks, string rootDir, string filePath)
