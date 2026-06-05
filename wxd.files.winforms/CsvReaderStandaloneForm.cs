@@ -26,20 +26,10 @@ namespace wxd.files.winforms
             try { Icon = Icon.ExtractAssociatedIcon(filePath); } catch { }
             BackColor = Color.FromArgb(240, 242, 245);
 
-            var ext = Path.GetExtension(filePath).ToLowerInvariant();
             var dir = Path.GetDirectoryName(filePath) ?? "";
-            if (ext == ".csv")
-            {
-                var viewer = new CsvViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName, linkConfig);
-                Controls.Add(viewer);
-            }
-            else
-            {
-                var viewer = new ExcelViewerControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
-                viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName, linkConfig);
-                Controls.Add(viewer);
-            }
+            var viewer = new TableBrowserControl(filePath, rootDir: dir, frozenRows: frozenRows, headerRowIndex: headerRowIndex) { Dock = DockStyle.Fill };
+            viewer.SetHighlight(highlightColumnIndex, highlightValue, highlightColumnName, linkConfig);
+            Controls.Add(viewer);
         }
     }
 }
