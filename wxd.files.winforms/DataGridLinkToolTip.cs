@@ -163,6 +163,14 @@ namespace wxd.files.winforms
             _dropDown.Close();
         }
 
+        /// <summary>创建一个固定的 tooltip 窗口（独立于悬浮 tooltip）</summary>
+        public PinnedTipWindow? CreatePinnedWindow(string? title, List<TipLine> lines, string? rawText, Point screenPos)
+        {
+            if (string.IsNullOrEmpty(title) && lines.Count == 0 && string.IsNullOrEmpty(rawText))
+                return null;
+            return new PinnedTipWindow(title, lines, rawText, screenPos);
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -366,6 +374,328 @@ namespace wxd.files.winforms
                 path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
                 path.CloseFigure();
                 return path;
+            }
+        }
+
+        /// <summary>固定的 tooltip 窗口（独立于悬浮 tooltip，支持多个并存）</summary>
+        public class PinnedTipWindow : IDisposable
+        {
+            private readonly ToolStripDropDown _dropDown;
+            private readonly PinnedTipPanel _panel;
+            private bool _disposed;
+
+            // 关闭按钮
+            private const int CloseBtnSize = 20;
+            private const int CloseBtnMargin = 6;
+
+            private static readonly Font _titleFont2 = new("Microsoft YaHei UI", 10f, FontStyle.Bold);
+            private static readonly Font _textFont2 = new("Microsoft YaHei UI", 9f);
+
+            private static readonly Color _bgColor2 = Color.FromArgb(255, 255, 248);
+            private static readonly Color _borderColor2 = Color.FromArgb(180, 190, 140);
+            private static readonly Color _titleColor2 = Color.FromArgb(120, 100, 30);
+            private static readonly Color _normalTextColor2 = Color.FromArgb(60, 60, 70);
+            private static readonly Color _warningTextColor2 = Color.FromArgb(200, 40, 40);
+            private static readonly Color _separatorColor2 = Color.FromArgb(220, 215, 195);
+
+            private const int PaddingH = 14;
+            private const int PaddingV = 10;
+            private const int LineSpacing = 3;
+            private const int SeparatorHeight = 1;
+            private const int SeparatorMargin = 6;
+            private const int CornerRadius = 6;
+            private const int MinWidth = 160;
+            private const int MaxWidth = 520;
+
+            public PinnedTipWindow(string? title, List<TipLine> lines, string? rawText, Point screenPos)
+            {
+                _panel = new PinnedTipPanel(this, title, lines, rawText);
+
+                _dropDown = new ToolStripDropDown
+                {
+                    AutoClose = false,
+                    Padding = Padding.Empty,
+                    Margin = Padding.Empty,
+                    DropShadowEnabled = false,
+                    BackColor = _bgColor2,
+                    Renderer = new NoBorderRenderer(),
+                };
+
+                var host = new ToolStripControlHost(_panel)
+                {
+                    Margin = Padding.Empty,
+                    Padding = Padding.Empty,
+                    AutoSize = false
+                };
+                _dropDown.Items.Add(host);
+
+                // 测量并设置大小
+                _panel.MeasureSize();
+                _panel.Size = new Size(_panel._measuredWidth, _panel._measuredHeight);
+                host.Size = _panel.Size;
+                _dropDown.Size = _panel.Size;
+
+                // 屏幕边界调整
+                var screen = Screen.FromPoint(screenPos).WorkingArea;
+                if (screenPos.X + _panel._measuredWidth > screen.Right)
+                    screenPos.X = screen.Right - _panel._measuredWidth - 5;
+                if (screenPos.X < screen.Left) screenPos.X = screen.Left + 5;
+                if (screenPos.Y + _panel._measuredHeight > screen.Bottom)
+                    screenPos.Y = screen.Bottom - _panel._measuredHeight - 5;
+
+                _dropDown.Show(screenPos);
+            }
+
+            public void Close()
+            {
+                if (_disposed) return;
+                _dropDown.Close();
+                Dispose();
+            }
+
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _dropDown.Dispose();
+                _panel.Dispose();
+            }
+
+            /// <summary>自绘 Panel —— 固定窗口的内容面板（带关闭按钮和拖动支持）</summary>
+            private class PinnedTipPanel : Panel
+            {
+                private readonly PinnedTipWindow _owner;
+                private readonly string? _title;
+                private readonly List<TipLine> _lines;
+                private readonly string? _rawText;
+
+                private List<(string text, bool isWarning)> _layoutLines = new();
+                private int _titleHeight;
+                private int _lineHeight;
+                private Rectangle _closeBtnRect;
+                private bool _closeHovered;
+                private Point _dragStart;
+                private bool _dragging;
+
+                public int _measuredWidth;
+                public int _measuredHeight;
+
+                public PinnedTipPanel(PinnedTipWindow owner, string? title, List<TipLine> lines, string? rawText)
+                {
+                    _owner = owner;
+                    _title = title;
+                    _lines = lines ?? new List<TipLine>();
+                    _rawText = rawText;
+                    DoubleBuffered = true;
+                    BackColor = Color.Transparent;
+                    Cursor = Cursors.SizeAll;
+                }
+
+                public void MeasureSize()
+                {
+                    using var g = CreateGraphics();
+
+                    _titleHeight = 0;
+                    if (!string.IsNullOrEmpty(_title))
+                    {
+                        var titleSize = g.MeasureString(_title, _titleFont2);
+                        _titleHeight = (int)Math.Ceiling(titleSize.Height);
+                    }
+
+                    _layoutLines.Clear();
+                    _lineHeight = (int)Math.Ceiling(g.MeasureString("Ag", _textFont2).Height);
+                    int maxWidth = MinWidth;
+
+                    // 为关闭按钮留出右侧空间
+                    int titleRightMargin = CloseBtnMargin + CloseBtnSize + CloseBtnMargin;
+
+                    if (_lines.Count > 0)
+                    {
+                        foreach (var line in _lines)
+                        {
+                            var subLines = line.Text.Split(new[] { '\n' }, StringSplitOptions.None);
+                            foreach (var sub in subLines)
+                            {
+                                _layoutLines.Add((sub, line.IsWarning));
+                                var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont2).Width);
+                                if (w > maxWidth) maxWidth = w;
+                            }
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(_rawText))
+                    {
+                        var subLines = _rawText.Split(new[] { '\n' }, StringSplitOptions.None);
+                        foreach (var sub in subLines)
+                        {
+                            _layoutLines.Add((sub, false));
+                            var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont2).Width);
+                            if (w > maxWidth) maxWidth = w;
+                        }
+                    }
+
+                    // 确保宽度至少能容纳标题+关闭按钮
+                    if (!string.IsNullOrEmpty(_title))
+                    {
+                        int titleW = (int)Math.Ceiling(g.MeasureString(_title, _titleFont2).Width) + PaddingH + titleRightMargin;
+                        if (titleW > maxWidth) maxWidth = titleW;
+                    }
+                    else if (maxWidth < MinWidth)
+                    {
+                        maxWidth = MinWidth;
+                    }
+
+                    _measuredWidth = Math.Min(maxWidth + PaddingH * 2, MaxWidth);
+                    if (_measuredWidth < MinWidth) _measuredWidth = MinWidth;
+
+                    int totalHeight = PaddingV;
+                    if (_titleHeight > 0) totalHeight += _titleHeight + SeparatorMargin + SeparatorHeight + SeparatorMargin;
+                    if (_layoutLines.Count > 0)
+                        totalHeight += _layoutLines.Count * (_lineHeight + LineSpacing) - LineSpacing;
+                    totalHeight += PaddingV;
+
+                    _measuredHeight = totalHeight;
+                }
+
+                protected override void OnPaint(PaintEventArgs e)
+                {
+                    base.OnPaint(e);
+                    var g = e.Graphics;
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+                    var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+
+                    // 圆角背景（淡黄色，区别于悬浮 tooltip）
+                    using (var path = GetRoundedRectPath(rect, CornerRadius))
+                    using (var bgBrush = new SolidBrush(_bgColor2))
+                    {
+                        g.FillPath(bgBrush, path);
+                    }
+
+                    // 边框
+                    using (var path = GetRoundedRectPath(rect, CornerRadius))
+                    using (var borderPen = new Pen(_borderColor2, 1f))
+                    {
+                        g.DrawPath(borderPen, path);
+                    }
+
+                    // 关闭按钮（右上角，自绘 X）
+                    _closeBtnRect = new Rectangle(Width - CloseBtnMargin - CloseBtnSize, CloseBtnMargin, CloseBtnSize, CloseBtnSize);
+                    using (var cbBgBrush = new SolidBrush(_closeHovered ? Color.FromArgb(240, 220, 220) : Color.FromArgb(250, 248, 240)))
+                    {
+                        g.FillRectangle(cbBgBrush, _closeBtnRect);
+                    }
+                    using (var cbBorderPen = new Pen(_closeHovered ? Color.FromArgb(220, 80, 80) : Color.FromArgb(200, 200, 180), 1f))
+                    {
+                        g.DrawRectangle(cbBorderPen, _closeBtnRect);
+                    }
+                    // 绘制 X
+                    int pad = 5;
+                    using var xPen = new Pen(_closeHovered ? Color.FromArgb(200, 50, 50) : Color.FromArgb(150, 140, 120), 1.8f);
+                    g.DrawLine(xPen, _closeBtnRect.Left + pad, _closeBtnRect.Top + pad,
+                               _closeBtnRect.Right - pad, _closeBtnRect.Bottom - pad);
+                    g.DrawLine(xPen, _closeBtnRect.Right - pad, _closeBtnRect.Top + pad,
+                               _closeBtnRect.Left + pad, _closeBtnRect.Bottom - pad);
+
+                    int y = PaddingV;
+                    // 标题区域要给关闭按钮让路
+                    int titleMaxWidth = Width - PaddingH - CloseBtnMargin - CloseBtnSize - CloseBtnMargin - PaddingH;
+                    if (titleMaxWidth < 40) titleMaxWidth = 40;
+                    var contentWidth = Width - PaddingH * 2;
+
+                    // 绘制标题
+                    if (!string.IsNullOrEmpty(_title))
+                    {
+                        var titleRect = new Rectangle(PaddingH, y, titleMaxWidth, _titleHeight);
+                        using var titleBrush = new SolidBrush(_titleColor2);
+                        var titleFmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
+                        g.DrawString(_title, _titleFont2, titleBrush, titleRect, titleFmt);
+                        y += _titleHeight + SeparatorMargin;
+
+                        using var sepPen = new Pen(_separatorColor2, 1f);
+                        g.DrawLine(sepPen, PaddingH, y, Width - PaddingH, y);
+                        y += SeparatorHeight + SeparatorMargin;
+                    }
+
+                    // 绘制内容行
+                    if (_layoutLines.Count > 0)
+                    {
+                        foreach (var line in _layoutLines)
+                        {
+                            var color = line.isWarning ? _warningTextColor2 : _normalTextColor2;
+                            using var textBrush = new SolidBrush(color);
+                            var fmt = new StringFormat
+                            {
+                                Trimming = StringTrimming.None,
+                                FormatFlags = 0
+                            };
+                            var textSize = g.MeasureString(line.text, _textFont2);
+                            var textRect = new Rectangle(PaddingH, y, contentWidth, (int)Math.Ceiling(textSize.Height) + LineSpacing);
+                            g.DrawString(line.text, _textFont2, textBrush, textRect, fmt);
+                            y += textRect.Height + LineSpacing;
+                        }
+                    }
+                }
+
+                protected override void OnMouseClick(MouseEventArgs e)
+                {
+                    if (_closeBtnRect.Contains(e.Location))
+                        _owner.Close();
+                    base.OnMouseClick(e);
+                }
+
+                protected override void OnMouseMove(MouseEventArgs e)
+                {
+                    base.OnMouseMove(e);
+                    bool newHovered = _closeBtnRect.Contains(e.Location);
+                    if (newHovered != _closeHovered)
+                    {
+                        _closeHovered = newHovered;
+                        Cursor = _closeHovered ? Cursors.Hand : Cursors.SizeAll;
+                        Invalidate();
+                    }
+
+                    if (_dragging)
+                    {
+                        int dx = e.X - _dragStart.X;
+                        int dy = e.Y - _dragStart.Y;
+                        if (Math.Abs(dx) > 2 || Math.Abs(dy) > 2)
+                        {
+                            var newPos = new Point(
+                                _owner._dropDown.Left + dx,
+                                _owner._dropDown.Top + dy);
+                            _owner._dropDown.Location = newPos;
+                        }
+                    }
+                }
+
+                protected override void OnMouseDown(MouseEventArgs e)
+                {
+                    base.OnMouseDown(e);
+                    if (!_closeBtnRect.Contains(e.Location))
+                    {
+                        _dragging = true;
+                        _dragStart = e.Location;
+                    }
+                }
+
+                protected override void OnMouseUp(MouseEventArgs e)
+                {
+                    base.OnMouseUp(e);
+                    _dragging = false;
+                }
+
+                private static GraphicsPath GetRoundedRectPath(Rectangle rect, int radius)
+                {
+                    var path = new GraphicsPath();
+                    int d = radius * 2;
+                    path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+                    path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+                    path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+                    path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+                    path.CloseFigure();
+                    return path;
+                }
             }
         }
     }

@@ -502,6 +502,23 @@ namespace wxd.files.winforms
                         EditCell(cell, _dataGridHeader);
                     };
                     ctx.Items.Add(editItem);
+                    // 固定Tips
+                    var pinItem2 = new ToolStripMenuItem("固定Tips");
+                    int frozenCol = e.ColumnIndex;
+                    pinItem2.Click += (s2, args) =>
+                    {
+                        if (_linkToolTip?.GetToolTipContent != null)
+                        {
+                            var content = _linkToolTip.GetToolTipContent(_dataGridHeader, e.RowIndex, frozenCol);
+                            if (content.title != null || content.lines.Count > 0 || !string.IsNullOrEmpty(content.rawText))
+                            {
+                                var cellRect = _dataGridHeader.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
+                                var screenPos = _dataGridHeader.PointToScreen(new Point(cellRect.Right + 6, cellRect.Top));
+                                _linkToolTip.CreatePinnedWindow(content.title, content.lines, content.rawText, screenPos);
+                            }
+                        }
+                    };
+                    ctx.Items.Add(pinItem2);
                     ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
                 }
             };
@@ -1331,6 +1348,11 @@ namespace wxd.files.winforms
         }
 
         // ==================== 单元格事件 ====================
+        private void OnGridKeyDown(object? sender, KeyEventArgs e)
+        {
+            // 预留快捷键扩展
+        }
+
         private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
@@ -1535,6 +1557,28 @@ namespace wxd.files.winforms
                 };
             }
             ctx.Items.Add(linkItem);
+
+            // 固定Tips
+            var pinItem = new ToolStripMenuItem("固定Tips");
+            pinItem.Click += (s, args) =>
+            {
+                // 获取当前单元格的 tooltip 内容
+                int adjCol2 = e.ColumnIndex;
+                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+                    adjCol2 = e.ColumnIndex - 1;
+                if (adjCol2 >= 0 && _linkToolTip?.GetToolTipContent != null)
+                {
+                    var content = _linkToolTip.GetToolTipContent(_dataGrid, e.RowIndex, adjCol2);
+                    if (content.title != null || content.lines.Count > 0 || !string.IsNullOrEmpty(content.rawText))
+                    {
+                        var cellRect = _dataGrid.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
+                        var screenPos = _dataGrid.PointToScreen(new Point(cellRect.Right + 6, cellRect.Top));
+                        _linkToolTip.CreatePinnedWindow(content.title, content.lines, content.rawText, screenPos);
+                    }
+                }
+            };
+            ctx.Items.Add(pinItem);
+
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
 
