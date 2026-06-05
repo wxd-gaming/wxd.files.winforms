@@ -411,15 +411,24 @@ namespace wxd.files.winforms
                     var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
                         ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
                     
-                    if (!string.IsNullOrEmpty(cellValue) && !matchValues.Any(v => kvp.Value.Values.Contains(v)))
+                    if (!string.IsNullOrEmpty(cellValue) && matchValues.Count > 0)
                     {
-                        e.CellStyle.ForeColor = Color.Red;
-                        e.CellStyle.SelectionForeColor = Color.Red;
+                        bool hasMissing = matchValues.Any(v => !kvp.Value.Values.Contains(v));
+                        if (hasMissing)
+                        {
+                            e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
+                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 150, 150);
+                        }
+                        else
+                        {
+                            e.CellStyle.BackColor = dataGrid.DefaultCellStyle.BackColor;
+                            e.CellStyle.SelectionBackColor = dataGrid.DefaultCellStyle.SelectionBackColor;
+                        }
                     }
                     else
                     {
-                        e.CellStyle.ForeColor = dataGrid.DefaultCellStyle.ForeColor;
-                        e.CellStyle.SelectionForeColor = dataGrid.DefaultCellStyle.SelectionForeColor;
+                        e.CellStyle.BackColor = dataGrid.DefaultCellStyle.BackColor;
+                        e.CellStyle.SelectionBackColor = dataGrid.DefaultCellStyle.SelectionBackColor;
                     }
                     break;
                 }
