@@ -886,7 +886,7 @@ namespace wxd.files.winforms
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             }
             catch { }
 
@@ -898,7 +898,7 @@ namespace wxd.files.winforms
                 {
                     using var doc = System.Text.Json.JsonDocument.Parse(fixedJson);
                     return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                 }
                 catch { }
             }
@@ -1377,7 +1377,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, IndentSize = 2, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             }
             catch
             {

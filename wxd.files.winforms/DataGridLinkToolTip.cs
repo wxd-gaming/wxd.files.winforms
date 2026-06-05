@@ -131,18 +131,42 @@ namespace wxd.files.winforms
             // 测量并计算布局
             _panel.MeasureLayout();
 
-            // 计算显示位置（在单元格右下侧）
-            var cellRect = _activeGrid.GetCellDisplayRectangle(_lastCol, _lastRow, false);
-            var screenPos = _activeGrid.PointToScreen(new Point(cellRect.Right + 6, cellRect.Top));
+            // 计算显示位置（使用鼠标位置，紧跟鼠标，不远离）
+            var mouseScreenPos = Cursor.Position;
+            // 默认显示在鼠标右下方
+            var screenPos = new Point(mouseScreenPos.X + 14, mouseScreenPos.Y + 8);
 
             // 屏幕边界调整
             var screen = Screen.FromPoint(screenPos).WorkingArea;
+
+            // 限制 tooltip 最大高度（不超过屏幕可用高度的 80%，避免内容过长时无法显示）
+            int maxTipHeight = (int)(screen.Height * 0.8);
+            if (_panel.Height > maxTipHeight)
+                _panel.Height = maxTipHeight;
+
+            // X 坐标修正：优先显示在鼠标右侧，空间不够则翻转到鼠标左侧
             if (screenPos.X + _dropDownWidth > screen.Right)
-                screenPos.X = screen.Right - _dropDownWidth - 5;
+            {
+                int leftPos = mouseScreenPos.X - _dropDownWidth - 14;
+                if (leftPos >= screen.Left)
+                    screenPos.X = leftPos;
+                else
+                    screenPos.X = screen.Right - _dropDownWidth - 5;
+            }
             if (screenPos.X < screen.Left)
                 screenPos.X = screen.Left + 5;
+
+            // Y 坐标修正：优先显示在鼠标下方，空间不够则翻转到鼠标上方
             if (screenPos.Y + _panel.Height > screen.Bottom)
-                screenPos.Y = screen.Bottom - _panel.Height - 5;
+            {
+                int topPos = mouseScreenPos.Y - _panel.Height - 8;
+                if (topPos >= screen.Top)
+                    screenPos.Y = topPos;
+                else
+                    screenPos.Y = Math.Max(screen.Top, screen.Bottom - _panel.Height - 5);
+            }
+            if (screenPos.Y < screen.Top)
+                screenPos.Y = screen.Top + 5;
 
             if (!_disposed)
             {
@@ -226,6 +250,107 @@ namespace wxd.files.winforms
                 BackColor = Color.Transparent;
             }
 
+            /// <summary>安全绘制字符串，防止特殊字符导致 GDI+ 崩溃</summary>
+            internal static void SafeDrawString(Graphics g, string text, Font font, Brush brush, RectangleF rect, StringFormat? format = null)
+            {
+                if (string.IsNullOrEmpty(text)) return;
+                try
+                {
+                    if (format != null)
+                        g.DrawString(text, font, brush, rect, format);
+                    else
+                        g.DrawString(text, font, brush, rect);
+                }
+                catch
+                {
+                    // 过滤不可打印字符后重试
+                    var safe = text.Length > 2000 ? text.Substring(0, 2000) : text;
+                    safe = new string(safe.Where(c => c >= 0x20 || c == '\n' || c == '\r' || c == '\t').ToArray());
+                    try
+                    {
+                        if (format != null)
+                            g.DrawString(safe, font, brush, rect, format);
+                        else
+                            g.DrawString(safe, font, brush, rect);
+                    }
+                    catch
+                    {
+                        // 放弃绘制
+                    }
+                }
+            }
+
+            /// <summary>安全测量字符串，防止特殊字符导致 GDI+ 崩溃</summary>
+            private static SizeF SafeMeasureString(Graphics g, string text, Font font)
+            {
+                if (string.IsNullOrEmpty(text))
+                    return SizeF.Empty;
+                try
+                {
+                    return g.MeasureString(text, font);
+                }
+                catch
+                {
+                    // GDI+ MeasureString 可能因特殊字符而崩溃
+                    // 回退：使用 TextRenderer 测量（更稳定）
+                    try
+                    {
+                        var size = TextRenderer.MeasureText(g, text, font);
+                        return new SizeF(size.Width, size.Height);
+                    }
+                    catch
+                    {
+                        // 最终回退：限制长度并清除控制字符后再次尝试
+                        var safe = text.Length > 2000 ? text.Substring(0, 2000) : text;
+                        safe = new string(safe.Where(c => c >= 0x20 || c == '\n' || c == '\r' || c == '\t').ToArray());
+                        try
+                        {
+                            var size = TextRenderer.MeasureText(g, safe, font);
+                            return new SizeF(size.Width, size.Height);
+                        }
+                        catch
+                        {
+                            return new SizeF(50, 16); // 兜底值
+                        }
+                    }
+                }
+            }
+
+            /// <summary>安全测量字符串（指定最大宽度，用于计算自动换行后的高度）</summary>
+            private static SizeF SafeMeasureString(Graphics g, string text, Font font, int maxWidth)
+            {
+                if (string.IsNullOrEmpty(text))
+                    return SizeF.Empty;
+                try
+                {
+                    return g.MeasureString(text, font, maxWidth);
+                }
+                catch
+                {
+                    try
+                    {
+                        var size = TextRenderer.MeasureText(g, text, font, new Size(maxWidth, int.MaxValue),
+                            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                        return new SizeF(size.Width, size.Height);
+                    }
+                    catch
+                    {
+                        var safe = text.Length > 2000 ? text.Substring(0, 2000) : text;
+                        safe = new string(safe.Where(c => c >= 0x20 || c == '\n' || c == '\r' || c == '\t').ToArray());
+                        try
+                        {
+                            var size = TextRenderer.MeasureText(g, safe, font, new Size(maxWidth, int.MaxValue),
+                                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                            return new SizeF(size.Width, size.Height);
+                        }
+                        catch
+                        {
+                            return new SizeF(50, 16);
+                        }
+                    }
+                }
+            }
+
             public void MeasureLayout()
             {
                 using var g = CreateGraphics();
@@ -234,14 +359,14 @@ namespace wxd.files.winforms
                 _titleHeight = 0;
                 if (!string.IsNullOrEmpty(_owner._currentTitle))
                 {
-                    var titleSize = g.MeasureString(_owner._currentTitle, _titleFont);
+                    var titleSize = SafeMeasureString(g, _owner._currentTitle, _titleFont);
                     _titleHeight = (int)Math.Ceiling(titleSize.Height);
                 }
 
-                // 测量各行（支持换行符拆分）
+                // 测量各行（支持换行符拆分 + 自动换行）
                 _layoutLines.Clear();
                 _hasLinkMapping = false;
-                _lineHeight = (int)Math.Ceiling(g.MeasureString("Ag", _textFont).Height);
+                _lineHeight = (int)Math.Ceiling(SafeMeasureString(g, "Ag", _textFont).Height);
                 int maxWidth = MinWidth;
 
                 if (_owner._currentLines.Count > 0)
@@ -253,7 +378,7 @@ namespace wxd.files.winforms
                         foreach (var sub in subLines)
                         {
                             _layoutLines.Add((sub, line.IsWarning));
-                            var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont).Width);
+                            var w = (int)Math.Ceiling(SafeMeasureString(g, sub, _textFont).Width);
                             if (w > maxWidth) maxWidth = w;
                         }
                         if (line.Text.Contains("→")) _hasLinkMapping = true;
@@ -265,22 +390,38 @@ namespace wxd.files.winforms
                     foreach (var sub in subLines)
                     {
                         _layoutLines.Add((sub, false));
-                        var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont).Width);
+                        var w = (int)Math.Ceiling(SafeMeasureString(g, sub, _textFont).Width);
                         if (w > maxWidth) maxWidth = w;
                     }
                 }
 
                 // 底部提示（仅有关联映射行时显示）
                 _hintText = _hasLinkMapping ? "右键 → 打开关联表" : "";
-                _hintHeight = _hasLinkMapping ? (int)Math.Ceiling(g.MeasureString(_hintText, _hintFont).Height) : 0;
+                _hintHeight = _hasLinkMapping ? (int)Math.Ceiling(SafeMeasureString(g, _hintText, _hintFont).Height) : 0;
 
                 _owner._dropDownWidth = Math.Min(maxWidth + PaddingH * 2, MaxWidth);
                 if (_owner._dropDownWidth < MinWidth) _owner._dropDownWidth = MinWidth;
 
+                // 计算高度时，对每行文本使用最大宽度约束测量，支持自动换行
+                int contentMaxWidth = _owner._dropDownWidth - PaddingH * 2;
                 int totalHeight = PaddingV;
-                if (_titleHeight > 0) totalHeight += _titleHeight + SeparatorMargin + SeparatorHeight + SeparatorMargin;
+                if (_titleHeight > 0)
+                {
+                    // 标题也需要考虑换行
+                    var titleSizeConstrained = SafeMeasureString(g, _owner._currentTitle!, _titleFont, contentMaxWidth);
+                    _titleHeight = (int)Math.Ceiling(titleSizeConstrained.Height);
+                    totalHeight += _titleHeight + SeparatorMargin + SeparatorHeight + SeparatorMargin;
+                }
                 if (_layoutLines.Count > 0)
-                    totalHeight += _layoutLines.Count * (_lineHeight + LineSpacing) - (_layoutLines.Count > 0 ? LineSpacing : 0);
+                {
+                    foreach (var line in _layoutLines)
+                    {
+                        // 在限定宽度下测量实际高度（支持自动换行）
+                        var constrainedSize = SafeMeasureString(g, line.text, _textFont, contentMaxWidth);
+                        totalHeight += (int)Math.Ceiling(constrainedSize.Height) + LineSpacing;
+                    }
+                    totalHeight -= LineSpacing; // 最后一行不需要额外的 LineSpacing
+                }
                 if (_hasLinkMapping)
                 {
                     totalHeight += SeparatorMargin + SeparatorHeight + SeparatorMargin;
@@ -322,7 +463,7 @@ namespace wxd.files.winforms
                 {
                     var titleRect = new Rectangle(PaddingH, y, contentWidth, _titleHeight);
                     using var titleBrush = new SolidBrush(_titleColor);
-                    g.DrawString(_owner._currentTitle, _titleFont, titleBrush, titleRect);
+                    SafeDrawString(g, _owner._currentTitle, _titleFont, titleBrush, titleRect);
                     y += _titleHeight + SeparatorMargin;
 
                     // 分隔线
@@ -331,7 +472,7 @@ namespace wxd.files.winforms
                     y += SeparatorHeight + SeparatorMargin;
                 }
 
-                // 绘制映射行
+                // 绘制映射行（使用约束宽度下的实际高度，支持自动换行）
                 if (_layoutLines.Count > 0)
                 {
                     foreach (var line in _layoutLines)
@@ -343,9 +484,9 @@ namespace wxd.files.winforms
                             Trimming = StringTrimming.None,
                             FormatFlags = 0
                         };
-                        var textSize = g.MeasureString(line.text, _textFont);
-                        var textRect = new Rectangle(PaddingH, y, contentWidth, (int)Math.Ceiling(textSize.Height) + LineSpacing);
-                        g.DrawString(line.text, _textFont, textBrush, textRect, fmt);
+                        var constrainedSize = SafeMeasureString(g, line.text, _textFont, contentWidth);
+                        var textRect = new Rectangle(PaddingH, y, contentWidth, (int)Math.Ceiling(constrainedSize.Height) + LineSpacing);
+                        SafeDrawString(g, line.text, _textFont, textBrush, textRect, fmt);
                         y += textRect.Height + LineSpacing;
                     }
                 }
@@ -360,7 +501,7 @@ namespace wxd.files.winforms
 
                     var hintRect = new Rectangle(PaddingH, y, contentWidth, _hintHeight);
                     using var hintBrush = new SolidBrush(_hintColor);
-                    g.DrawString(_hintText, _hintFont, hintBrush, hintRect);
+                    SafeDrawString(g, _hintText, _hintFont, hintBrush, hintRect);
                 }
             }
 
@@ -437,11 +578,23 @@ namespace wxd.files.winforms
 
                 // 屏幕边界调整
                 var screen = Screen.FromPoint(screenPos).WorkingArea;
+
+                // 限制最大高度
+                int maxTipHeight = (int)(screen.Height * 0.8);
+                if (_panel._measuredHeight > maxTipHeight)
+                    _panel._measuredHeight = maxTipHeight;
+
+                // X 修正：优先右侧，不够则翻转到左侧
                 if (screenPos.X + _panel._measuredWidth > screen.Right)
-                    screenPos.X = screen.Right - _panel._measuredWidth - 5;
+                {
+                    int leftPos = screenPos.X - _panel._measuredWidth - 6;
+                    screenPos.X = leftPos >= screen.Left ? leftPos : screen.Right - _panel._measuredWidth - 5;
+                }
                 if (screenPos.X < screen.Left) screenPos.X = screen.Left + 5;
+
+                // Y 修正：优先下方，不够则翻转到上方
                 if (screenPos.Y + _panel._measuredHeight > screen.Bottom)
-                    screenPos.Y = screen.Bottom - _panel._measuredHeight - 5;
+                    screenPos.Y = Math.Max(screen.Top, screen.Bottom - _panel._measuredHeight - 5);
 
                 _dropDown.Show(screenPos);
             }
@@ -491,6 +644,39 @@ namespace wxd.files.winforms
                     Cursor = Cursors.SizeAll;
                 }
 
+                /// <summary>安全测量字符串（PinnedTipPanel 版本）</summary>
+                private static SizeF SafeMeasureStringPinned(Graphics g, string text, Font font)
+                {
+                    if (string.IsNullOrEmpty(text))
+                        return SizeF.Empty;
+                    try
+                    {
+                        return g.MeasureString(text, font);
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            var size = TextRenderer.MeasureText(g, text, font);
+                            return new SizeF(size.Width, size.Height);
+                        }
+                        catch
+                        {
+                            var safe = text.Length > 2000 ? text.Substring(0, 2000) : text;
+                            safe = new string(safe.Where(c => c >= 0x20 || c == '\n' || c == '\r' || c == '\t').ToArray());
+                            try
+                            {
+                                var size = TextRenderer.MeasureText(g, safe, font);
+                                return new SizeF(size.Width, size.Height);
+                            }
+                            catch
+                            {
+                                return new SizeF(50, 16);
+                            }
+                        }
+                    }
+                }
+
                 public void MeasureSize()
                 {
                     using var g = CreateGraphics();
@@ -498,12 +684,12 @@ namespace wxd.files.winforms
                     _titleHeight = 0;
                     if (!string.IsNullOrEmpty(_title))
                     {
-                        var titleSize = g.MeasureString(_title, _titleFont2);
+                        var titleSize = SafeMeasureStringPinned(g, _title, _titleFont2);
                         _titleHeight = (int)Math.Ceiling(titleSize.Height);
                     }
 
                     _layoutLines.Clear();
-                    _lineHeight = (int)Math.Ceiling(g.MeasureString("Ag", _textFont2).Height);
+                    _lineHeight = (int)Math.Ceiling(SafeMeasureStringPinned(g, "Ag", _textFont2).Height);
                     int maxWidth = MinWidth;
 
                     // 为关闭按钮留出右侧空间
@@ -517,7 +703,7 @@ namespace wxd.files.winforms
                             foreach (var sub in subLines)
                             {
                                 _layoutLines.Add((sub, line.IsWarning));
-                                var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont2).Width);
+                                var w = (int)Math.Ceiling(SafeMeasureStringPinned(g, sub, _textFont2).Width);
                                 if (w > maxWidth) maxWidth = w;
                             }
                         }
@@ -528,7 +714,7 @@ namespace wxd.files.winforms
                         foreach (var sub in subLines)
                         {
                             _layoutLines.Add((sub, false));
-                            var w = (int)Math.Ceiling(g.MeasureString(sub, _textFont2).Width);
+                            var w = (int)Math.Ceiling(SafeMeasureStringPinned(g, sub, _textFont2).Width);
                             if (w > maxWidth) maxWidth = w;
                         }
                     }
@@ -536,7 +722,7 @@ namespace wxd.files.winforms
                     // 确保宽度至少能容纳标题+关闭按钮
                     if (!string.IsNullOrEmpty(_title))
                     {
-                        int titleW = (int)Math.Ceiling(g.MeasureString(_title, _titleFont2).Width) + PaddingH + titleRightMargin;
+                        int titleW = (int)Math.Ceiling(SafeMeasureStringPinned(g, _title, _titleFont2).Width) + PaddingH + titleRightMargin;
                         if (titleW > maxWidth) maxWidth = titleW;
                     }
                     else if (maxWidth < MinWidth)
@@ -609,7 +795,7 @@ namespace wxd.files.winforms
                         var titleRect = new Rectangle(PaddingH, y, titleMaxWidth, _titleHeight);
                         using var titleBrush = new SolidBrush(_titleColor2);
                         var titleFmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
-                        g.DrawString(_title, _titleFont2, titleBrush, titleRect, titleFmt);
+                        CustomToolTipPanel.SafeDrawString(g, _title, _titleFont2, titleBrush, titleRect, titleFmt);
                         y += _titleHeight + SeparatorMargin;
 
                         using var sepPen = new Pen(_separatorColor2, 1f);
@@ -629,9 +815,9 @@ namespace wxd.files.winforms
                                 Trimming = StringTrimming.None,
                                 FormatFlags = 0
                             };
-                            var textSize = g.MeasureString(line.text, _textFont2);
+                            var textSize = SafeMeasureStringPinned(g, line.text, _textFont2);
                             var textRect = new Rectangle(PaddingH, y, contentWidth, (int)Math.Ceiling(textSize.Height) + LineSpacing);
-                            g.DrawString(line.text, _textFont2, textBrush, textRect, fmt);
+                            CustomToolTipPanel.SafeDrawString(g, line.text, _textFont2, textBrush, textRect, fmt);
                             y += textRect.Height + LineSpacing;
                         }
                     }

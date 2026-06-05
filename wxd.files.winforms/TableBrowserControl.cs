@@ -44,10 +44,16 @@ namespace wxd.files.winforms
         private List<int> _visibleColumnIndices = new();
         private bool _editingFromFrozen = false;
         private DataGridLinkToolTip? _linkToolTip;
+        private FlowLayoutPanel? _flowTop;
+        private Button? _btnReload;
+        private Button? _btnHistory;
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
         public TableFileType FileType => _fileType;
+
+        /// <summary>数据加载完成事件（供版本对比等外部功能使用）</summary>
+        public event EventHandler? DataLoaded;
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
@@ -77,20 +83,22 @@ namespace wxd.files.winforms
         private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
         private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
 
+        private bool _lightweight;
         private string? _rootDir;
         private string FrozenDir => !string.IsNullOrEmpty(_rootDir) ? _rootDir : Path.GetDirectoryName(_filePath) ?? "";
 
         // ==================== 构造函数 ====================
         public TableBrowserControl(string filePath, int paneIndex = -1, string? rootDir = null,
-            int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "")
+            int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "",
+            bool lightweight = false)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
+            _lightweight = lightweight;
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
             if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
             _initialContentFilter = initialContentFilter;
-            _fileType = DetectFileType(filePath);
 
             var dir = FrozenDir;
             if (!string.IsNullOrEmpty(dir))
@@ -98,10 +106,22 @@ namespace wxd.files.winforms
 
             InitializeComponent();
 
-            if (_fileType == TableFileType.Csv)
-                LoadCsvAsync();
+            // 如果文件路径为空或文件不存在，跳过自动加载（由外部通过 SetDataTable 注入数据）
+            if (!string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
+            {
+                _fileType = DetectFileType(filePath);
+                if (_fileType == TableFileType.Csv)
+                    LoadCsvAsync();
+                else
+                    LoadExcelAsync();
+            }
             else
-                LoadExcelAsync();
+            {
+                // 空数据模式：创建一个空的 DataTable，等待外部 SetDataTable
+                _dataTable = new DataTable();
+                _headerTable = _dataTable.Clone();
+                _fileType = TableFileType.Csv; // 默认类型
+            }
         }
 
         private static TableFileType DetectFileType(string path)
@@ -196,7 +216,7 @@ namespace wxd.files.winforms
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             // 第一行工具栏
-            var flowTop = new FlowLayoutPanel
+            _flowTop = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 Height = 40,
@@ -328,10 +348,10 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow, lblHeaderFilter, _btnSelectColumns });
+            _flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow, lblHeaderFilter, _btnSelectColumns });
 
             // 重新加载按钮
-            var btnReload = new Button
+            _btnReload = new Button
             {
                 Text = "重新加载",
                 Size = new Size(75, 27),
@@ -344,8 +364,8 @@ namespace wxd.files.winforms
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            btnReload.Click += (s, e) => ReloadContentAsync();
-            flowTop.Controls.Add(btnReload);
+            _btnReload.Click += (s, e) => ReloadContentAsync();
+            _flowTop.Controls.Add(_btnReload);
 
             var lblCellPos = new Label
             {
@@ -355,9 +375,9 @@ namespace wxd.files.winforms
                 ForeColor = _colorPrimary,
                 Margin = new Padding(10, 5, 10, 0)
             };
-            flowTop.Controls.Add(lblCellPos);
+            _flowTop.Controls.Add(lblCellPos);
             _lblCellPos = lblCellPos;
-            flowTop.Controls.Add(_lblInfo);
+            _flowTop.Controls.Add(_lblInfo);
 
             // 分隔线
             var separatorLine = new Panel
@@ -438,7 +458,7 @@ namespace wxd.files.winforms
             };
             flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
 
-            topTable.Controls.Add(flowTop, 0, 0);
+            topTable.Controls.Add(_flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
             topTable.Controls.Add(flowContent, 0, 2);
             topTable.Controls.Add(flowAdv, 0, 3);
@@ -771,7 +791,20 @@ namespace wxd.files.winforms
             RebuildHighlightRows();
             _lblInfo.Text = infoText;
 
-            if (_frozenRows > 0)
+            if (_lightweight)
+            {
+                // 轻量模式：直接绑定 DataSource，不做额外初始化
+                _dataGrid.DataSource = _dataTable;
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    _dataGrid.Columns[i].Width = 120;
+                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                }
+                // 轻量模式：隐藏顶部工具栏
+                _pnlTop.Visible = false;
+            }
+            else if (_frozenRows > 0)
                 RefreshGridLayout();
             else
             {
@@ -787,13 +820,20 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(_initialContentFilter))
                 _txtContentFilter.Text = _initialContentFilter;
 
-            // 初始化自定义 tooltip（只初始化一次）
-            if (_linkToolTip == null)
+            // 初始化自定义 tooltip（只初始化一次；轻量模式跳过）
+            if (!_lightweight && _linkToolTip == null)
             {
                 _linkToolTip = new DataGridLinkToolTip(_dataGrid);
                 _linkToolTip.RegisterGrid(_dataGridHeader);
                 _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
             }
+
+            // 触发数据加载完成事件
+            DataLoaded?.Invoke(this, EventArgs.Empty);
+
+            // 检测是否 SVN/Git 管理，如果是则显示"历史记录"按钮（轻量模式跳过）
+            if (!_lightweight)
+                ShowHistoryButtonIfVcs();
         }
 
         /// <summary>为自定义 tooltip 提供内容（grid: 当前鼠标所在的 DataGridView）</summary>
@@ -1492,6 +1532,8 @@ namespace wxd.files.winforms
                     e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
                 }
             }
+            // 转发给外部事件处理器（如版本对比的差异高亮）
+            OnExternalCellFormatting?.Invoke(sender, e);
         }
 
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
@@ -1890,12 +1932,136 @@ namespace wxd.files.winforms
             return result.ToString();
         }
 
+        // ==================== 版本历史按钮 ====================
+        private void ShowHistoryButtonIfVcs()
+        {
+            try
+            {
+                if (_btnHistory != null) return;
+                if (string.IsNullOrEmpty(_filePath) || !File.Exists(_filePath)) return;
+
+                var vcs = VersionControlHelper.DetectVcs(_filePath);
+                if (vcs == VcsType.None) return;
+
+                _btnHistory = new Button
+                {
+                    Text = vcs == VcsType.Svn ? "SVN历史" : "Git历史",
+                    Size = new Size(75, 27),
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    FlatStyle = FlatStyle.Flat,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    BackColor = Color.FromArgb(22, 163, 74),
+                    ForeColor = Color.White,
+                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61) },
+                    Cursor = Cursors.Hand,
+                    Margin = new Padding(0, 2, 10, 0)
+                };
+
+                var vcsType = vcs;
+                var frozen = _frozenRows;
+                var headerRow = _headerRowIndex;
+                var filePath = _filePath;
+
+                _btnHistory.Click += (s, e) =>
+                {
+                    var form = new VersionCompareForm(filePath, vcsType, frozen, headerRow);
+                    form.Show(this);
+                };
+
+                _flowTop?.Controls.Add(_btnHistory);
+            }
+            catch { }
+        }
+
+        /// <summary>获取内部 DataTable（供版本对比等外部功能使用）</summary>
+        public DataTable GetDataTable() => _dataTable;
+
+        /// <summary>获取内部 DataGridView（供版本对比等外部功能使用）</summary>
+        public DataGridView GetDataGridView() => _dataGrid;
+
+        /// <summary>
+        /// 直接设置 DataTable 并刷新显示（供版本对比等外部功能复用控件实例）。
+        /// 跳过文件加载、tooltip 初始化、VCS 检测等。
+        /// 隐藏"重新加载"和"历史记录"按钮，避免版本对比中无限嵌套。
+        /// </summary>
+        /// <summary>从父容器中移除 DataGridView，防止设置 DataSource 时逐行绘制</summary>
+        public void DetachGridFromParent()
+        {
+            var gridParent = _dataGrid.Parent;
+            var gridHeaderParent = _dataGridHeader.Parent;
+
+            if (gridParent != null)
+                gridParent.Controls.Remove(_dataGrid);
+            if (gridHeaderParent != null)
+                gridHeaderParent.Controls.Remove(_dataGridHeader);
+        }
+
+        /// <summary>将 DataGridView 重新加入父容器（在数据绑定完成后调用）</summary>
+        public void AttachGridToParent()
+        {
+            // _dataGrid 的父容器是 _pnlGridContainer.Panel2
+            // _dataGridHeader 的父容器是 _pnlGridContainer.Panel1
+            if (!_pnlGridContainer.Panel2.Controls.Contains(_dataGrid))
+                _pnlGridContainer.Panel2.Controls.Add(_dataGrid);
+            if (!_pnlGridContainer.Panel1Collapsed && !_pnlGridContainer.Panel1.Controls.Contains(_dataGridHeader))
+                _pnlGridContainer.Panel1.Controls.Add(_dataGridHeader);
+        }
+
+        public void SetDataTable(DataTable dataTable, string infoText = "")
+        {
+            if (dataTable == null) return;
+
+            // ★ 彻底清理旧绑定，避免多次切换后事件/引用累积导致卡顿
+            _dataGrid.DataSource = null;
+            _dataGridHeader.DataSource = null;
+            // 清理可能由外部附加的 CellFormatting 事件（如版本对比的差异高亮）
+            _dataGrid.CellFormatting -= OnExternalCellFormatting;
+            // 清理高亮状态
+            _highlightRows.Clear();
+            _highlightsReady = false;
+
+            _dataTable = dataTable;
+            _headerTable = dataTable.Clone();
+
+            _columnCheckStates = new bool[_dataTable.Columns.Count];
+            for (int i = 0; i < _columnCheckStates.Length; i++)
+                _columnCheckStates[i] = true;
+
+            RebuildHighlightRows();
+            _lblInfo.Text = string.IsNullOrEmpty(infoText)
+                ? $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"
+                : infoText;
+
+            // 隐藏"重新加载"和"历史记录"按钮（避免版本对比中无限嵌套）
+            if (_btnReload != null) _btnReload.Visible = false;
+            if (_btnHistory != null) _btnHistory.Visible = false;
+
+            if (_frozenRows > 0)
+                RefreshGridLayout();
+            else
+            {
+                _pnlGridContainer.Panel1Collapsed = true;
+                _dataGrid.DataSource = _dataTable;
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    _dataGrid.Columns[i].Width = 120;
+                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                }
+            }
+        }
+
+        /// <summary>供外部（版本对比等）移除的 CellFormatting 事件占位</summary>
+        internal event DataGridViewCellFormattingEventHandler? OnExternalCellFormatting;
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
                 _linkToolTip?.Dispose();
                 _linkToolTip = null;
+                _btnHistory?.Dispose();
+                _btnHistory = null;
             }
             base.Dispose(disposing);
         }

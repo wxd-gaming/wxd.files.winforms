@@ -1254,9 +1254,43 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 4. 设置备注名（仅文件节点可用）
-            var mnuRemark = new ToolStripMenuItem("设置备注名");
+            // 4. 历史记录对比（始终显示，点击时检测 VCS 类型）
             var isFile = System.IO.File.Exists(fullPath);
+            var mnuHistory = new ToolStripMenuItem("历史记录对比");
+            mnuHistory.Enabled = isFile;
+            mnuHistory.Click += (s, args) =>
+            {
+                if (!System.IO.File.Exists(fullPath)) return;
+                var vcsType = VersionControlHelper.DetectVcs(fullPath);
+                if (vcsType == VcsType.None)
+                {
+                    MessageBox.Show(this,
+                        "此文件不受 SVN 或 Git 管控，无法进行历史记录对比。",
+                        "非受控文件",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                var dir = Path.GetDirectoryName(fullPath) ?? "";
+                var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+                int frozenRows, headerRowIndex;
+                if (ext == ".csv")
+                {
+                    frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
+                    headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+                }
+                else
+                {
+                    frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
+                    headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+                }
+                var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex);
+                form.Show();
+            };
+
+            // 5. 设置备注名（仅文件节点可用）
+            var mnuRemark = new ToolStripMenuItem("设置备注名");
             mnuRemark.Enabled = isFile;
             mnuRemark.Click += (s, args) =>
             {
@@ -1329,7 +1363,7 @@ namespace wxd.files.winforms
                 }
             };
 
-            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuOpenFolder, mnuRemark });
+            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuHistory, mnuOpenFolder, mnuRemark });
             ctx.Show(_treeFiles, e.Location);
         }
 
