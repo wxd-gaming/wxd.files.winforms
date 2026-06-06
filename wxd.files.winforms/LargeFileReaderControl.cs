@@ -1739,63 +1739,71 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
             int contextLines = (int)_numContextLines.Value;
 
-            // 合并重叠的上下文区间，避免重复输出
-            var ranges = new List<(int Start, int End)>();
-            foreach (int lineIdx in _searchResults)
-            {
-                int start = Math.Max(0, lineIdx - contextLines);
-                int end = Math.Min(_lineOffsets!.Length - 1, lineIdx + contextLines);
-                ranges.Add((start, end));
-            }
-            ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
-
-            var mergedRanges = new List<(int Start, int End)>();
-            foreach (var range in ranges)
-            {
-                if (mergedRanges.Count == 0)
-                {
-                    mergedRanges.Add(range);
-                }
-                else
-                {
-                    var last = mergedRanges[^1];
-                    if (range.Start <= last.End + 1) // 相邻或重叠 → 合并
-                    {
-                        mergedRanges[^1] = (last.Start, Math.Max(last.End, range.End));
-                    }
-                    else
-                    {
-                        mergedRanges.Add(range);
-                    }
-                }
-            }
-
-            // 计算总行数
-            int totalLines = 0;
-            foreach (var (s, e) in mergedRanges)
-                totalLines += (e - s + 1);
-
+            // 快照：避免后台线程读取时被并发修改
+            var searchResultsSnapshot = _searchResults.ToList();
+            var lineOffsets = _lineOffsets!;
             string dir = Path.GetDirectoryName(sourcePath)!;
-            string fileName = Path.GetFileName(sourcePath);        // 保留原始文件名含后缀，如 xxx.log
+            string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
             string filterPart = SanitizeFileName(_lastSearchKeyword, 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
-            
-            // 命名规则：原始文件名.过滤字符.时间戳.源文件后缀
-            // 例如 xxx.log 过滤"时长" → xxx.log.时长.20260525143000.log
-            string safeFileName;
-            if (!string.IsNullOrEmpty(filterPart))
-                safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}.{timestamp}{sourceExt}";
-            else
-                safeFileName = $"{SanitizeFileName(fileName, 200)}.{timestamp}{sourceExt}";
-            
-            string outName = safeFileName;
-            string outPath = Path.Combine(dir, outName);
 
-            // 后台线程导出，防止卡 UI
-            Status($"正在导出 {totalLines} 行到 {outName}...");
+            Status("正在准备导出...");
+
+            // 所有耗时操作都在后台线程执行，避免 UI 卡死
             _ = Task.Run(() =>
             {
+                // ===== 以下全部在后台线程执行 =====
+
+                // 合并重叠的上下文区间，避免重复输出
+                var ranges = new List<(int Start, int End)>(searchResultsSnapshot.Count);
+                foreach (int lineIdx in searchResultsSnapshot)
+                {
+                    int start = Math.Max(0, lineIdx - contextLines);
+                    int end = Math.Min(lineOffsets.Length - 1, lineIdx + contextLines);
+                    ranges.Add((start, end));
+                }
+                ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+                var mergedRanges = new List<(int Start, int End)>();
+                foreach (var range in ranges)
+                {
+                    if (mergedRanges.Count == 0)
+                    {
+                        mergedRanges.Add(range);
+                    }
+                    else
+                    {
+                        var last = mergedRanges[^1];
+                        if (range.Start <= last.End + 1) // 相邻或重叠 → 合并
+                        {
+                            mergedRanges[^1] = (last.Start, Math.Max(last.End, range.End));
+                        }
+                        else
+                        {
+                            mergedRanges.Add(range);
+                        }
+                    }
+                }
+
+                // 计算总行数
+                int totalLines = 0;
+                foreach (var (s, e) in mergedRanges)
+                    totalLines += (e - s + 1);
+
+                // 命名规则：原始文件名.过滤字符.时间戳.源文件后缀
+                string safeFileName;
+                if (!string.IsNullOrEmpty(filterPart))
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}.{timestamp}{sourceExt}";
+                else
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}.{timestamp}{sourceExt}";
+
+                string outName = safeFileName;
+                string outPath = Path.Combine(dir, outName);
+
+                // 更新状态（回 UI 线程）
+                BeginInvoke(() => Status($"正在导出 {totalLines} 行到 {outName}..."));
+
                 try
                 {
                     using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
@@ -1813,7 +1821,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         Status($"已导出 {totalLines} 行 -> {outName}");
                         MessageBox.Show(ParentForm,
-                            $"导出完成！\n\n文件: {outName}\n路径: {dir}\n行数: {totalLines:N0}\n匹配行: {_searchResults.Count:N0}\n上下行数: {contextLines}",
+                            $"导出完成！\n\n文件: {outName}\n路径: {dir}\n行数: {totalLines:N0}\n匹配行: {searchResultsSnapshot.Count:N0}\n上下行数: {contextLines}",
                             "导出成功");
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
