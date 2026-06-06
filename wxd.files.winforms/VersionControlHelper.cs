@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace wxd.files.winforms
 {
@@ -140,50 +141,46 @@ namespace wxd.files.winforms
         {
             var entries = new List<VersionHistoryEntry>();
 
-            // 外层正则：匹配整个 <logentry> 块，不要求 revision 和 logentry 在同一行
-            var logentryRegex = new Regex(
-                @"<logentry\s[^>]*revision=""(\d+)""[^>]*>" +
-                @"((?!</logentry>)[\s\S])*?" +
-                @"</logentry>",
-                RegexOptions.Compiled);
-
-            // 内层正则：分别匹配 author、date、msg，不依赖元素顺序
-            var authorRegex = new Regex(@"<author>([^<]*)</author>", RegexOptions.Compiled);
-            var dateRegex = new Regex(@"<date>([^<]*)</date>", RegexOptions.Compiled);
-            var msgRegex = new Regex(@"<msg>([\s\S]*?)</msg>", RegexOptions.Compiled);
-
-            int index = 0;
-            foreach (Match m in logentryRegex.Matches(xml))
+            try
             {
-                var innerXml = m.Groups[2].Value;
-                var revision = m.Groups[1].Value;
+                var doc = XDocument.Parse(xml);
+                int index = 0;
 
-                var authorMatch = authorRegex.Match(innerXml);
-                var dateMatch = dateRegex.Match(innerXml);
-                var msgMatch = msgRegex.Match(innerXml);
-
-                var author = authorMatch.Success
-                    ? System.Net.WebUtility.HtmlDecode(authorMatch.Groups[1].Value)
-                    : "";
-                var dateStr = dateMatch.Success ? dateMatch.Groups[1].Value : "";
-
-                DateTime commitDate;
-                if (!DateTime.TryParse(dateStr, out commitDate))
-                    commitDate = DateTime.MinValue;
-
-                var message = msgMatch.Success ? msgMatch.Groups[1].Value.Trim() : "";
-
-                entries.Add(new VersionHistoryEntry
+                foreach (var logentry in doc.Root!.Elements("logentry"))
                 {
-                    Revision = revision,
-                    FullRevision = revision,
-                    Author = author,
-                    CommitDate = commitDate,
-                    Message = message,
-                    HasFileChange = true,
-                    Index = index++
-                });
+                    var revision = logentry.Attribute("revision")?.Value ?? "";
+                    var author = logentry.Element("author")?.Value ?? "";
+                    var dateStr = logentry.Element("date")?.Value ?? "";
+                    var message = logentry.Element("msg")?.Value?.Trim() ?? "";
+
+                    DateTime commitDate;
+                    // SVN 输出 ISO 8601 格式（如 2026-05-08T03:56:51.000Z）
+                    if (!DateTime.TryParseExact(dateStr,
+                            new[] { "yyyy-MM-ddTHH:mm:ss.fffZ", "yyyy-MM-ddTHH:mm:ssZ" },
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                            out commitDate))
+                    {
+                        commitDate = DateTime.MinValue;
+                    }
+
+                    entries.Add(new VersionHistoryEntry
+                    {
+                        Revision = revision,
+                        FullRevision = revision,
+                        Author = author,
+                        CommitDate = commitDate,
+                        Message = message,
+                        HasFileChange = true,
+                        Index = index++
+                    });
+                }
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SVN log XML parse error: {ex.Message}");
+            }
+
             return entries;
         }
 
