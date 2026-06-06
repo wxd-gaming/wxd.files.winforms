@@ -27,6 +27,7 @@ namespace wxd.files.winforms
         private Label _lblCellPos = new();
         private Panel _pnlLoading = new();
         private Panel _pnlTop = new();
+        private Panel _pnlStatus = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
         private string _filePath = "";
@@ -373,11 +374,10 @@ namespace wxd.files.winforms
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
                 ForeColor = _colorPrimary,
-                Margin = new Padding(10, 5, 10, 0)
+                Margin = new Padding(0, 3, 10, 3)
             };
-            _flowTop.Controls.Add(lblCellPos);
             _lblCellPos = lblCellPos;
-            _flowTop.Controls.Add(_lblInfo);
+            // _lblCellPos 和 _lblInfo 不再添加到 _flowTop，改为放入底部状态栏 _pnlStatus
 
             // 分隔线
             var separatorLine = new Panel
@@ -578,6 +578,52 @@ namespace wxd.files.winforms
 
             Controls.Add(_pnlGridContainer);
             Controls.Add(_pnlTop);
+
+            // ============ 底部状态栏 ============
+            // 状态栏顶部分隔线
+            var statusSeparator = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 1,
+                BackColor = Color.FromArgb(200, 225, 245),
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            Controls.Add(statusSeparator);
+
+            _pnlStatus = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 28,
+                BackColor = Color.FromArgb(245, 250, 255),
+                Padding = new Padding(0)
+            };
+
+            // 使用 TableLayoutPanel 来实现左右布局
+            var statusTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.Transparent,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+
+            // _lblInfo 放左侧
+            _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
+            _lblInfo.Dock = DockStyle.Fill;
+            statusTable.Controls.Add(_lblInfo, 0, 0);
+
+            // _lblCellPos 放右侧
+            _lblCellPos.TextAlign = ContentAlignment.MiddleRight;
+            _lblCellPos.Dock = DockStyle.Fill;
+            statusTable.Controls.Add(_lblCellPos, 1, 0);
+
+            _pnlStatus.Controls.Add(statusTable);
+            Controls.Add(_pnlStatus);
 
             ResumeLayout(false);
         }
@@ -1532,8 +1578,18 @@ namespace wxd.files.winforms
                     e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
                 }
             }
+            // ★ 调试：记录 OnDiffCellFormatting 执行前的颜色
+            var beforeColor = e.CellStyle.BackColor;
             // 转发给外部事件处理器（如版本对比的差异高亮）
             OnExternalCellFormatting?.Invoke(sender, e);
+            // ★ 调试：记录 OnDiffCellFormatting 执行后的颜色
+            var afterColor = e.CellStyle.BackColor;
+            if (beforeColor != afterColor)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[CELLFMT] RowIdx={e.RowIndex} ColIdx={e.ColumnIndex} " +
+                    $"Before={beforeColor} After={afterColor} FormattingApplied={e.FormattingApplied}");
+            }
         }
 
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)

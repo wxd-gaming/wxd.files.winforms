@@ -59,6 +59,9 @@ namespace wxd.files.winforms
         private static readonly Color _colorSurface = Color.White;
         private static readonly Color _colorDiffCellBg = Color.FromArgb(255, 200, 200);   // 差异单元格：红色背景
         private static readonly Color _colorDiffRowBg = Color.FromArgb(255, 253, 220);    // 差异行：浅黄色背景
+        // ★ 调试开关：定位后改为 false
+        private static bool _debugDiffCell = true;
+        private static int _debugCount = 0;
         private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
         private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
         private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
@@ -1070,37 +1073,128 @@ namespace wxd.files.winforms
 
         private void OnDiffCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
-            if (sender is not DataGridView dgv || dgv.Tag is not DiffTagData tagData)
+            if (sender is not DataGridView dgv)
                 return;
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
-            int col = e.ColumnIndex;
-
-            // 将 DataGridView 的显示行索引映射回原始 DataTable 的行索引
-            // - 有 __RowNum__ 列时（_frozenRows > 0）：从中读取原始行号（1-based）
-            // - 无 __RowNum__ 列时：显示行索引直接对应原始行索引
-            int originalRow;
-            if (dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
+            // Tag may be cleared when DataSource is changed; fallback to internal diff sets
+            DiffTagData? tagData = null;
+            if (dgv.Tag is DiffTagData dt) tagData = dt;
+            else
             {
-                // 跳过行号列
-                if (col == 0) return;
-                col -= 1; // 列号也要减去行号列
-                var rowNumVal = dgv.Rows[e.RowIndex].Cells[0].Value;
-                originalRow = (rowNumVal is int val ? val : 0) - 1; // __RowNum__ 是 1-based
+                // determine side
+                if (_leftView != null && ReferenceEquals(dgv, _leftView.GetDataGridView()))
+                {
+                    tagData = new DiffTagData
+                    {
+                        DiffRowSet = new HashSet<int>(_diffRows),
+                        DiffCellSet = new HashSet<(int, int)>(_diffCellsLeft)
+                    };
+                    dgv.Tag = tagData; // cache for future
+                }
+                else if (_rightView != null && ReferenceEquals(dgv, _rightView.GetDataGridView()))
+                {
+                    tagData = new DiffTagData
+                    {
+                        DiffRowSet = new HashSet<int>(_diffRows),
+                        DiffCellSet = new HashSet<(int, int)>(_diffCellsRight)
+                    };
+                    dgv.Tag = tagData;
+                }
+            }
+            if (tagData == null) return;
+            if (e.RowIndex < 0) return;
+
+            // Map display column index to original data column index. The __RowNum__ column
+            // may exist (hidden) and its position in dgv.Columns can change, so find it by name.
+            int displayCol = e.ColumnIndex;
+            int rowNumColIndex = -1;
+            for (int i = 0; i < dgv.Columns.Count; i++)
+            {
+                if (dgv.Columns[i].Name == "__RowNum__") { rowNumColIndex = i; break; }
+            }
+
+            int originalRow;
+            int dataCol;
+            bool isLeftSide = false;
+
+            if (rowNumColIndex >= 0)
+            {
+                // If the event is for the hidden __RowNum__ column, skip coloring it.
+                if (displayCol == rowNumColIndex) return;
+                // Compute original row index from the __RowNum__ cell (stored 1-based)
+                var obj = dgv.Rows[e.RowIndex].Cells[rowNumColIndex].Value;
+                originalRow = (obj is int v ? v : 0) - 1;
+
+                // Adjust column index: columns to the right of __RowNum__ move left by 1
+                dataCol = displayCol > rowNumColIndex ? displayCol - 1 : displayCol;
+                isLeftSide = ReferenceEquals(dgv, _leftView?.GetDataGridView());
             }
             else
             {
                 originalRow = e.RowIndex;
+                dataCol = displayCol;
+                isLeftSide = ReferenceEquals(dgv, _leftView?.GetDataGridView());
             }
 
-            if (col < 0) return;
+            // ★ RowHeader 处理：必须在 dataCol < 0 之前，否则 displayCol=-1 时
+            // dataCol 也会是 -1，被 dataCol < 0 拦截，永远到不了这里
+            if (displayCol < 0)
+            {
+                if (!tagData.DiffRowSet.Contains(originalRow)) return;
+                e.CellStyle.BackColor = _colorDiffRowBg;
+                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 230, 180);
+                return;
+            }
 
-            // 快速判断行是否有差异（使用预构建的 HashSet，O(1) 查找）
+            if (dataCol < 0) return;
+
+            // If this row itself has no differences, skip
             if (!tagData.DiffRowSet.Contains(originalRow)) return;
 
-            // 判断该单元格是否有差异
-            bool cellHasDiff = tagData.DiffCellSet.Contains((originalRow, col));
+            // If the grid is a filtered view with renamed/reordered columns, map the displayed
+            // column to the original DataTable column index by column name.
+            int originalColIndex = dataCol;
+            try
+            {
+                var view = isLeftSide ? _leftView : _rightView;
+                var srcTable = view?.GetDataTable();
+                if (srcTable != null && displayCol >= 0 && displayCol < dgv.Columns.Count)
+                {
+                    // Use displayCol to access dgv.Columns directly, because displayCol
+                    // is the actual column index in the DataGridView. When __RowNum__
+                    // exists, dataCol is adjusted but dgv.Columns indexing is not.
+                    var col = dgv.Columns[displayCol];
+                    var colName = col.Name;
+                    if (!string.IsNullOrEmpty(colName) && srcTable.Columns.Contains(colName))
+                    {
+                        originalColIndex = srcTable.Columns.IndexOf(colName);
+                    }
+                }
+            }
+            catch { }
 
+            // ★★★ 调试日志 ★★★
+            if (_debugDiffCell)
+            {
+                bool isFirstDataCol = (rowNumColIndex >= 0 && displayCol == rowNumColIndex + 1)
+                                   || (rowNumColIndex < 0 && displayCol == 0);
+                if (isFirstDataCol || _debugCount < 50)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[DIFF#{_debugCount}] RowIdx={e.RowIndex} DisplayCol={displayCol} " +
+                        $"RowNumColIdx={rowNumColIndex} OrigRow={originalRow} " +
+                        $"DataCol={dataCol} OrigColIdx={originalColIndex} " +
+                        $"IsLeft={isLeftSide} IsDiffRow=true " +
+                        $"InCellSet={tagData.DiffCellSet.Contains((originalRow, originalColIndex))} " +
+                        $"BackColor={(tagData.DiffCellSet.Contains((originalRow, originalColIndex)) ? "RED" : "YELLOW")} " +
+                        $"ColName={(dataCol >= 0 && dataCol < dgv.Columns.Count ? dgv.Columns[dataCol].Name : "OOB")} " +
+                        $"DiffRowSet.Count={tagData.DiffRowSet.Count} " +
+                        $"DiffCellSet.Count={tagData.DiffCellSet.Count}");
+                    _debugCount++;
+                }
+            }
+
+            bool cellHasDiff = tagData.DiffCellSet.Contains((originalRow, originalColIndex));
             if (cellHasDiff)
             {
                 e.CellStyle.BackColor = _colorDiffCellBg;
@@ -1111,6 +1205,7 @@ namespace wxd.files.winforms
                 e.CellStyle.BackColor = _colorDiffRowBg;
                 e.CellStyle.SelectionBackColor = Color.FromArgb(240, 230, 180);
             }
+            e.FormattingApplied = true;
         }
 
         private class DiffTagData
