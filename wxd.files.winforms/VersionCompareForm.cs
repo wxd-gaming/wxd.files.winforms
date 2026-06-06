@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ExcelDataReader;
@@ -289,37 +290,63 @@ namespace wxd.files.winforms
         }
 
         // ==================== Loading 对话框 ====================
+        private Thread? _loadingThread;
+
         private void ShowLoading(string? detail = null)
         {
-            if (InvokeRequired)
-            {
-                Invoke(() => ShowLoading(detail));
-                return;
-            }
-            if (_loadingForm != null) return;
+            if (_loadingForm != null || _loadingThread != null) return;
 
-            _loadingForm = new LoadingForm();
-            if (!string.IsNullOrEmpty(detail))
-                _loadingForm.SetDetail(detail);
-            // 禁用父窗体，阻止用户交互（模拟模态效果）
+            // ★ 在独立 STA 线程中运行 LoadingForm，拥有自己的消息泵
+            //    这样即使主 UI 线程被同步操作阻塞，旋转动画也能持续转动
+            var detailCopy = detail;
+            var ownerHandle = this.Handle; // 在主线程获取句柄
+            var ownerLocation = this.Location;
+            var ownerSize = this.Size;
+
+            _loadingThread = new Thread(() =>
+            {
+                _loadingForm = new LoadingForm();
+                if (!string.IsNullOrEmpty(detailCopy))
+                    _loadingForm.SetDetail(detailCopy);
+
+                // 居中于父窗体
+                _loadingForm.Load += (s, e) =>
+                {
+                    _loadingForm.Location = new Point(
+                        ownerLocation.X + (ownerSize.Width - _loadingForm.Width) / 2,
+                        ownerLocation.Y + (ownerSize.Height - _loadingForm.Height) / 2);
+                };
+
+                _loadingForm.FormClosed += (s, e) =>
+                {
+                    _loadingForm = null;
+                };
+
+                Application.Run(_loadingForm);
+            });
+            _loadingThread.SetApartmentState(ApartmentState.STA);
+            _loadingThread.IsBackground = true;
+            _loadingThread.Start();
+
+            // 禁用父窗体，阻止用户交互
             Enabled = false;
-            _loadingForm.Show(this);
-            // 确保 LoadingForm 立即渲染
-            Application.DoEvents();
         }
 
         private void HideLoading()
         {
-            if (InvokeRequired)
-            {
-                Invoke(HideLoading);
-                return;
-            }
             // 恢复父窗体交互
             Enabled = true;
-            _loadingForm?.Close();
+
+            // ★ 跨线程关闭 LoadingForm
+            _loadingForm?.BeginInvoke(new Action(() =>
+            {
+                _loadingForm?.Close();
+            }));
+
+            _loadingThread?.Join(1000); // 等待线程结束
             _loadingForm?.Dispose();
             _loadingForm = null;
+            _loadingThread = null;
         }
 
         /// <summary>独立的 Loading 提示窗体（旋转圆弧动画 + 文字）</summary>
@@ -551,7 +578,7 @@ namespace wxd.files.winforms
 
             // 左边：选中的提交记录
             string leftRevision = selected.FullRevision;
-            string leftLabel = $"r{selected.Revision}";
+            string leftLabel = $"r{selected.Revision} ({selected.CommitDate:yyyy-MM-dd HH:mm})";
 
             // 右边：更新的版本
             string rightRevision;
@@ -568,7 +595,7 @@ namespace wxd.files.winforms
                 // 有更新的版本（selectedIndex=0 是最新，没有更新的）
                 var newer = _history[selectedIndex - 1];
                 rightRevision = newer.FullRevision;
-                rightLabel = $"r{newer.Revision}";
+                rightLabel = $"r{newer.Revision} ({newer.CommitDate:yyyy-MM-dd HH:mm})";
             }
             else
             {
@@ -1130,13 +1157,28 @@ namespace wxd.files.winforms
 
             var filteredTable = sourceTable.Clone();
 
+            // ★ 添加 __RowNum__ 列来追踪原始行号，确保筛选后差异高亮仍能正确匹配
+            if (!filteredTable.Columns.Contains("__RowNum__"))
+            {
+                filteredTable.Columns.Add("__RowNum__", typeof(int));
+                filteredTable.Columns["__RowNum__"]!.SetOrdinal(0);
+            }
+
             foreach (var rowIdx in visibleRows)
             {
                 if (rowIdx < sourceTable.Rows.Count)
+                {
                     filteredTable.ImportRow(sourceTable.Rows[rowIdx]);
+                    // ★ 在导入的行上写入原始行号（1-based），OnDiffCellFormatting 通过它还原行号
+                    filteredTable.Rows[filteredTable.Rows.Count - 1]["__RowNum__"] = rowIdx + 1;
+                }
             }
 
             dgv.DataSource = filteredTable;
+
+            // ★ 隐藏 __RowNum__ 列，用户不可见
+            if (dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
+                dgv.Columns[0].Visible = false;
 
             for (int i = 0; i < dgv.Columns.Count; i++)
             {
