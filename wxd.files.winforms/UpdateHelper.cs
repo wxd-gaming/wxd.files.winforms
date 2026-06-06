@@ -122,8 +122,8 @@ namespace wxd.files.winforms
             return result;
         }
 
-        /// <summary>下载并更新，带进度回调</summary>
-        public static async Task DoUpdateAsync(string remoteVersion, string expectedMd5, IProgress<int>? progress)
+        /// <summary>下载并更新，带进度回调（Action&lt;int&gt; 每次读取都触发，不合并）</summary>
+        public static async Task DoUpdateAsync(string remoteVersion, string expectedMd5, Action<int>? onProgress)
         {
             var currentExePath = Application.ExecutablePath;
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
@@ -131,37 +131,37 @@ namespace wxd.files.winforms
 
             var tempPath = currentExePath + ".tmp";
 
-            // 下载
-            using (var response = await _httpClient.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead))
+            // 下载（所有 await 使用 ConfigureAwait(false)，不回到调用线程）
+            using (var response = await _httpClient.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
             {
                 response.EnsureSuccessStatusCode();
                 var totalBytes = response.Content.Headers.ContentLength ?? -1;
-                using var contentStream = await response.Content.ReadAsStreamAsync();
+                using var contentStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var fileStream = File.Create(tempPath);
 
-                if (totalBytes > 0 && progress != null)
+                if (totalBytes > 0 && onProgress != null)
                 {
                     var buffer = new byte[8192];
                     long readBytes = 0;
                     int bytesRead;
-                    while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
                     {
-                        await fileStream.WriteAsync(buffer, 0, bytesRead);
+                        await fileStream.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
                         readBytes += bytesRead;
-                        progress.Report((int)(readBytes * 100 / totalBytes));
+                        onProgress((int)(readBytes * 100 / totalBytes));
                     }
                 }
                 else
                 {
-                    await contentStream.CopyToAsync(fileStream);
-                    progress?.Report(100);
+                    await contentStream.CopyToAsync(fileStream).ConfigureAwait(false);
+                    onProgress?.Invoke(100);
                 }
             }
 
             // 校验 MD5
             if (!string.IsNullOrEmpty(expectedMd5))
             {
-                var downloadedMd5 = await ComputeFileMd5Async(tempPath);
+                var downloadedMd5 = await ComputeFileMd5Async(tempPath).ConfigureAwait(false);
                 if (!string.Equals(downloadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
                 {
                     File.Delete(tempPath);
@@ -282,7 +282,7 @@ namespace wxd.files.winforms
         {
             using var md5 = MD5.Create();
             using var stream = File.OpenRead(filePath);
-            var hash = await md5.ComputeHashAsync(stream);
+            var hash = await md5.ComputeHashAsync(stream).ConfigureAwait(false);
             return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 

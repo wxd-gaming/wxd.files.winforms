@@ -187,7 +187,7 @@ namespace wxd.files.winforms
         {
             UserChoice = 1;
 
-            // 禁用按钮，显示进度条在立即更新按钮下方
+            // 禁用按钮，显示进度条
             _btnUpdate.Enabled = false;
             _btnSkip.Enabled = false;
             _btnCancel.Enabled = false;
@@ -195,18 +195,27 @@ namespace wxd.files.winforms
             _progressBar.Visible = true;
             _lblProgressText.Visible = true;
 
-            var progress = new Progress<int>(p =>
-            {
-                if (!IsDisposed)
-                {
-                    _progressBar.Value = p;
-                    _lblProgressText.Text = $"{p}%";
-                }
-            });
-
             try
             {
-                await UpdateHelper.DoUpdateAsync(_result.RemoteVersion, _result.RemoteMd5, progress);
+                // ★ 在后台线程执行下载，通过 BeginInvoke 安全更新 UI
+                //    使用 Action<int> 而非 Progress<T>，避免 Progress 内部的回调合并机制
+                //    导致进度条跳过中间值（只显示 0% → 100%）
+                await Task.Run(async () =>
+                {
+                    await UpdateHelper.DoUpdateAsync(_result.RemoteVersion, _result.RemoteMd5, p =>
+                    {
+                        // 此回调在线程池线程上执行，通过 BeginInvoke 安全更新 UI
+                        BeginInvoke(new Action(() =>
+                        {
+                            if (!IsDisposed)
+                            {
+                                _progressBar.Value = p;
+                                _lblProgressText.Text = $"{p}%";
+                            }
+                        }));
+                    });
+                });
+
                 // DoUpdateAsync 会执行 Environment.Exit(0)，不会执行到这里
             }
             catch (Exception ex)

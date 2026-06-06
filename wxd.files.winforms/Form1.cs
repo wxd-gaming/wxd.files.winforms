@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -26,11 +27,9 @@ namespace wxd.files.winforms
         private bool _showSettings = false;                   // 是否显示设置界面
         private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
 
-        // ==================== 启动Loading相关 ====================
-        private Panel? _pnlLoadingOverlay;                    // Loading全屏遮罩
-        private Label? _lblLoadingText;                       // Loading文字
-        private ProgressBar? _progressLoading;                // Loading进度条
-        private bool _isInitialLoadingComplete = false;       // 初始加载是否完成
+        // ==================== 启动Loading相关（独立STA线程方案） ====================
+        private StartupLoadingForm? _startupLoadingForm;      // 独立线程运行的Loading窗体
+        private Thread? _loadingThread;                       // Loading所在线程
 
         private enum LayoutMode { Horizontal, Vertical, Flow }
         private enum ThemeMode { Dark, Light }
@@ -74,8 +73,8 @@ namespace wxd.files.winforms
             // 应用主题（面板创建后再应用到面板）
             ApplyTheme();
 
-            // 显示Loading遮罩
-            ShowLoadingOverlay();
+            // 显示Loading遮罩（独立STA线程，确保动画流畅）
+            ShowStartupLoading();
 
             // 首次可见时异步加载所有面板（此时 ClientRectangle 已是最终尺寸）
             VisibleChanged += OnFirstVisible;
@@ -92,126 +91,46 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>显示Loading全屏遮罩层（直接覆盖整个Form）</summary>
-        private void ShowLoadingOverlay()
+        /// <summary>启动独立STA线程的Loading窗体（仿照VersionCompareForm方案）</summary>
+        private void ShowStartupLoading()
         {
-            // 直接加到Form上而非_pnlContainer上，确保始终覆盖全部区域
-            _pnlLoadingOverlay = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = _currentTheme == ThemeMode.Dark
-                    ? Color.FromArgb(30, 30, 30)
-                    : Color.FromArgb(235, 248, 255),
-            };
+            if (_startupLoadingForm != null || _loadingThread != null) return;
 
-            // 居中的Loading容器
-            var pnlCenter = new Panel
-            {
-                Size = new Size(320, 100),
-                BackColor = _currentTheme == ThemeMode.Dark
-                    ? Color.FromArgb(45, 45, 48)
-                    : Color.FromArgb(255, 255, 255),
-                Padding = new Padding(20)
-            };
+            var isDark = _currentTheme == ThemeMode.Dark;
+            var ownerHandle = this.Handle;
+            var ownerLocation = this.Location;
+            var ownerSize = this.Size;
 
-            // Loading文字
-            _lblLoadingText = new Label
+            _loadingThread = new Thread(() =>
             {
-                Text = "正在初始化文件管理器...",
-                AutoSize = false,
-                Size = new Size(280, 28),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Microsoft YaHei UI", 11f),
-                ForeColor = _currentTheme == ThemeMode.Dark
-                    ? Color.FromArgb(241, 241, 241)
-                    : Color.FromArgb(20, 60, 100),
-                Location = new Point(0, 12),
-                BackColor = Color.Transparent
-            };
-
-            // 进度条
-            _progressLoading = new ProgressBar
-            {
-                Size = new Size(280, 8),
-                Location = new Point(0, 50),
-                Style = ProgressBarStyle.Continuous,
-                Minimum = 0,
-                Maximum = 100,
-                Value = 0
-            };
-
-            // 动画圆点（让用户看到"活着"的加载效果）
-            var pnlDots = new Panel
-            {
-                Size = new Size(280, 16),
-                Location = new Point(0, 68),
-                BackColor = Color.Transparent
-            };
-            var dotLabels = new Label[3];
-            for (int d = 0; d < 3; d++)
-            {
-                dotLabels[d] = new Label
+                _startupLoadingForm = new StartupLoadingForm(isDark);
+                _startupLoadingForm.Load += (s, e) =>
                 {
-                    Text = "●",
-                    AutoSize = true,
-                    Font = new Font("Segoe UI", 10f),
-                    ForeColor = Color.FromArgb(66, 165, 245),
-                    Location = new Point(110 + d * 22, 0),
-                    BackColor = Color.Transparent
+                    _startupLoadingForm.Location = new Point(
+                        ownerLocation.X + (ownerSize.Width - _startupLoadingForm.Width) / 2,
+                        ownerLocation.Y + (ownerSize.Height - _startupLoadingForm.Height) / 2);
                 };
-                pnlDots.Controls.Add(dotLabels[d]);
-            }
+                _startupLoadingForm.FormClosed += (s, e) =>
+                {
+                    _startupLoadingForm = null;
+                };
+                Application.Run(_startupLoadingForm);
+            });
+            _loadingThread.SetApartmentState(ApartmentState.STA);
+            _loadingThread.IsBackground = true;
+            _loadingThread.Start();
 
-            pnlCenter.Controls.Add(_lblLoadingText);
-            pnlCenter.Controls.Add(_progressLoading);
-            pnlCenter.Controls.Add(pnlDots);
-
-            // 居中定位（使用Resize事件自适应）
-            Action centerIt = () =>
-            {
-                if (pnlCenter.IsDisposed || _pnlLoadingOverlay?.IsDisposed != false) return;
-                pnlCenter.Location = new Point(
-                    (_pnlLoadingOverlay.ClientSize.Width - pnlCenter.Width) / 2,
-                    (_pnlLoadingOverlay.ClientSize.Height - pnlCenter.Height) / 2);
-            };
-            _pnlLoadingOverlay.Resize += (_, _) => centerIt();
-            centerIt();
-
-            _pnlLoadingOverlay.Controls.Add(pnlCenter);
-
-            // 关键：加到Form.Controls的最顶层（在所有子控件之上）
-            Controls.Add(_pnlLoadingOverlay);
-            _pnlLoadingOverlay.BringToFront();
-
-            // 启动跳动动画定时器
-            var dotTimer = new System.Windows.Forms.Timer { Interval = 350 };
-            int dotStep = 0;
-            dotTimer.Tick += (_, _) =>
-            {
-                dotStep = (dotStep + 1) % 4;
-                for (int d = 0; d < 3; d++)
-                    dotLabels[d].ForeColor = (d == dotStep % 3)
-                        ? Color.FromArgb(100, 181, 246)
-                        : Color.FromArgb(180, 200, 220);
-            };
-            dotTimer.Start();
-            // 将timer存到Tag中，关闭时停止
-            _pnlLoadingOverlay.Tag = dotTimer;
+            // 禁用主窗体，阻止用户交互
+            Enabled = false;
         }
 
-        /// <summary>隐藏Loading遮罩层（带淡出效果），同时一次性显示所有面板</summary>
-        private async Task HideLoadingOverlayAsync()
+        /// <summary>隐藏Loading窗体（跨线程关闭，带淡出效果）</summary>
+        private async Task HideStartupLoadingAsync()
         {
-            if (_pnlLoadingOverlay == null) return;
+            // 恢复主窗体交互
+            Enabled = true;
 
-            // 停止跳动动画定时器
-            if (_pnlLoadingOverlay.Tag is System.Windows.Forms.Timer dotTimer)
-            {
-                dotTimer.Stop();
-                dotTimer.Dispose();
-            }
-
-            // 先一次性显示所有面板（此时还在遮罩后面，用户看不到面板绘制过程）
+            // 先一次性显示所有面板（在遮罩后面）
             SuspendLayout();
             foreach (var panel in _panels)
             {
@@ -219,31 +138,23 @@ namespace wxd.files.winforms
                     panel.Visible = true;
             }
             ResumeLayout(false);
-
-            // 强制刷新，确保面板绘制完成后再开始淡出
             Refresh();
 
-            // 简单的透明度渐隐效果
-            for (int i = 10; i >= 0; i--)
-            {
-                if (_pnlLoadingOverlay.IsDisposed) return;
-                var alpha = (int)(255 * i / 10.0);
-                bool isDark = _currentTheme == ThemeMode.Dark;
-                _pnlLoadingOverlay.BackColor = Color.FromArgb(alpha,
-                    isDark ? 30 : 235,
-                    isDark ? 30 : 248,
-                    isDark ? 30 : 255);
-                await Task.Delay(20);
-            }
+            // 短暂延迟，让面板绘制完成
+            await Task.Delay(100);
 
-            // 移除遮罩（从Form.Controls移除）
-            _pnlLoadingOverlay.Visible = false;
-            Controls.Remove(_pnlLoadingOverlay);
-            _pnlLoadingOverlay.Dispose();
-            _pnlLoadingOverlay = null;
+            // 关闭 LoadingForm（跨线程）
+            _startupLoadingForm?.BeginInvoke(new Action(() =>
+            {
+                _startupLoadingForm?.Close();
+            }));
+            _loadingThread?.Join(1000);
+            _startupLoadingForm?.Dispose();
+            _startupLoadingForm = null;
+            _loadingThread = null;
         }
 
-        /// <summary>异步初始化所有面板：先创建空面板做布局，再逐个异步加载数据</summary>
+        /// <summary>异步初始化所有面板：先创建空面板做布局，再逐个异步加载数据（后台线程执行）</summary>
         private async void AsyncInitializePanels()
         {
             int panelCount = _cboCount!.SelectedIndex + 1;
@@ -254,48 +165,43 @@ namespace wxd.files.winforms
                 CreatePanelsLightweight(panelCount);
                 ApplyLayout(GetCurrentLayout());
 
-                // 强制刷新UI，确保Loading遮罩和进度文字已经绘制出来
-                Application.DoEvents();
+                // 给独立线程的 LoadingForm 一点时间启动并绘制
+                await Task.Delay(100);
 
-                // ===== 第二步：分批异步导航到保存的目录 ======
+                // ===== 第二步：分批异步初始化面板 =====
+                // 注意：InitializeDeferred 内部会操作 WinForms 控件（RefreshUI、ShowLoading 创建 Label 等），
+                // 因此必须在 UI 线程上执行。LoadFileListAsync 内部已经在后台线程读取文件，不会长时间阻塞 UI。
                 for (int i = 0; i < _panels.Length; i++)
                 {
-                    // 更新进度文字
-                    if (_lblLoadingText != null && _progressLoading != null)
+                    // ★ 跨线程更新进度（通过 BeginInvoke 发送到 LoadingForm 的独立消息泵）
+                    int percent = (i * 100) / _panels.Length;
+                    _startupLoadingForm?.BeginInvoke(new Action(() =>
                     {
-                        _lblLoadingText.Text = $"正在加载窗格 {i + 1}/{_panels.Length}...";
-                        _progressLoading.Value = (i * 100) / _panels.Length;
-                    }
+                        _startupLoadingForm?.UpdateProgress(percent,
+                            $"正在加载窗格 {i + 1}/{_panels.Length}...");
+                    }));
 
-                    // 给UI线程一个喘息机会，处理绘制消息（让进度更新可见）
-                    await Task.Delay(20);
-
-                    // 异步初始化单个面板（恢复目录+过滤条件）
-                    // 注意：InitializeDeferred 内部会调用 NavigateTo → LoadFileListAsync（后台异步）
-                    // 所以这里不会阻塞太久
+                    // 在 UI 线程上执行初始化（内部 NavigateTo → LoadFileListAsync 是异步的，不阻塞）
                     _panels[i].InitializeDeferred();
 
-                    // 每加载完一个面板后短暂等待，避免阻塞UI渲染
+                    // 短暂让出 UI 线程，让 LoadingForm 的动画和进度条有刷新机会
+                    await Task.Delay(20);
+
+                    // 每 2 个面板后额外休息
                     if ((i + 1) % 2 == 0)
                         await Task.Delay(30);
-
-                    // 定期刷新UI，确保Loading动画流畅
-                    Application.DoEvents();
                 }
 
-                // 更新进度到100%
-                if (_progressLoading != null)
-                    _progressLoading.Value = 100;
-                if (_lblLoadingText != null)
-                    _lblLoadingText.Text = "初始化完成！";
+                // 更新进度到 100%
+                _startupLoadingForm?.BeginInvoke(new Action(() =>
+                {
+                    _startupLoadingForm?.UpdateProgress(100, "初始化完成！");
+                }));
 
-                // 刷新最终状态
-                Application.DoEvents();
+                await Task.Delay(300); // 让用户看到 100% 状态
 
-                _isInitialLoadingComplete = true;
-
-                // 隐藏Loading遮罩
-                await HideLoadingOverlayAsync();
+                // 隐藏 Loading 遮罩
+                await HideStartupLoadingAsync();
 
                 // 界面完全就绪后，延迟 3 秒再触发更新检查
                 var updateTimer = new System.Windows.Forms.Timer { Interval = 3000 };
@@ -315,14 +221,7 @@ namespace wxd.files.winforms
                 // 即使出错也要隐藏loading，并显示面板
                 foreach (var panel in _panels)
                     if (!panel.IsDisposed) panel.Visible = true;
-                if (_pnlLoadingOverlay != null)
-                {
-                    if (_pnlLoadingOverlay.Tag is System.Windows.Forms.Timer dt) { dt.Stop(); dt.Dispose(); }
-                    _pnlLoadingOverlay.Visible = false;
-                    Controls.Remove(_pnlLoadingOverlay);
-                    _pnlLoadingOverlay?.Dispose();
-                    _pnlLoadingOverlay = null;
-                }
+                await HideStartupLoadingAsync();
             }
         }
 
@@ -1099,6 +998,200 @@ namespace wxd.files.winforms
             {
                 MessageBox.Show($"执行命令 [{item.Name}] 失败：{ex.Message}", "错误",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ==================== 启动Loading窗体（独立STA线程运行） ====================
+
+        /// <summary>启动时的 Loading 遮罩窗体（独立 STA 线程运行，确保动画流畅）</summary>
+        private class StartupLoadingForm : Form
+        {
+            private readonly System.Windows.Forms.Timer _animTimer;
+            private int _angle;
+            private readonly Label _lblTitle;
+            private readonly Label _lblDetail;
+            private readonly ProgressBar _progressBar;
+            private readonly Panel _pnlDots;
+            private readonly Label[] _dotLabels;
+
+            public StartupLoadingForm(bool isDark)
+            {
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                Size = new Size(420, 200);
+                BackColor = isDark ? Color.FromArgb(45, 45, 48) : Color.White;
+                TopMost = true;
+
+                SetStyle(ControlStyles.AllPaintingInWmPaint |
+                         ControlStyles.UserPaint |
+                         ControlStyles.DoubleBuffer |
+                         ControlStyles.ResizeRedraw, true);
+                UpdateStyles();
+
+                // 标题
+                _lblTitle = new Label
+                {
+                    Text = "正在初始化文件管理器...",
+                    AutoSize = false,
+                    Size = new Size(380, 28),
+                    Location = new Point(20, 15),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
+                    ForeColor = isDark ? Color.FromArgb(241, 241, 241) : Color.FromArgb(30, 136, 229),
+                    BackColor = Color.Transparent
+                };
+
+                // 进度条
+                _progressBar = new ProgressBar
+                {
+                    Size = new Size(380, 8),
+                    Location = new Point(20, 55),
+                    Style = ProgressBarStyle.Continuous,
+                    Minimum = 0,
+                    Maximum = 100,
+                    Value = 0
+                };
+
+                // 详细信息
+                _lblDetail = new Label
+                {
+                    Text = "",
+                    AutoSize = false,
+                    Size = new Size(380, 20),
+                    Location = new Point(20, 72),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    ForeColor = isDark ? Color.FromArgb(180, 180, 180) : Color.FromArgb(120, 160, 200),
+                    BackColor = Color.Transparent
+                };
+
+                // 动画圆点
+                _pnlDots = new Panel
+                {
+                    Size = new Size(380, 20),
+                    Location = new Point(20, 100),
+                    BackColor = Color.Transparent
+                };
+                _dotLabels = new Label[3];
+                for (int d = 0; d < 3; d++)
+                {
+                    _dotLabels[d] = new Label
+                    {
+                        Text = "●",
+                        AutoSize = true,
+                        Font = new Font("Segoe UI", 10f),
+                        ForeColor = Color.FromArgb(66, 165, 245),
+                        Location = new Point(150 + d * 28, 0),
+                        BackColor = Color.Transparent
+                    };
+                    _pnlDots.Controls.Add(_dotLabels[d]);
+                }
+
+                Controls.Add(_lblTitle);
+                Controls.Add(_progressBar);
+                Controls.Add(_lblDetail);
+                Controls.Add(_pnlDots);
+
+                // 绘制圆角边框 + 旋转圆弧
+                Paint += OnPaintBorder;
+
+                // 旋转动画 ~60 FPS
+                _animTimer = new System.Windows.Forms.Timer { Interval = 16 };
+                _animTimer.Tick += (s, e) =>
+                {
+                    _angle = (_angle + 6) % 360;
+                    // 跳动圆点动画
+                    int step = (_angle / 10) % 4;
+                    for (int d = 0; d < 3; d++)
+                        _dotLabels[d].ForeColor = (d == step % 3)
+                            ? Color.FromArgb(100, 181, 246)
+                            : Color.FromArgb(180, 200, 220);
+                    Invalidate(new Rectangle(20, 130, 72, 72)); // 只刷新圆弧区域
+                };
+            }
+
+            /// <summary>更新进度（线程安全，通过 BeginInvoke 调用）</summary>
+            public void UpdateProgress(int value, string detail)
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() => UpdateProgress(value, detail)));
+                    return;
+                }
+                _progressBar.Value = Math.Min(100, Math.Max(0, value));
+                _lblDetail.Text = detail;
+            }
+
+            /// <summary>设置标题文字（线程安全）</summary>
+            public void SetTitle(string title)
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() => SetTitle(title)));
+                    return;
+                }
+                _lblTitle.Text = title;
+            }
+
+            protected override void OnShown(EventArgs e)
+            {
+                base.OnShown(e);
+                _animTimer.Start();
+            }
+
+            protected override void OnFormClosed(FormClosedEventArgs e)
+            {
+                _animTimer.Stop();
+                _animTimer.Dispose();
+                base.OnFormClosed(e);
+            }
+
+            private void OnPaintBorder(object? sender, PaintEventArgs e)
+            {
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+                // 圆角矩形边框
+                var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+                using var pen = new Pen(Color.FromArgb(200, 210, 225), 1f);
+                using var path = GetRoundedRectPath(rect, 8);
+                e.Graphics.DrawPath(pen, path);
+
+                // 旋转圆弧动画
+                DrawSpinner(e.Graphics);
+            }
+
+            private void DrawSpinner(Graphics g)
+            {
+                int cx = 56, cy = 155, radius = 18;
+                float penWidth = 3f;
+
+                // 背景圆环
+                using var bgPen = new Pen(Color.FromArgb(230, 235, 240), penWidth);
+                g.DrawEllipse(bgPen, cx - radius, cy - radius, radius * 2, radius * 2);
+
+                // 旋转蓝色弧线
+                using var arcPen = new Pen(Color.FromArgb(30, 136, 229), penWidth)
+                {
+                    StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                    EndCap = System.Drawing.Drawing2D.LineCap.Round
+                };
+                g.DrawArc(arcPen,
+                    cx - radius, cy - radius, radius * 2, radius * 2,
+                    _angle, 270);
+            }
+
+            private static System.Drawing.Drawing2D.GraphicsPath GetRoundedRectPath(
+                Rectangle rect, int radius)
+            {
+                var path = new System.Drawing.Drawing2D.GraphicsPath();
+                int d = radius * 2;
+                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+                path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+                path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+                path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+                return path;
             }
         }
     }
