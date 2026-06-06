@@ -55,6 +55,30 @@ namespace wxd.files.winforms
             return relative.Replace('\\', '/');
         }
 
+        /// <summary>查找 svn.exe 的完整路径</summary>
+        private static string FindSvnExe()
+        {
+            // 常见安装路径
+            var paths = new[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "TortoiseSVN", "bin", "svn.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "TortoiseSVN", "bin", "svn.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SlikSvn", "bin", "svn.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SlikSvn", "bin", "svn.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VisualSVN", "bin", "svn.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "VisualSVN", "bin", "svn.exe"),
+            };
+
+            foreach (var path in paths)
+            {
+                if (File.Exists(path))
+                    return path;
+            }
+
+            // 最后尝试 PATH 环境变量中的 svn
+            return "svn";
+        }
+
         /// <summary>获取 SVN 历史记录</summary>
         public static async Task<List<VersionHistoryEntry>> GetSvnHistoryAsync(
             string filePath, int maxCount = 100)
@@ -66,7 +90,7 @@ namespace wxd.files.winforms
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "svn",
+                    FileName = FindSvnExe(),
                     Arguments = $"log --xml -l {maxCount} \"{filePath}\"",
                     WorkingDirectory = root,
                     RedirectStandardOutput = true,
@@ -79,10 +103,30 @@ namespace wxd.files.winforms
                 using var process = Process.Start(psi);
                 if (process == null) return entries;
 
-                var output = await process.StandardOutput.ReadToEndAsync();
+                // 同时读取 stdout 和 stderr，避免死锁
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var stderrTask = process.StandardError.ReadToEndAsync();
+
+                var output = await outputTask;
+                var stderr = await stderrTask;
                 await process.WaitForExitAsync();
 
+                if (process.ExitCode != 0)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"SVN log error (exit={process.ExitCode}): {stderr}");
+                    return entries;
+                }
+
                 entries = ParseSvnLogXml(output);
+
+                // 诊断：解析结果为空但 stdout 有内容，说明正则匹配失败
+                if (entries.Count == 0 && !string.IsNullOrWhiteSpace(output))
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"SVN log parse warning: got {output.Length} chars but parsed 0 entries. " +
+                        $"Output preview: {output.Substring(0, Math.Min(output.Length, 500))}");
+                }
             }
             catch (Exception ex)
             {
@@ -95,19 +139,47 @@ namespace wxd.files.winforms
         private static List<VersionHistoryEntry> ParseSvnLogXml(string xml)
         {
             var entries = new List<VersionHistoryEntry>();
-            var logEntryPattern = @"<logentry\s+revision=""(\d+)"">\s*<author>([^<]*)</author>\s*<date>([^<]*)</date>\s*<msg>([^<]*)</msg>";
-            var matches = Regex.Matches(xml, logEntryPattern, RegexOptions.Singleline);
+
+            // 外层正则：匹配整个 <logentry> 块，不要求 revision 和 logentry 在同一行
+            var logentryRegex = new Regex(
+                @"<logentry\s[^>]*revision=""(\d+)""[^>]*>" +
+                @"((?!</logentry>)[\s\S])*?" +
+                @"</logentry>",
+                RegexOptions.Compiled);
+
+            // 内层正则：分别匹配 author、date、msg，不依赖元素顺序
+            var authorRegex = new Regex(@"<author>([^<]*)</author>", RegexOptions.Compiled);
+            var dateRegex = new Regex(@"<date>([^<]*)</date>", RegexOptions.Compiled);
+            var msgRegex = new Regex(@"<msg>([\s\S]*?)</msg>", RegexOptions.Compiled);
 
             int index = 0;
-            foreach (Match m in matches)
+            foreach (Match m in logentryRegex.Matches(xml))
             {
+                var innerXml = m.Groups[2].Value;
+                var revision = m.Groups[1].Value;
+
+                var authorMatch = authorRegex.Match(innerXml);
+                var dateMatch = dateRegex.Match(innerXml);
+                var msgMatch = msgRegex.Match(innerXml);
+
+                var author = authorMatch.Success
+                    ? System.Net.WebUtility.HtmlDecode(authorMatch.Groups[1].Value)
+                    : "";
+                var dateStr = dateMatch.Success ? dateMatch.Groups[1].Value : "";
+
+                DateTime commitDate;
+                if (!DateTime.TryParse(dateStr, out commitDate))
+                    commitDate = DateTime.MinValue;
+
+                var message = msgMatch.Success ? msgMatch.Groups[1].Value.Trim() : "";
+
                 entries.Add(new VersionHistoryEntry
                 {
-                    Revision = m.Groups[1].Value,
-                    FullRevision = m.Groups[1].Value,
-                    Author = m.Groups[2].Value,
-                    CommitDate = DateTime.Parse(m.Groups[3].Value),
-                    Message = m.Groups[4].Value.Trim(),
+                    Revision = revision,
+                    FullRevision = revision,
+                    Author = author,
+                    CommitDate = commitDate,
+                    Message = message,
                     HasFileChange = true,
                     Index = index++
                 });
@@ -206,7 +278,7 @@ namespace wxd.files.winforms
 
                 var psi = new ProcessStartInfo
                 {
-                    FileName = vcs == VcsType.Svn ? "svn" : "git",
+                    FileName = vcs == VcsType.Svn ? FindSvnExe() : "git",
                     Arguments = arguments,
                     WorkingDirectory = root,
                     RedirectStandardOutput = true,
