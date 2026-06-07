@@ -1254,19 +1254,39 @@ namespace wxd.files.winforms
             // ★ 获取当前列显隐状态（基于投影后列数的状态）
             var currentLeftColStates = _leftView.GetColumnCheckStates();
             var currentRightColStates = _rightView.GetColumnCheckStates();
-            var leftVisibleCols = _leftView.GetVisibleColumnIndices();
-            var rightVisibleCols = _rightView.GetVisibleColumnIndices();
+
+            // ★ 关键修复：不能直接使用 GetVisibleColumnIndices()（投影后索引），
+            //    需要使用 _leftColToOriginalIndex / _rightColToOriginalIndex 中的原始列索引。
+            //    GetVisibleColumnIndices() 返回的是当前投影后 DataTable 中的列索引(0~N-1)，
+            //    而 _leftFullFileData 保存的是完整列数的数据，需要用原始列索引来访问。
+            var leftOriginalCols = new List<int>(_leftColToOriginalIndex);
+            var rightOriginalCols = new List<int>(_rightColToOriginalIndex);
+
+            // ★ 根据当前列显隐状态，从原始列索引中筛选出当前可见的列
+            //    currentLeftColStates 维度 = 投影后列数，与原列索引一一对应
+            var leftVisibleOriginalCols = new List<int>();
+            for (int i = 0; i < leftOriginalCols.Count && i < currentLeftColStates.Length; i++)
+            {
+                if (currentLeftColStates[i])
+                    leftVisibleOriginalCols.Add(leftOriginalCols[i]);
+            }
+            var rightVisibleOriginalCols = new List<int>();
+            for (int i = 0; i < rightOriginalCols.Count && i < currentRightColStates.Length; i++)
+            {
+                if (currentRightColStates[i])
+                    rightVisibleOriginalCols.Add(rightOriginalCols[i]);
+            }
 
             bool diffOnly = _chkDiffOnly.Checked;
 
-            // ★ 左表：注入列状态后再 SetDataTable，防止 _columnCheckStates 被重置
-            if (_leftFullFileData != null && leftVisibleCols.Count > 0)
+            // ★ 左表：使用原始列索引构建投影数据
+            if (_leftFullFileData != null && leftVisibleOriginalCols.Count > 0)
             {
-                var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly);
+                var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleOriginalCols, diffOnly);
                 _leftView.SetColumnVisibility(currentLeftColStates);
                 _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
                 _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
-                _leftColToOriginalIndex = new List<int>(leftVisibleCols);
+                _leftColToOriginalIndex = new List<int>(leftVisibleOriginalCols);
             }
             else
             {
@@ -1275,13 +1295,13 @@ namespace wxd.files.winforms
             }
 
             // ★ 右表：同上
-            if (_rightFullFileData != null && rightVisibleCols.Count > 0)
+            if (_rightFullFileData != null && rightVisibleOriginalCols.Count > 0)
             {
-                var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly);
+                var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleOriginalCols, diffOnly);
                 _rightView.SetColumnVisibility(currentRightColStates);
                 _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
                 _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
-                _rightColToOriginalIndex = new List<int>(rightVisibleCols);
+                _rightColToOriginalIndex = new List<int>(rightVisibleOriginalCols);
             }
             else
             {
