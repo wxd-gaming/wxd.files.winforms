@@ -68,6 +68,10 @@ namespace wxd.files.winforms
         private List<int> _leftColToOriginalIndex = new();
         private List<int> _rightColToOriginalIndex = new();
 
+        // ★ 完整列数的列隐藏状态（阶段3.5会覆盖 _columnCheckStates 为投影后列数，需要独立保存）
+        private bool[]? _savedLeftColStates = null;
+        private bool[]? _savedRightColStates = null;
+
         private int _diffRowCount = 0;
         private bool _diffComputed = false;
         private bool _syncingScroll = false;
@@ -674,6 +678,19 @@ namespace wxd.files.winforms
                 await Task.WhenAll(loadTasks);
 
                 // 阶段2：更新 TableBrowserControl 数据（控件已移除，不会逐行绘制）
+                // ★ 在 SetDataTable 之前，用完整列数的保存状态注入 _externalColumnStates
+                // （_externalColumnStates 在第一次 SetDataTable 后被清空；阶段3.5会覆盖 _columnCheckStates，
+                //   所以不能依赖 GetColumnCheckStates()，需要独立保存完整列数的状态）
+                if (_leftView != null && _savedLeftColStates != null)
+                    _leftView.SetColumnVisibility(_savedLeftColStates);
+                else if (_leftView != null && _columnVisibility != null)
+                    _leftView.SetColumnVisibility(_columnVisibility);
+
+                if (_rightView != null && _savedRightColStates != null)
+                    _rightView.SetColumnVisibility(_savedRightColStates);
+                else if (_rightView != null && _columnVisibility != null)
+                    _rightView.SetColumnVisibility(_columnVisibility);
+
                 if (leftData != null)
                     _leftView!.SetDataTable(leftData,
                         $"旧版本 {leftLabel} | 行数: {leftData.Rows.Count}");
@@ -689,6 +706,10 @@ namespace wxd.files.winforms
                 // ★ 保存原始 FileTableData（用于筛选后恢复全部显示）
                 _leftFullFileData = _leftView?.GetFileData();
                 _rightFullFileData = _rightView?.GetFileData();
+
+                // ★ 保存完整列数的列隐藏状态（阶段3.5会覆盖 _columnCheckStates，需要独立保存）
+                _savedLeftColStates = _leftView?.GetColumnCheckStates();
+                _savedRightColStates = _rightView?.GetColumnCheckStates();
 
                 _splitCompare.SplitterDistance = _splitCompare.Width / 2;
 
