@@ -64,6 +64,10 @@ namespace wxd.files.winforms
         private List<int> _leftRowToOriginalIndex = new();
         private List<int> _rightRowToOriginalIndex = new();
 
+        // ★ DGV 列索引 → 原始完整 DataTable 列索引的映射（解决列隐藏后列号转换问题）
+        private List<int> _leftColToOriginalIndex = new();
+        private List<int> _rightColToOriginalIndex = new();
+
         private int _diffRowCount = 0;
         private bool _diffComputed = false;
         private bool _syncingScroll = false;
@@ -700,14 +704,16 @@ namespace wxd.files.winforms
                 {
                     var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
                     _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
-                    // ★ 构建行索引映射（DGV行→原始行），不再依赖 Tag
+                    // ★ 构建行/列索引映射（DGV行/列→原始行/列），不再依赖 Tag 或 GetVisibleColumnIndices
                     _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
+                    _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                 }
                 if (_rightFullFileData != null && rightVisibleCols.Count > 0 && _rightView != null)
                 {
                     var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
                     _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
                     _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
+                    _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                 }
 
                 // 阶段4：应用高亮 + 差异行筛选
@@ -722,12 +728,14 @@ namespace wxd.files.winforms
                         var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
                         _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
                         _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
+                        _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                     }
                     if (_rightFullFileData != null && _rightView != null && rightVisibleCols.Count > 0)
                     {
                         var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
                         _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
                         _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
+                        _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                     }
                     // 筛选后重新绑定差异高亮事件
                     ApplyDiffHighlight(_leftView?.GetDataGridView(), true);
@@ -1161,12 +1169,11 @@ namespace wxd.files.winforms
             }
             else
             {
-                // ★ 计算当前显示列对应的原始列索引
-                var view = isLeft ? _leftView : _rightView;
-                var visibleCols = view?.GetVisibleColumnIndices() ?? new List<int>();
+                // ★ 计算当前显示列对应的原始列索引（使用固定的列映射，不依赖运行时 GetVisibleColumnIndices）
+                var colMap = isLeft ? _leftColToOriginalIndex : _rightColToOriginalIndex;
                 int originalColIndex = displayCol;
-                if (displayCol < visibleCols.Count)
-                    originalColIndex = visibleCols[displayCol];
+                if (displayCol < colMap.Count)
+                    originalColIndex = colMap[displayCol];
 
                 // ★ 用原始行索引和原始列索引判断是否为差异单元格
                 int cellKey = (originalRowIndex << 16) | originalColIndex;
@@ -1211,10 +1218,12 @@ namespace wxd.files.winforms
                     var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
                     _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
                     _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
+                    _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                 }
                 else
                 {
                     _leftRowToOriginalIndex.Clear();
+                    _leftColToOriginalIndex.Clear();
                 }
 
                 if (_rightFullFileData != null && rightVisibleCols.Count > 0)
@@ -1222,10 +1231,12 @@ namespace wxd.files.winforms
                     var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
                     _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
                     _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
+                    _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                 }
                 else
                 {
                     _rightRowToOriginalIndex.Clear();
+                    _rightColToOriginalIndex.Clear();
                 }
             }
             else
@@ -1236,10 +1247,12 @@ namespace wxd.files.winforms
                     var leftFull = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
                     _leftView.SetDataTable(BuildDataTableFromFileData(leftFull), _lblLeftHeader.Text);
                     _leftRowToOriginalIndex = BuildRowIndexMap(leftFull);
+                    _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                 }
                 else
                 {
                     _leftRowToOriginalIndex.Clear();
+                    _leftColToOriginalIndex.Clear();
                 }
 
                 if (_rightFullFileData != null && rightVisibleCols.Count > 0)
@@ -1247,10 +1260,12 @@ namespace wxd.files.winforms
                     var rightFull = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
                     _rightView.SetDataTable(BuildDataTableFromFileData(rightFull), _lblRightHeader.Text);
                     _rightRowToOriginalIndex = BuildRowIndexMap(rightFull);
+                    _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                 }
                 else
                 {
                     _rightRowToOriginalIndex.Clear();
+                    _rightColToOriginalIndex.Clear();
                 }
             }
 
@@ -1304,12 +1319,13 @@ namespace wxd.files.winforms
             return result;
         }
 
-        /// <summary>从投影后的 FileTableData 构建 DGV行索引→原始行索引 的映射</summary>
-        private static List<int> BuildRowIndexMap(FileTableData projectedData)
+        /// <summary>从投影后的 FileTableData 构建 DGV行索引→原始行索引 的映射（冻结行模式下跳过固定行）</summary>
+        private List<int> BuildRowIndexMap(FileTableData projectedData)
         {
-            var map = new List<int>(projectedData.Rows.Count);
-            foreach (var row in projectedData.Rows)
-                map.Add(row.OriginalRowIndex);
+            var map = new List<int>();
+            // ★ 冻结行模式下，DGV 不显示冻结行，跳过冻结行的映射
+            for (int i = _frozenRows; i < projectedData.Rows.Count; i++)
+                map.Add(projectedData.Rows[i].OriginalRowIndex);
             return map;
         }
 
