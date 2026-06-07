@@ -666,6 +666,12 @@ namespace wxd.files.winforms
                 await Task.WhenAll(loadTasks);
 
                 // 阶段2：更新 TableBrowserControl 数据（控件已移除，不会逐行绘制）
+                // ★ 在 SetDataTable 前同步当前列显隐状态（修复切换历史记录时列显隐丢失的问题）
+                if (_leftView != null && _leftView.GetColumnCheckStates().Length > 0)
+                    _leftView.SetColumnVisibility(_leftView.GetColumnCheckStates());
+                if (_rightView != null && _rightView.GetColumnCheckStates().Length > 0)
+                    _rightView.SetColumnVisibility(_rightView.GetColumnCheckStates());
+
                 if (leftData != null)
                     _leftView!.SetDataTable(leftData,
                         $"旧版本 {leftLabel} | 行数: {leftData.Rows.Count}");
@@ -700,13 +706,17 @@ namespace wxd.files.winforms
                     if (_leftFullFileData != null && _leftView != null)
                     {
                         var leftFiltered = BuildFilteredTableFromFileData(_leftFullFileData);
-                        if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
+                        // ★ 优先使用用户当前选择的列显隐状态，回退到初始配置
+                        var leftStates = _leftView.GetColumnCheckStates();
+                        _leftView.SetColumnVisibility(leftStates.Length > 0 ? leftStates : _columnVisibility);
                         _leftView.SetDataTable(leftFiltered, _lblLeftHeader.Text);
                     }
                     if (_rightFullFileData != null && _rightView != null)
                     {
                         var rightFiltered = BuildFilteredTableFromFileData(_rightFullFileData);
-                        if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
+                        // ★ 优先使用用户当前选择的列显隐状态，回退到初始配置
+                        var rightStates = _rightView.GetColumnCheckStates();
+                        _rightView.SetColumnVisibility(rightStates.Length > 0 ? rightStates : _columnVisibility);
                         _rightView.SetDataTable(rightFiltered, _lblRightHeader.Text);
                     }
                     // 筛选后重新绑定差异高亮事件

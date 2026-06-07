@@ -2229,6 +2229,12 @@ namespace wxd.files.winforms
             _externalColumnStates = states;
         }
 
+        /// <summary>获取当前列显隐状态的副本（用于切换数据时保持用户选择的列显示/隐藏）</summary>
+        public bool[] GetColumnCheckStates()
+        {
+            return (bool[])_columnCheckStates.Clone();
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
