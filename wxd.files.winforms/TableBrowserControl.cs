@@ -2072,6 +2072,13 @@ namespace wxd.files.winforms
         /// <summary>获取内部 FileTableData（用于行号追踪、差异标记）</summary>
         public FileTableData GetFileData() => _fileData;
 
+        /// <summary>直接设置 FileTableData 并刷新 Tag（供版本对比等场景使用，绕过 BuildFileData 继承逻辑）</summary>
+        public void SetFileData(FileTableData fileData)
+        {
+            _fileData = fileData;
+            SetRowTags();
+        }
+
         /// <summary>获取内部 DataGridView（供版本对比等外部功能使用）</summary>
         public DataGridView GetDataGridView() => _dataGrid;
 

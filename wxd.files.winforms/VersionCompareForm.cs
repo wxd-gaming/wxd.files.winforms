@@ -60,6 +60,10 @@ namespace wxd.files.winforms
         private HashSet<int> _leftDiffCells = new();    // (row << 16) | col 编码的差异单元格集合（左）
         private HashSet<int> _rightDiffCells = new();   // (row << 16) | col 编码的差异单元格集合（右）
 
+        // ★ DGV 行索引 → 原始完整 DataTable 行索引（包含固定行）的映射
+        private List<int> _leftRowToOriginalIndex = new();
+        private List<int> _rightRowToOriginalIndex = new();
+
         private int _diffRowCount = 0;
         private bool _diffComputed = false;
         private bool _syncingScroll = false;
@@ -666,12 +670,6 @@ namespace wxd.files.winforms
                 await Task.WhenAll(loadTasks);
 
                 // 阶段2：更新 TableBrowserControl 数据（控件已移除，不会逐行绘制）
-                // ★ 在 SetDataTable 前同步当前列显隐状态（修复切换历史记录时列显隐丢失的问题）
-                if (_leftView != null && _leftView.GetColumnCheckStates().Length > 0)
-                    _leftView.SetColumnVisibility(_leftView.GetColumnCheckStates());
-                if (_rightView != null && _rightView.GetColumnCheckStates().Length > 0)
-                    _rightView.SetColumnVisibility(_rightView.GetColumnCheckStates());
-
                 if (leftData != null)
                     _leftView!.SetDataTable(leftData,
                         $"旧版本 {leftLabel} | 行数: {leftData.Rows.Count}");
@@ -690,34 +688,46 @@ namespace wxd.files.winforms
 
                 _splitCompare.SplitterDistance = _splitCompare.Width / 2;
 
-                // 阶段3：后台计算差异（差异信息直接写入 TableRow）
+                // 阶段3：后台计算差异
                 _loadingForm?.SetDetail("正在计算差异...");
                 await ComputeDiffAsync(leftData, rightData);
 
+                // 阶段3.5：★ 根据当前列显隐状态重新构建投影后的 FileTableData → DataTable
+                var leftVisibleCols = _leftView?.GetVisibleColumnIndices() ?? new List<int> { };
+                var rightVisibleCols = _rightView?.GetVisibleColumnIndices() ?? new List<int> { };
+
+                if (_leftFullFileData != null && leftVisibleCols.Count > 0 && _leftView != null)
+                {
+                    var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
+                    _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
+                    // ★ 构建行索引映射（DGV行→原始行），不再依赖 Tag
+                    _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
+                }
+                if (_rightFullFileData != null && rightVisibleCols.Count > 0 && _rightView != null)
+                {
+                    var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
+                    _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
+                    _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
+                }
+
                 // 阶段4：应用高亮 + 差异行筛选
-                var leftDgv = _leftView?.GetDataGridView();
-                var rightDgv = _rightView?.GetDataGridView();
-                ApplyDiffHighlight(leftDgv, true);
-                ApplyDiffHighlight(rightDgv, false);
+                ApplyDiffHighlight(_leftView?.GetDataGridView(), true);
+                ApplyDiffHighlight(_rightView?.GetDataGridView(), false);
 
                 // ★ 如果勾选了"仅显示差异行"，应用筛选
                 if (_chkDiffOnly.Checked)
                 {
-                    if (_leftFullFileData != null && _leftView != null)
+                    if (_leftFullFileData != null && _leftView != null && leftVisibleCols.Count > 0)
                     {
-                        var leftFiltered = BuildFilteredTableFromFileData(_leftFullFileData);
-                        // ★ 优先使用用户当前选择的列显隐状态，回退到初始配置
-                        var leftStates = _leftView.GetColumnCheckStates();
-                        _leftView.SetColumnVisibility(leftStates.Length > 0 ? leftStates : _columnVisibility);
-                        _leftView.SetDataTable(leftFiltered, _lblLeftHeader.Text);
+                        var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
+                        _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
+                        _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
                     }
-                    if (_rightFullFileData != null && _rightView != null)
+                    if (_rightFullFileData != null && _rightView != null && rightVisibleCols.Count > 0)
                     {
-                        var rightFiltered = BuildFilteredTableFromFileData(_rightFullFileData);
-                        // ★ 优先使用用户当前选择的列显隐状态，回退到初始配置
-                        var rightStates = _rightView.GetColumnCheckStates();
-                        _rightView.SetColumnVisibility(rightStates.Length > 0 ? rightStates : _columnVisibility);
-                        _rightView.SetDataTable(rightFiltered, _lblRightHeader.Text);
+                        var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
+                        _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
+                        _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
                     }
                     // 筛选后重新绑定差异高亮事件
                     ApplyDiffHighlight(_leftView?.GetDataGridView(), true);
@@ -1085,7 +1095,7 @@ namespace wxd.files.winforms
                     if (rowHasDiff)
                     {
                         diffCount++;
-                        // ★ 记录原始行号到集合（原始行号 = DataTable 行索引，包含固定行）
+                        // ★ 仅记录原始行号到集合（原始行号 = DataTable 行索引，包含固定行）
                         if (row < leftData.Rows.Count)
                         {
                             _leftDiffRows.Add(row);
@@ -1097,20 +1107,6 @@ namespace wxd.files.winforms
                             _rightDiffRows.Add(row);
                             foreach (var c in rightDiffCols ?? Enumerable.Empty<int>())
                                 _rightDiffCells.Add((row << 16) | c);
-                        }
-
-                        // ★ 同步标记 TableRow（用于 BuildFilteredTableFromFileData 筛选）
-                        var leftFileData = _leftView?.GetFileData();
-                        var rightFileData = _rightView?.GetFileData();
-                        if (row < leftFileData?.Rows.Count)
-                        {
-                            leftFileData.Rows[row].IsDiffRow = true;
-                            leftFileData.Rows[row].DiffColumns = leftDiffCols;
-                        }
-                        if (row < rightFileData?.Rows.Count)
-                        {
-                            rightFileData.Rows[row].IsDiffRow = true;
-                            rightFileData.Rows[row].DiffColumns = rightDiffCols;
                         }
                     }
                 }
@@ -1141,17 +1137,18 @@ namespace wxd.files.winforms
             if (sender is not DataGridView dgv) return;
             if (e.RowIndex < 0) return;
 
-            // ★ 判断当前 dgv 是左还是右
-            bool isLeft = (dgv == _leftView?.GetDataGridView());
+            // ★ 判断是左表还是右表
+            bool isLeft = dgv == _leftView?.GetDataGridView();
+            var rowMap = isLeft ? _leftRowToOriginalIndex : _rightRowToOriginalIndex;
             var diffRows = isLeft ? _leftDiffRows : _rightDiffRows;
             var diffCells = isLeft ? _leftDiffCells : _rightDiffCells;
 
-            if (diffRows.Count == 0) return;  // 无差异数据
+            // ★ 通过行映射获取原始行索引
+            if (e.RowIndex >= rowMap.Count) return;
+            int originalRowIndex = rowMap[e.RowIndex];
 
-            // ★ 内容表格行号 → 原始 DataTable 行号
-            // 原始行号 = 内容表格行号 + _frozenRows（固定行在内容表格中不显示）
-            int originalRow = e.RowIndex + _frozenRows;
-            if (!diffRows.Contains(originalRow)) return;  // 非差异行，跳过
+            // ★ 用原始行索引判断是否为差异行
+            if (!diffRows.Contains(originalRowIndex)) return;
 
             Color backColor, selBackColor;
             int displayCol = e.ColumnIndex;
@@ -1164,31 +1161,25 @@ namespace wxd.files.winforms
             }
             else
             {
-                // 列索引映射（通过列名，兼容列重排/列显隐）
+                // ★ 计算当前显示列对应的原始列索引
+                var view = isLeft ? _leftView : _rightView;
+                var visibleCols = view?.GetVisibleColumnIndices() ?? new List<int>();
                 int originalColIndex = displayCol;
-                try
-                {
-                    if (dgv.DataSource is DataTable srcTable && displayCol >= 0 && displayCol < dgv.Columns.Count)
-                    {
-                        var colName = dgv.Columns[displayCol].Name;
-                        if (!string.IsNullOrEmpty(colName) && srcTable.Columns.Contains(colName))
-                            originalColIndex = srcTable.Columns.IndexOf(colName);
-                    }
-                }
-                catch { }
+                if (displayCol < visibleCols.Count)
+                    originalColIndex = visibleCols[displayCol];
 
-                // ★ 用编码后的 (row << 16) | col 查找差异单元格
-                int cellKey = (originalRow << 16) | originalColIndex;
+                // ★ 用原始行索引和原始列索引判断是否为差异单元格
+                int cellKey = (originalRowIndex << 16) | originalColIndex;
                 bool cellHasDiff = diffCells.Contains(cellKey);
 
                 if (cellHasDiff)
                 {
-                    backColor = _colorDiffCellBg;
+                    backColor = _colorDiffCellBg;       // 红色：差异单元格
                     selBackColor = Color.FromArgb(255, 170, 170);
                 }
                 else
                 {
-                    backColor = _colorDiffRowBg;
+                    backColor = _colorDiffRowBg;        // 黄色：差异行的非差异单元格
                     selBackColor = Color.FromArgb(240, 230, 180);
                 }
             }
@@ -1196,21 +1187,6 @@ namespace wxd.files.winforms
             // ★ 设置事件参数样式
             e.CellStyle.BackColor = backColor;
             e.CellStyle.SelectionBackColor = selBackColor;
-
-            // ★ 直接写入 DataGridView 实际样式对象（确保不被 AlternatingRowsDefaultCellStyle 等覆盖）
-            try
-            {
-                var dgvRow = dgv.Rows[e.RowIndex];
-                dgvRow.DefaultCellStyle.BackColor = backColor;
-                dgvRow.DefaultCellStyle.SelectionBackColor = selBackColor;
-                if (displayCol >= 0 && displayCol < dgv.Columns.Count)
-                {
-                    dgvRow.Cells[displayCol].Style.BackColor = backColor;
-                    dgvRow.Cells[displayCol].Style.SelectionBackColor = selBackColor;
-                }
-            }
-            catch { }
-
             e.FormattingApplied = true;
         }
 
@@ -1223,36 +1199,58 @@ namespace wxd.files.winforms
             var leftDgv = _leftView.GetDataGridView();
             var rightDgv = _rightView.GetDataGridView();
 
+            // ★ 获取当前列显隐状态
+            var leftVisibleCols = _leftView.GetVisibleColumnIndices();
+            var rightVisibleCols = _rightView.GetVisibleColumnIndices();
+
             if (_chkDiffOnly.Checked)
             {
-                // ★ 从保存的原始 FileTableData 中筛选差异行，构建新 DataTable
-                if (_leftFullFileData != null)
+                // ★ 投影 + 筛选差异行
+                if (_leftFullFileData != null && leftVisibleCols.Count > 0)
                 {
-                    var leftFiltered = BuildFilteredTableFromFileData(_leftFullFileData);
-                    if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
-                    _leftView.SetDataTable(leftFiltered, _lblLeftHeader.Text);
+                    var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
+                    _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
+                    _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
                 }
-                if (_rightFullFileData != null)
+                else
                 {
-                    var rightFiltered = BuildFilteredTableFromFileData(_rightFullFileData);
-                    if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
-                    _rightView.SetDataTable(rightFiltered, _lblRightHeader.Text);
+                    _leftRowToOriginalIndex.Clear();
+                }
+
+                if (_rightFullFileData != null && rightVisibleCols.Count > 0)
+                {
+                    var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
+                    _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
+                    _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
+                }
+                else
+                {
+                    _rightRowToOriginalIndex.Clear();
                 }
             }
             else
             {
-                // ★ 恢复全部显示：从原始 FileTableData 重建完整 DataTable
-                if (_leftFullFileData != null && _leftView != null)
+                // ★ 投影 + 全部行（保持当前列显隐）
+                if (_leftFullFileData != null && leftVisibleCols.Count > 0)
                 {
-                    var leftFull = BuildFullTableFromFileData(_leftFullFileData);
-                    if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
-                    _leftView.SetDataTable(leftFull, _lblLeftHeader.Text);
+                    var leftFull = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
+                    _leftView.SetDataTable(BuildDataTableFromFileData(leftFull), _lblLeftHeader.Text);
+                    _leftRowToOriginalIndex = BuildRowIndexMap(leftFull);
                 }
-                if (_rightFullFileData != null && _rightView != null)
+                else
                 {
-                    var rightFull = BuildFullTableFromFileData(_rightFullFileData);
-                    if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
-                    _rightView.SetDataTable(rightFull, _lblRightHeader.Text);
+                    _leftRowToOriginalIndex.Clear();
+                }
+
+                if (_rightFullFileData != null && rightVisibleCols.Count > 0)
+                {
+                    var rightFull = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
+                    _rightView.SetDataTable(BuildDataTableFromFileData(rightFull), _lblRightHeader.Text);
+                    _rightRowToOriginalIndex = BuildRowIndexMap(rightFull);
+                }
+                else
+                {
+                    _rightRowToOriginalIndex.Clear();
                 }
             }
 
@@ -1261,28 +1259,62 @@ namespace wxd.files.winforms
             ApplyDiffHighlight(rightDgv, false);
         }
 
-        /// <summary>从 FileTableData 构建只含差异行的 DataTable</summary>
-        private static DataTable BuildFilteredTableFromFileData(FileTableData fd)
+        /// <summary>从原始 FileTableData 按可见列索引构建投影后的 FileTableData</summary>
+        private static FileTableData BuildProjectedFileData(FileTableData source, List<int> visibleColIndices, bool diffOnly = false)
         {
-            var dt = new DataTable();
-            foreach (var colName in fd.ColumnNames)
-                dt.Columns.Add(colName, typeof(string));
-
-            foreach (var row in fd.Rows)
+            var result = new FileTableData
             {
-                if (row.IsDiffRow)
-                {
-                    var dr = dt.NewRow();
-                    for (int c = 0; c < Math.Min(row.Cells.Count, dt.Columns.Count); c++)
-                        dr[c] = row.Cells[c];
-                    dt.Rows.Add(dr);
-                }
+                FilePath = source.FilePath,
+                Type = source.Type,
+                Delimiter = source.Delimiter
+            };
+
+            // 构建新列名列表（只包含可见列）
+            for (int i = 0; i < visibleColIndices.Count; i++)
+            {
+                int srcIdx = visibleColIndices[i];
+                if (srcIdx < source.ColumnNames.Count)
+                    result.ColumnNames.Add(source.ColumnNames[srcIdx]);
+                else
+                    result.ColumnNames.Add($"Column{i}");
             }
-            return dt;
+
+            // 构建行数据（不再需要 DiffColumns 转换，差异信息由 _leftDiffRows/_leftDiffCells 独立管理）
+            foreach (var srcRow in source.Rows)
+            {
+                if (diffOnly && !srcRow.IsDiffRow) continue;
+
+                var newRow = new TableRow
+                {
+                    OriginalRowIndex = srcRow.OriginalRowIndex,
+                    IsDiffRow = srcRow.IsDiffRow,
+                    DiffColumns = null
+                };
+
+                // 只复制可见列的单元格值
+                for (int i = 0; i < visibleColIndices.Count; i++)
+                {
+                    int srcIdx = visibleColIndices[i];
+                    newRow.Cells.Add(srcIdx < srcRow.Cells.Count ? srcRow.Cells[srcIdx] : "");
+                }
+
+                result.Rows.Add(newRow);
+            }
+
+            return result;
         }
 
-        /// <summary>从 FileTableData 构建完整 DataTable</summary>
-        private static DataTable BuildFullTableFromFileData(FileTableData fd)
+        /// <summary>从投影后的 FileTableData 构建 DGV行索引→原始行索引 的映射</summary>
+        private static List<int> BuildRowIndexMap(FileTableData projectedData)
+        {
+            var map = new List<int>(projectedData.Rows.Count);
+            foreach (var row in projectedData.Rows)
+                map.Add(row.OriginalRowIndex);
+            return map;
+        }
+
+        /// <summary>从 FileTableData 构建 DataTable</summary>
+        private static DataTable BuildDataTableFromFileData(FileTableData fd)
         {
             var dt = new DataTable();
             foreach (var colName in fd.ColumnNames)

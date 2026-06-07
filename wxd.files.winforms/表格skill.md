@@ -1,0 +1,9 @@
+## TableBrowserControl 
+TableBrowserControl 中的 Skill 列显示了技能信息。技能信息是从原始 FileTableData 中提取的，并根据配置进行处理后显示在表格中。当配置发生变化时，Skill 列的数据会根据原始 FileTableData 重新构建，以确保显示的数据始终与原始数据保持一致。
+## 差异化
+差异化表格的构建，从FileTableData原始内容提取信息，行TableRow数据在有隐藏列的时候，构建新的FileTableData从TableRow删除列进行显示
+## 条件变化
+当我重新选择了需要显示或者隐藏的列，重新从原始的FileTableData数据根据显示列重新构建新的FileTableData传递给TableBrowserControl进行显示
+## 差异对比
+TableBrowserControl是分为固定行和内容行的datagridview，数据是list<tableRow> 如果固定行是4，那么固定行显示数据是list<tableRow>.take(4)，内容行显示数据是list<tableRow>.skip(4)，当我需要隐藏某一列时，我会从原始的FileTableData中构建新的FileTableData，删除需要隐藏的列，然后重新传递给TableBrowserControl进行显示，这样就能保证显示的数据始终与原始数据保持一致。
+所有不需要tag设置来控制差异背景，在构建差异化对比的时候通过leftlist和rightlist来存储，新增一个list<int>差异的行
