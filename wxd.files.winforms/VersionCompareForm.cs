@@ -717,13 +717,34 @@ namespace wxd.files.winforms
                 _loadingForm?.SetDetail("正在计算差异...");
                 await ComputeDiffAsync(leftData, rightData);
 
+                // ★ 阶段3.1：将差异结果回写到 _leftFullFileData / _rightFullFileData 的 TableRow 中
+                // （BuildProjectedFileData 在 diffOnly:true 时依赖 TableRow.IsDiffRow 判断，必须回写）
+                if (_leftFullFileData != null)
+                {
+                    foreach (var row in _leftFullFileData.Rows)
+                    {
+                        row.IsDiffRow = _leftDiffRows.Contains(row.OriginalRowIndex);
+                    }
+                }
+                if (_rightFullFileData != null)
+                {
+                    foreach (var row in _rightFullFileData.Rows)
+                    {
+                        row.IsDiffRow = _rightDiffRows.Contains(row.OriginalRowIndex);
+                    }
+                }
+
                 // 阶段3.5：★ 根据当前列显隐状态重新构建投影后的 FileTableData → DataTable
+                // ★ 先保存当前列显隐状态（基于完整列数），后续 SetDataTable 会重置 _columnCheckStates
+                var leftColStatesBefore = _leftView?.GetColumnCheckStates();
+                var rightColStatesBefore = _rightView?.GetColumnCheckStates();
                 var leftVisibleCols = _leftView?.GetVisibleColumnIndices() ?? new List<int> { };
                 var rightVisibleCols = _rightView?.GetVisibleColumnIndices() ?? new List<int> { };
 
                 if (_leftFullFileData != null && leftVisibleCols.Count > 0 && _leftView != null)
                 {
                     var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
+                    _leftView.SetColumnVisibility(leftColStatesBefore);
                     _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
                     // ★ 构建行/列索引映射（DGV行/列→原始行/列），不再依赖 Tag 或 GetVisibleColumnIndices
                     _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
@@ -732,6 +753,7 @@ namespace wxd.files.winforms
                 if (_rightFullFileData != null && rightVisibleCols.Count > 0 && _rightView != null)
                 {
                     var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
+                    _rightView.SetColumnVisibility(rightColStatesBefore);
                     _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
                     _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
                     _rightColToOriginalIndex = new List<int>(rightVisibleCols);
@@ -747,6 +769,7 @@ namespace wxd.files.winforms
                     if (_leftFullFileData != null && _leftView != null && leftVisibleCols.Count > 0)
                     {
                         var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
+                        _leftView.SetColumnVisibility(leftColStatesBefore);
                         _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
                         _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
                         _leftColToOriginalIndex = new List<int>(leftVisibleCols);
@@ -754,6 +777,7 @@ namespace wxd.files.winforms
                     if (_rightFullFileData != null && _rightView != null && rightVisibleCols.Count > 0)
                     {
                         var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
+                        _rightView.SetColumnVisibility(rightColStatesBefore);
                         _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
                         _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
                         _rightColToOriginalIndex = new List<int>(rightVisibleCols);
@@ -1227,67 +1251,42 @@ namespace wxd.files.winforms
             var leftDgv = _leftView.GetDataGridView();
             var rightDgv = _rightView.GetDataGridView();
 
-            // ★ 获取当前列显隐状态
+            // ★ 获取当前列显隐状态（基于投影后列数的状态）
+            var currentLeftColStates = _leftView.GetColumnCheckStates();
+            var currentRightColStates = _rightView.GetColumnCheckStates();
             var leftVisibleCols = _leftView.GetVisibleColumnIndices();
             var rightVisibleCols = _rightView.GetVisibleColumnIndices();
 
-            if (_chkDiffOnly.Checked)
-            {
-                // ★ 投影 + 筛选差异行
-                if (_leftFullFileData != null && leftVisibleCols.Count > 0)
-                {
-                    var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
-                    _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
-                    _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
-                    _leftColToOriginalIndex = new List<int>(leftVisibleCols);
-                }
-                else
-                {
-                    _leftRowToOriginalIndex.Clear();
-                    _leftColToOriginalIndex.Clear();
-                }
+            bool diffOnly = _chkDiffOnly.Checked;
 
-                if (_rightFullFileData != null && rightVisibleCols.Count > 0)
-                {
-                    var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
-                    _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
-                    _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
-                    _rightColToOriginalIndex = new List<int>(rightVisibleCols);
-                }
-                else
-                {
-                    _rightRowToOriginalIndex.Clear();
-                    _rightColToOriginalIndex.Clear();
-                }
+            // ★ 左表：注入列状态后再 SetDataTable，防止 _columnCheckStates 被重置
+            if (_leftFullFileData != null && leftVisibleCols.Count > 0)
+            {
+                var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly);
+                _leftView.SetColumnVisibility(currentLeftColStates);
+                _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
+                _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
+                _leftColToOriginalIndex = new List<int>(leftVisibleCols);
             }
             else
             {
-                // ★ 投影 + 全部行（保持当前列显隐）
-                if (_leftFullFileData != null && leftVisibleCols.Count > 0)
-                {
-                    var leftFull = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
-                    _leftView.SetDataTable(BuildDataTableFromFileData(leftFull), _lblLeftHeader.Text);
-                    _leftRowToOriginalIndex = BuildRowIndexMap(leftFull);
-                    _leftColToOriginalIndex = new List<int>(leftVisibleCols);
-                }
-                else
-                {
-                    _leftRowToOriginalIndex.Clear();
-                    _leftColToOriginalIndex.Clear();
-                }
+                _leftRowToOriginalIndex.Clear();
+                _leftColToOriginalIndex.Clear();
+            }
 
-                if (_rightFullFileData != null && rightVisibleCols.Count > 0)
-                {
-                    var rightFull = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
-                    _rightView.SetDataTable(BuildDataTableFromFileData(rightFull), _lblRightHeader.Text);
-                    _rightRowToOriginalIndex = BuildRowIndexMap(rightFull);
-                    _rightColToOriginalIndex = new List<int>(rightVisibleCols);
-                }
-                else
-                {
-                    _rightRowToOriginalIndex.Clear();
-                    _rightColToOriginalIndex.Clear();
-                }
+            // ★ 右表：同上
+            if (_rightFullFileData != null && rightVisibleCols.Count > 0)
+            {
+                var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly);
+                _rightView.SetColumnVisibility(currentRightColStates);
+                _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
+                _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
+                _rightColToOriginalIndex = new List<int>(rightVisibleCols);
+            }
+            else
+            {
+                _rightRowToOriginalIndex.Clear();
+                _rightColToOriginalIndex.Clear();
             }
 
             // 重新绑定差异高亮事件
@@ -1296,7 +1295,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>从原始 FileTableData 按可见列索引构建投影后的 FileTableData</summary>
-        private static FileTableData BuildProjectedFileData(FileTableData source, List<int> visibleColIndices, bool diffOnly = false)
+        private FileTableData BuildProjectedFileData(FileTableData source, List<int> visibleColIndices, bool diffOnly = false)
         {
             var result = new FileTableData
             {
@@ -1318,7 +1317,9 @@ namespace wxd.files.winforms
             // 构建行数据（不再需要 DiffColumns 转换，差异信息由 _leftDiffRows/_leftDiffCells 独立管理）
             foreach (var srcRow in source.Rows)
             {
-                if (diffOnly && !srcRow.IsDiffRow) continue;
+                // ★ 固定行（冻结行）始终保留，不受 diffOnly 影响
+                bool isFrozenRow = srcRow.OriginalRowIndex < _frozenRows;
+                if (diffOnly && !srcRow.IsDiffRow && !isFrozenRow) continue;
 
                 var newRow = new TableRow
                 {
