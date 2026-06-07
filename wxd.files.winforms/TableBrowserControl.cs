@@ -30,6 +30,7 @@ namespace wxd.files.winforms
         private Panel _pnlStatus = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
+        private FileTableData _fileData = new();  // 统一数据模型，用于行号追踪
         private string _filePath = "";
         private TableFileType _fileType;
         private char _delimiter = ',';
@@ -48,6 +49,7 @@ namespace wxd.files.winforms
         private FlowLayoutPanel? _flowTop;
         private Button? _btnReload;
         private Button? _btnHistory;
+        private bool[]? _externalColumnStates = null;
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
@@ -120,6 +122,7 @@ namespace wxd.files.winforms
             {
                 // 空数据模式：创建一个空的 DataTable，等待外部 SetDataTable
                 _dataTable = new DataTable();
+                _fileData = new FileTableData();
                 _headerTable = _dataTable.Clone();
                 _fileType = TableFileType.Csv; // 默认类型
             }
@@ -209,7 +212,7 @@ namespace wxd.files.winforms
                 Padding = new Padding(0),
                 Margin = new Padding(0),
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
-            };
+            };            
             topTable.RowStyles.Clear();
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
@@ -565,8 +568,7 @@ namespace wxd.files.winforms
             {
                 int dataGridColumnIndex = e.Column.Index;
                 int headerColumnIndex = dataGridColumnIndex;
-                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && dataGridColumnIndex > 0)
-                    headerColumnIndex = dataGridColumnIndex - 1;
+                // ★ 不再需要 __RowNum__ 偏移
                 if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
                     _dataGridHeader.Columns[headerColumnIndex].Width = _dataGrid.Columns[dataGridColumnIndex].Width;
             };
@@ -814,6 +816,8 @@ namespace wxd.files.winforms
         private void OnDataLoaded(DataTable dataTable, DataTable headerTable, string infoText)
         {
             _dataTable = dataTable;
+            // ★ 同步构建 FileTableData（继承旧差异信息）
+            _fileData = BuildFileData(dataTable, _fileData);
             _headerTable = headerTable.Clone();
 
             _columnCheckStates = new bool[_dataTable.Columns.Count];
@@ -894,9 +898,8 @@ namespace wxd.files.winforms
             int originalColIndex = columnIndex;
             if (_visibleColumnIndices.Count > 0 && columnIndex < grid.Columns.Count)
             {
+                // ★ 不再需要 __RowNum__ 偏移
                 int adjustedCol = columnIndex;
-                if (grid.Columns.Count > 0 && grid.Columns[0].Name == "__RowNum__")
-                    adjustedCol = columnIndex - 1;
                 if (adjustedCol >= 0 && adjustedCol < _visibleColumnIndices.Count)
                     originalColIndex = _visibleColumnIndices[adjustedCol];
             }
@@ -1203,7 +1206,7 @@ namespace wxd.files.winforms
                 dataTable.Rows.Add(row);
             }
 
-            this.Invoke(() => { _delimiter = delimiter; _dataTable = dataTable; _headerTable = dataTable.Clone(); });
+            this.Invoke(() => { _delimiter = delimiter; _dataTable = dataTable; _fileData = BuildFileData(dataTable, _fileData); _headerTable = dataTable.Clone(); });
         }
 
         // ==================== 表头行下拉 ====================
@@ -1253,7 +1256,16 @@ namespace wxd.files.winforms
                     {
                         dgvCol.DisplayIndex = i;
                         dgvCol.Width = 120;
-                        dgvCol.HeaderText = GetExcelColumnName(i);
+                        // 如果设置了表头行，用表头行的值作为列标题
+                        if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                        {
+                            var srcColIdx = _visibleColumnIndices[i];
+                            dgvCol.HeaderText = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                        }
+                        else
+                        {
+                            dgvCol.HeaderText = GetExcelColumnName(i);
+                        }
                         dgvCol.SortMode = DataGridViewColumnSortMode.NotSortable;
                     }
                 }
@@ -1269,14 +1281,31 @@ namespace wxd.files.winforms
                 for (int i = 0; i < _dataGrid.Columns.Count; i++)
                 {
                     _dataGrid.Columns[i].Width = 120;
-                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                    // 如果设置了表头行，用表头行的值作为列标题
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+                    {
+                        _dataGrid.Columns[i].HeaderText = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                    }
+                    else
+                    {
+                        _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    }
                 }
+                // ★ 同步设置 Tag（DataSource 赋值后行已创建）
+                SetRowTags();
             }
         }
 
+        /// <summary>将 _fileData.Rows 挂到 _dataGrid 每行的 Tag 上</summary>
+        private void SetRowTags()
+        {
+            for (int i = 0; i < _dataGrid.Rows.Count && i < _fileData.Rows.Count; i++)
+                _dataGrid.Rows[i].Tag = _fileData.Rows[i];
+        }
+
         // ==================== 列选择 ====================
-        private List<int> GetVisibleColumnIndices()
+        public List<int> GetVisibleColumnIndices()
         {
             var visibleIndices = new List<int>();
             if (_dataTable.Columns.Count > 0) visibleIndices.Add(0);
@@ -1378,25 +1407,31 @@ namespace wxd.files.winforms
         private void RefreshFilteredDisplay(List<DataRow> visibleRows)
         {
             var filteredTable = new DataTable();
-            filteredTable.Columns.Add("__RowNum__", typeof(int));
+            // ★ 不再添加 __RowNum__ 隐藏列；行号通过 _fileData.Rows[origIdx].OriginalRowIndex 追踪
             foreach (var colIndex in _visibleColumnIndices)
             {
                 var sourceCol = _dataTable.Columns[colIndex];
-                filteredTable.Columns.Add(sourceCol.ColumnName, sourceCol.DataType);
+                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string)); // ★ 统一 string 避免类型冲突
             }
+            // ★ 记录每个 filteredTable 行对应的原始 _dataTable 行索引（用于修复冻结行偏移导致的 Tag 错位）
+            var originalIndices = new List<int>();
             foreach (var sourceRow in visibleRows)
             {
                 var newRow = filteredTable.NewRow();
-                var originalRowIndex = _dataTable.Rows.IndexOf(sourceRow) + 1;
-                newRow[0] = originalRowIndex;
                 for (int i = 0; i < _visibleColumnIndices.Count; i++)
-                    newRow[i + 1] = sourceRow[_visibleColumnIndices[i]];
+                    newRow[i] = sourceRow[_visibleColumnIndices[i]];
                 filteredTable.Rows.Add(newRow);
+                originalIndices.Add(_dataTable.Rows.IndexOf(sourceRow));
             }
             _dataGrid.DataSource = filteredTable;
-            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
-                _dataGrid.Columns[0].Visible = false;
-            for (int i = 1; i < _dataGrid.Columns.Count; i++)
+            // ★ 同步设置 Tag（DataSource 赋值后行已创建），使用原始行索引修复冻结行偏移
+            for (int i = 0; i < _dataGrid.Rows.Count && i < originalIndices.Count; i++)
+            {
+                int origIdx = originalIndices[i];
+                if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
+                    _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
+            }
+            for (int i = 0; i < _dataGrid.Columns.Count; i++)
             {
                 var colName = filteredTable.Columns[i].ColumnName;
                 var dgvCol = _dataGrid.Columns[colName];
@@ -1404,8 +1439,17 @@ namespace wxd.files.winforms
                 {
                     dgvCol.DisplayIndex = i;
                     dgvCol.Width = 120;
-                    dgvCol.HeaderText = GetExcelColumnName(i - 1);
                     dgvCol.SortMode = DataGridViewColumnSortMode.Programmatic;
+                    // 如果设置了表头行，用表头行的值作为列标题
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                    {
+                        var srcColIdx = _visibleColumnIndices[i];
+                        dgvCol.HeaderText = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                    }
+                    else
+                    {
+                        dgvCol.HeaderText = GetExcelColumnName(i);
+                    }
                 }
             }
             _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRows.Count} 行";
@@ -1423,6 +1467,8 @@ namespace wxd.files.winforms
             var dataRows = _dataTable.AsEnumerable().Skip(_frozenRows).ToList();
             var sortedDataRows = dataRows.OrderBy(row => row.Field<string>(columnName), new NaturalStringComparer(_sortOrder)).ToList();
             _dataTable = frozenRows.Concat(sortedDataRows).ToArray().CopyToDataTable();
+            // ★ 排序后同步重建 FileTableData（继承旧差异信息，按 OriginalRowIndex 匹配）
+            _fileData = BuildFileData(_dataTable, _fileData);
             RefreshGridLayout();
             UpdateColumnHeaderSortGlyph();
         }
@@ -1445,8 +1491,7 @@ namespace wxd.files.winforms
             var dgv = (DataGridView)sender!;
             int rowOff = (dgv == _dataGridHeader) ? 0 : _frozenRows;
             int colIdx = e.ColumnIndex;
-            if (dgv != _dataGridHeader && dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
-                colIdx = Math.Max(0, colIdx - 1);
+            // ★ 不再需要 __RowNum__ 偏移
             string colName = colIdx >= 0 && colIdx < 26 ? ((char)('A' + colIdx)).ToString() : $"Col{colIdx}";
             _lblCellPos.Text = $"行 {e.RowIndex + 1 + rowOff}  列 {colName}({colIdx})";
         }
@@ -1517,19 +1562,19 @@ namespace wxd.files.winforms
             }
             if (_dataGrid.DataSource is DataTable filteredTable && filteredTable.Columns.Count > 0)
             {
+                // ★ 从 DataGridView 行的 Tag 直接获取原始行号
                 int originalRowIndex = displayRowIndex;
-                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
+                if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
                 {
-                    var cellValue = _dataGrid.Rows[displayRowIndex].Cells[0].Value;
-                    if (cellValue != null) originalRowIndex = Convert.ToInt32(cellValue) - 1;
+                    var tagRow = _dataGrid.Rows[displayRowIndex].Tag as TableRow;
+                    if (tagRow != null)
+                        originalRowIndex = tagRow.OriginalRowIndex;
                 }
                 int originalColumnIndex = displayColumnIndex;
                 if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGrid.Columns.Count)
                 {
-                    var actualDisplayIndex = displayColumnIndex;
-                    if (_dataGrid.Columns[0].Name == "__RowNum__") actualDisplayIndex = displayColumnIndex - 1;
-                    if (actualDisplayIndex >= 0 && actualDisplayIndex < _visibleColumnIndices.Count)
-                        originalColumnIndex = _visibleColumnIndices[actualDisplayIndex];
+                    if (displayColumnIndex >= 0 && displayColumnIndex < _visibleColumnIndices.Count)
+                        originalColumnIndex = _visibleColumnIndices[displayColumnIndex];
                 }
                 return (originalRowIndex, originalColumnIndex);
             }
@@ -1578,18 +1623,8 @@ namespace wxd.files.winforms
                     e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
                 }
             }
-            // ★ 调试：记录 OnDiffCellFormatting 执行前的颜色
-            var beforeColor = e.CellStyle.BackColor;
             // 转发给外部事件处理器（如版本对比的差异高亮）
             OnExternalCellFormatting?.Invoke(sender, e);
-            // ★ 调试：记录 OnDiffCellFormatting 执行后的颜色
-            var afterColor = e.CellStyle.BackColor;
-            if (beforeColor != afterColor)
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[CELLFMT] RowIdx={e.RowIndex} ColIdx={e.ColumnIndex} " +
-                    $"Before={beforeColor} After={afterColor} FormattingApplied={e.FormattingApplied}");
-            }
         }
 
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
@@ -1604,8 +1639,7 @@ namespace wxd.files.winforms
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
             int adjCol = e.ColumnIndex;
-            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
-                adjCol = e.ColumnIndex - 1;
+            // ★ 不再需要 __RowNum__ 偏移
             int origCol = adjCol;
             if (adjCol >= 0 && adjCol < _visibleColumnIndices.Count)
                 origCol = _visibleColumnIndices[adjCol];
@@ -1662,8 +1696,7 @@ namespace wxd.files.winforms
             {
                 // 获取当前单元格的 tooltip 内容
                 int adjCol2 = e.ColumnIndex;
-                if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__")
-                    adjCol2 = e.ColumnIndex - 1;
+                // ★ 不再需要 __RowNum__ 偏移
                 if (adjCol2 >= 0 && _linkToolTip?.GetToolTipContent != null)
                 {
                     var content = _linkToolTip.GetToolTipContent(_dataGrid, e.RowIndex, adjCol2);
@@ -1690,11 +1723,15 @@ namespace wxd.files.winforms
         // ==================== 行号绘制 ====================
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
         {
+            // ★ 从 DataGridView 行的 Tag 直接获取原始行号
             int rowIndex;
-            if (_dataGrid.Columns.Count > 0 && _dataGrid.Columns[0].Name == "__RowNum__" && e.RowIndex >= 0)
+            if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
             {
-                var cellValue = _dataGrid.Rows[e.RowIndex].Cells[0].Value;
-                rowIndex = cellValue != null ? Convert.ToInt32(cellValue) : e.RowIndex + 1 + _frozenRows;
+                var tagRow = _dataGrid.Rows[e.RowIndex].Tag as TableRow;
+                if (tagRow != null)
+                    rowIndex = tagRow.OriginalRowIndex + 1;
+                else
+                    rowIndex = e.RowIndex + 1 + _frozenRows;
             }
             else rowIndex = e.RowIndex + 1 + _frozenRows;
             var rowHeaderBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, _dataGrid.RowHeadersWidth, e.RowBounds.Height);
@@ -2032,8 +2069,14 @@ namespace wxd.files.winforms
         /// <summary>获取内部 DataTable（供版本对比等外部功能使用）</summary>
         public DataTable GetDataTable() => _dataTable;
 
+        /// <summary>获取内部 FileTableData（用于行号追踪、差异标记）</summary>
+        public FileTableData GetFileData() => _fileData;
+
         /// <summary>获取内部 DataGridView（供版本对比等外部功能使用）</summary>
         public DataGridView GetDataGridView() => _dataGrid;
+
+        /// <summary>获取固定行数（供版本对比计算内容表格行号映射）</summary>
+        public int FrozenRows => _frozenRows;
 
         /// <summary>
         /// 直接设置 DataTable 并刷新显示（供版本对比等外部功能复用控件实例）。
@@ -2063,6 +2106,56 @@ namespace wxd.files.winforms
                 _pnlGridContainer.Panel1.Controls.Add(_dataGridHeader);
         }
 
+        /// <summary>从 DataTable 构建 FileTableData（用于行号追踪）</summary>
+        private static FileTableData BuildFileData(DataTable dt, FileTableData? inheritFrom = null)
+        {
+            var fd = new FileTableData();
+            foreach (DataColumn col in dt.Columns)
+                fd.ColumnNames.Add(col.ColumnName);
+
+            for (int r = 0; r < dt.Rows.Count; r++)
+            {
+                int origRowIdx = r;
+                bool isDiff = false;
+                HashSet<int>? diffCols = null;
+
+                if (inheritFrom != null)
+                {
+                    // ★ 如果新旧表行数一致 → 按索引继承（排序场景）
+                    if (dt.Rows.Count == inheritFrom.Rows.Count && r < inheritFrom.Rows.Count)
+                    {
+                        origRowIdx = inheritFrom.Rows[r].OriginalRowIndex;
+                        isDiff = inheritFrom.Rows[r].IsDiffRow;
+                        diffCols = inheritFrom.Rows[r].DiffColumns;
+                    }
+                    // ★ 如果行数不一致（筛选子集场景）→ 通过 OriginalRowIndex 反查
+                    else
+                    {
+                        origRowIdx = r;
+                        // 在 inheritFrom 中查找 OriginalRowIndex == r 的行
+                        var matched = inheritFrom.Rows.FirstOrDefault(x => x.OriginalRowIndex == r);
+                        if (matched != null)
+                        {
+                            isDiff = matched.IsDiffRow;
+                            diffCols = matched.DiffColumns;
+                        }
+                    }
+                }
+
+                var row = new TableRow
+                {
+                    OriginalRowIndex = origRowIdx,
+                    IsDiffRow = isDiff,
+                    DiffColumns = diffCols
+                };
+                for (int c = 0; c < dt.Columns.Count; c++)
+                    row.Cells.Add(dt.Rows[r][c]?.ToString() ?? "");
+
+                fd.Rows.Add(row);
+            }
+            return fd;
+        }
+
         public void SetDataTable(DataTable dataTable, string infoText = "")
         {
             if (dataTable == null) return;
@@ -2077,11 +2170,21 @@ namespace wxd.files.winforms
             _highlightsReady = false;
 
             _dataTable = dataTable;
+            // ★ 同步构建 FileTableData（继承旧差异信息）
+            _fileData = BuildFileData(dataTable, _fileData);
             _headerTable = dataTable.Clone();
 
-            _columnCheckStates = new bool[_dataTable.Columns.Count];
-            for (int i = 0; i < _columnCheckStates.Length; i++)
-                _columnCheckStates[i] = true;
+            if (_externalColumnStates != null && _externalColumnStates.Length == _dataTable.Columns.Count)
+            {
+                _columnCheckStates = (bool[])_externalColumnStates.Clone();
+                _externalColumnStates = null; // 只使用一次，避免影响后续调用
+            }
+            else
+            {
+                _columnCheckStates = new bool[_dataTable.Columns.Count];
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    _columnCheckStates[i] = true;
+            }
 
             RebuildHighlightRows();
             _lblInfo.Text = string.IsNullOrEmpty(infoText)
@@ -2102,13 +2205,29 @@ namespace wxd.files.winforms
                 {
                     _dataGrid.Columns[i].Width = 120;
                     _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    // 如果设置了表头行，用表头行的值作为列标题
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+                    {
+                        _dataGrid.Columns[i].HeaderText = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                    }
+                    else
+                    {
+                        _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    }
                 }
+                // ★ 同步设置 Tag（DataSource 赋值后行已创建）
+                SetRowTags();
             }
         }
 
         /// <summary>供外部（版本对比等）移除的 CellFormatting 事件占位</summary>
         internal event DataGridViewCellFormattingEventHandler? OnExternalCellFormatting;
+
+        /// <summary>设置外部传入的列可见性状态（版本对比等场景使用）。下次 SetDataTable 调用时会优先使用此状态。</summary>
+        public void SetColumnVisibility(bool[]? states)
+        {
+            _externalColumnStates = states;
+        }
 
         protected override void Dispose(bool disposing)
         {

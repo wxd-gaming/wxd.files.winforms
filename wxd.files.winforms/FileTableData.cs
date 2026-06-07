@@ -13,6 +13,15 @@ namespace wxd.files.winforms
     public class TableRow
     {
         public List<string> Cells { get; set; } = new();
+
+        /// <summary>原始行号（0-based），排序/筛选/列显隐后不变</summary>
+        public int OriginalRowIndex { get; set; }
+
+        /// <summary>是否为差异行（版本对比场景使用）</summary>
+        public bool IsDiffRow { get; set; }
+
+        /// <summary>差异列索引集合（版本对比场景使用，null 表示无差异）</summary>
+        public HashSet<int>? DiffColumns { get; set; }
     }
 
     /// <summary>通用表格数据模型（CSV/Excel统一）</summary>

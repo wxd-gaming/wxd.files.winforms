@@ -212,9 +212,8 @@ namespace wxd.files.winforms
             int originalColIndex = columnIndex;
             if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
             {
+                // ★ 不再需要 __RowNum__ 偏移
                 int adjustedCol = columnIndex;
-                if (dataGrid.Columns.Count > 0 && dataGrid.Columns[0].Name == "__RowNum__")
-                    adjustedCol = columnIndex - 1;
                 if (adjustedCol >= 0 && adjustedCol < visibleColumnIndices.Count)
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }
@@ -283,9 +282,8 @@ namespace wxd.files.winforms
             int originalColIndex = columnIndex;
             if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
             {
+                // ★ 不再需要 __RowNum__ 偏移
                 int adjustedCol = columnIndex;
-                if (dataGrid.Columns.Count > 0 && dataGrid.Columns[0].Name == "__RowNum__")
-                    adjustedCol = columnIndex - 1;
                 if (adjustedCol >= 0 && adjustedCol < visibleColumnIndices.Count)
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }
@@ -380,9 +378,8 @@ namespace wxd.files.winforms
             int originalColIndex = e.ColumnIndex;
             if (visibleColumnIndices.Count > 0 && e.ColumnIndex < dataGrid.Columns.Count)
             {
+                // ★ 不再需要 __RowNum__ 偏移，因为已移除该隐藏列
                 int adjustedCol = e.ColumnIndex;
-                if (dataGrid.Columns.Count > 0 && dataGrid.Columns[0].Name == "__RowNum__")
-                    adjustedCol = e.ColumnIndex - 1;
                 if (adjustedCol >= 0 && adjustedCol < visibleColumnIndices.Count)
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }

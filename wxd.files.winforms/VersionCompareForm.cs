@@ -35,6 +35,7 @@ namespace wxd.files.winforms
         private int _selectedIndex = 0;
         private int _frozenRows;
         private int _headerRowIndex;
+        private bool[]? _columnVisibility;
 
         // 左右两个 TableBrowserControl（复用，不每次创建销毁）
         private TableBrowserControl? _leftView;
@@ -48,10 +49,18 @@ namespace wxd.files.winforms
         // DataTable 缓存：key = revision, value = DataTable
         private readonly Dictionary<string, DataTable> _dataCache = new();
 
-        // 差异数据
-        private HashSet<(int row, int col)> _diffCellsLeft = new();
-        private HashSet<(int row, int col)> _diffCellsRight = new();
-        private List<int> _diffRows = new();
+        // 差异数据 —— 用行号集合记录原始DataTable中的差异行索引
+        // 保留这些字段用于恢复全部显示（保存原始完整 FileTableData）
+        private FileTableData? _leftFullFileData;
+        private FileTableData? _rightFullFileData;
+
+        // ★ 差异行原始行号集合（0-based，对应 DataTable.Rows 的索引，包含固定行）
+        private HashSet<int> _leftDiffRows = new();
+        private HashSet<int> _rightDiffRows = new();
+        private HashSet<int> _leftDiffCells = new();    // (row << 16) | col 编码的差异单元格集合（左）
+        private HashSet<int> _rightDiffCells = new();   // (row << 16) | col 编码的差异单元格集合（右）
+
+        private int _diffRowCount = 0;
         private bool _diffComputed = false;
         private bool _syncingScroll = false;
 
@@ -59,9 +68,6 @@ namespace wxd.files.winforms
         private static readonly Color _colorSurface = Color.White;
         private static readonly Color _colorDiffCellBg = Color.FromArgb(255, 200, 200);   // 差异单元格：红色背景
         private static readonly Color _colorDiffRowBg = Color.FromArgb(255, 253, 220);    // 差异行：浅黄色背景
-        // ★ 调试开关：定位后改为 false
-        private static bool _debugDiffCell = true;
-        private static int _debugCount = 0;
         private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
         private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
         private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
@@ -86,6 +92,17 @@ namespace wxd.files.winforms
             {
                 _frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
                 _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+            }
+
+            // 读取列的显隐状态
+            {
+                string fileDir = dir;
+                string relPath;
+                if (!string.IsNullOrEmpty(fileDir) && filePath.StartsWith(fileDir, StringComparison.OrdinalIgnoreCase))
+                    relPath = filePath.Substring(fileDir.Length).TrimStart(Path.DirectorySeparatorChar);
+                else
+                    relPath = Path.GetFileName(filePath);
+                _columnVisibility = CsvSettings.GetColumnVisibility(fileDir, relPath);
             }
 
             _tempDir = Path.Combine(Path.GetTempPath(),
@@ -661,9 +678,13 @@ namespace wxd.files.winforms
                 else if (_rightView != null)
                     _rightView.SetDataTable(new DataTable(), "无数据");
 
+                // ★ 保存原始 FileTableData（用于筛选后恢复全部显示）
+                _leftFullFileData = _leftView?.GetFileData();
+                _rightFullFileData = _rightView?.GetFileData();
+
                 _splitCompare.SplitterDistance = _splitCompare.Width / 2;
 
-                // 阶段3：后台计算差异
+                // 阶段3：后台计算差异（差异信息直接写入 TableRow）
                 _loadingForm?.SetDetail("正在计算差异...");
                 await ComputeDiffAsync(leftData, rightData);
 
@@ -676,19 +697,27 @@ namespace wxd.files.winforms
                 // ★ 如果勾选了"仅显示差异行"，应用筛选
                 if (_chkDiffOnly.Checked)
                 {
-                    var leftTable = _leftView?.GetDataTable();
-                    var rightTable = _rightView?.GetDataTable();
-                    SetRowFilter(leftDgv, leftTable, _diffRows);
-                    SetRowFilter(rightDgv, rightTable, _diffRows);
-                    // 筛选后重新应用高亮（因为 DataSource 变了）
-                    ApplyDiffHighlight(leftDgv, true);
-                    ApplyDiffHighlight(rightDgv, false);
+                    if (_leftFullFileData != null && _leftView != null)
+                    {
+                        var leftFiltered = BuildFilteredTableFromFileData(_leftFullFileData);
+                        if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
+                        _leftView.SetDataTable(leftFiltered, _lblLeftHeader.Text);
+                    }
+                    if (_rightFullFileData != null && _rightView != null)
+                    {
+                        var rightFiltered = BuildFilteredTableFromFileData(_rightFullFileData);
+                        if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
+                        _rightView.SetDataTable(rightFiltered, _lblRightHeader.Text);
+                    }
+                    // 筛选后重新绑定差异高亮事件
+                    ApplyDiffHighlight(_leftView?.GetDataGridView(), true);
+                    ApplyDiffHighlight(_rightView?.GetDataGridView(), false);
                 }
 
                 SetupSyncScroll();
 
                 _lblInfo.Text = $"对比: {leftLabel} ← → {rightLabel}  " +
-                               $"(差异行: {_diffRows.Count})";
+                               $"(差异行: {_diffRowCount})";
             }
             catch (Exception ex)
             {
@@ -718,6 +747,8 @@ namespace wxd.files.winforms
                     frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
                     lightweight: false)
                 { Dock = DockStyle.Fill };
+                if (_columnVisibility != null)
+                    _leftView.SetColumnVisibility(_columnVisibility);
                 leftPanel.Controls.Add(_leftView, 0, 1);
             }
 
@@ -727,6 +758,8 @@ namespace wxd.files.winforms
                     frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
                     lightweight: false)
                 { Dock = DockStyle.Fill };
+                if (_columnVisibility != null)
+                    _rightView.SetColumnVisibility(_columnVisibility);
                 rightPanel.Controls.Add(_rightView, 0, 1);
             }
         }
@@ -994,26 +1027,28 @@ namespace wxd.files.winforms
         // ==================== 差异计算（异步） ====================
         private async Task ComputeDiffAsync(DataTable? leftData, DataTable? rightData)
         {
-            _diffCellsLeft.Clear();
-            _diffCellsRight.Clear();
-            _diffRows.Clear();
+            _diffRowCount = 0;
             _diffComputed = false;
 
-            if (leftData == null || rightData == null) return;
+            // ★ 清空旧差异数据
+            _leftDiffRows.Clear();
+            _rightDiffRows.Clear();
+            _leftDiffCells.Clear();
+            _rightDiffCells.Clear();
 
-            // 在后台线程执行差异计算，避免阻塞 UI
-            var diffCellsLeft = new HashSet<(int row, int col)>();
-            var diffCellsRight = new HashSet<(int row, int col)>();
-            var diffRows = new List<int>();
+            if (leftData == null || rightData == null) return;
 
             await Task.Run(() =>
             {
                 int maxRows = Math.Max(leftData.Rows.Count, rightData.Rows.Count);
                 int maxCols = Math.Max(leftData.Columns.Count, rightData.Columns.Count);
+                int diffCount = 0;
 
                 for (int row = 0; row < maxRows; row++)
                 {
                     bool rowHasDiff = false;
+                    HashSet<int>? leftDiffCols = null;
+                    HashSet<int>? rightDiffCols = null;
 
                     for (int col = 0; col < maxCols; col++)
                     {
@@ -1025,27 +1060,54 @@ namespace wxd.files.winforms
                         if (leftVal != rightVal)
                         {
                             rowHasDiff = true;
-
                             if (leftVal != null && rightVal == null)
-                                diffCellsLeft.Add((row, col));
+                                { leftDiffCols ??= new(); leftDiffCols.Add(col); }
                             else if (leftVal == null && rightVal != null)
-                                diffCellsRight.Add((row, col));
+                                { rightDiffCols ??= new(); rightDiffCols.Add(col); }
                             else
                             {
-                                diffCellsLeft.Add((row, col));
-                                diffCellsRight.Add((row, col));
+                                leftDiffCols ??= new(); leftDiffCols.Add(col);
+                                rightDiffCols ??= new(); rightDiffCols.Add(col);
                             }
                         }
                     }
 
                     if (rowHasDiff)
-                        diffRows.Add(row);
+                    {
+                        diffCount++;
+                        // ★ 记录原始行号到集合（原始行号 = DataTable 行索引，包含固定行）
+                        if (row < leftData.Rows.Count)
+                        {
+                            _leftDiffRows.Add(row);
+                            foreach (var c in leftDiffCols ?? Enumerable.Empty<int>())
+                                _leftDiffCells.Add((row << 16) | c);
+                        }
+                        if (row < rightData.Rows.Count)
+                        {
+                            _rightDiffRows.Add(row);
+                            foreach (var c in rightDiffCols ?? Enumerable.Empty<int>())
+                                _rightDiffCells.Add((row << 16) | c);
+                        }
+
+                        // ★ 同步标记 TableRow（用于 BuildFilteredTableFromFileData 筛选）
+                        var leftFileData = _leftView?.GetFileData();
+                        var rightFileData = _rightView?.GetFileData();
+                        if (row < leftFileData?.Rows.Count)
+                        {
+                            leftFileData.Rows[row].IsDiffRow = true;
+                            leftFileData.Rows[row].DiffColumns = leftDiffCols;
+                        }
+                        if (row < rightFileData?.Rows.Count)
+                        {
+                            rightFileData.Rows[row].IsDiffRow = true;
+                            rightFileData.Rows[row].DiffColumns = rightDiffCols;
+                        }
+                    }
                 }
+
+                _diffRowCount = diffCount;
             });
 
-            _diffCellsLeft = diffCellsLeft;
-            _diffCellsRight = diffCellsRight;
-            _diffRows = diffRows;
             _diffComputed = true;
         }
 
@@ -1053,16 +1115,9 @@ namespace wxd.files.winforms
         {
             if (dgv == null) return;
 
-            // 存储差异数据到 Tag（预构建 HashSet 加速 CellFormatting 查找）
-            var diffSet = isLeft ? _diffCellsLeft : _diffCellsRight;
-            dgv.Tag = new DiffTagData
-            {
-                DiffRowSet = new HashSet<int>(_diffRows),
-                DiffCellSet = new HashSet<(int, int)>(diffSet)
-            };
+            // ★ 差异数据已在 TableRow 上，不需要再构建 DiffTagData
+            // 只绑定 OnDiffCellFormatting 事件即可
 
-            // 通过 TableBrowserControl 的 OnExternalCellFormatting 事件绑定，
-            // 这样 SetDataTable 清理时可以一并移除，避免事件累积
             var view = isLeft ? _leftView : _rightView;
             if (view != null)
             {
@@ -1073,147 +1128,80 @@ namespace wxd.files.winforms
 
         private void OnDiffCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
-            if (sender is not DataGridView dgv)
-                return;
-
-            // Tag may be cleared when DataSource is changed; fallback to internal diff sets
-            DiffTagData? tagData = null;
-            if (dgv.Tag is DiffTagData dt) tagData = dt;
-            else
-            {
-                // determine side
-                if (_leftView != null && ReferenceEquals(dgv, _leftView.GetDataGridView()))
-                {
-                    tagData = new DiffTagData
-                    {
-                        DiffRowSet = new HashSet<int>(_diffRows),
-                        DiffCellSet = new HashSet<(int, int)>(_diffCellsLeft)
-                    };
-                    dgv.Tag = tagData; // cache for future
-                }
-                else if (_rightView != null && ReferenceEquals(dgv, _rightView.GetDataGridView()))
-                {
-                    tagData = new DiffTagData
-                    {
-                        DiffRowSet = new HashSet<int>(_diffRows),
-                        DiffCellSet = new HashSet<(int, int)>(_diffCellsRight)
-                    };
-                    dgv.Tag = tagData;
-                }
-            }
-            if (tagData == null) return;
+            if (sender is not DataGridView dgv) return;
             if (e.RowIndex < 0) return;
 
-            // Map display column index to original data column index. The __RowNum__ column
-            // may exist (hidden) and its position in dgv.Columns can change, so find it by name.
+            // ★ 判断当前 dgv 是左还是右
+            bool isLeft = (dgv == _leftView?.GetDataGridView());
+            var diffRows = isLeft ? _leftDiffRows : _rightDiffRows;
+            var diffCells = isLeft ? _leftDiffCells : _rightDiffCells;
+
+            if (diffRows.Count == 0) return;  // 无差异数据
+
+            // ★ 内容表格行号 → 原始 DataTable 行号
+            // 原始行号 = 内容表格行号 + _frozenRows（固定行在内容表格中不显示）
+            int originalRow = e.RowIndex + _frozenRows;
+            if (!diffRows.Contains(originalRow)) return;  // 非差异行，跳过
+
+            Color backColor, selBackColor;
             int displayCol = e.ColumnIndex;
-            int rowNumColIndex = -1;
-            for (int i = 0; i < dgv.Columns.Count; i++)
+
+            // RowHeader 处理
+            if (displayCol < 0)
             {
-                if (dgv.Columns[i].Name == "__RowNum__") { rowNumColIndex = i; break; }
-            }
-
-            int originalRow;
-            int dataCol;
-            bool isLeftSide = false;
-
-            if (rowNumColIndex >= 0)
-            {
-                // If the event is for the hidden __RowNum__ column, skip coloring it.
-                if (displayCol == rowNumColIndex) return;
-                // Compute original row index from the __RowNum__ cell (stored 1-based)
-                var obj = dgv.Rows[e.RowIndex].Cells[rowNumColIndex].Value;
-                originalRow = (obj is int v ? v : 0) - 1;
-
-                // Adjust column index: columns to the right of __RowNum__ move left by 1
-                dataCol = displayCol > rowNumColIndex ? displayCol - 1 : displayCol;
-                isLeftSide = ReferenceEquals(dgv, _leftView?.GetDataGridView());
+                backColor = _colorDiffRowBg;
+                selBackColor = Color.FromArgb(240, 230, 180);
             }
             else
             {
-                originalRow = e.RowIndex;
-                dataCol = displayCol;
-                isLeftSide = ReferenceEquals(dgv, _leftView?.GetDataGridView());
+                // 列索引映射（通过列名，兼容列重排/列显隐）
+                int originalColIndex = displayCol;
+                try
+                {
+                    if (dgv.DataSource is DataTable srcTable && displayCol >= 0 && displayCol < dgv.Columns.Count)
+                    {
+                        var colName = dgv.Columns[displayCol].Name;
+                        if (!string.IsNullOrEmpty(colName) && srcTable.Columns.Contains(colName))
+                            originalColIndex = srcTable.Columns.IndexOf(colName);
+                    }
+                }
+                catch { }
+
+                // ★ 用编码后的 (row << 16) | col 查找差异单元格
+                int cellKey = (originalRow << 16) | originalColIndex;
+                bool cellHasDiff = diffCells.Contains(cellKey);
+
+                if (cellHasDiff)
+                {
+                    backColor = _colorDiffCellBg;
+                    selBackColor = Color.FromArgb(255, 170, 170);
+                }
+                else
+                {
+                    backColor = _colorDiffRowBg;
+                    selBackColor = Color.FromArgb(240, 230, 180);
+                }
             }
 
-            // ★ RowHeader 处理：必须在 dataCol < 0 之前，否则 displayCol=-1 时
-            // dataCol 也会是 -1，被 dataCol < 0 拦截，永远到不了这里
-            if (displayCol < 0)
-            {
-                if (!tagData.DiffRowSet.Contains(originalRow)) return;
-                e.CellStyle.BackColor = _colorDiffRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 230, 180);
-                return;
-            }
+            // ★ 设置事件参数样式
+            e.CellStyle.BackColor = backColor;
+            e.CellStyle.SelectionBackColor = selBackColor;
 
-            if (dataCol < 0) return;
-
-            // If this row itself has no differences, skip
-            if (!tagData.DiffRowSet.Contains(originalRow)) return;
-
-            // If the grid is a filtered view with renamed/reordered columns, map the displayed
-            // column to the original DataTable column index by column name.
-            int originalColIndex = dataCol;
+            // ★ 直接写入 DataGridView 实际样式对象（确保不被 AlternatingRowsDefaultCellStyle 等覆盖）
             try
             {
-                var view = isLeftSide ? _leftView : _rightView;
-                var srcTable = view?.GetDataTable();
-                if (srcTable != null && displayCol >= 0 && displayCol < dgv.Columns.Count)
+                var dgvRow = dgv.Rows[e.RowIndex];
+                dgvRow.DefaultCellStyle.BackColor = backColor;
+                dgvRow.DefaultCellStyle.SelectionBackColor = selBackColor;
+                if (displayCol >= 0 && displayCol < dgv.Columns.Count)
                 {
-                    // Use displayCol to access dgv.Columns directly, because displayCol
-                    // is the actual column index in the DataGridView. When __RowNum__
-                    // exists, dataCol is adjusted but dgv.Columns indexing is not.
-                    var col = dgv.Columns[displayCol];
-                    var colName = col.Name;
-                    if (!string.IsNullOrEmpty(colName) && srcTable.Columns.Contains(colName))
-                    {
-                        originalColIndex = srcTable.Columns.IndexOf(colName);
-                    }
+                    dgvRow.Cells[displayCol].Style.BackColor = backColor;
+                    dgvRow.Cells[displayCol].Style.SelectionBackColor = selBackColor;
                 }
             }
             catch { }
 
-            // ★★★ 调试日志 ★★★
-            if (_debugDiffCell)
-            {
-                bool isFirstDataCol = (rowNumColIndex >= 0 && displayCol == rowNumColIndex + 1)
-                                   || (rowNumColIndex < 0 && displayCol == 0);
-                if (isFirstDataCol || _debugCount < 50)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[DIFF#{_debugCount}] RowIdx={e.RowIndex} DisplayCol={displayCol} " +
-                        $"RowNumColIdx={rowNumColIndex} OrigRow={originalRow} " +
-                        $"DataCol={dataCol} OrigColIdx={originalColIndex} " +
-                        $"IsLeft={isLeftSide} IsDiffRow=true " +
-                        $"InCellSet={tagData.DiffCellSet.Contains((originalRow, originalColIndex))} " +
-                        $"BackColor={(tagData.DiffCellSet.Contains((originalRow, originalColIndex)) ? "RED" : "YELLOW")} " +
-                        $"ColName={(dataCol >= 0 && dataCol < dgv.Columns.Count ? dgv.Columns[dataCol].Name : "OOB")} " +
-                        $"DiffRowSet.Count={tagData.DiffRowSet.Count} " +
-                        $"DiffCellSet.Count={tagData.DiffCellSet.Count}");
-                    _debugCount++;
-                }
-            }
-
-            bool cellHasDiff = tagData.DiffCellSet.Contains((originalRow, originalColIndex));
-            if (cellHasDiff)
-            {
-                e.CellStyle.BackColor = _colorDiffCellBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 170, 170);
-            }
-            else
-            {
-                e.CellStyle.BackColor = _colorDiffRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 230, 180);
-            }
             e.FormattingApplied = true;
-        }
-
-        private class DiffTagData
-        {
-            /// <summary>差异行集合（HashSet 提供 O(1) 查找）</summary>
-            public HashSet<int> DiffRowSet { get; set; } = new();
-            /// <summary>当前侧的差异单元格集合（HashSet 提供 O(1) 查找）</summary>
-            public HashSet<(int row, int col)> DiffCellSet { get; set; } = new();
         }
 
         // ==================== 差异视图刷新 ====================
@@ -1224,63 +1212,80 @@ namespace wxd.files.winforms
 
             var leftDgv = _leftView.GetDataGridView();
             var rightDgv = _rightView.GetDataGridView();
-            var leftData = _leftView.GetDataTable();
-            var rightData = _rightView.GetDataTable();
 
             if (_chkDiffOnly.Checked)
             {
-                SetRowFilter(leftDgv, leftData, _diffRows);
-                SetRowFilter(rightDgv, rightData, _diffRows);
+                // ★ 从保存的原始 FileTableData 中筛选差异行，构建新 DataTable
+                if (_leftFullFileData != null)
+                {
+                    var leftFiltered = BuildFilteredTableFromFileData(_leftFullFileData);
+                    if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
+                    _leftView.SetDataTable(leftFiltered, _lblLeftHeader.Text);
+                }
+                if (_rightFullFileData != null)
+                {
+                    var rightFiltered = BuildFilteredTableFromFileData(_rightFullFileData);
+                    if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
+                    _rightView.SetDataTable(rightFiltered, _lblRightHeader.Text);
+                }
             }
             else
             {
-                // 恢复全部显示
-                if (leftData != null)
-                    leftDgv!.DataSource = leftData;
-                if (rightData != null)
-                    rightDgv!.DataSource = rightData;
+                // ★ 恢复全部显示：从原始 FileTableData 重建完整 DataTable
+                if (_leftFullFileData != null && _leftView != null)
+                {
+                    var leftFull = BuildFullTableFromFileData(_leftFullFileData);
+                    if (_columnVisibility != null) _leftView.SetColumnVisibility(_columnVisibility);
+                    _leftView.SetDataTable(leftFull, _lblLeftHeader.Text);
+                }
+                if (_rightFullFileData != null && _rightView != null)
+                {
+                    var rightFull = BuildFullTableFromFileData(_rightFullFileData);
+                    if (_columnVisibility != null) _rightView.SetColumnVisibility(_columnVisibility);
+                    _rightView.SetDataTable(rightFull, _lblRightHeader.Text);
+                }
             }
 
-            // 重新应用高亮
+            // 重新绑定差异高亮事件
             ApplyDiffHighlight(leftDgv, true);
             ApplyDiffHighlight(rightDgv, false);
         }
 
-        private void SetRowFilter(DataGridView? dgv, DataTable? sourceTable, List<int> visibleRows)
+        /// <summary>从 FileTableData 构建只含差异行的 DataTable</summary>
+        private static DataTable BuildFilteredTableFromFileData(FileTableData fd)
         {
-            if (dgv == null || sourceTable == null) return;
+            var dt = new DataTable();
+            foreach (var colName in fd.ColumnNames)
+                dt.Columns.Add(colName, typeof(string));
 
-            var filteredTable = sourceTable.Clone();
-
-            // ★ 添加 __RowNum__ 列来追踪原始行号，确保筛选后差异高亮仍能正确匹配
-            if (!filteredTable.Columns.Contains("__RowNum__"))
+            foreach (var row in fd.Rows)
             {
-                filteredTable.Columns.Add("__RowNum__", typeof(int));
-                filteredTable.Columns["__RowNum__"]!.SetOrdinal(0);
-            }
-
-            foreach (var rowIdx in visibleRows)
-            {
-                if (rowIdx < sourceTable.Rows.Count)
+                if (row.IsDiffRow)
                 {
-                    filteredTable.ImportRow(sourceTable.Rows[rowIdx]);
-                    // ★ 在导入的行上写入原始行号（1-based），OnDiffCellFormatting 通过它还原行号
-                    filteredTable.Rows[filteredTable.Rows.Count - 1]["__RowNum__"] = rowIdx + 1;
+                    var dr = dt.NewRow();
+                    for (int c = 0; c < Math.Min(row.Cells.Count, dt.Columns.Count); c++)
+                        dr[c] = row.Cells[c];
+                    dt.Rows.Add(dr);
                 }
             }
+            return dt;
+        }
 
-            dgv.DataSource = filteredTable;
+        /// <summary>从 FileTableData 构建完整 DataTable</summary>
+        private static DataTable BuildFullTableFromFileData(FileTableData fd)
+        {
+            var dt = new DataTable();
+            foreach (var colName in fd.ColumnNames)
+                dt.Columns.Add(colName, typeof(string));
 
-            // ★ 隐藏 __RowNum__ 列，用户不可见
-            if (dgv.Columns.Count > 0 && dgv.Columns[0].Name == "__RowNum__")
-                dgv.Columns[0].Visible = false;
-
-            for (int i = 0; i < dgv.Columns.Count; i++)
+            foreach (var row in fd.Rows)
             {
-                dgv.Columns[i].Width = 120;
-                dgv.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                dgv.Columns[i].HeaderText = GetExcelColumnName(i);
+                var dr = dt.NewRow();
+                for (int c = 0; c < Math.Min(row.Cells.Count, dt.Columns.Count); c++)
+                    dr[c] = row.Cells[c];
+                dt.Rows.Add(dr);
             }
+            return dt;
         }
 
         // ==================== 清理 ====================

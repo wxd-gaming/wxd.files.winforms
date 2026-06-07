@@ -63,3 +63,47 @@
 
 tips显示现在和鼠标所在的表格相聚很远，tips如果内容自动换行，tips高度每增加显示不够友好，
 第一次打开版本差异历史记录界面，默认显示第一个差异，左边展示的是文件夹内未提交的内容，右边也是文件夹未提交的内容，当我切换成其它提交再切换回来最新的提交，显示正常
+
+
+
+git仓库的svn管理拉取日志
+<?xml version="1.0" encoding="UTF-8"?>
+<log>
+	<logentry   revision="5">
+		<author>wxd-gaming &lt;492794628@qq.com&gt;</author>
+		<date>2026-05-08T03:56:51.000Z</date>
+		<msg>Merge branch 'master' of https://gitee.com/wxd-gaming/excelmerge
+
+		# Conflicts:
+		#       aa.xlsx</msg>
+		<revprops>
+		<property
+		   name="git-commit">71e914487e06f9a38da70c686cac6f82dd429ff2</property>
+		</revprops>
+	</logentry>
+	<logentry   revision="4">
+		<author>wxd-gaming &lt;492794628@qq.com&gt;</author>
+		<date>2026-05-08T03:55:52.000Z</date>
+		<msg>b1</msg>
+		<revprops>
+		<property
+		   name="git-commit">19bee283207c22823367394b9b35f0f7848fd0ba</property>
+		</revprops>
+	</logentry>
+</log>
+
+
+完全的svn仓库的日志
+<?xml version="1.0" encoding="UTF-8"?>
+<log>
+	<logentry	   revision="177086">
+		<author>712Win_guozhiqiang</author>
+		<date>2026-06-03T05:23:29.444534Z</date>
+		<msg>\"GM璧勬簮鍚堝苟\"</msg>
+	</logentry>
+	<logentry	   revision="176613">
+		<author>712Win_guozhiqiang</author>
+		<date>2026-05-26T06:43:59.779145Z</date>
+		<msg>\"GM璧勬簮鍚堝苟\"</msg>
+	</logentry>
+</log>
