@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ExcelDataReader;
+using MiniExcelLibs;
 
 namespace wxd.files.winforms
 {
@@ -1546,10 +1547,43 @@ namespace wxd.files.winforms
             }
             else
             {
-                // Excel：只读模式
-                var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                    onSave: null, readOnly: true, readOnlyMessage: "不支持Excel文件修改");
-                dialog.Show(this);
+                var ext = Path.GetExtension(_filePath).ToLowerInvariant();
+                if (ext == ".xlsx")
+                {
+                    var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                        onSave: newValue =>
+                        {
+                            if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
+                                originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                            {
+                                _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+                                SaveExcelFile();
+
+                                int displayColIndex = _visibleColumnIndices.Count > 0
+                                    ? _visibleColumnIndices.IndexOf(originalColumnIndex)
+                                    : originalColumnIndex;
+                                if (displayColIndex >= 0)
+                                {
+                                    for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                                    {
+                                        if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
+                                        {
+                                            if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
+                                                _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    dialog.Show(this);
+                }
+                else
+                {
+                    var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                        onSave: null, readOnly: true, readOnlyMessage: "不支持此文件类型的修改");
+                    dialog.Show(this);
+                }
             }
         }
 
@@ -1629,6 +1663,45 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 MessageBox.Show(this, $"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void SaveExcelFile()
+        {
+            var backupPath = _filePath + "." + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ".bak";
+            try
+            {
+                // 1. 备份原始文件并删除原文件（避免 MiniExcel 报"已存在"）
+                if (File.Exists(_filePath))
+                {
+                    File.Copy(_filePath, backupPath, overwrite: true);
+                    File.Delete(_filePath);
+                }
+
+                // 2. 写入新内容
+                MiniExcel.SaveAs(_filePath, _dataTable);
+
+                // 3. 写入成功，删除备份
+                if (File.Exists(backupPath))
+                    File.Delete(backupPath);
+            }
+            catch (Exception ex)
+            {
+                // 4. 写入失败，尝试还原原始文件
+                if (File.Exists(backupPath))
+                {
+                    try
+                    {
+                        if (File.Exists(_filePath))
+                            File.Delete(_filePath);
+                        File.Move(backupPath, _filePath);
+                    }
+                    catch
+                    {
+                        // 还原失败也保留备份文件，用户可手动恢复
+                    }
+                }
+                MessageBox.Show(this, $"保存Excel文件失败:{Environment.NewLine}{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
