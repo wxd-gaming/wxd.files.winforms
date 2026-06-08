@@ -295,3 +295,43 @@ public void ApplyTheme(bool isDark)
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | 1.0.0.4 | 当前 | 列关联、文件备注、目录级配置、Loading动画、自然排序、视图模式 |
+
+---
+
+## 十一、按功能面板的开发指南
+
+> ⚠️ **在修改特定功能面板之前，必须先阅读对应的 skill 文档！**
+
+### 11.1 面板 skill 文档索引
+
+| 面板 | 文档 | 复杂度 | 核心关注点 |
+|------|------|--------|-----------|
+| CSV/Excel 阅读器 | [skills/CsvReader.md](skills/CsvReader.md) | ⭐⭐⭐⭐⭐ | 列显隐、列关联、双DataGridView、值提取 |
+| 版本历史对比 | [skills/VersionCompare.md](skills/VersionCompare.md) | ⭐⭐⭐⭐ | 差异计算、行列索引映射、双表同步滚动、列显隐重建 |
+| 文件浏览器面板 | [skills/FileBrowserPanel.md](skills/FileBrowserPanel.md) | ⭐⭐⭐ | 导航、过滤、右键菜单、防抖、自然排序 |
+| 大文件阅读器 | [skills/LargeFileViewer.md](skills/LargeFileViewer.md) | ⭐⭐⭐ | 流式读取、虚拟滚动、行索引、搜索 |
+| 自定义命令系统 | [skills/CustomCommand.md](skills/CustomCommand.md) | ⭐⭐ | 数据模型、按钮生成、JSON序列化 |
+| 主题系统 | [skills/ThemeSystem.md](skills/ThemeSystem.md) | ⭐⭐ | 配色方案、ApplyTheme()、深色/浅色 |
+| 配置持久化系统 | [skills/ConfigPersistence.md](skills/ConfigPersistence.md) | ⭐⭐ | 双层存储、JSON序列化、LRU淘汰 |
+
+### 11.2 开发前必读流程
+
+1. **确定要修改的功能属于哪个面板**
+2. **阅读对应面板的 `skills/*.md` 文档**（特别是"修改禁区"章节）
+3. **阅读全局 `skill.md` 中的编码规范**（第二节~第八节）
+4. **确认修改不会违反任何"禁止事项"**（第八节）
+5. **修改完成后检查常见 Bug 模式**（各面板 skill 文档中的对应章节）
+
+### 11.3 CSV/Excel 阅读器特别提醒
+
+CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地方：
+
+| 子系统 | 关键数据结构 | 最容易出错 |
+|--------|-------------|-----------|
+| 列显隐 | `_columnCheckStates` → `_visibleColumnIndices` | 状态与投影的索引映射、持久化格式兼容 |
+| 列关联 | `ColumnLinkConfig` → `ColumnLinkChecker._linkLookups` | 缓存 Key 格式、值提取多值拆分顺序 |
+| 冻结行 | `_dataGridHeader` + `_dataGrid` 双 DataGridView | 两个表格的投影必须同步 |
+| 行过滤 | 内容过滤 + 高级过滤 | `||`/`&&` 运算符解析、过滤后 Tag 映射 |
+| 版本对比 | `_leftDiffRows` + `_leftRowToOriginalIndex` + `_leftColToOriginalIndex` | 三层索引映射（原始→投影→DGV）、列显隐重建、差异编码 `(row<<16)\|col` |
+
+**修改任何相关代码前，务必先阅读 [skills/CsvReader.md](skills/CsvReader.md)！**
