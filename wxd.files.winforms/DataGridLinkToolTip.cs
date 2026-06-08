@@ -202,9 +202,8 @@ namespace wxd.files.winforms
             _hoverTimer?.Dispose();
             _dropDown.Dispose();
             _panel.Dispose();
-            _titleFont.Dispose();
-            _textFont.Dispose();
-            _hintFont.Dispose();
+            // 注意：_titleFont/_textFont/_hintFont 是 static 字段，生命周期应持续到 AppDomain 卸载，
+            // 不能在这里 Dispose，否则后续新创建的实例会使用已释放的字体导致 tooltip 文字无法绘制。
         }
 
         /// <summary>无边框渲染器，禁止 ToolStripDropDown 绘制系统边框</summary>
