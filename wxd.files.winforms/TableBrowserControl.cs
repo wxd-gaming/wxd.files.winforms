@@ -972,7 +972,14 @@ namespace wxd.files.winforms
             else if (!string.IsNullOrEmpty(lookup.TargetColumnName))
                 displayTableName = $"{Path.GetFileName(lookup.TargetFile)} [{lookup.TargetColumnName}]";
 
-            string title = $"📋 {displayTableName}";
+            // 获取列名
+            string colHeaderName = "";
+            if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+                colHeaderName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(colHeaderName))
+                colHeaderName = GetExcelColumnName(originalColIndex);
+
+            string title = $"📋 {displayTableName}\n来自: {colHeaderName} — 第{realRowIndex + 1}行";
 
             // 构建映射行
             var lines = new List<DataGridLinkToolTip.TipLine>();
