@@ -1,6 +1,6 @@
-1.0.1.9
-b8f28eb58f650cecf84532e378aaa443
-d8ced20defea76a2ff9a454faba973b23cd4b87b
+1.0.2.0
+2cdb6c4de83c25125d14eca0363e8656
+fea044ba0149812fc6d9f4fdf44c6f0e41426549
 -【优化】svn时间格式兼容性
 -【优化】svn历史记录，传递列的显隐设置
 -【优化】修复loading问题

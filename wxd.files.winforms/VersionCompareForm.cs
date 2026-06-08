@@ -117,7 +117,7 @@ namespace wxd.files.winforms
             Directory.CreateDirectory(_tempDir);
 
             InitializeComponent();
-            _ = LoadHistoryAsync();
+            // LoadHistoryAsync 移到 Shown 事件中延迟执行，确保窗体先显示
 
             FormClosed += (s, e) => CleanupTempFiles();
         }
@@ -258,10 +258,14 @@ namespace wxd.files.winforms
             Controls.Add(_pnlTop);
 
             // 调整左右对比各占 50%，历史列表固定高度
-            Shown += (s, e) =>
+            Shown += async (s, e) =>
             {
                 _splitMain.SplitterDistance = 160;
                 _splitCompare.SplitterDistance = _splitCompare.Width / 2;
+
+                // ★ 延迟 500ms，确保窗体完成渲染后再检测 SVN/Git
+                await Task.Delay(500);
+                await LoadHistoryAsync();
             };
             _splitCompare.Resize += (s, e) =>
             {
@@ -522,6 +526,28 @@ namespace wxd.files.winforms
             }
         }
 
+        // ==================== 错误提示 ====================
+        /// <summary>显示错误信息：红色背景标签 + MessageBox 弹窗</summary>
+        private void ShowError(string message)
+        {
+            _lblInfo.BackColor = Color.FromArgb(200, 50, 50);
+            _lblInfo.ForeColor = Color.White;
+            _lblInfo.Text = message;
+
+            // ★ 延迟弹出 MessageBox，确保差异化窗口先显示
+            BeginInvoke(new Action(() =>
+            {
+                MessageBox.Show(this, message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }));
+        }
+
+        /// <summary>恢复 _lblInfo 为正常样式</summary>
+        private void ResetInfoStyle()
+        {
+            _lblInfo.BackColor = Color.Transparent;
+            _lblInfo.ForeColor = _colorLightTextSecondary;
+        }
+
         // ==================== 加载历史 ====================
         private async Task LoadHistoryAsync()
         {
@@ -529,13 +555,21 @@ namespace wxd.files.winforms
             {
                 _lblInfo.Text = "正在加载历史记录...";
 
-                _history = _vcsType == VcsType.Svn
+                var result = _vcsType == VcsType.Svn
                     ? await VersionControlHelper.GetSvnHistoryAsync(_filePath)
                     : await VersionControlHelper.GetGitHistoryAsync(_filePath);
 
+                if (!result.Success)
+                {
+                    ShowError(result.ErrorMessage!);
+                    return;
+                }
+
+                _history = result.Entries;
+
                 if (_history.Count == 0)
                 {
-                    _lblInfo.Text = "未找到历史记录";
+                    ShowError("该文件没有提交历史记录");
                     return;
                 }
 
@@ -558,6 +592,7 @@ namespace wxd.files.winforms
                 }
 
                 _dgvHistory.DataSource = table;
+                ResetInfoStyle();
                 _lblInfo.Text = $"共 {_history.Count} 条历史记录";
 
                 if (_dgvHistory.Rows.Count > 0)
@@ -574,7 +609,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                _lblInfo.Text = $"加载失败: {ex.Message}";
+                ShowError($"加载失败: {ex.Message}");
             }
         }
 
@@ -651,6 +686,7 @@ namespace wxd.files.winforms
                 _leftRevision = leftRevision;
                 _rightRevision = rightRevision;
 
+                ResetInfoStyle();
                 _lblInfo.Text = $"正在加载对比: {leftLabel} ← → {rightLabel}";
                 _lblLeftHeader.Text = $"旧版本 - {leftLabel}";
                 _lblRightHeader.Text = $"新版本 - {rightLabel}";
@@ -784,12 +820,13 @@ namespace wxd.files.winforms
 
                 SetupSyncScroll();
 
+                ResetInfoStyle();
                 _lblInfo.Text = $"对比: {leftLabel} ← → {rightLabel}  " +
                                $"(差异行: {_diffRowCount})";
             }
             catch (Exception ex)
             {
-                _lblInfo.Text = $"加载失败: {ex.Message}";
+                ShowError($"加载失败: {ex.Message}");
             }
             finally
             {
@@ -852,8 +889,14 @@ namespace wxd.files.winforms
             else
             {
                 // 从 SVN/Git 导出指定版本
-                file = await VersionControlHelper.ExportRevisionAsync(
+                var exportResult = await VersionControlHelper.ExportRevisionAsync(
                     _filePath, _vcsType, revision, _tempDir);
+                if (!exportResult.Success)
+                {
+                    ShowError(exportResult.ErrorMessage!);
+                    return null;
+                }
+                file = exportResult.TempFile;
             }
 
             if (file == null || !File.Exists(file))

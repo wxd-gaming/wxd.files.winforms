@@ -57,7 +57,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>查找 svn.exe 的完整路径</summary>
-        private static string FindSvnExe()
+        private static string? FindSvnExe()
         {
             // 常见安装路径
             var paths = new[]
@@ -80,18 +80,112 @@ namespace wxd.files.winforms
             return "svn";
         }
 
+        /// <summary>检查 SVN 命令行是否可用（运行 svn --version 验证）</summary>
+        private static string? CheckSvnAvailable()
+        {
+            var svnExe = FindSvnExe();
+            if (svnExe == null)
+                return "未找到 SVN 命令行工具（svn.exe）。请安装 TortoiseSVN（需勾选命令行工具）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = svnExe,
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var process = Process.Start(psi);
+                if (process == null)
+                    return $"无法启动 SVN 命令行工具（{svnExe}）。请检查安装是否正确。";
+                process.WaitForExit(5000);
+                if (process.ExitCode != 0)
+                {
+                    var err = process.StandardError.ReadToEnd();
+                    return $"SVN 命令行工具异常（{svnExe}）：{err}";
+                }
+                return null; // 可用
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // svn 命令不在 PATH 中（"系统找不到指定的文件"）
+                return "本功能需要安装 SVN 命令行工具。请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return "文件所在目录不存在，文件可能已被移动或删除。";
+            }
+            catch (Exception ex)
+            {
+                return $"SVN 命令行工具异常：{ex.Message}";
+            }
+        }
+
+        /// <summary>检查 Git 命令行是否可用（运行 git --version 验证）</summary>
+        private static string? CheckGitAvailable()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var process = Process.Start(psi);
+                if (process == null)
+                    return "无法启动 Git 命令行工具（git）。请确认 Git 是否已正确安装。";
+                process.WaitForExit(5000);
+                if (process.ExitCode != 0)
+                {
+                    var err = process.StandardError.ReadToEnd();
+                    return $"Git 命令行工具异常：{err}";
+                }
+                return null; // 可用
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // git 命令不在 PATH 中（"系统找不到指定的文件"）
+                return "本功能需要安装 Git 命令行工具。请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return "文件所在目录不存在，文件可能已被移动或删除。";
+            }
+            catch (Exception ex)
+            {
+                return $"Git 命令行工具异常：{ex.Message}";
+            }
+        }
+
         /// <summary>获取 SVN 历史记录</summary>
-        public static async Task<List<VersionHistoryEntry>> GetSvnHistoryAsync(
+        public static async Task<VersionHistoryResult> GetSvnHistoryAsync(
             string filePath, int maxCount = 100)
         {
-            var entries = new List<VersionHistoryEntry>();
+            var result = new VersionHistoryResult();
+
+            // 先检查 SVN 命令行是否可用
+            var svnError = CheckSvnAvailable();
+            if (svnError != null)
+            {
+                result.ErrorMessage = svnError;
+                return result;
+            }
+
+            var svnExe = FindSvnExe()!;
             var root = GetVcsRoot(filePath, VcsType.Svn);
 
             try
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = FindSvnExe(),
+                    FileName = svnExe,
                     Arguments = $"log --xml -l {maxCount} \"{filePath}\"",
                     WorkingDirectory = root,
                     RedirectStandardOutput = true,
@@ -102,7 +196,11 @@ namespace wxd.files.winforms
                 };
 
                 using var process = Process.Start(psi);
-                if (process == null) return entries;
+                if (process == null)
+                {
+                    result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）。";
+                    return result;
+                }
 
                 // 同时读取 stdout 和 stderr，避免死锁
                 var outputTask = process.StandardOutput.ReadToEndAsync();
@@ -114,27 +212,39 @@ namespace wxd.files.winforms
 
                 if (process.ExitCode != 0)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"SVN log error (exit={process.ExitCode}): {stderr}");
-                    return entries;
+                    result.ErrorMessage = $"SVN log 命令执行失败 (exit={process.ExitCode})：{stderr}";
+                    return result;
                 }
 
-                entries = ParseSvnLogXml(output);
+                result.Entries = ParseSvnLogXml(output);
 
-                // 诊断：解析结果为空但 stdout 有内容，说明正则匹配失败
-                if (entries.Count == 0 && !string.IsNullOrWhiteSpace(output))
+                // 诊断：解析结果为空但 stdout 有内容，说明 XML 解析失败
+                if (result.Entries.Count == 0 && !string.IsNullOrWhiteSpace(output))
                 {
+                    result.ErrorMessage = "SVN log 解析失败：返回的 XML 无法解析为历史记录。请检查文件路径是否正确。";
                     System.Diagnostics.Debug.WriteLine(
                         $"SVN log parse warning: got {output.Length} chars but parsed 0 entries. " +
                         $"Output preview: {output.Substring(0, Math.Min(output.Length, 500))}");
+                    return result;
                 }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                result.ErrorMessage = "本功能需要安装 SVN 命令行工具。请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
+                System.Diagnostics.Debug.WriteLine("SVN log error: svn.exe not found");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                result.ErrorMessage = "文件所在目录不存在，文件可能已被移动或删除。";
+                System.Diagnostics.Debug.WriteLine("SVN log error: directory not found");
             }
             catch (Exception ex)
             {
+                result.ErrorMessage = $"SVN 历史记录获取失败：{ex.Message}";
                 System.Diagnostics.Debug.WriteLine($"SVN log error: {ex.Message}");
             }
 
-            return entries;
+            return result;
         }
 
         private static List<VersionHistoryEntry> ParseSvnLogXml(string xml)
@@ -198,10 +308,19 @@ namespace wxd.files.winforms
         }
 
         /// <summary>获取 Git 历史记录（只包含当前文件有变更的）</summary>
-        public static async Task<List<VersionHistoryEntry>> GetGitHistoryAsync(
+        public static async Task<VersionHistoryResult> GetGitHistoryAsync(
             string filePath, int maxCount = 100)
         {
-            var entries = new List<VersionHistoryEntry>();
+            var result = new VersionHistoryResult();
+
+            // 先检查 Git 命令行是否可用
+            var gitError = CheckGitAvailable();
+            if (gitError != null)
+            {
+                result.ErrorMessage = gitError;
+                return result;
+            }
+
             var root = GetVcsRoot(filePath, VcsType.Git);
             var relativePath = GetRelativePath(filePath, VcsType.Git);
 
@@ -221,7 +340,11 @@ namespace wxd.files.winforms
                 };
 
                 using var process = Process.Start(psi);
-                if (process == null) return entries;
+                if (process == null)
+                {
+                    result.ErrorMessage = "无法启动 Git 进程。";
+                    return result;
+                }
 
                 var output = await process.StandardOutput.ReadToEndAsync();
                 var stderr = await process.StandardError.ReadToEndAsync();
@@ -229,9 +352,8 @@ namespace wxd.files.winforms
 
                 if (process.ExitCode != 0)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"Git log error (exit={process.ExitCode}): {stderr}");
-                    return entries;
+                    result.ErrorMessage = $"Git log 命令执行失败 (exit={process.ExitCode})：{stderr}";
+                    return result;
                 }
 
                 var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
@@ -241,7 +363,7 @@ namespace wxd.files.winforms
                     var parts = line.Split('|');
                     if (parts.Length >= 5)
                     {
-                        entries.Add(new VersionHistoryEntry
+                        result.Entries.Add(new VersionHistoryEntry
                         {
                             FullRevision = parts[0].Trim(),
                             Revision = parts[1].Trim(),
@@ -254,19 +376,52 @@ namespace wxd.files.winforms
                     }
                 }
             }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                result.ErrorMessage = "本功能需要安装 Git 命令行工具。请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
+                System.Diagnostics.Debug.WriteLine("Git log error: git.exe not found");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                result.ErrorMessage = "文件所在目录不存在，文件可能已被移动或删除。";
+                System.Diagnostics.Debug.WriteLine("Git log error: directory not found");
+            }
             catch (Exception ex)
             {
+                result.ErrorMessage = $"Git 历史记录获取失败：{ex.Message}";
                 System.Diagnostics.Debug.WriteLine($"Git log error: {ex.Message}");
             }
 
-            return entries;
+            return result;
         }
 
         /// <summary>导出指定版本的文件内容到临时文件</summary>
-        /// <returns>临时文件的完整路径，失败返回 null</returns>
-        public static async Task<string?> ExportRevisionAsync(
+        /// <returns>导出结果（带错误信息）</returns>
+        public static async Task<ExportRevisionResult> ExportRevisionAsync(
             string filePath, VcsType vcs, string revision, string tempDir)
         {
+            var result = new ExportRevisionResult();
+
+            // 检查命令行工具是否可用
+            if (vcs == VcsType.Svn)
+            {
+                var svnError = CheckSvnAvailable();
+                if (svnError != null)
+                {
+                    result.ErrorMessage = svnError;
+                    return result;
+                }
+            }
+            else
+            {
+                var gitError = CheckGitAvailable();
+                if (gitError != null)
+                {
+                    result.ErrorMessage = gitError;
+                    return result;
+                }
+            }
+
             var root = GetVcsRoot(filePath, vcs);
             var relativePath = GetRelativePath(filePath, vcs);
             var fileName = Path.GetFileName(filePath);
@@ -298,7 +453,11 @@ namespace wxd.files.winforms
                 };
 
                 using var process = Process.Start(psi);
-                if (process == null) return null;
+                if (process == null)
+                {
+                    result.ErrorMessage = $"无法启动 {(vcs == VcsType.Svn ? "SVN" : "Git")} 导出进程。";
+                    return result;
+                }
 
                 // 异步读取 stdout 和 stderr
                 var stdoutTask = Task.Run(async () =>
@@ -314,26 +473,50 @@ namespace wxd.files.winforms
                 if (process.ExitCode != 0)
                 {
                     var err = stderrTask.Result;
+                    result.ErrorMessage = $"{(vcs == VcsType.Svn ? "SVN" : "Git")} 导出失败 (exit={process.ExitCode})：{err}";
                     System.Diagnostics.Debug.WriteLine(
                         $"Export error (exit={process.ExitCode}): {err}");
                     try { File.Delete(tempFile); } catch { }
-                    return null;
+                    return result;
                 }
 
                 if (new FileInfo(tempFile).Length > 0)
-                    return tempFile;
+                {
+                    result.TempFile = tempFile;
+                    return result;
+                }
 
                 // 空文件也算失败
+                result.ErrorMessage = $"导出的文件为空：{revision}:{relativePath}";
                 System.Diagnostics.Debug.WriteLine(
                     $"Export error: empty output for {revision}:{relativePath}");
                 try { File.Delete(tempFile); } catch { }
-                return null;
+                return result;
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                var tool = vcs == VcsType.Svn ? "SVN" : "Git";
+                var installTip = vcs == VcsType.Svn
+                    ? "请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。"
+                    : "请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
+                result.ErrorMessage = $"本功能需要安装 {tool} 命令行工具。{installTip}";
+                System.Diagnostics.Debug.WriteLine($"Export error: {tool.ToLower()}.exe not found");
+                try { File.Delete(tempFile); } catch { }
+                return result;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                result.ErrorMessage = "文件所在目录不存在，文件可能已被移动或删除。";
+                System.Diagnostics.Debug.WriteLine("Export error: directory not found");
+                try { File.Delete(tempFile); } catch { }
+                return result;
             }
             catch (Exception ex)
             {
+                result.ErrorMessage = $"{(vcs == VcsType.Svn ? "SVN" : "Git")} 导出失败：{ex.Message}";
                 System.Diagnostics.Debug.WriteLine($"Export error: {ex.Message}");
                 try { File.Delete(tempFile); } catch { }
-                return null;
+                return result;
             }
         }
     }
