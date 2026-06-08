@@ -1506,9 +1506,29 @@ namespace wxd.files.winforms
                         if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                             originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                         {
+                            // 1. 更新内存中的数据
                             _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+
+                            // 2. 回写文件
                             SaveCsvFile();
-                            RefreshGridLayout();
+
+                            // 3. 只在 DataGridView 中更新对应的显示单元格，不重建整个 Grid
+                            int displayColIndex = _visibleColumnIndices.Count > 0
+                                ? _visibleColumnIndices.IndexOf(originalColumnIndex)
+                                : originalColumnIndex;
+
+                            if (displayColIndex >= 0)
+                            {
+                                for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                                {
+                                    if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
+                                    {
+                                        if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
+                                            _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     });
                 dialog.Show(this);
