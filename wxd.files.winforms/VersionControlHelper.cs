@@ -154,14 +154,27 @@ namespace wxd.files.winforms
                     var message = logentry.Element("msg")?.Value?.Trim() ?? "";
 
                     DateTime commitDate;
-                    // SVN 输出 ISO 8601 格式（如 2026-05-08T03:56:51.000Z）
+                    // SVN 输出 ISO 8601 格式，支持多种精度：
+                    //   6位微秒：2026-06-05T08:58:09.534829Z
+                    //   3位毫秒：2026-05-08T03:56:51.000Z
+                    //   无小数秒：2026-03-23T09:36:57Z
                     if (!DateTime.TryParseExact(dateStr,
-                            new[] { "yyyy-MM-ddTHH:mm:ss.fffZ", "yyyy-MM-ddTHH:mm:ssZ" },
+                            new[] {
+                                "yyyy-MM-ddTHH:mm:ss.ffffffZ",
+                                "yyyy-MM-ddTHH:mm:ss.fffZ",
+                                "yyyy-MM-ddTHH:mm:ssZ"
+                            },
                             CultureInfo.InvariantCulture,
                             DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
                             out commitDate))
                     {
-                        commitDate = DateTime.MinValue;
+                        // 兜底：标准 DateTime 解析，覆盖其他 ISO 8601 变体
+                        if (!DateTime.TryParse(dateStr, CultureInfo.InvariantCulture,
+                                DateTimeStyles.AdjustToUniversal,
+                                out commitDate))
+                        {
+                            commitDate = DateTime.MinValue;
+                        }
                     }
 
                     entries.Add(new VersionHistoryEntry
