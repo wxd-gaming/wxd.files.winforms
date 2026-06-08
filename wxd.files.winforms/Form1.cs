@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -9,6 +10,18 @@ namespace wxd.files.winforms
 {
     public partial class Form1 : Form
     {
+        // ==================== SetWindowPos P/Invoke（静默控制 Z-order，避免 TopMost 闪烁） ====================
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
+
+        private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
         private ComboBox? _cboCount;
         private Label? _lblCount;
         private ComboBox? _cboLayout;
@@ -101,6 +114,9 @@ namespace wxd.files.winforms
             var ownerLocation = this.Location;
             var ownerSize = this.Size;
 
+            // ★ 信号量：Loading 窗体 Shown 后通知主线程
+            var readyEvent = new ManualResetEvent(false);
+
             _loadingThread = new Thread(() =>
             {
                 _startupLoadingForm = new StartupLoadingForm(isDark);
@@ -109,6 +125,11 @@ namespace wxd.files.winforms
                     _startupLoadingForm.Location = new Point(
                         ownerLocation.X + (ownerSize.Width - _startupLoadingForm.Width) / 2,
                         ownerLocation.Y + (ownerSize.Height - _startupLoadingForm.Height) / 2);
+                };
+                _startupLoadingForm.Shown += (s, e) =>
+                {
+                    // ★ 窗体完全显示后通知主线程
+                    readyEvent.Set();
                 };
                 _startupLoadingForm.FormClosed += (s, e) =>
                 {
@@ -120,6 +141,9 @@ namespace wxd.files.winforms
             _loadingThread.IsBackground = true;
             _loadingThread.Start();
 
+            // ★ 等待 Loading 窗体完全显示（最多等 3 秒，防止卡死）
+            readyEvent.WaitOne(3000);
+
             // 禁用主窗体，阻止用户交互
             Enabled = false;
         }
@@ -130,7 +154,7 @@ namespace wxd.files.winforms
             // 恢复主窗体交互
             Enabled = true;
 
-            // 先一次性显示所有面板（在遮罩后面）
+            // ★★★ 先显示面板内容，再关闭 Loading ★★★
             SuspendLayout();
             foreach (var panel in _panels)
             {
@@ -140,8 +164,13 @@ namespace wxd.files.winforms
             ResumeLayout(false);
             Refresh();
 
-            // 短暂延迟，让面板绘制完成
-            await Task.Delay(100);
+            // ★ 强制处理 WM_PAINT，确保面板完全渲染
+            Application.DoEvents();
+
+            // ★★★ 关键：静默地将 Form1 置于 TopMost 层（不激活，不闪烁） ★★★
+            // Loading 关闭后 Form1 就在最前面，不会被 VS 等其他窗口挡住
+            SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
             // 关闭 LoadingForm（跨线程）
             _startupLoadingForm?.BeginInvoke(new Action(() =>
@@ -152,6 +181,21 @@ namespace wxd.files.winforms
             _startupLoadingForm?.Dispose();
             _startupLoadingForm = null;
             _loadingThread = null;
+
+            // ★ Loading 关闭后，用 BeginInvoke 延迟取消 TopMost 并温和激活
+            // BeginInvoke 确保在 Loading 线程完全退出后再执行
+            await Task.Delay(50);
+
+            BeginInvoke(new Action(() =>
+            {
+                // 1. 取消 TopMost，回到普通 Z-order（此时 Form1 在 Loading 之前的位置，即最前面）
+                SetWindowPos(Handle, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                // 2. 温和激活（不带 SWP_NOACTIVATE，会激活窗口但不改变 Z-order）
+                SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE);
+            }));
         }
 
         /// <summary>异步初始化所有面板：先创建空面板做布局，再逐个异步加载数据（后台线程执行）</summary>
@@ -165,12 +209,12 @@ namespace wxd.files.winforms
                 CreatePanelsLightweight(panelCount);
                 ApplyLayout(GetCurrentLayout());
 
-                // 给独立线程的 LoadingForm 一点时间启动并绘制
-                await Task.Delay(100);
+                // ★ ShowStartupLoading 已通过 ManualResetEvent 确保 Loading 窗体完全显示，
+                // 不再需要 Task.Delay 猜测等待时间
 
-                // ===== 第二步：分批异步初始化面板 =====
-                // 注意：InitializeDeferred 内部会操作 WinForms 控件（RefreshUI、ShowLoading 创建 Label 等），
-                // 因此必须在 UI 线程上执行。LoadFileListAsync 内部已经在后台线程读取文件，不会长时间阻塞 UI。
+                // ===== 第二步：逐个异步初始化面板，等待每个面板的文件列表加载完成 =====
+                // InitializeDeferredAsync 内部 NavigateToAsync → await LoadFileListAsync，
+                // LoadFileListAsync 在后台线程读取文件，不会长时间阻塞 UI 线程。
                 for (int i = 0; i < _panels.Length; i++)
                 {
                     // ★ 跨线程更新进度（通过 BeginInvoke 发送到 LoadingForm 的独立消息泵）
@@ -181,15 +225,8 @@ namespace wxd.files.winforms
                             $"正在加载窗格 {i + 1}/{_panels.Length}...");
                     }));
 
-                    // 在 UI 线程上执行初始化（内部 NavigateTo → LoadFileListAsync 是异步的，不阻塞）
-                    _panels[i].InitializeDeferred();
-
-                    // 短暂让出 UI 线程，让 LoadingForm 的动画和进度条有刷新机会
-                    await Task.Delay(20);
-
-                    // 每 2 个面板后额外休息
-                    if ((i + 1) % 2 == 0)
-                        await Task.Delay(30);
+                    // ★ 等待文件列表加载完成后再进入下一个面板
+                    await _panels[i].InitializeDeferredAsync();
                 }
 
                 // 更新进度到 100%

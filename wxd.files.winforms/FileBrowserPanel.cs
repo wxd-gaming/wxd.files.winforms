@@ -407,6 +407,16 @@ namespace wxd.files.winforms
                 NavigateTo(GetFirstDrive(), restoreFilter: false, saveState: false);
         }
 
+        /// <summary>异步版本的延迟初始化，等待文件列表加载完成</summary>
+        public async Task InitializeDeferredAsync()
+        {
+            var startPath = CsvSettings.GetPaneDirectory(PanelIndex);
+            if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
+                await NavigateToAsync(startPath, restoreFilter: false, saveState: false);
+            else
+                await NavigateToAsync(GetFirstDrive(), restoreFilter: false, saveState: false);
+        }
+
         /// <summary>设置主题颜色</summary>
         private void SetThemeColors(bool isDark)
         {
@@ -905,6 +915,36 @@ namespace wxd.files.winforms
                 }
                 // 异步加载文件列表
                 _ = LoadFileListAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"无法访问路径:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>异步版本的导航，等待文件列表加载完成后再返回</summary>
+        public async Task NavigateToAsync(string path, bool restoreFilter = true, bool saveState = true)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(path))
+                    path = Path.GetFullPath(path);
+                if (!Directory.Exists(path)) return;
+                var trimmed = path.TrimEnd(Path.DirectorySeparatorChar);
+                if (trimmed.Length == 2 && trimmed[1] == ':')
+                    _currentDir = trimmed + Path.DirectorySeparatorChar;
+                else
+                    _currentDir = trimmed;
+                CsvSettings.AddRecentPath(_currentDir);
+                RebuildPathComboItems();
+                RefreshUI();
+                if (saveState)
+                {
+                    _hasUnsavedChanges = true;
+                    _saveDebounceTimer?.Stop();
+                    _saveDebounceTimer?.Start();
+                }
+                await LoadFileListAsync();
             }
             catch (Exception ex)
             {
