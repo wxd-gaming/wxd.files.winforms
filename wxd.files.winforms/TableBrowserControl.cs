@@ -2049,7 +2049,9 @@ namespace wxd.files.winforms
 
                 _btnHistory.Click += (s, e) =>
                 {
-                    var form = new VersionCompareForm(filePath, vcsType, frozen, headerRow);
+                    var form = new VersionCompareForm(filePath, vcsType, frozen, headerRow,
+                        rootDir: FrozenDir,
+                        columnVisibility: _columnCheckStates);
                     form.Show(this);
                 };
 

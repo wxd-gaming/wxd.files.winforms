@@ -1285,7 +1285,8 @@ namespace wxd.files.winforms
                     frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
                     headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
                 }
-                var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex);
+                var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
+                    rootDir: _currentDir);
                 form.Show();
             };
 

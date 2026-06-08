@@ -87,34 +87,29 @@ namespace wxd.files.winforms
 
         // ==================== 构造函数 ====================
         public VersionCompareForm(string filePath, VcsType vcsType,
-            int frozenRows, int headerRowIndex)
+            int frozenRows, int headerRowIndex,
+            string? rootDir = null,
+            bool[]? columnVisibility = null)
         {
             _filePath = filePath;
             _vcsType = vcsType;
 
-            // 从原文件目录的环境统一设置读取 frozenRows 和 headerRowIndex
-            var dir = Path.GetDirectoryName(filePath) ?? "";
-            var ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext == ".csv")
-            {
-                _frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
-                _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
-            }
-            else
-            {
-                _frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
-                _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
-            }
+            // ✅ 优先使用调用方传入的值（调用方已正确获取配置）
+            _frozenRows = frozenRows;
+            _headerRowIndex = headerRowIndex;
+            _columnVisibility = columnVisibility;
 
-            // 读取列的显隐状态
+            // 只有调用方未传入列可见性时，才从配置回退读取（兼容旧调用）
+            if (_columnVisibility == null)
             {
-                string fileDir = dir;
+                var dir = rootDir ?? Path.GetDirectoryName(filePath) ?? "";
+                var ext = Path.GetExtension(filePath).ToLowerInvariant();
                 string relPath;
-                if (!string.IsNullOrEmpty(fileDir) && filePath.StartsWith(fileDir, StringComparison.OrdinalIgnoreCase))
-                    relPath = filePath.Substring(fileDir.Length).TrimStart(Path.DirectorySeparatorChar);
+                if (!string.IsNullOrEmpty(dir) && filePath.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+                    relPath = filePath.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar);
                 else
                     relPath = Path.GetFileName(filePath);
-                _columnVisibility = CsvSettings.GetColumnVisibility(fileDir, relPath);
+                _columnVisibility = CsvSettings.GetColumnVisibility(dir, relPath);
             }
 
             _tempDir = Path.Combine(Path.GetTempPath(),
