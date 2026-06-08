@@ -50,6 +50,7 @@ namespace wxd.files.winforms
         private Button? _btnReload;
         private Button? _btnHistory;
         private bool[]? _externalColumnStates = null;
+        private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
@@ -1500,8 +1501,17 @@ namespace wxd.files.winforms
 
             if (_fileType == TableFileType.Csv)
             {
-                var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                    onSave: newValue =>
+                if (_isEmbeddedMode)
+                {
+                    // 历史对比等嵌入式模式：只读，不允许修改
+                    var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                        onSave: null, readOnly: true, readOnlyMessage: "当前状态不支持修改");
+                    dialog.Show(this);
+                }
+                else
+                {
+                    var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                        onSave: newValue =>
                     {
                         if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                             originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
@@ -1531,7 +1541,8 @@ namespace wxd.files.winforms
                             }
                         }
                     });
-                dialog.Show(this);
+                    dialog.Show(this);
+                }
             }
             else
             {
@@ -2180,6 +2191,8 @@ namespace wxd.files.winforms
         public void SetDataTable(DataTable dataTable, string infoText = "")
         {
             if (dataTable == null) return;
+
+            _isEmbeddedMode = true; // 标记为外部嵌入模式（版本对比等），禁止编辑
 
             // ★ 彻底清理旧绑定，避免多次切换后事件/引用累积导致卡顿
             _dataGrid.DataSource = null;
