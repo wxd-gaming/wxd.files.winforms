@@ -9,37 +9,7 @@ namespace wxd.files.winforms
     /// </summary>
     public static class CsvSettings
     {
-        private const int DefaultValue = 2;
-
-        #region CSV查看器设置
-
-        private const string DefaultFrozenRowsKey = "DefaultFrozenRows";
-
-        /// <summary>
-        /// CSV查看器的默认冻结行数
-        /// </summary>
-        public static int DefaultFrozenRows
-        {
-            get => GetIntValue(DefaultFrozenRowsKey, DefaultValue, 0, 8);
-            set => SetIntValue(DefaultFrozenRowsKey, Math.Max(0, Math.Min(8, value)));
-        }
-
-        #endregion
-
-        #region Excel查看器设置
-
-        private const string ExcelDefaultFrozenRowsKey = "ExcelDefaultFrozenRows";
-
-        /// <summary>
-        /// Excel查看器的默认冻结行数
-        /// </summary>
-        public static int ExcelDefaultFrozenRows
-        {
-            get => GetIntValue(ExcelDefaultFrozenRowsKey, DefaultValue, 0, 8);
-            set => SetIntValue(ExcelDefaultFrozenRowsKey, Math.Max(0, Math.Min(8, value)));
-        }
-
-        #endregion
+        internal const int DefaultValue = 2;
 
         #region 主题设置
 

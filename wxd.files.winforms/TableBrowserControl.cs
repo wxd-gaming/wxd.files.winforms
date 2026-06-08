@@ -107,12 +107,13 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(dir))
                 _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
 
+            _fileType = DetectFileType(filePath);
+
             InitializeComponent();
 
             // 如果文件路径为空或文件不存在，跳过自动加载（由外部通过 SetDataTable 注入数据）
             if (!string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
             {
-                _fileType = DetectFileType(filePath);
                 if (_fileType == TableFileType.Csv)
                     LoadCsvAsync();
                 else
@@ -255,9 +256,7 @@ namespace wxd.files.winforms
                     ? (_fileType == TableFileType.Csv
                         ? CsvSettings.GetCsvFrozenRowsByDirectory(FrozenDir)
                         : CsvSettings.GetExcelFrozenRowsByDirectory(FrozenDir))
-                    : (_fileType == TableFileType.Csv
-                        ? CsvSettings.DefaultFrozenRows
-                        : CsvSettings.ExcelDefaultFrozenRows);
+                    : CsvSettings.DefaultValue;
             }
             cboFrozenRows.SelectedIndex = _frozenRows;
             cboFrozenRows.SelectedIndexChanged += (s, e) =>
@@ -269,13 +268,6 @@ namespace wxd.files.winforms
                         CsvSettings.SetCsvFrozenRowsByDirectory(FrozenDir, _frozenRows);
                     else
                         CsvSettings.SetExcelFrozenRowsByDirectory(FrozenDir, _frozenRows);
-                }
-                else
-                {
-                    if (_fileType == TableFileType.Csv)
-                        CsvSettings.DefaultFrozenRows = _frozenRows;
-                    else
-                        CsvSettings.ExcelDefaultFrozenRows = _frozenRows;
                 }
                 CsvSettings.Save();
                 RefreshGridLayout();
