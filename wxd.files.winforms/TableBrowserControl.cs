@@ -112,33 +112,35 @@ namespace wxd.files.winforms
             _initialContentFilter = initialContentFilter;
 
             var dir = FrozenDir;
+
+            // ★ 表头行：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
+            if (headerRowIndex >= 0)
+                _headerRowIndex = headerRowIndex;
+            else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
+                _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+            else if (!string.IsNullOrEmpty(dir))
+                _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+
+            // ★ 唯一列：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
+            if (uniqueColumnIndex >= 0)
+                _uniqueColumnIndex = uniqueColumnIndex;
+            else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
+                _uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+            else if (!string.IsNullOrEmpty(dir))
+                _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+
+            // ★ 映射行：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
+            if (mappingRowIndex >= 0)
+                _mappingRowIndex = mappingRowIndex;
+            else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
+                _mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
+            else if (!string.IsNullOrEmpty(dir))
+                _mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
+
+            // 文件备注名仍然需要从配置读取（依赖 dir）
             if (!string.IsNullOrEmpty(dir))
             {
                 _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
-
-                // 表头行：如果未传入，从配置读取
-                if (headerRowIndex >= 0)
-                    _headerRowIndex = headerRowIndex;
-                else if (_fileType == TableFileType.Csv)
-                    _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
-                else
-                    _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
-
-                // 唯一列：如果未传入，从配置读取
-                if (uniqueColumnIndex >= 0)
-                    _uniqueColumnIndex = uniqueColumnIndex;
-                else if (_fileType == TableFileType.Csv)
-                    _uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
-                else
-                    _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
-
-                // 映射行：如果未传入，从配置读取
-                if (mappingRowIndex >= 0)
-                    _mappingRowIndex = mappingRowIndex;
-                else if (_fileType == TableFileType.Csv)
-                    _mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
-                else
-                    _mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
             }
 
             InitializeComponent();
@@ -2409,7 +2411,9 @@ namespace wxd.files.winforms
                 {
                     var form = new VersionCompareForm(filePath, vcsType, frozen, headerRow,
                         rootDir: FrozenDir,
-                        columnVisibility: _columnCheckStates);
+                        columnVisibility: _columnCheckStates,
+                        uniqueColumnIndex: _uniqueColumnIndex,
+                        mappingRowIndex: _mappingRowIndex);
                     form.Show(this);
                 };
 
@@ -2584,6 +2588,22 @@ namespace wxd.files.winforms
 
             // ★ 数据表变更后刷新唯一列下拉选项
             RefreshUniqueColumnCombo();
+
+            // ★ 初始化自定义 tooltip（如果尚未初始化，且非轻量模式）
+            if (!_lightweight && _linkToolTip == null)
+            {
+                _linkToolTip = new DataGridLinkToolTip(_dataGrid);
+                _linkToolTip.RegisterGrid(_dataGridHeader);
+                _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
+            }
+
+            // ★ 重新加载关联配置（确保 _columnLinks 和 ColumnLinkChecker 缓存正确；
+            //   版本对比等 SetDataTable 场景下 _filePath 为空字符串，需要依赖 rootDir 加载配置）
+            if (!string.IsNullOrEmpty(_rootDir))
+            {
+                _columnLinks = CsvSettings.GetColumnLinksByDirectory(_rootDir);
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, _rootDir, _filePath);
+            }
         }
 
         /// <summary>供外部（版本对比等）移除的 CellFormatting 事件占位</summary>

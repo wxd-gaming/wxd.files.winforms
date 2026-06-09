@@ -2,6 +2,15 @@ using System.Collections.Generic;
 
 namespace wxd.files.winforms
 {
+    /// <summary>差异行类型（版本对比场景使用）</summary>
+    public enum DiffRowType
+    {
+        None,       // 无差异
+        Modified,   // 内容修改（两表都存在但内容不同）
+        Added,      // 新增行（只在右表存在）
+        Deleted     // 删除行（只在左表存在）
+    }
+
     /// <summary>文件类型枚举</summary>
     public enum TableFileType
     {
@@ -22,6 +31,12 @@ namespace wxd.files.winforms
 
         /// <summary>差异列索引集合（版本对比场景使用，null 表示无差异）</summary>
         public HashSet<int>? DiffColumns { get; set; }
+
+        /// <summary>差异行类型（新增/删除/修改，版本对比场景使用）</summary>
+        public DiffRowType DiffType { get; set; } = DiffRowType.None;
+
+        /// <summary>是否为空白占位行（版本对比时，对面有数据而本侧无对应行时插入）</summary>
+        public bool IsBlankRow { get; set; } = false;
     }
 
     /// <summary>通用表格数据模型（CSV/Excel统一）</summary>

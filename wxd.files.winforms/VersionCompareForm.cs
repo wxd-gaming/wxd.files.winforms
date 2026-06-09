@@ -19,6 +19,7 @@ namespace wxd.files.winforms
         private DataGridView _dgvHistory;
         private CheckBox _chkDiffOnly;
         private CheckBox _chkAlwaysLatest;
+        private CheckBox _chkIdAlign;
         private Label _lblInfo;
         private SplitContainer _splitMain;
         private SplitContainer _splitCompare;
@@ -35,6 +36,7 @@ namespace wxd.files.winforms
         private int _selectedIndex = 0;
         private int _frozenRows;
         private int _headerRowIndex;
+        private int _mappingRowIndex = -1;
         private bool[]? _columnVisibility;
 
         // 左右两个 TableBrowserControl（复用，不每次创建销毁）
@@ -64,6 +66,10 @@ namespace wxd.files.winforms
         private List<int> _leftRowToOriginalIndex = new();
         private List<int> _rightRowToOriginalIndex = new();
 
+        // ★ DGV 行索引 → 行属性（DiffType + IsBlankRow，用于 OnDiffCellFormatting 直接判断行类型）
+        private List<(DiffRowType diffType, bool isBlankRow)> _leftRowProperties = new();
+        private List<(DiffRowType diffType, bool isBlankRow)> _rightRowProperties = new();
+
         // ★ DGV 列索引 → 原始完整 DataTable 列索引的映射（解决列隐藏后列号转换问题）
         private List<int> _leftColToOriginalIndex = new();
         private List<int> _rightColToOriginalIndex = new();
@@ -76,6 +82,12 @@ namespace wxd.files.winforms
         private bool _diffComputed = false;
         private bool _syncingScroll = false;
 
+        // ★ ID 对齐相关
+        private int _uniqueColumnIndex = -1;                   // 从配置读取的唯一列索引（调用方传入）
+        private int _idColumnIndex = -1;                       // ID 列索引（-1 表示未检测到或未启用）
+        private HashSet<int> _leftDeletedRows = new();        // 左表删除行集合（右表无对应 ID）
+        private HashSet<int> _rightAddedRows = new();         // 右表新增行集合（左表无对应 ID）
+
         // 配色
         private static readonly Color _colorSurface = Color.White;
         private static readonly Color _colorDiffCellBg = Color.FromArgb(255, 200, 200);   // 差异单元格：红色背景
@@ -84,12 +96,18 @@ namespace wxd.files.winforms
         private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
         private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
         private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
+        private static readonly Color _colorAddedRowBg = Color.FromArgb(213, 245, 227);    // 新增行：浅绿色
+        private static readonly Color _colorDeletedRowBg = Color.FromArgb(250, 219, 216);  // 删除行：浅橙色
+        private static readonly Color _colorBlankRowForAdded = Color.FromArgb(232, 250, 240);   // 空白行（对面为新增行）：更浅绿
+        private static readonly Color _colorBlankRowForDeleted = Color.FromArgb(253, 235, 233);  // 空白行（对面为删除行）：更浅橙
 
         // ==================== 构造函数 ====================
         public VersionCompareForm(string filePath, VcsType vcsType,
             int frozenRows, int headerRowIndex,
             string? rootDir = null,
-            bool[]? columnVisibility = null)
+            bool[]? columnVisibility = null,
+            int uniqueColumnIndex = -1,
+            int mappingRowIndex = -1)
         {
             _filePath = filePath;
             _vcsType = vcsType;
@@ -97,7 +115,9 @@ namespace wxd.files.winforms
             // ✅ 优先使用调用方传入的值（调用方已正确获取配置）
             _frozenRows = frozenRows;
             _headerRowIndex = headerRowIndex;
+            _mappingRowIndex = mappingRowIndex;
             _columnVisibility = columnVisibility;
+            _uniqueColumnIndex = uniqueColumnIndex;
 
             // 只有调用方未传入列可见性时，才从配置回退读取（兼容旧调用）
             if (_columnVisibility == null)
@@ -168,16 +188,28 @@ namespace wxd.files.winforms
             _chkAlwaysLatest.CheckedChanged += async (s, e) =>
                 await LoadComparisonAsync(_selectedIndex);
 
+            _chkIdAlign = new CheckBox
+            {
+                Text = "ID对齐匹配",
+                AutoSize = true,
+                Location = new Point(310, 8),
+                Checked = true,
+                ForeColor = _colorLightText,
+                Font = new Font("Microsoft YaHei UI", 9f)
+            };
+            _chkIdAlign.CheckedChanged += async (s, e) =>
+                await LoadComparisonAsync(_selectedIndex);
+
             _lblInfo = new Label
             {
                 AutoSize = true,
-                Location = new Point(340, 10),
+                Location = new Point(440, 10),
                 ForeColor = _colorLightTextSecondary,
                 Font = new Font("Microsoft YaHei UI", 9f)
             };
 
             _pnlTop.Controls.AddRange(new Control[] {
-                _chkDiffOnly, _chkAlwaysLatest, _lblInfo });
+                _chkDiffOnly, _chkAlwaysLatest, _chkIdAlign, _lblInfo });
 
             // === 上下分割: 历史表格 / 对比区域 ===
             _splitMain = new SplitContainer
@@ -755,6 +787,12 @@ namespace wxd.files.winforms
                     foreach (var row in _leftFullFileData.Rows)
                     {
                         row.IsDiffRow = _leftDiffRows.Contains(row.OriginalRowIndex);
+                        if (_leftDeletedRows.Contains(row.OriginalRowIndex))
+                            row.DiffType = DiffRowType.Deleted;
+                        else if (row.IsDiffRow)
+                            row.DiffType = DiffRowType.Modified;
+                        else
+                            row.DiffType = DiffRowType.None;
                     }
                 }
                 if (_rightFullFileData != null)
@@ -762,7 +800,24 @@ namespace wxd.files.winforms
                     foreach (var row in _rightFullFileData.Rows)
                     {
                         row.IsDiffRow = _rightDiffRows.Contains(row.OriginalRowIndex);
+                        if (_rightAddedRows.Contains(row.OriginalRowIndex))
+                            row.DiffType = DiffRowType.Added;
+                        else if (row.IsDiffRow)
+                            row.DiffType = DiffRowType.Modified;
+                        else
+                            row.DiffType = DiffRowType.None;
                     }
+                }
+
+                // ★ 阶段3.2：ID对齐模式下，构建对齐后的左右 FileTableData（插入空白行使行一一对应）
+                if (_chkIdAlign.Checked && _idColumnIndex >= 0 &&
+                    _leftFullFileData != null && _rightFullFileData != null)
+                {
+                    var (alignedLeft, alignedRight) = BuildAlignedTables(
+                        _leftFullFileData, _rightFullFileData,
+                        leftData!, rightData!);
+                    _leftFullFileData = alignedLeft;
+                    _rightFullFileData = alignedRight;
                 }
 
                 // 阶段3.5：★ 根据当前列显隐状态重新构建投影后的 FileTableData → DataTable
@@ -778,7 +833,7 @@ namespace wxd.files.winforms
                     _leftView.SetColumnVisibility(leftColStatesBefore);
                     _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
                     // ★ 构建行/列索引映射（DGV行/列→原始行/列），不再依赖 Tag 或 GetVisibleColumnIndices
-                    _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
+                    _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected, out _leftRowProperties);
                     _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                 }
                 if (_rightFullFileData != null && rightVisibleCols.Count > 0 && _rightView != null)
@@ -786,7 +841,7 @@ namespace wxd.files.winforms
                     var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
                     _rightView.SetColumnVisibility(rightColStatesBefore);
                     _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
-                    _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
+                    _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected, out _rightRowProperties);
                     _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                 }
 
@@ -802,7 +857,7 @@ namespace wxd.files.winforms
                         var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
                         _leftView.SetColumnVisibility(leftColStatesBefore);
                         _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
-                        _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered);
+                        _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered, out _leftRowProperties);
                         _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                     }
                     if (_rightFullFileData != null && _rightView != null && rightVisibleCols.Count > 0)
@@ -810,7 +865,7 @@ namespace wxd.files.winforms
                         var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
                         _rightView.SetColumnVisibility(rightColStatesBefore);
                         _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
-                        _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered);
+                        _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered, out _rightRowProperties);
                         _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                     }
                     // 筛选后重新绑定差异高亮事件
@@ -847,9 +902,13 @@ namespace wxd.files.winforms
 
             if (_leftView == null && leftPanel != null)
             {
-                // 传入空字符串：跳过构造函数的自动文件加载，数据由 SetDataTable 注入
-                _leftView = new TableBrowserControl("",
+                // 传入原始文件路径和 rootDir：让构造函数加载关联配置（_columnLinks、_fileRemarks 等），
+                // 数据由后续 SetDataTable 注入（构造函数中 filePath 为空时跳过自动文件加载）
+                var rootDir = Path.GetDirectoryName(_filePath);
+                _leftView = new TableBrowserControl(_filePath,
+                    rootDir: rootDir,
                     frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
+                    uniqueColumnIndex: _uniqueColumnIndex, mappingRowIndex: _mappingRowIndex,
                     lightweight: false)
                 { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -859,8 +918,11 @@ namespace wxd.files.winforms
 
             if (_rightView == null && rightPanel != null)
             {
-                _rightView = new TableBrowserControl("",
+                var rootDir = Path.GetDirectoryName(_filePath);
+                _rightView = new TableBrowserControl(_filePath,
+                    rootDir: rootDir,
                     frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
+                    uniqueColumnIndex: _uniqueColumnIndex, mappingRowIndex: _mappingRowIndex,
                     lightweight: false)
                 { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -1110,7 +1172,11 @@ namespace wxd.files.winforms
             try
             {
                 if (e.ScrollOrientation == ScrollOrientation.VerticalScroll)
-                    rightDgv.FirstDisplayedScrollingRowIndex = leftDgv.FirstDisplayedScrollingRowIndex;
+                {
+                    int idx = leftDgv.FirstDisplayedScrollingRowIndex;
+                    if (rightDgv.RowCount > 0)
+                        rightDgv.FirstDisplayedScrollingRowIndex = Math.Min(idx, rightDgv.RowCount - 1);
+                }
                 else if (e.ScrollOrientation == ScrollOrientation.HorizontalScroll)
                     rightDgv.HorizontalScrollingOffset = leftDgv.HorizontalScrollingOffset;
             }
@@ -1128,7 +1194,11 @@ namespace wxd.files.winforms
             try
             {
                 if (e.ScrollOrientation == ScrollOrientation.VerticalScroll)
-                    leftDgv.FirstDisplayedScrollingRowIndex = rightDgv.FirstDisplayedScrollingRowIndex;
+                {
+                    int idx = rightDgv.FirstDisplayedScrollingRowIndex;
+                    if (leftDgv.RowCount > 0)
+                        leftDgv.FirstDisplayedScrollingRowIndex = Math.Min(idx, leftDgv.RowCount - 1);
+                }
                 else if (e.ScrollOrientation == ScrollOrientation.HorizontalScroll)
                     leftDgv.HorizontalScrollingOffset = rightDgv.HorizontalScrollingOffset;
             }
@@ -1146,58 +1216,163 @@ namespace wxd.files.winforms
             _rightDiffRows.Clear();
             _leftDiffCells.Clear();
             _rightDiffCells.Clear();
+            _leftDeletedRows.Clear();
+            _rightAddedRows.Clear();
 
             if (leftData == null || rightData == null) return;
 
             await Task.Run(() =>
             {
-                int maxRows = Math.Max(leftData.Rows.Count, rightData.Rows.Count);
                 int maxCols = Math.Max(leftData.Columns.Count, rightData.Columns.Count);
                 int diffCount = 0;
 
-                for (int row = 0; row < maxRows; row++)
+                // ★ 检测是否启用 ID 对齐
+                bool useIdAlign = _chkIdAlign.Checked && DetectIdColumn(leftData, rightData);
+
+                if (useIdAlign)
                 {
-                    bool rowHasDiff = false;
-                    HashSet<int>? leftDiffCols = null;
-                    HashSet<int>? rightDiffCols = null;
+                    // ========== ID 对齐模式（行编辑语义） ==========
+                    int idCol = _idColumnIndex;
 
-                    for (int col = 0; col < maxCols; col++)
+                    // ★ 数据行从表头行下一行开始，固定行/表头行不参与对比
+                    int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+
+                    // 构建 ID → 行索引 字典（跳过固定行/表头行）
+                    var leftIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    var rightIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+                    for (int r = dataStartRow; r < leftData.Rows.Count; r++)
                     {
-                        string? leftVal = (row < leftData.Rows.Count && col < leftData.Columns.Count)
-                            ? leftData.Rows[row][col]?.ToString() : null;
-                        string? rightVal = (row < rightData.Rows.Count && col < rightData.Columns.Count)
-                            ? rightData.Rows[row][col]?.ToString() : null;
+                        string id = leftData.Rows[r][idCol]?.ToString()?.Trim() ?? "";
+                        if (!string.IsNullOrEmpty(id) && !leftIdMap.ContainsKey(id))
+                            leftIdMap[id] = r;
+                    }
+                    for (int r = dataStartRow; r < rightData.Rows.Count; r++)
+                    {
+                        string id = rightData.Rows[r][idCol]?.ToString()?.Trim() ?? "";
+                        if (!string.IsNullOrEmpty(id) && !rightIdMap.ContainsKey(id))
+                            rightIdMap[id] = r;
+                    }
 
-                        if (leftVal != rightVal)
+                    // 所有唯一 ID
+                    var allIds = new HashSet<string>(leftIdMap.Keys, StringComparer.OrdinalIgnoreCase);
+                    allIds.UnionWith(rightIdMap.Keys);
+
+                    foreach (var id in allIds)
+                    {
+                        bool leftExists = leftIdMap.TryGetValue(id, out int leftRow);
+                        bool rightExists = rightIdMap.TryGetValue(id, out int rightRow);
+
+                        if (leftExists && !rightExists)
                         {
-                            rowHasDiff = true;
-                            if (leftVal != null && rightVal == null)
-                                { leftDiffCols ??= new(); leftDiffCols.Add(col); }
-                            else if (leftVal == null && rightVal != null)
-                                { rightDiffCols ??= new(); rightDiffCols.Add(col); }
-                            else
+                            // ★ 删除行：左表有，右表没有
+                            _leftDiffRows.Add(leftRow);
+                            _leftDeletedRows.Add(leftRow);
+                            for (int c = 0; c < leftData.Columns.Count; c++)
+                                _leftDiffCells.Add((leftRow << 16) | c);
+                            diffCount++;
+                        }
+                        else if (!leftExists && rightExists)
+                        {
+                            // ★ 新增行：右表有，左表没有
+                            _rightDiffRows.Add(rightRow);
+                            _rightAddedRows.Add(rightRow);
+                            for (int c = 0; c < rightData.Columns.Count; c++)
+                                _rightDiffCells.Add((rightRow << 16) | c);
+                            diffCount++;
+                        }
+                        else
+                        {
+                            // ★ 修改行：两表都存在 → 逐单元格比较
+                            bool rowHasDiff = false;
+                            var leftDiffCols = new HashSet<int>();
+                            var rightDiffCols = new HashSet<int>();
+
+                            for (int col = 0; col < maxCols; col++)
                             {
-                                leftDiffCols ??= new(); leftDiffCols.Add(col);
-                                rightDiffCols ??= new(); rightDiffCols.Add(col);
+                                string? leftVal = (col < leftData.Columns.Count)
+                                    ? leftData.Rows[leftRow][col]?.ToString() : null;
+                                string? rightVal = (col < rightData.Columns.Count)
+                                    ? rightData.Rows[rightRow][col]?.ToString() : null;
+
+                                if (leftVal != rightVal)
+                                {
+                                    rowHasDiff = true;
+                                    if (leftVal != null && rightVal == null)
+                                        leftDiffCols.Add(col);
+                                    else if (leftVal == null && rightVal != null)
+                                        rightDiffCols.Add(col);
+                                    else
+                                    {
+                                        leftDiffCols.Add(col);
+                                        rightDiffCols.Add(col);
+                                    }
+                                }
+                            }
+
+                            if (rowHasDiff)
+                            {
+                                diffCount++;
+                                _leftDiffRows.Add(leftRow);
+                                foreach (var c in leftDiffCols)
+                                    _leftDiffCells.Add((leftRow << 16) | c);
+                                _rightDiffRows.Add(rightRow);
+                                foreach (var c in rightDiffCols)
+                                    _rightDiffCells.Add((rightRow << 16) | c);
                             }
                         }
                     }
+                }
+                else
+                {
+                    // ========== 无 ID 列 / 未勾选 ID 对齐 → 按行号对齐（跳过固定行/表头行） ==========
+                    // ★ 数据行从表头行下一行开始，固定行/表头行不参与对比
+                    int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+                    int maxRows = Math.Max(leftData.Rows.Count, rightData.Rows.Count);
 
-                    if (rowHasDiff)
+                    for (int row = dataStartRow; row < maxRows; row++)
                     {
-                        diffCount++;
-                        // ★ 仅记录原始行号到集合（原始行号 = DataTable 行索引，包含固定行）
-                        if (row < leftData.Rows.Count)
+                        bool rowHasDiff = false;
+                        HashSet<int>? leftDiffCols = null;
+                        HashSet<int>? rightDiffCols = null;
+
+                        for (int col = 0; col < maxCols; col++)
                         {
-                            _leftDiffRows.Add(row);
-                            foreach (var c in leftDiffCols ?? Enumerable.Empty<int>())
-                                _leftDiffCells.Add((row << 16) | c);
+                            string? leftVal = (row < leftData.Rows.Count && col < leftData.Columns.Count)
+                                ? leftData.Rows[row][col]?.ToString() : null;
+                            string? rightVal = (row < rightData.Rows.Count && col < rightData.Columns.Count)
+                                ? rightData.Rows[row][col]?.ToString() : null;
+
+                            if (leftVal != rightVal)
+                            {
+                                rowHasDiff = true;
+                                if (leftVal != null && rightVal == null)
+                                    { leftDiffCols ??= new(); leftDiffCols.Add(col); }
+                                else if (leftVal == null && rightVal != null)
+                                    { rightDiffCols ??= new(); rightDiffCols.Add(col); }
+                                else
+                                {
+                                    leftDiffCols ??= new(); leftDiffCols.Add(col);
+                                    rightDiffCols ??= new(); rightDiffCols.Add(col);
+                                }
+                            }
                         }
-                        if (row < rightData.Rows.Count)
+
+                        if (rowHasDiff)
                         {
-                            _rightDiffRows.Add(row);
-                            foreach (var c in rightDiffCols ?? Enumerable.Empty<int>())
-                                _rightDiffCells.Add((row << 16) | c);
+                            diffCount++;
+                            if (row < leftData.Rows.Count)
+                            {
+                                _leftDiffRows.Add(row);
+                                foreach (var c in leftDiffCols ?? Enumerable.Empty<int>())
+                                    _leftDiffCells.Add((row << 16) | c);
+                            }
+                            if (row < rightData.Rows.Count)
+                            {
+                                _rightDiffRows.Add(row);
+                                foreach (var c in rightDiffCols ?? Enumerable.Empty<int>())
+                                    _rightDiffCells.Add((row << 16) | c);
+                            }
                         }
                     }
                 }
@@ -1206,6 +1381,49 @@ namespace wxd.files.winforms
             });
 
             _diffComputed = true;
+        }
+
+        /// <summary>
+        /// 检测左右表中是否存在同名的 ID 列，并设置 _idColumnIndex。
+        /// 策略：
+        /// 1. 优先使用 _uniqueColumnIndex（从配置读取的唯一列索引）
+        /// 2. 回退到匹配表头行中的关键词（id、编号、序号、key、code、编码）
+        /// </summary>
+        private bool DetectIdColumn(DataTable leftData, DataTable rightData)
+        {
+            // ★ 优先使用配置中的唯一列索引
+            if (_uniqueColumnIndex >= 0 && _uniqueColumnIndex < Math.Min(leftData.Columns.Count, rightData.Columns.Count))
+            {
+                _idColumnIndex = _uniqueColumnIndex;
+                return true;
+            }
+
+            // ★ 回退：从表头行（_headerRowIndex）中读取真实列名进行匹配
+            string[] idKeywords = { "id", "编号", "序号", "key", "code", "编码" };
+            int maxCols = Math.Min(leftData.Columns.Count, rightData.Columns.Count);
+
+            for (int c = 0; c < maxCols; c++)
+            {
+                // 从表头行读取真实列名（DataTable.Columns[c].ColumnName 不包含真实列名）
+                string leftColName = (_headerRowIndex >= 0 && _headerRowIndex < leftData.Rows.Count)
+                    ? leftData.Rows[_headerRowIndex][c]?.ToString()?.Trim()?.ToLowerInvariant() ?? ""
+                    : "";
+                string rightColName = (_headerRowIndex >= 0 && _headerRowIndex < rightData.Rows.Count)
+                    ? rightData.Rows[_headerRowIndex][c]?.ToString()?.Trim()?.ToLowerInvariant() ?? ""
+                    : "";
+
+                // 确保左右表同一列名一致
+                if (string.IsNullOrEmpty(leftColName) || leftColName != rightColName) continue;
+
+                bool matchKeyword = idKeywords.Any(k => leftColName.Contains(k));
+                if (!matchKeyword) continue;
+
+                _idColumnIndex = c;
+                return true;
+            }
+
+            _idColumnIndex = -1;
+            return false;
         }
 
         private void ApplyDiffHighlight(DataGridView? dgv, bool isLeft)
@@ -1231,15 +1449,66 @@ namespace wxd.files.winforms
             // ★ 判断是左表还是右表
             bool isLeft = dgv == _leftView?.GetDataGridView();
             var rowMap = isLeft ? _leftRowToOriginalIndex : _rightRowToOriginalIndex;
-            var diffRows = isLeft ? _leftDiffRows : _rightDiffRows;
             var diffCells = isLeft ? _leftDiffCells : _rightDiffCells;
+            var rowProps = isLeft ? _leftRowProperties : _rightRowProperties;
 
-            // ★ 通过行映射获取原始行索引
+            // ★ 通过行属性直接判断行类型（不再依赖 OriginalRowIndex 查集合）
+            if (e.RowIndex >= rowProps.Count) return;
+            var (diffType, isBlankRow) = rowProps[e.RowIndex];
+
+            // ★ 场景1：左有右删 → 左表数据行(Deleted色) + 右表空白行(BlankForDeleted色)
+            // ★ 场景2：左无右增 → 左表空白行(BlankForAdded色) + 右表数据行(Added色)
+            // ★ 场景3：两有但改 → 差异单元格红色 + 非差异单元格浅黄
+
+            // ★ 空白行 → 根据对面行类型选择背景色
+            if (isBlankRow)
+            {
+                // DiffType 标记了对面行的类型：Added=对面新增（左表空白），Deleted=对面删除（右表空白）
+                if (diffType == DiffRowType.Added)
+                {
+                    // 左表空白行（对面是新增行）
+                    e.CellStyle.BackColor = _colorBlankRowForAdded;
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(210, 240, 225);
+                }
+                else if (diffType == DiffRowType.Deleted)
+                {
+                    // 右表空白行（对面是删除行）
+                    e.CellStyle.BackColor = _colorBlankRowForDeleted;
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(245, 225, 220);
+                }
+                else
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(245, 245, 245);
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(230, 230, 230);
+                }
+                e.FormattingApplied = true;
+                return;
+            }
+
+            // ★ 新增行（只在右表存在）→ 浅绿色整行高亮
+            if (diffType == DiffRowType.Added)
+            {
+                e.CellStyle.BackColor = _colorAddedRowBg;
+                e.CellStyle.SelectionBackColor = Color.FromArgb(190, 230, 200);
+                e.FormattingApplied = true;
+                return;
+            }
+
+            // ★ 删除行（只在左表存在）→ 浅橙色整行高亮
+            if (diffType == DiffRowType.Deleted)
+            {
+                e.CellStyle.BackColor = _colorDeletedRowBg;
+                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 200, 190);
+                e.FormattingApplied = true;
+                return;
+            }
+
+            // ★ 修改行 → 逐单元格判断差异
+            if (diffType != DiffRowType.Modified) return;
+
+            // 通过行映射获取原始行索引（用于差异单元格定位）
             if (e.RowIndex >= rowMap.Count) return;
             int originalRowIndex = rowMap[e.RowIndex];
-
-            // ★ 用原始行索引判断是否为差异行
-            if (!diffRows.Contains(originalRowIndex)) return;
 
             Color backColor, selBackColor;
             int displayCol = e.ColumnIndex;
@@ -1323,12 +1592,13 @@ namespace wxd.files.winforms
                 var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleOriginalCols, diffOnly);
                 _leftView.SetColumnVisibility(currentLeftColStates);
                 _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
-                _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected);
+                _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected, out _leftRowProperties);
                 _leftColToOriginalIndex = new List<int>(leftVisibleOriginalCols);
             }
             else
             {
                 _leftRowToOriginalIndex.Clear();
+                _leftRowProperties.Clear();
                 _leftColToOriginalIndex.Clear();
             }
 
@@ -1338,18 +1608,200 @@ namespace wxd.files.winforms
                 var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleOriginalCols, diffOnly);
                 _rightView.SetColumnVisibility(currentRightColStates);
                 _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
-                _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected);
+                _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected, out _rightRowProperties);
                 _rightColToOriginalIndex = new List<int>(rightVisibleOriginalCols);
             }
             else
             {
                 _rightRowToOriginalIndex.Clear();
+                _rightRowProperties.Clear();
                 _rightColToOriginalIndex.Clear();
             }
 
             // 重新绑定差异高亮事件
             ApplyDiffHighlight(leftDgv, true);
             ApplyDiffHighlight(rightDgv, false);
+        }
+
+        /// <summary>
+        /// ★ ID对齐模式：构建对齐后的左右 FileTableData，插入空白行使行一一对应。
+        /// 删除行（左有右无）：左表有数据行，右表插入空白行
+        /// 新增行（右有左无）：右表有数据行，左表插入空白行
+        /// 修改行/无差异行：两表都保留实际行
+        /// </summary>
+        private (FileTableData leftAligned, FileTableData rightAligned) BuildAlignedTables(
+            FileTableData leftOriginal, FileTableData rightOriginal,
+            DataTable leftData, DataTable rightData)
+        {
+            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int idCol = _idColumnIndex;
+
+            // 构建 ID → FileTableData 行索引 的映射
+            var leftIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var rightIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // 同时记录 ID → DataTable 行索引（用于读取单元格值）
+            var leftIdDtMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var rightIdDtMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < leftOriginal.Rows.Count; i++)
+            {
+                var row = leftOriginal.Rows[i];
+                if (row.OriginalRowIndex < dataStartRow) continue; // 跳过固定行/表头行
+                string? id = idCol < row.Cells.Count ? row.Cells[idCol]?.Trim() : null;
+                if (!string.IsNullOrEmpty(id) && !leftIdMap.ContainsKey(id))
+                {
+                    leftIdMap[id] = i;
+                    leftIdDtMap[id] = row.OriginalRowIndex;
+                }
+            }
+            for (int i = 0; i < rightOriginal.Rows.Count; i++)
+            {
+                var row = rightOriginal.Rows[i];
+                if (row.OriginalRowIndex < dataStartRow) continue;
+                string? id = idCol < row.Cells.Count ? row.Cells[idCol]?.Trim() : null;
+                if (!string.IsNullOrEmpty(id) && !rightIdMap.ContainsKey(id))
+                {
+                    rightIdMap[id] = i;
+                    rightIdDtMap[id] = row.OriginalRowIndex;
+                }
+            }
+
+            // ★ 以右表（新版本）行顺序为主，归并左表的删除行
+            // 确保新增/删除行插入到正确位置，而非追加到最后
+            var leftIdsOrdered = leftIdMap.Keys.ToList();
+            var rightIdsOrdered = rightIdMap.Keys.ToList();
+
+            // 创建对齐后的 FileTableData
+            var leftAligned = new FileTableData
+            {
+                FilePath = leftOriginal.FilePath,
+                Type = leftOriginal.Type,
+                Delimiter = leftOriginal.Delimiter,
+                ColumnNames = new List<string>(leftOriginal.ColumnNames)
+            };
+            var rightAligned = new FileTableData
+            {
+                FilePath = rightOriginal.FilePath,
+                Type = rightOriginal.Type,
+                Delimiter = rightOriginal.Delimiter,
+                ColumnNames = new List<string>(rightOriginal.ColumnNames)
+            };
+
+            // ★ 先复制固定行/表头行（原样保留，不对齐）
+            for (int i = 0; i < leftOriginal.Rows.Count; i++)
+            {
+                if (leftOriginal.Rows[i].OriginalRowIndex < dataStartRow)
+                    leftAligned.Rows.Add(CloneRow(leftOriginal.Rows[i], leftOriginal.ColumnNames.Count));
+            }
+            for (int i = 0; i < rightOriginal.Rows.Count; i++)
+            {
+                if (rightOriginal.Rows[i].OriginalRowIndex < dataStartRow)
+                    rightAligned.Rows.Add(CloneRow(rightOriginal.Rows[i], rightOriginal.ColumnNames.Count));
+            }
+
+            // ★ 归并算法：以右表ID顺序为主，左表按指针推进
+            int colCount = Math.Max(leftOriginal.ColumnNames.Count, rightOriginal.ColumnNames.Count);
+            int leftPtr = 0;
+
+            foreach (var rightId in rightIdsOrdered)
+            {
+                // 先消耗左表中在 rightId 之前的删除行（左有右无）
+                while (leftPtr < leftIdsOrdered.Count)
+                {
+                    var leftId = leftIdsOrdered[leftPtr];
+                    if (string.Equals(leftId, rightId, StringComparison.OrdinalIgnoreCase))
+                        break; // 左右都有，停
+
+                    // ★ 左表当前ID在右表中存在但还未轮到 → 当前rightId在左表中无对应行，
+                    //   停止消耗左表，让外层逻辑输出"新增行+左侧空白行"
+                    if (rightIdMap.ContainsKey(leftId))
+                        break;
+
+                    // 该左表ID不在右表中 → 删除行
+                    if (!rightIdMap.ContainsKey(leftId))
+                    {
+                        var leftFdIdx = leftIdMap[leftId];
+                        var leftRow = CloneRow(leftOriginal.Rows[leftFdIdx], colCount);
+                        leftRow.DiffType = DiffRowType.Deleted;
+                        leftRow.IsDiffRow = true;
+                        leftAligned.Rows.Add(leftRow);
+                        rightAligned.Rows.Add(CreateBlankRow(leftOriginal.Rows[leftFdIdx].OriginalRowIndex, colCount, DiffRowType.Deleted));
+                    }
+                    leftPtr++;
+                }
+
+                // 输出当前 rightId
+                if (leftPtr < leftIdsOrdered.Count &&
+                    string.Equals(leftIdsOrdered[leftPtr], rightId, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 两表都有 → 匹配行
+                    var leftFdIdx = leftIdMap[rightId];
+                    var rightFdIdx = rightIdMap[rightId];
+                    leftAligned.Rows.Add(CloneRow(leftOriginal.Rows[leftFdIdx], colCount));
+                    rightAligned.Rows.Add(CloneRow(rightOriginal.Rows[rightFdIdx], colCount));
+                    leftPtr++;
+                }
+                else
+                {
+                    // 右有左无 → 新增行
+                    var rightFdIdx = rightIdMap[rightId];
+                    leftAligned.Rows.Add(CreateBlankRow(rightOriginal.Rows[rightFdIdx].OriginalRowIndex, colCount, DiffRowType.Added));
+                    var rightRow = CloneRow(rightOriginal.Rows[rightFdIdx], colCount);
+                    rightRow.DiffType = DiffRowType.Added;
+                    rightRow.IsDiffRow = true;
+                    rightAligned.Rows.Add(rightRow);
+                }
+            }
+
+            // ★ 左表剩余的删除行（尾部删除）
+            while (leftPtr < leftIdsOrdered.Count)
+            {
+                var leftId = leftIdsOrdered[leftPtr];
+                if (!rightIdMap.ContainsKey(leftId))
+                {
+                    var leftFdIdx = leftIdMap[leftId];
+                    var leftRow = CloneRow(leftOriginal.Rows[leftFdIdx], colCount);
+                    leftRow.DiffType = DiffRowType.Deleted;
+                    leftRow.IsDiffRow = true;
+                    leftAligned.Rows.Add(leftRow);
+                    rightAligned.Rows.Add(CreateBlankRow(leftOriginal.Rows[leftFdIdx].OriginalRowIndex, colCount, DiffRowType.Deleted));
+                }
+                leftPtr++;
+            }
+
+            return (leftAligned, rightAligned);
+        }
+
+        /// <summary>克隆 TableRow</summary>
+        private static TableRow CloneRow(TableRow src, int colCount)
+        {
+            var row = new TableRow
+            {
+                OriginalRowIndex = src.OriginalRowIndex,
+                IsDiffRow = src.IsDiffRow,
+                DiffType = src.DiffType,
+                IsBlankRow = src.IsBlankRow,
+                DiffColumns = src.DiffColumns != null ? new HashSet<int>(src.DiffColumns) : null
+            };
+            for (int i = 0; i < colCount; i++)
+                row.Cells.Add(i < src.Cells.Count ? src.Cells[i] : "");
+            return row;
+        }
+
+        /// <summary>创建空白占位行</summary>
+        private static TableRow CreateBlankRow(int originalRowIndex, int colCount, DiffRowType oppositeDiffType)
+        {
+            var row = new TableRow
+            {
+                OriginalRowIndex = -1,  // 空白行无原始行索引
+                IsDiffRow = false,
+                DiffType = oppositeDiffType,  // ★ 标记对面行的类型，用于区分空白行是"对面新增"还是"对面删除"
+                IsBlankRow = true
+            };
+            // 空白行所有单元格为空
+            for (int i = 0; i < colCount; i++)
+                row.Cells.Add("");
+            return row;
         }
 
         /// <summary>从原始 FileTableData 按可见列索引构建投影后的 FileTableData</summary>
@@ -1376,14 +1828,18 @@ namespace wxd.files.winforms
             foreach (var srcRow in source.Rows)
             {
                 // ★ 固定行（冻结行）始终保留，不受 diffOnly 影响
+                // ★ 空白行始终保留，否则对面有数据行但空白行被过滤导致行不对齐
                 bool isFrozenRow = srcRow.OriginalRowIndex < _frozenRows;
-                if (diffOnly && !srcRow.IsDiffRow && !isFrozenRow) continue;
+                bool isBlankRow = srcRow.IsBlankRow;
+                if (diffOnly && !srcRow.IsDiffRow && !isFrozenRow && !isBlankRow) continue;
 
                 var newRow = new TableRow
                 {
                     OriginalRowIndex = srcRow.OriginalRowIndex,
                     IsDiffRow = srcRow.IsDiffRow,
-                    DiffColumns = null
+                    DiffColumns = null,
+                    DiffType = srcRow.DiffType,
+                    IsBlankRow = srcRow.IsBlankRow
                 };
 
                 // 只复制可见列的单元格值
@@ -1400,12 +1856,16 @@ namespace wxd.files.winforms
         }
 
         /// <summary>从投影后的 FileTableData 构建 DGV行索引→原始行索引 的映射（冻结行模式下跳过固定行）</summary>
-        private List<int> BuildRowIndexMap(FileTableData projectedData)
+        private List<int> BuildRowIndexMap(FileTableData projectedData, out List<(DiffRowType diffType, bool isBlankRow)> rowProps)
         {
             var map = new List<int>();
+            rowProps = new List<(DiffRowType, bool)>();
             // ★ 冻结行模式下，DGV 不显示冻结行，跳过冻结行的映射
             for (int i = _frozenRows; i < projectedData.Rows.Count; i++)
+            {
                 map.Add(projectedData.Rows[i].OriginalRowIndex);
+                rowProps.Add((projectedData.Rows[i].DiffType, projectedData.Rows[i].IsBlankRow));
+            }
             return map;
         }
 

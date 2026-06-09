@@ -1301,19 +1301,31 @@ namespace wxd.files.winforms
 
                 var dir = Path.GetDirectoryName(fullPath) ?? "";
                 var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-                int frozenRows, headerRowIndex;
+                int frozenRows, headerRowIndex, uniqueColumnIndex, mappingRowIndex;
                 if (ext == ".csv")
                 {
                     frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
                     headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+                    uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+                    mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
                 }
                 else
                 {
                     frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
                     headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+                    uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+                    mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
                 }
+                // 获取列可见性配置
+                string relPath;
+                if (!string.IsNullOrEmpty(dir) && fullPath.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+                    relPath = fullPath.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar);
+                else
+                    relPath = Path.GetFileName(fullPath);
+                var columnVisibility = CsvSettings.GetColumnVisibility(dir, relPath);
                 var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
-                    rootDir: _currentDir);
+                    rootDir: _currentDir, columnVisibility: columnVisibility,
+                    uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex);
                 form.Show();
             };
 
