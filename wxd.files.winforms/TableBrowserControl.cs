@@ -1686,7 +1686,7 @@ namespace wxd.files.winforms
                 }
 
                 // 2. 写入新内容
-                MiniExcel.SaveAs(_filePath, _dataTable);
+                MiniExcel.SaveAs(_filePath, _dataTable, printHeader: false);
 
                 // 3. 写入成功，删除备份
                 if (File.Exists(backupPath))

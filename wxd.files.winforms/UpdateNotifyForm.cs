@@ -39,8 +39,8 @@ namespace wxd.files.winforms
 
             // 根据是否有更新内容调整窗体高度
             bool hasNotes = !string.IsNullOrEmpty(result.ReleaseNotes);
-            int formHeight = hasNotes ? 340 : 200;
-            ClientSize = new Size(420, formHeight);
+            int formHeight = hasNotes ? 380 : 200;
+            ClientSize = new Size(600, formHeight);
 
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -60,7 +60,7 @@ namespace wxd.files.winforms
             {
                 Text = msg,
                 AutoSize = false,
-                Size = new Size(380, 65),
+                Size = new Size(560, 65),
                 Location = new Point(20, 16),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 ForeColor = _isDark ? Color.FromArgb(241, 241, 241) : Color.FromArgb(20, 60, 100),
@@ -86,7 +86,7 @@ namespace wxd.files.winforms
                 {
                     Text = result.ReleaseNotes,
                     Location = new Point(20, notesTop + 22),
-                    Size = new Size(380, 120),
+                    Size = new Size(560, 160),
                     ReadOnly = true,
                     BorderStyle = BorderStyle.FixedSingle,
                     BackColor = _isDark ? Color.FromArgb(45, 45, 48) : Color.White,
@@ -101,7 +101,7 @@ namespace wxd.files.winforms
             }
 
             // 按钮布局：有更新内容时下移
-            int btnTop = hasNotes ? 230 : 100;
+            int btnTop = hasNotes ? 270 : 100;
 
             _btnUpdate = new Button
             {
@@ -133,7 +133,7 @@ namespace wxd.files.winforms
             {
                 Text = "取消",
                 Size = new Size(110, 34),
-                Location = new Point(280, btnTop),
+                Location = new Point(460, btnTop),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = _isDark ? darkBtnBg : Color.FromArgb(158, 158, 158),
@@ -147,7 +147,7 @@ namespace wxd.files.winforms
             _progressBar = new ProgressBar
             {
                 Location = new Point(20, progressTop),
-                Size = new Size(300, 18),
+                Size = new Size(480, 18),
                 Visible = false,
                 Style = ProgressBarStyle.Continuous,
                 Minimum = 0,
@@ -161,7 +161,7 @@ namespace wxd.files.winforms
                 Text = "",
                 AutoSize = false,
                 Size = new Size(40, 18),
-                Location = new Point(324, progressTop),
+                Location = new Point(504, progressTop),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _isDark ? Color.FromArgb(200, 200, 200) : Color.FromArgb(90, 130, 170),
                 BackColor = Color.Transparent,

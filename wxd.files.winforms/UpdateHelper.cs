@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -6,6 +7,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -22,18 +24,27 @@ namespace wxd.files.winforms
         public bool HasUpdate { get; set; }
         /// <summary>当前版本号</summary>
         public string CurrentVersion { get; set; } = "";
-        /// <summary>更新说明（md5.txt 第三行起的内容）</summary>
+        /// <summary>更新说明（累积历史版本的 Release body）</summary>
         public string ReleaseNotes { get; set; } = "";
+    }
+
+    /// <summary>Release 信息（从 Gitee API 解析）</summary>
+    internal class ReleaseInfo
+    {
+        public string Version { get; set; } = "";
+        public string Md5 { get; set; } = "";
+        public string? DownloadUrl { get; set; }
+        public string Body { get; set; } = "";
     }
 
     /// <summary>更新核心逻辑</summary>
     public static class UpdateHelper
     {
-        // Gitee raw 链接（固定地址）
-        private const string Md5CheckUrl =
-            "https://gitee.com/wxd-gaming/wxd.files.winforms/raw/master/md5.txt";
-        private const string DownloadUrl =
-            "https://gitee.com/wxd-gaming/wxd.files.winforms/raw/master/wxd.files.winforms.exe";
+        // Gitee API（公开仓库无需 token）
+        private const string ReleaseLatestApi =
+            "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases/latest";
+        private const string ReleasesListApi =
+            "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases?page=1&per_page=50";
 
         // Config 中的键名
         private const string KeyLastCheckTime = "UpdateLastCheckTime";
@@ -129,10 +140,15 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
                 throw new Exception("无法定位当前程序文件。");
 
+            // 从 Release API 获取附件下载地址
+            var downloadUrl = await GetLatestReleaseDownloadUrlAsync().ConfigureAwait(false);
+            if (string.IsNullOrEmpty(downloadUrl))
+                throw new Exception("无法获取更新文件的下载地址。");
+
             var tempPath = currentExePath + ".tmp";
 
             // 下载（所有 await 使用 ConfigureAwait(false)，不回到调用线程）
-            using (var response = await _httpClient.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+            using (var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
             {
                 response.EnsureSuccessStatusCode();
                 var totalBytes = response.Content.Headers.ContentLength ?? -1;
@@ -211,29 +227,20 @@ namespace wxd.files.winforms
             Environment.Exit(0);
         }
 
-        /// <summary>从远程获取版本检查结果</summary>
+        /// <summary>从 Gitee Release API 获取版本检查结果</summary>
         private static async Task<CheckResult?> FetchCheckResultAsync()
         {
-            var response = await _httpClient.GetStringAsync(Md5CheckUrl);
-            var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (lines.Length < 2) return null;
+            // 1. 获取最新 Release 信息
+            var latestRelease = await GetLatestReleaseAsync().ConfigureAwait(false);
+            if (latestRelease == null)
+                return null;
 
-            var remoteVersion = lines[0].Trim();
-            var remoteMd5 = lines[1].Trim();
+            var remoteVersion = latestRelease.Version;
+            var remoteMd5 = latestRelease.Md5;
 
-            // 解析第三行起的内容作为更新说明
-            string releaseNotes = "";
-            if (lines.Length > 2)
-            {
-                // 用原始行解析（保留格式）
-                var rawLines = response.Split('\n');
-                var notesBuilder = new StringBuilder();
-                for (int i = 2; i < rawLines.Length; i++)
-                {
-                    notesBuilder.AppendLine(rawLines[i].TrimEnd('\r'));
-                }
-                releaseNotes = notesBuilder.ToString().TrimEnd();
-            }
+            // 2. 获取当前版本到最新版本之间的累积更新日志
+            var releaseNotes = await FetchReleaseNotesBetweenAsync(
+                GetCurrentVersion(), remoteVersion).ConfigureAwait(false);
 
             // 当前程序集版本
             var currentVersion = Assembly.GetExecutingAssembly().GetName()?.Version?.ToString() ?? "0.0.0.0";
@@ -248,7 +255,7 @@ namespace wxd.files.winforms
             string? currentMd5 = null;
             if (!string.IsNullOrEmpty(currentExePath) && File.Exists(currentExePath))
             {
-                currentMd5 = await ComputeFileMd5Async(currentExePath);
+                currentMd5 = await ComputeFileMd5Async(currentExePath).ConfigureAwait(false);
             }
 
             // 核心逻辑：以 MD5 为准判断是否需要更新文件
@@ -275,6 +282,174 @@ namespace wxd.files.winforms
                 HasUpdate = needUpdateFile,
                 CurrentVersion = currentVersion
             };
+        }
+
+        /// <summary>获取最新 Release 的 exe 下载地址</summary>
+        private static async Task<string?> GetLatestReleaseDownloadUrlAsync()
+        {
+            var json = await _httpClient.GetStringAsync(ReleaseLatestApi).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("assets", out var assets) && assets.GetArrayLength() > 0)
+            {
+                return assets[0].GetProperty("browser_download_url").GetString();
+            }
+            return null;
+        }
+
+        /// <summary>从 Gitee API 获取最新 Release 信息（版本号 + MD5）</summary>
+        private static async Task<ReleaseInfo?> GetLatestReleaseAsync()
+        {
+            try
+            {
+                var json = await _httpClient.GetStringAsync(ReleaseLatestApi).ConfigureAwait(false);
+                return ParseReleaseInfo(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>从 JSON 解析 Release 信息</summary>
+        private static ReleaseInfo? ParseReleaseInfo(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var tagName = root.GetProperty("tag_name").GetString() ?? "";
+            var version = tagName.StartsWith("v") ? tagName[1..] : tagName;
+            var body = root.GetProperty("body").GetString() ?? "";
+
+            // 从 body 中解析 MD5: **MD5**: `xxx`
+            var md5Match = Regex.Match(body, @"\*\*MD5\*\*:\s*`([a-f0-9]{32})`", RegexOptions.IgnoreCase);
+            var md5 = md5Match.Success ? md5Match.Groups[1].Value : "";
+
+            string? downloadUrl = null;
+            if (root.TryGetProperty("assets", out var assets) && assets.GetArrayLength() > 0)
+            {
+                downloadUrl = assets[0].GetProperty("browser_download_url").GetString();
+            }
+
+            return new ReleaseInfo
+            {
+                Version = version,
+                Md5 = md5,
+                DownloadUrl = downloadUrl,
+                Body = body
+            };
+        }
+
+        /// <summary>从 Release body 中提取纯更新日志（去掉 MD5 等元信息行）</summary>
+        private static string ExtractReleaseNotes(string body)
+        {
+            if (string.IsNullOrEmpty(body))
+                return "";
+
+            // 按 "---" 分割，取第一部分（更新日志）作为有效内容
+            var lines = body.Split('\n');
+            var sb = new StringBuilder();
+            bool foundSeparator = false;
+
+            foreach (var line in lines)
+            {
+                var trimmed = line.TrimEnd('\r');
+
+                // 遇到 --- 分隔线就停止
+                if (trimmed.Trim() == "---")
+                {
+                    foundSeparator = true;
+                    continue;
+                }
+                if (foundSeparator)
+                    continue;
+
+                // 跳过版本标题行
+                if (trimmed.Trim().StartsWith("## version", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                sb.AppendLine(trimmed);
+            }
+
+            return sb.ToString().Trim();
+        }
+
+        /// <summary>获取两个版本之间的累积更新日志</summary>
+        private static async Task<string> FetchReleaseNotesBetweenAsync(
+            string currentVersion, string targetVersion)
+        {
+            try
+            {
+                var json = await _httpClient.GetStringAsync(ReleasesListApi).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                var releases = doc.RootElement;
+
+                // 解析版本号（去掉 'v' 前缀）
+                static bool TryParseVersion(string? v, out Version? parsed)
+                {
+                    parsed = null;
+                    if (string.IsNullOrEmpty(v)) return false;
+                    var clean = v.StartsWith("v") ? v[1..] : v;
+                    return Version.TryParse(clean, out parsed);
+                }
+
+                Version? currentVer = null;
+                Version? targetVer = null;
+                TryParseVersion(currentVersion, out currentVer);
+                TryParseVersion(targetVersion, out targetVer);
+
+                // 先收集符合条件的 Release 到列表
+                var matchedReleases = new List<(Version Ver, string TagName, string Notes)>();
+
+                foreach (var release in releases.EnumerateArray())
+                {
+                    var tagName = release.GetProperty("tag_name").GetString() ?? "";
+                    var verStr = tagName.StartsWith("v") ? tagName[1..] : tagName;
+                    var body = release.GetProperty("body").GetString() ?? "";
+
+                    if (!TryParseVersion(verStr, out var relVer) || relVer == null)
+                        continue;
+
+                    // 筛选：只取 currentVersion < relVer <= targetVersion 之间的版本
+                    if (targetVer != null && relVer > targetVer)
+                        continue; // 超出目标版本
+
+                    if (currentVer != null && relVer <= currentVer)
+                        continue; // 不高于当前版本
+
+                    var notes = ExtractReleaseNotes(body);
+                    if (!string.IsNullOrEmpty(notes))
+                    {
+                        matchedReleases.Add((relVer, tagName, notes));
+                    }
+                }
+
+                // 按版本号降序排列（最新在上面）
+                matchedReleases.Sort((a, b) => b.Ver.CompareTo(a.Ver));
+
+                var sb = new StringBuilder();
+                foreach (var (_, tagName, notes) in matchedReleases)
+                {
+                    sb.AppendLine($"━━━ {tagName} ━━━");
+                    sb.AppendLine(notes);
+                    sb.AppendLine();
+                }
+
+                return sb.ToString().Trim();
+            }
+            catch
+            {
+                // 降级：只取最新 Release 的更新日志
+                try
+                {
+                    var latest = await GetLatestReleaseAsync().ConfigureAwait(false);
+                    if (latest != null)
+                        return ExtractReleaseNotes(latest.Body);
+                }
+                catch { }
+                return "";
+            }
         }
 
         /// <summary>计算文件的 MD5 值</summary>
