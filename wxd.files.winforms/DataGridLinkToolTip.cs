@@ -87,7 +87,8 @@ namespace wxd.files.winforms
 
         private void OnGridCellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            // 允许列标题（RowIndex=-1）也触发自定义 ToolTip
+            if (e.ColumnIndex < 0)
             {
                 Hide();
                 return;
@@ -356,17 +357,24 @@ namespace wxd.files.winforms
 
                 // 测量标题
                 _titleHeight = 0;
+                int maxWidth = MinWidth;
                 if (!string.IsNullOrEmpty(_owner._currentTitle))
                 {
                     var titleSize = SafeMeasureString(g, _owner._currentTitle, _titleFont);
                     _titleHeight = (int)Math.Ceiling(titleSize.Height);
+                    // ★ 标题行宽度也参与 maxWidth 计算（拆分换行符逐行测量）
+                    var titleLines = _owner._currentTitle.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+                    foreach (var tl in titleLines)
+                    {
+                        int tw = (int)Math.Ceiling(SafeMeasureString(g, tl, _titleFont).Width);
+                        if (tw > maxWidth) maxWidth = tw;
+                    }
                 }
 
                 // 测量各行（支持换行符拆分 + 自动换行）
                 _layoutLines.Clear();
                 _hasLinkMapping = false;
                 _lineHeight = (int)Math.Ceiling(SafeMeasureString(g, "Ag", _textFont).Height);
-                int maxWidth = MinWidth;
 
                 if (_owner._currentLines.Count > 0)
                 {

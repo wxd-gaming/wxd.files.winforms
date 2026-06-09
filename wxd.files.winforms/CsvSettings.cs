@@ -198,6 +198,10 @@ namespace wxd.files.winforms
                     ExcelFrozenRows = cfg.ExcelFrozenRows,
                     CsvHeaderRowIndex = cfg.CsvHeaderRowIndex,
                     ExcelHeaderRowIndex = cfg.ExcelHeaderRowIndex,
+                    CsvUniqueColumnIndex = cfg.CsvUniqueColumnIndex,
+                    ExcelUniqueColumnIndex = cfg.ExcelUniqueColumnIndex,
+                    CsvMappingRowIndex = cfg.CsvMappingRowIndex,
+                    ExcelMappingRowIndex = cfg.ExcelMappingRowIndex,
                     ColumnLinks = cfg.ColumnLinks,
                     FileRemarks = cfg.FileRemarks,
                     ColumnVisibility = cfg.ColumnVisibility
@@ -446,6 +450,58 @@ namespace wxd.files.winforms
         public static void SetExcelHeaderRowIndexByDirectory(string directoryPath, int value)
         {
             SaveDirConfig(directoryPath, cfg => cfg.ExcelHeaderRowIndex = value);
+        }
+
+        /// <summary>获取指定目录的CSV唯一列索引</summary>
+        public static int GetCsvUniqueColumnIndexByDirectory(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.CsvUniqueColumnIndex ?? -1;
+        }
+
+        /// <summary>设置指定目录的CSV唯一列索引</summary>
+        public static void SetCsvUniqueColumnIndexByDirectory(string directoryPath, int value)
+        {
+            SaveDirConfig(directoryPath, cfg => cfg.CsvUniqueColumnIndex = value);
+        }
+
+        /// <summary>获取指定目录的Excel唯一列索引</summary>
+        public static int GetExcelUniqueColumnIndexByDirectory(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.ExcelUniqueColumnIndex ?? -1;
+        }
+
+        /// <summary>设置指定目录的Excel唯一列索引</summary>
+        public static void SetExcelUniqueColumnIndexByDirectory(string directoryPath, int value)
+        {
+            SaveDirConfig(directoryPath, cfg => cfg.ExcelUniqueColumnIndex = value);
+        }
+
+        /// <summary>获取指定目录的CSV映射行索引</summary>
+        public static int GetCsvMappingRowIndexByDirectory(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.CsvMappingRowIndex ?? -1;
+        }
+
+        /// <summary>设置指定目录的CSV映射行索引</summary>
+        public static void SetCsvMappingRowIndexByDirectory(string directoryPath, int value)
+        {
+            SaveDirConfig(directoryPath, cfg => cfg.CsvMappingRowIndex = value);
+        }
+
+        /// <summary>获取指定目录的Excel映射行索引</summary>
+        public static int GetExcelMappingRowIndexByDirectory(string directoryPath)
+        {
+            var cfg = TryGetDirConfig(directoryPath);
+            return cfg?.ExcelMappingRowIndex ?? -1;
+        }
+
+        /// <summary>设置指定目录的Excel映射行索引</summary>
+        public static void SetExcelMappingRowIndexByDirectory(string directoryPath, int value)
+        {
+            SaveDirConfig(directoryPath, cfg => cfg.ExcelMappingRowIndex = value);
         }
 
         #endregion

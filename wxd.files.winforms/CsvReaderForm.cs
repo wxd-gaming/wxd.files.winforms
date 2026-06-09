@@ -2096,8 +2096,8 @@ namespace wxd.files.winforms
     }
 
 
-    /// <summary>列选择对话框 — ListView展示冻结行数据，复选框选择列，新增关联按钮（加宽180px）</summary>
-    public class ColumnSelectorDialog : Form
+    /// <summary>列管理对话框 — ListView列显隐 + 关联设置</summary>
+    public class ColumnManagerDialog : Form
     {
         private ListView _lvColumns = new();
         private Button _btnSelectAll = new();
@@ -2110,20 +2110,25 @@ namespace wxd.files.winforms
         private string _rootDir = "";
         private string _currentFilePath = "";
         private int _frozenRows = 0;
-        private int _headerRowIndex = -1;              // 表头行索引（-1=未设置）
+        private int _headerRowIndex = -1;
+        private int _mappingRowIndex = -1;
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<ColumnLinkConfig> _columnLinks = new();
+        private DataTable _dataTable;
 
-        public ColumnSelectorDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex,
+        public ColumnManagerDialog(DataTable dataTable, bool[] checkedStates, int frozenRows, int lockedColumnIndex,
             string rootDir = "", string currentFilePath = "", List<(string display, string fullPath)>? fileEntries = null,
-            List<ColumnLinkConfig>? columnLinks = null, int headerRowIndex = -1)
+            List<ColumnLinkConfig>? columnLinks = null, int headerRowIndex = -1,
+            int mappingRowIndex = -1)
         {
+            _dataTable = dataTable;
             _lockedColumnIndex = lockedColumnIndex;
             _checkedStates = (bool[])checkedStates.Clone();
             _rootDir = rootDir;
             _currentFilePath = currentFilePath;
             _frozenRows = frozenRows;
-            _headerRowIndex = headerRowIndex;  // 接收表头行索引
+            _headerRowIndex = headerRowIndex;
+            _mappingRowIndex = mappingRowIndex;
             _fileEntries = fileEntries ?? new();
             _columnLinks = columnLinks != null ? new List<ColumnLinkConfig>(columnLinks) : new();
             InitializeComponent();
@@ -2153,14 +2158,19 @@ namespace wxd.files.winforms
             // 第一列：选择
             _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
 
-            // 表头名列：显示表头行对应的字段名（如果有设置表头行）
+            // 字段名列：显示表头行对应的字段名
             if (_headerRowIndex >= 0 && _headerRowIndex < dataTable.Rows.Count && _headerRowIndex < frozenCount)
                 _lvColumns.Columns.Add($"字段名(行{_headerRowIndex + 1})", 140, System.Windows.Forms.HorizontalAlignment.Left);
+
+            // 映射名列：如果设置了映射行且与表头行不同，显示映射行的值
+            if (_mappingRowIndex >= 0 && _mappingRowIndex < dataTable.Rows.Count && _mappingRowIndex < frozenCount
+                && _mappingRowIndex != _headerRowIndex)
+                _lvColumns.Columns.Add($"映射名(行{_mappingRowIndex + 1})", 140, System.Windows.Forms.HorizontalAlignment.Left);
 
             // 其余冻结行
             for (int r = 0; r < frozenCount; r++)
             {
-                if (r == _headerRowIndex) continue; // 已作为字段名列显示
+                if (r == _headerRowIndex || r == _mappingRowIndex) continue;
                 _lvColumns.Columns.Add($"行{r + 1}", 130, System.Windows.Forms.HorizontalAlignment.Left);
             }
 
@@ -2177,17 +2187,25 @@ namespace wxd.files.winforms
                     Checked = _checkedStates[col]
                 };
 
-                // 先添加字段名（如果设置了表头行）
+                // 字段名
                 if (_headerRowIndex >= 0 && _headerRowIndex < dataTable.Rows.Count && _headerRowIndex < frozenCount)
                 {
                     var headerVal = dataTable.Rows[_headerRowIndex][col]?.ToString() ?? "";
                     item.SubItems.Add(headerVal);
                 }
 
-                // 添加其余冻结行的值
+                // 映射名
+                if (_mappingRowIndex >= 0 && _mappingRowIndex < dataTable.Rows.Count && _mappingRowIndex < frozenCount
+                    && _mappingRowIndex != _headerRowIndex)
+                {
+                    var mappingVal = dataTable.Rows[_mappingRowIndex][col]?.ToString() ?? "";
+                    item.SubItems.Add(mappingVal);
+                }
+
+                // 其余冻结行的值
                 for (int r = 0; r < frozenCount; r++)
                 {
-                    if (r == _headerRowIndex) continue;
+                    if (r == _headerRowIndex || r == _mappingRowIndex) continue;
                     var val = dataTable.Rows[r][col]?.ToString() ?? "";
                     item.SubItems.Add(val);
                 }
@@ -2200,8 +2218,6 @@ namespace wxd.files.winforms
                 _lvColumns.Items.Add(item);
             }
 
-            // 高亮标记表头行所在的列头（ColumnHeader 不支持 BackColor，跳过）
-            
             _lvColumns.EndUpdate();
         }
 
@@ -2209,7 +2225,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            Text = "选择显示列";
+            Text = "列管理";
             ClientSize = new Size(980, 520);
             MinimumSize = new Size(600, 300);
             StartPosition = FormStartPosition.CenterParent;
@@ -2309,7 +2325,7 @@ namespace wxd.files.winforms
             // 取消按钮
             _btnCancel = new Button
             {
-                Text = "清除",
+                Text = "取消",
                 Location = new Point(780, 468),
                 Size = new Size(70, 28),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
@@ -2354,12 +2370,10 @@ namespace wxd.files.winforms
                 if (newLink != null)
                     _columnLinks.Add(newLink);
 
-                // 刷新ListView中的关联列显示
                 UpdateLinkColumnInListView();
             }
         }
 
-        /// <summary>刷新ListView中关联列的显示</summary>
         private void UpdateLinkColumnInListView()
         {
             string currentRelPath = GetRelativePath(_currentFilePath);
@@ -2370,10 +2384,8 @@ namespace wxd.files.winforms
                     var link = _columnLinks.Find(l =>
                         l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
                         l.SourceColumnIndex == col);
-                    // 更新关联文本（sub-items 最后一个）
                     var linkText = item.SubItems[item.SubItems.Count - 1];
 
-                    // 构建关联显示文本：优先显示表头名称
                     string displayText = "";
                     if (link != null)
                     {

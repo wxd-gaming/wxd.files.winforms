@@ -21,6 +21,18 @@ public class DirectoryFrozenConfig
     /// <summary>Excel表头行索引（0-based，-1表示未设置/默认第一行为表头），必须 < ExcelFrozenRows</summary>
     public int ExcelHeaderRowIndex { get; set; } = -1;
 
+    /// <summary>CSV唯一列索引（0-based，-1表示未设置）</summary>
+    public int CsvUniqueColumnIndex { get; set; } = -1;
+
+    /// <summary>Excel唯一列索引（0-based，-1表示未设置）</summary>
+    public int ExcelUniqueColumnIndex { get; set; } = -1;
+
+    /// <summary>CSV映射行索引（固定行中哪一行是中文映射，0-based，-1表示未设置），必须 < CsvFrozenRows</summary>
+    public int CsvMappingRowIndex { get; set; } = -1;
+
+    /// <summary>Excel映射行索引（固定行中哪一行是中文映射，0-based，-1表示未设置），必须 < ExcelFrozenRows</summary>
+    public int ExcelMappingRowIndex { get; set; } = -1;
+
     /// <summary>最后修改时间</summary>
     public DateTime LastModified { get; set; } = DateTime.UtcNow;
 

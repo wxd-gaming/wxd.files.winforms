@@ -38,6 +38,8 @@ namespace wxd.files.winforms
         private int _frozenRows = 0;
         private bool _frozenRowsOverridden = false;
         private int _headerRowIndex = -1;
+        private int _uniqueColumnIndex = -1;
+        private int _mappingRowIndex = -1;
         private int _paneIndex = -1;
         private Dictionary<string, string> _fileRemarks = new();
         private bool[] _columnCheckStates = Array.Empty<bool>();
@@ -50,12 +52,15 @@ namespace wxd.files.winforms
         private FlowLayoutPanel? _flowTop;
         private Button? _btnReload;
         private Button? _btnHistory;
+        private ComboBox? _cboUniqueColumn;
         private bool[]? _externalColumnStates = null;
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
         public TableFileType FileType => _fileType;
+        public int UniqueColumnIndex => _uniqueColumnIndex;
+        public int MappingRowIndex => _mappingRowIndex;
 
         /// <summary>数据加载完成事件（供版本对比等外部功能使用）</summary>
         public event EventHandler? DataLoaded;
@@ -95,21 +100,46 @@ namespace wxd.files.winforms
         // ==================== 构造函数 ====================
         public TableBrowserControl(string filePath, int paneIndex = -1, string? rootDir = null,
             int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "",
-            bool lightweight = false)
+            bool lightweight = false, int uniqueColumnIndex = -1, int mappingRowIndex = -1)
         {
             _filePath = filePath;
             _paneIndex = paneIndex;
             _rootDir = rootDir;
             _lightweight = lightweight;
+            // ★ 先确定文件类型，后续配置读取需要用到
+            _fileType = DetectFileType(filePath);
             if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
-            if (headerRowIndex >= 0) _headerRowIndex = headerRowIndex;
             _initialContentFilter = initialContentFilter;
 
             var dir = FrozenDir;
             if (!string.IsNullOrEmpty(dir))
+            {
                 _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
 
-            _fileType = DetectFileType(filePath);
+                // 表头行：如果未传入，从配置读取
+                if (headerRowIndex >= 0)
+                    _headerRowIndex = headerRowIndex;
+                else if (_fileType == TableFileType.Csv)
+                    _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+                else
+                    _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+
+                // 唯一列：如果未传入，从配置读取
+                if (uniqueColumnIndex >= 0)
+                    _uniqueColumnIndex = uniqueColumnIndex;
+                else if (_fileType == TableFileType.Csv)
+                    _uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+                else
+                    _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+
+                // 映射行：如果未传入，从配置读取
+                if (mappingRowIndex >= 0)
+                    _mappingRowIndex = mappingRowIndex;
+                else if (_fileType == TableFileType.Csv)
+                    _mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
+                else
+                    _mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
+            }
 
             InitializeComponent();
 
@@ -292,16 +322,12 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            if (!_frozenRowsOverridden && !string.IsNullOrEmpty(FrozenDir))
-            {
-                _headerRowIndex = _fileType == TableFileType.Csv
-                    ? CsvSettings.GetCsvHeaderRowIndexByDirectory(FrozenDir)
-                    : CsvSettings.GetExcelHeaderRowIndexByDirectory(FrozenDir);
-            }
-            PopulateHeaderRowCombo(cboHeaderRow);
+            cboHeaderRow.Items.Add("未设置");
+            for (int i = 0; i < 10; i++) cboHeaderRow.Items.Add($"第{i + 1}行");
+            cboHeaderRow.SelectedIndex = _headerRowIndex >= 0 && _headerRowIndex < 10 ? _headerRowIndex + 1 : 0;
             cboHeaderRow.SelectedIndexChanged += (s, e) =>
             {
-                _headerRowIndex = cboHeaderRow.SelectedIndex >= 0 ? cboHeaderRow.SelectedIndex : -1;
+                _headerRowIndex = cboHeaderRow.SelectedIndex > 0 ? cboHeaderRow.SelectedIndex - 1 : -1;
                 if (!string.IsNullOrEmpty(FrozenDir))
                 {
                     if (_fileType == TableFileType.Csv)
@@ -312,12 +338,78 @@ namespace wxd.files.winforms
                 CsvSettings.Save();
                 RefreshGridLayout();
             };
-            Tag = cboHeaderRow;
 
-            // 列选择按钮
+            // 映射行选择
+            var lblMappingRow = new Label
+            {
+                Text = "映射行:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+            var cboMappingRow = new ComboBox
+            {
+                Size = new Size(70, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            cboMappingRow.Items.Add("未设置");
+            int maxMappingRow = Math.Min(_frozenRows, 10);
+            for (int i = 0; i < maxMappingRow; i++) cboMappingRow.Items.Add($"第{i + 1}行");
+            cboMappingRow.SelectedIndex = _mappingRowIndex >= 0 && _mappingRowIndex < maxMappingRow ? _mappingRowIndex + 1 : 0;
+            cboMappingRow.SelectedIndexChanged += (s, e) =>
+            {
+                _mappingRowIndex = cboMappingRow.SelectedIndex > 0 ? cboMappingRow.SelectedIndex - 1 : -1;
+                if (!string.IsNullOrEmpty(FrozenDir))
+                {
+                    if (_fileType == TableFileType.Csv)
+                        CsvSettings.SetCsvMappingRowIndexByDirectory(FrozenDir, _mappingRowIndex);
+                    else
+                        CsvSettings.SetExcelMappingRowIndexByDirectory(FrozenDir, _mappingRowIndex);
+                }
+                CsvSettings.Save();
+                RefreshGridLayout();
+            };
+
+            // 唯一列选择
+            var lblUniqueColumn = new Label
+            {
+                Text = "唯一列:",
+                AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightTextSecondary,
+                Margin = new Padding(3, 5, 3, 0)
+            };
+            _cboUniqueColumn = new ComboBox
+            {
+                Size = new Size(130, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            RefreshUniqueColumnCombo();
+            _cboUniqueColumn.SelectedIndexChanged += (s, e) =>
+            {
+                _uniqueColumnIndex = _cboUniqueColumn.SelectedIndex > 0 ? _cboUniqueColumn.SelectedIndex - 1 : -1;
+                if (!string.IsNullOrEmpty(FrozenDir))
+                {
+                    if (_fileType == TableFileType.Csv)
+                        CsvSettings.SetCsvUniqueColumnIndexByDirectory(FrozenDir, _uniqueColumnIndex);
+                    else
+                        CsvSettings.SetExcelUniqueColumnIndexByDirectory(FrozenDir, _uniqueColumnIndex);
+                }
+                CsvSettings.Save();
+                CheckUniqueColumnDuplicates();
+            };
+
+            // 列管理按钮
             var lblHeaderFilter = new Label
             {
-                Text = "列选择:",
+                Text = "列管理:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -328,7 +420,7 @@ namespace wxd.files.winforms
                 Size = new Size(120, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
-                Text = "选择列 (全部)",
+                Text = "列管理",
                 TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = _colorHoverBg,
                 ForeColor = _colorLightText,
@@ -346,7 +438,8 @@ namespace wxd.files.winforms
                 Margin = new Padding(3, 5, 0, 0)
             };
 
-            _flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow, lblHeaderFilter, _btnSelectColumns });
+            _flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow,
+                lblMappingRow, cboMappingRow, lblUniqueColumn, _cboUniqueColumn, lblHeaderFilter, _btnSelectColumns });
 
             // 重新加载按钮
             _btnReload = new Button
@@ -872,6 +965,9 @@ namespace wxd.files.winforms
                 _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
             }
 
+            // ★ 数据加载完成后刷新唯一列下拉（触发 SelectedIndexChanged 自动检查重复）
+            RefreshUniqueColumnCombo();
+
             // 触发数据加载完成事件
             DataLoaded?.Invoke(this, EventArgs.Empty);
 
@@ -883,6 +979,30 @@ namespace wxd.files.winforms
         /// <summary>为自定义 tooltip 提供内容（grid: 当前鼠标所在的 DataGridView）</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText) GetLinkToolTipContent(DataGridView grid, int rowIndex, int columnIndex)
         {
+            // 列标题悬停（rowIndex == -1）
+            if (rowIndex < 0 && columnIndex >= 0)
+            {
+                var dgvCol = grid.Columns[columnIndex];
+                var headerVal = dgvCol.HeaderText;
+
+                // 计算原始列索引
+                int colIdx = columnIndex;
+                if (_visibleColumnIndices.Count > 0 && columnIndex < _visibleColumnIndices.Count)
+                    colIdx = _visibleColumnIndices[columnIndex];
+
+                // 构建列标题 ToolTip
+                string tipText = headerVal;
+                if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count
+                    && colIdx < _dataTable.Columns.Count)
+                {
+                    var mappingVal = _dataTable.Rows[_mappingRowIndex][colIdx]?.ToString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(mappingVal))
+                        tipText = $"{mappingVal} ({headerVal}) - 第{_mappingRowIndex + 1}行";
+                }
+
+                return (null, new List<DataGridLinkToolTip.TipLine>(), tipText);
+            }
+
             if (rowIndex < 0 || columnIndex < 0)
                 return (null, new List<DataGridLinkToolTip.TipLine>(), null);
 
@@ -911,6 +1031,18 @@ namespace wxd.files.winforms
                 string headerName = "";
                 if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                     headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                // 如果设置了映射行，拼接映射名 → "映射名(表头名)"
+                if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+                {
+                    var mappingVal = _dataTable.Rows[_mappingRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(mappingVal))
+                    {
+                        if (!string.IsNullOrEmpty(headerName))
+                            headerName = $"{mappingVal}({headerName})";
+                        else
+                            headerName = mappingVal;
+                    }
+                }
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
@@ -936,6 +1068,18 @@ namespace wxd.files.winforms
                 string headerName = "";
                 if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                     headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                // 如果设置了映射行，拼接映射名 → "映射名(表头名)"
+                if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+                {
+                    var mappingVal = _dataTable.Rows[_mappingRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(mappingVal))
+                    {
+                        if (!string.IsNullOrEmpty(headerName))
+                            headerName = $"{mappingVal}({headerName})";
+                        else
+                            headerName = mappingVal;
+                    }
+                }
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
@@ -976,6 +1120,18 @@ namespace wxd.files.winforms
             string colHeaderName = "";
             if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                 colHeaderName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+            // 如果设置了映射行，拼接映射名 → "映射名(表头名)"
+            if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
+            {
+                var mappingVal = _dataTable.Rows[_mappingRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(mappingVal))
+                {
+                    if (!string.IsNullOrEmpty(colHeaderName))
+                        colHeaderName = $"{mappingVal}({colHeaderName})";
+                    else
+                        colHeaderName = mappingVal;
+                }
+            }
             if (string.IsNullOrEmpty(colHeaderName))
                 colHeaderName = GetExcelColumnName(originalColIndex);
 
@@ -1210,15 +1366,26 @@ namespace wxd.files.winforms
             this.Invoke(() => { _delimiter = delimiter; _dataTable = dataTable; _fileData = BuildFileData(dataTable, _fileData); _headerTable = dataTable.Clone(); });
         }
 
-        // ==================== 表头行下拉 ====================
-        private void PopulateHeaderRowCombo(ComboBox cbo)
+        // ==================== 唯一列下拉刷新 ====================
+        private void RefreshUniqueColumnCombo()
         {
-            cbo.Items.Clear();
-            for (int i = 0; i < 10; i++) cbo.Items.Add($"第{i + 1}行");
-            if (_headerRowIndex >= 0 && _headerRowIndex < 10)
-                cbo.SelectedIndex = _headerRowIndex;
-            else
-                cbo.SelectedIndex = -1;
+            if (_cboUniqueColumn == null) return;
+
+            _cboUniqueColumn.Items.Clear();
+            _cboUniqueColumn.Items.Add("未设置");
+            for (int col = 0; col < _dataTable.Columns.Count; col++)
+            {
+                string displayName;
+                if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && _headerRowIndex < _frozenRows)
+                    displayName = _dataTable.Rows[_headerRowIndex][col]?.ToString() ?? $"Col{col}";
+                else
+                    displayName = $"Col{col}";
+                _cboUniqueColumn.Items.Add($"{displayName} (Col{col})");
+            }
+            // 根据 _uniqueColumnIndex 恢复选中状态；未设置时默认选中第一列
+            _cboUniqueColumn.SelectedIndex = _uniqueColumnIndex >= 0 && _uniqueColumnIndex < _dataTable.Columns.Count
+                ? _uniqueColumnIndex + 1
+                : (_dataTable.Columns.Count > 0 ? 1 : 0);
         }
 
         // ==================== 布局刷新 ====================
@@ -1261,7 +1428,10 @@ namespace wxd.files.winforms
                         if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
                         {
                             var srcColIdx = _visibleColumnIndices[i];
-                            dgvCol.HeaderText = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                            var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                            dgvCol.HeaderText = headerVal;
+                            // 如果设置了映射行，设置 ToolTip 为 "映射名 (表头名)"
+                            SetColumnHeaderToolTip(dgvCol, i, headerVal);
                         }
                         else
                         {
@@ -1286,7 +1456,9 @@ namespace wxd.files.winforms
                     // 如果设置了表头行，用表头行的值作为列标题
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
                     {
-                        _dataGrid.Columns[i].HeaderText = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                        var headerVal = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                        _dataGrid.Columns[i].HeaderText = headerVal;
+                        SetColumnHeaderToolTip(_dataGrid.Columns[i], i, headerVal);
                     }
                     else
                     {
@@ -1303,6 +1475,76 @@ namespace wxd.files.winforms
         {
             for (int i = 0; i < _dataGrid.Rows.Count && i < _fileData.Rows.Count; i++)
                 _dataGrid.Rows[i].Tag = _fileData.Rows[i];
+        }
+
+        /// <summary>列标题 ToolTip 已统一由 DataGridLinkToolTip 自定义控件处理，此方法保留为空</summary>
+        private void SetColumnHeaderToolTip(DataGridViewColumn dgvCol, int displayColIndex, string headerVal)
+        {
+            // 不再设置原生 ToolTipText，列标题悬停由 DataGridLinkToolTip.OnGridCellMouseMove 统一处理
+        }
+
+        /// <summary>检查唯一列是否有重复值，如有则弹窗警告</summary>
+        private void CheckUniqueColumnDuplicates()
+        {
+            if (_uniqueColumnIndex < 0 || _uniqueColumnIndex >= _dataTable.Columns.Count) return;
+            if (_dataTable.Rows.Count <= _frozenRows) return;
+
+            // ★ 获取列显示名（映射名(列名) 格式）
+            string colDisplayName = $"Col{_uniqueColumnIndex}";
+            if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count)
+            {
+                var mappingVal = _dataTable.Rows[_mappingRowIndex][_uniqueColumnIndex]?.ToString()?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(mappingVal))
+                {
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+                    {
+                        var headerVal = _dataTable.Rows[_headerRowIndex][_uniqueColumnIndex]?.ToString()?.Trim() ?? "";
+                        colDisplayName = $"{mappingVal}({headerVal})";
+                    }
+                    else
+                        colDisplayName = mappingVal;
+                }
+            }
+            else if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+            {
+                colDisplayName = _dataTable.Rows[_headerRowIndex][_uniqueColumnIndex]?.ToString()?.Trim() ?? $"Col{_uniqueColumnIndex}";
+            }
+
+            var duplicates = _dataTable.AsEnumerable()
+                .Skip(_frozenRows)
+                .GroupBy(r => r[_uniqueColumnIndex]?.ToString()?.Trim() ?? "")
+                .Where(g => !string.IsNullOrEmpty(g.Key) && g.Count() > 1)
+                .ToList();
+
+            if (duplicates.Any())
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"列 \"{colDisplayName}\" 存在重复值：");
+                sb.AppendLine();
+                foreach (var g in duplicates.Take(10))
+                {
+                    sb.AppendLine($"值 \"{g.Key}\" 重复 {g.Count()} 次：");
+                    int lineNum = 0;
+                    foreach (var row in g.Take(10))
+                    {
+                        // 在 DataTable 中的实际索引
+                        var dtIndex = _dataTable.Rows.IndexOf(row);
+                        int fileRowNum = dtIndex + 1; // 1-based 显示行号
+                        // 如果能从 _fileData 获取原始文件行号则用
+                        if (dtIndex >= 0 && dtIndex < _fileData.Rows.Count)
+                            fileRowNum = _fileData.Rows[dtIndex].OriginalRowIndex + 1;
+                        sb.AppendLine($"  行 {fileRowNum}: {g.Key}");
+                        lineNum++;
+                    }
+                    if (g.Count() > 10)
+                        sb.AppendLine($"  ... 还有 {g.Count() - 10} 行");
+                }
+                if (duplicates.Count > 10)
+                    sb.AppendLine($"... 还有 {duplicates.Count - 10} 个重复值");
+
+                MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         // ==================== 列选择 ====================
@@ -1322,8 +1564,9 @@ namespace wxd.files.winforms
         {
             if (_dataTable.Columns.Count == 0) return;
             EnsureFileEntriesLoaded();
-            using var dialog = new ColumnSelectorDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
-                _rootDir ?? "", _filePath, _fileEntries, _columnLinks, _headerRowIndex);
+            using var dialog = new ColumnManagerDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
+                _rootDir ?? "", _filePath, _fileEntries, _columnLinks, _headerRowIndex,
+                _mappingRowIndex);
             if (dialog.ShowDialog(this) == DialogResult.OK)
             {
                 _columnCheckStates = dialog.GetCheckedStates();
@@ -1331,6 +1574,7 @@ namespace wxd.files.winforms
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
                 ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
                 CsvSettings.SetColumnVisibility(FrozenDir, GetCurrentRelativePath(), _columnCheckStates);
+                CsvSettings.Save();
                 UpdateColumnSelectorButton();
                 RefreshGridLayout();
             }
@@ -1373,7 +1617,7 @@ namespace wxd.files.winforms
                 if (_columnCheckStates[i]) checkedCount++;
             int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
             int checkedData = Math.Max(0, checkedCount - 1);
-            _btnSelectColumns.Text = $"选择列 ({checkedData}/{dataColumns})";
+            _btnSelectColumns.Text = "列管理";
             _btnSelectColumns.ForeColor = checkedData < dataColumns ? Color.Red : _colorLightText;
         }
 
@@ -1445,7 +1689,10 @@ namespace wxd.files.winforms
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
                     {
                         var srcColIdx = _visibleColumnIndices[i];
-                        dgvCol.HeaderText = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                        var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                        dgvCol.HeaderText = headerVal;
+                        // 如果设置了映射行，设置 ToolTip 为 "映射名 (表头名)"
+                        SetColumnHeaderToolTip(dgvCol, i, headerVal);
                     }
                     else
                     {
@@ -2322,7 +2569,9 @@ namespace wxd.files.winforms
                     // 如果设置了表头行，用表头行的值作为列标题
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
                     {
-                        _dataGrid.Columns[i].HeaderText = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                        var headerVal = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                        _dataGrid.Columns[i].HeaderText = headerVal;
+                        SetColumnHeaderToolTip(_dataGrid.Columns[i], i, headerVal);
                     }
                     else
                     {
@@ -2332,6 +2581,9 @@ namespace wxd.files.winforms
                 // ★ 同步设置 Tag（DataSource 赋值后行已创建）
                 SetRowTags();
             }
+
+            // ★ 数据表变更后刷新唯一列下拉选项
+            RefreshUniqueColumnCombo();
         }
 
         /// <summary>供外部（版本对比等）移除的 CellFormatting 事件占位</summary>
