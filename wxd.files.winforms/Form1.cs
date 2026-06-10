@@ -486,7 +486,7 @@ namespace wxd.files.winforms
             // 打开大文件阅读器按钮
             var btnLargeFileViewer = new Button
             {
-                Text = "大文件阅读",
+                Text = "日志分析",
                 Size = new Size(80, ctrlHeight),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,

@@ -98,7 +98,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             ClientSize = new Size(1200, 800);
-            Text = "大文件阅读器";
+            Text = "日志分析";
             MinimumSize = new Size(800, 600);
             StartPosition = FormStartPosition.CenterScreen;
             WindowState = FormWindowState.Maximized;
@@ -373,9 +373,9 @@ namespace wxd.files.winforms
         private void UpdateTitle()
         {
             if (!string.IsNullOrEmpty(_currentDir))
-                Text = $"大文件阅读器 - {_currentDir}";
+                Text = $"日志分析 - {_currentDir}";
             else
-                Text = "大文件阅读器";
+                Text = "日志分析";
         }
 
         private void OnRefreshClick(object? sender, EventArgs e)
@@ -386,7 +386,7 @@ namespace wxd.files.winforms
 
         private void OnHelpClick(object? sender, EventArgs e)
         {
-            const string helpText = @"📄 大文件阅读器 - 使用说明
+            const string helpText = @"📄 日志分析 - 使用说明
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ◆ 基本操作
@@ -468,7 +468,7 @@ namespace wxd.files.winforms
   · 内存占用严格控制在合理范围内
   · 大文件打开速度与文件大小无关，秒级响应";
 
-            HelpForm.ShowHelp(this, "使用说明 - 大文件阅读器", helpText, CsvSettings.ThemeMode == 0);
+            HelpForm.ShowHelp(this, "使用说明 - 日志分析", helpText, CsvSettings.ThemeMode == 0);
         }
 
         private async void LoadFilesAsync()
@@ -876,13 +876,13 @@ namespace wxd.files.winforms
 
             var tabPage = _tabContent.TabPages[tabIndex];
 
+            // ★ 先清理 reader 资源（文件流、缓存等），再移除标签页
             foreach (Control ctrl in tabPage.Controls)
             {
                 if (ctrl is LargeFileReaderControl reader)
                 {
                     reader.Cleanup();
                 }
-                ctrl.Dispose();
             }
 
             _tabContent.TabPages.RemoveAt(tabIndex);
@@ -966,7 +966,9 @@ namespace wxd.files.winforms
 
         private void CloseAllTabs()
         {
-            while (_tabContent.TabPages.Count > 0)
+            // ★ 先记录当前标签页数量，避免 CloseTab 中添加的"欢迎"页导致无限循环
+            int count = _tabContent.TabPages.Count;
+            for (int i = 0; i < count; i++)
                 CloseTab(0);
         }
 
@@ -975,17 +977,19 @@ namespace wxd.files.winforms
             var dirText = !string.IsNullOrEmpty(_currentDir) ? $" - {_currentDir}" : "";
             if (_tabContent.SelectedTab?.Tag is string path)
             {
-                Text = $"大文件阅读器{dirText} - {Path.GetFileName(path)}";
+                Text = $"日志分析{dirText} - {Path.GetFileName(path)}";
             }
             else
             {
-                Text = $"大文件阅读器{dirText}";
+                Text = $"日志分析{dirText}";
             }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _loadingCts?.Cancel();
+            // ★ 主动清理所有标签页，避免 Dispose 递归时堆积导致 UI 卡顿
+            CloseAllTabs();
             base.OnFormClosing(e);
         }
     }
