@@ -261,33 +261,29 @@ Write-Host "[4/6] Tag pushed" -ForegroundColor Green
 Write-Host
 Write-Host "[5/6] Creating Gitee Release..." -ForegroundColor Cyan
 
-# ★ 在 here-string 之前预先拼接 MD5 行，避免 here-string 中子表达式解析异常
-$releaseBody = @"
-## $TagName
+# ★ 使用双引号字符串 + 转义换行符，避免 here-string 中的反引号与 Markdown 冲突
+$releaseTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+$releaseBody = "## $TagName`n`n**Release Time**: $releaseTime`n`n$ReleaseNotes`n`n---`n`n**MD5**: $md5`n**File**: $ExeName`n**Size**: $exeSize MB"
 
-$ReleaseNotes
-
----
-
-**MD5**: ``$md5``
-**File**: $ExeName
-**Size**: $exeSize MB
-"@
-
-$apiBody = @{
+# ★ 使用 JavaScriptSerializer 替代 ConvertTo-Json，避免中文字符被转义为 \uXXXX 导致乱码
+Add-Type -AssemblyName System.Web.Extensions
+$serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+$apiBody = $serializer.Serialize(@{
     access_token     = $GiteeToken
     tag_name         = $TagName
     name             = $TagName
     body             = $releaseBody
     target_commitish = "master"
     prerelease       = $false
-} | ConvertTo-Json -Compress
+})
+
+$utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($apiBody)
 
 try {
     $releaseResponse = Invoke-RestMethod `
         -Uri "https://gitee.com/api/v5/repos/$GiteeOwner/$GiteeRepo/releases" `
         -Method Post `
-        -Body $apiBody `
+        -Body $utf8Bytes `
         -ContentType "application/json; charset=utf-8"
 
     $releaseId = $releaseResponse.id
@@ -304,7 +300,7 @@ try {
     $errorMsg = $_.Exception.Message
     Write-Host "[ERROR] Create Release failed: $errorMsg" -ForegroundColor Red
 
-    if ($errorMsg -match "401|403|Unauthorized") {
+    if ($errorMsg -match "401" -or $errorMsg -match "403" -or $errorMsg -match "Unauthorized") {
         Write-Host "  Please check that GITEE_TOKEN is correct and has 'projects' permission." -ForegroundColor Yellow
     }
     if ($errorMsg -match "422|already|exist") {
@@ -361,7 +357,7 @@ Write-Host "  Release Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  Version : $TagName" -ForegroundColor White
 Write-Host "  MD5     : $md5" -ForegroundColor White
-Write-Host "  File    : $ExeName ($exeSize MB)" -ForegroundColor White
+Write-Host "  File    : $ExeName (${exeSize} MB)" -ForegroundColor White
 Write-Host "  Release : $releaseUrl" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Green
 Write-Host
