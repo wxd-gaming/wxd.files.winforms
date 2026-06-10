@@ -465,7 +465,7 @@ namespace wxd.files.winforms
                     CsvSettings.SetFileUniqueColumn(FrozenDir, relPath, _uniqueColumnIndex);
                 }
                 CsvSettings.Save();
-                CheckUniqueColumnDuplicates();
+                CheckUniqueColumnDuplicates(showMessageBox: true);
             };
 
             // 列管理按钮
@@ -720,6 +720,29 @@ namespace wxd.files.winforms
                 // ★ 不再需要 __RowNum__ 偏移
                 if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
                     _dataGridHeader.Columns[headerColumnIndex].Width = _dataGrid.Columns[dataGridColumnIndex].Width;
+            };
+
+            // 快捷键：Ctrl+D 复制当前行，Delete 删除当前行
+            _dataGrid.KeyDown += (s, e) =>
+            {
+                if (_isEmbeddedMode) return;
+                if (_dataGrid.CurrentRow == null) return;
+
+                int displayIdx = _dataGrid.CurrentRow.Index;
+                int origIdx = GetOriginalRowIndexFromDisplay(displayIdx);
+
+                if (e.Control && e.KeyCode == Keys.D)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    DuplicateRowAt(origIdx);
+                }
+                else if (e.KeyCode == Keys.Delete && !e.Control)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    DeleteRowAt(origIdx);
+                }
             };
 
             splitContainer.Panel1.Controls.Add(_dataGridHeader);
@@ -1405,8 +1428,8 @@ namespace wxd.files.winforms
             RebuildHighlightRows();
             RefreshGridLayout();
 
-            // ★ 重新加载后重新检测唯一列重复
-            CheckUniqueColumnDuplicates();
+            // ★ 重新加载后重新检测唯一列重复（首次加载，弹 MessageBox）
+            CheckUniqueColumnDuplicates(showMessageBox: true);
         }
 
         private void ReloadCsvFile()
@@ -1564,7 +1587,8 @@ namespace wxd.files.winforms
 
         /// <summary>检查唯一列是否有重复值，如有则弹窗警告并在状态栏显示红色提示</summary>
         /// <returns>true = 存在重复值</returns>
-        private bool CheckUniqueColumnDuplicates()
+        /// <param name="showMessageBox">是否弹出 MessageBox（仅首次加载/手动切换唯一列时传 true）</param>
+        private bool CheckUniqueColumnDuplicates(bool showMessageBox = false)
         {
             // ★ 先清除之前的警告状态
             _duplicateWarningText = null;
@@ -1621,37 +1645,40 @@ namespace wxd.files.winforms
             var totalDupCount = duplicates.Count;
             var totalRedundant = duplicates.Sum(g => g.Count() - 1);
 
-            // ★ MessageBox：只显示前3组，每组最多5行
-            var sb = new StringBuilder();
-            sb.AppendLine($"列 \"{colDisplayName}\" 存在重复值：");
-            sb.AppendLine($"共 {totalDupCount} 个重复值，{totalRedundant} 处冗余");
-            sb.AppendLine();
-
-            int showGroups = Math.Min(3, duplicates.Count);
-            for (int i = 0; i < showGroups; i++)
+            // ★ MessageBox：只在首次加载或手动切换唯一列时弹出
+            if (showMessageBox)
             {
-                var g = duplicates[i];
-                sb.AppendLine($"▸ 值 \"{g.Key}\" 重复 {g.Count()} 次：");
-                int showRows = Math.Min(5, g.Count());
-                foreach (var x in g.Take(showRows))
+                var sb = new StringBuilder();
+                sb.AppendLine($"列 \"{colDisplayName}\" 存在重复值：");
+                sb.AppendLine($"共 {totalDupCount} 个重复值，{totalRedundant} 处冗余");
+                sb.AppendLine();
+
+                int showGroups = Math.Min(3, duplicates.Count);
+                for (int i = 0; i < showGroups; i++)
                 {
-                    int fileRowNum = x.DataTableIndex < _fileData.Rows.Count
-                        ? _fileData.Rows[x.DataTableIndex].OriginalRowIndex + 1
-                        : x.DataTableIndex + 1;
-                    sb.AppendLine($"    行 {fileRowNum}");
+                    var g = duplicates[i];
+                    sb.AppendLine($"▸ 值 \"{g.Key}\" 重复 {g.Count()} 次：");
+                    int showRows = Math.Min(5, g.Count());
+                    foreach (var x in g.Take(showRows))
+                    {
+                        int fileRowNum = x.DataTableIndex < _fileData.Rows.Count
+                            ? _fileData.Rows[x.DataTableIndex].OriginalRowIndex + 1
+                            : x.DataTableIndex + 1;
+                        sb.AppendLine($"    行 {fileRowNum}");
+                    }
+                    if (g.Count() > 5)
+                        sb.AppendLine($"    ... 还有 {g.Count() - 5} 行");
                 }
-                if (g.Count() > 5)
-                    sb.AppendLine($"    ... 还有 {g.Count() - 5} 行");
+                if (duplicates.Count > 3)
+                    sb.AppendLine($"... 还有 {duplicates.Count - 3} 个重复值组未显示");
+                sb.AppendLine();
+                sb.AppendLine("点击状态栏可查看完整详情");
+
+                MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
-            if (duplicates.Count > 3)
-                sb.AppendLine($"... 还有 {duplicates.Count - 3} 个重复值组未显示");
-            sb.AppendLine();
-            sb.AppendLine("点击状态栏可查看完整详情");
 
-            MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-
-            // ★ 状态栏：简短摘要 + 可点击
+            // ★ 状态栏：简短摘要 + 可点击（始终更新）
             _duplicateWarningText = totalDupCount <= 3
                 ? $"⚠ 唯一列\"{colDisplayName}\"有{totalDupCount}个重复值({totalRedundant}处冗余)"
                 : $"⚠ 唯一列\"{colDisplayName}\"有{totalDupCount}个重复值({totalRedundant}处冗余)…点击查看详情";
@@ -2489,6 +2516,41 @@ namespace wxd.files.winforms
             };
             ctx.Items.Add(pinItem);
 
+            // ==================== 行操作菜单 ====================
+            ctx.Items.Add(new ToolStripSeparator());
+
+            var insertAboveItem = new ToolStripMenuItem("在上方插入行");
+            insertAboveItem.Click += (s, args) =>
+            {
+                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                InsertRowAt(origRowIndex - 1);
+            };
+            ctx.Items.Add(insertAboveItem);
+
+            var insertBelowItem = new ToolStripMenuItem("在下方插入行");
+            insertBelowItem.Click += (s, args) =>
+            {
+                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                InsertRowAt(origRowIndex);
+            };
+            ctx.Items.Add(insertBelowItem);
+
+            var duplicateItem = new ToolStripMenuItem("复制当前行");
+            duplicateItem.Click += (s, args) =>
+            {
+                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                DuplicateRowAt(origRowIndex);
+            };
+            ctx.Items.Add(duplicateItem);
+
+            var deleteItem = new ToolStripMenuItem("删除当前行");
+            deleteItem.Click += (s, args) =>
+            {
+                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                DeleteRowAt(origRowIndex);
+            };
+            ctx.Items.Add(deleteItem);
+
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
 
@@ -2964,6 +3026,210 @@ namespace wxd.files.winforms
         public bool[] GetColumnCheckStates()
         {
             return (bool[])_columnCheckStates.Clone();
+        }
+
+        // ==================== 行操作 ====================
+
+        /// <summary>从 DataGridView 显示行索引获取原始 DataTable 行索引</summary>
+        private int GetOriginalRowIndexFromDisplay(int displayRowIndex)
+        {
+            if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
+            {
+                if (_dataGrid.Rows[displayRowIndex].Tag is TableRow tr)
+                    return tr.OriginalRowIndex;
+            }
+            // 回退：无冻结行时 displayRowIndex 即原始行索引
+            return displayRowIndex;
+        }
+
+        /// <summary>在指定位置之后插入空行</summary>
+        /// <param name="afterOriginalRowIndex">在此原始行索引之后插入（-1=最前面插入，>=Rows.Count=末尾追加）</param>
+        private void InsertRowAt(int afterOriginalRowIndex)
+        {
+            if (_isEmbeddedMode)
+            {
+                MessageBox.Show(this, "当前状态不支持插入行", "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // 如果有排序，先取消排序
+            if (_sortColumnIndex >= 0)
+            {
+                var result = MessageBox.Show(this,
+                    "当前处于排序状态，插入行前需要先取消排序。是否继续？",
+                    "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (result != DialogResult.Yes) return;
+                _sortColumnIndex = -1;
+                _sortOrder = SortOrder.None;
+            }
+
+            // 保存滚动位置
+            int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+            int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
+            int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
+
+            // 创建新行，所有列初始化为空字符串
+            var newRow = _dataTable.NewRow();
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+                newRow[i] = "";
+
+            // 插入到 _dataTable
+            if (afterOriginalRowIndex >= 0 && afterOriginalRowIndex < _dataTable.Rows.Count - 1)
+                _dataTable.Rows.InsertAt(newRow, afterOriginalRowIndex + 1);
+            else if (afterOriginalRowIndex < 0)
+                _dataTable.Rows.InsertAt(newRow, 0);  // 最前面插入
+            else
+                _dataTable.Rows.Add(newRow);  // 末尾追加
+
+            // 重建 _fileData
+            _fileData = BuildFileData(_dataTable, inheritFrom: null);
+
+            // 重建关联缓存
+            ColumnLinkChecker.Reset();
+            if (_columnLinks.Count > 0)
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+
+            // 刷新显示
+            RefreshGridLayout();
+
+            // 恢复滚动位置
+            if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
+                _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
+            if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
+                _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
+
+            // 即时保存
+            SaveCurrentFile();
+        }
+
+        /// <summary>复制指定行并插入到其下方</summary>
+        private void DuplicateRowAt(int originalRowIndex)
+        {
+            if (_isEmbeddedMode)
+            {
+                MessageBox.Show(this, "当前状态不支持复制行", "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (originalRowIndex < 0 || originalRowIndex >= _dataTable.Rows.Count)
+                return;
+
+            // 如果有排序，先取消排序
+            if (_sortColumnIndex >= 0)
+            {
+                var result = MessageBox.Show(this,
+                    "当前处于排序状态，复制行前需要先取消排序。是否继续？",
+                    "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (result != DialogResult.Yes) return;
+                _sortColumnIndex = -1;
+                _sortOrder = SortOrder.None;
+            }
+
+            // 保存滚动位置
+            int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+            int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
+            int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
+
+            // 复制源行数据
+            var newRow = _dataTable.NewRow();
+            var sourceRow = _dataTable.Rows[originalRowIndex];
+            for (int i = 0; i < _dataTable.Columns.Count; i++)
+                newRow[i] = sourceRow[i];
+
+            // 插入到源行下方
+            _dataTable.Rows.InsertAt(newRow, originalRowIndex + 1);
+
+            // 重建 _fileData
+            _fileData = BuildFileData(_dataTable, inheritFrom: null);
+
+            // 重建关联缓存
+            ColumnLinkChecker.Reset();
+            if (_columnLinks.Count > 0)
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+
+            // 刷新显示
+            RefreshGridLayout();
+
+            // 恢复滚动位置
+            if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
+                _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
+            if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
+                _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
+
+            // 即时保存
+            SaveCurrentFile();
+        }
+
+        /// <summary>删除指定行</summary>
+        private void DeleteRowAt(int originalRowIndex)
+        {
+            if (_isEmbeddedMode)
+            {
+                MessageBox.Show(this, "当前状态不支持删除行", "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (originalRowIndex < 0 || originalRowIndex >= _dataTable.Rows.Count)
+                return;
+
+            // 冻结行不允许删除
+            if (originalRowIndex < _frozenRows)
+            {
+                MessageBox.Show(this, "冻结行不允许删除。请先调整冻结行设置。",
+                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var result = MessageBox.Show(this,
+                $"确认删除第 {originalRowIndex + 1} 行？此操作不可撤销。",
+                "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes) return;
+
+            // 取消排序
+            if (_sortColumnIndex >= 0)
+            {
+                _sortColumnIndex = -1;
+                _sortOrder = SortOrder.None;
+            }
+
+            // 保存滚动位置
+            int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+            int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
+            int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
+
+            _dataTable.Rows.RemoveAt(originalRowIndex);
+
+            // 重建 _fileData
+            _fileData = BuildFileData(_dataTable, inheritFrom: null);
+
+            // 重建关联缓存
+            ColumnLinkChecker.Reset();
+            if (_columnLinks.Count > 0)
+                ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+
+            // 刷新显示
+            RefreshGridLayout();
+
+            // 恢复滚动位置
+            if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
+                _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
+            if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
+                _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
+
+            // 即时保存
+            SaveCurrentFile();
+        }
+
+        /// <summary>统一保存（根据文件类型调用 CSV 或 Excel 保存）</summary>
+        private void SaveCurrentFile()
+        {
+            if (_fileType == TableFileType.Csv)
+                SaveCsvFile();
+            else
+                SaveExcelFile();
         }
 
         protected override void Dispose(bool disposing)
