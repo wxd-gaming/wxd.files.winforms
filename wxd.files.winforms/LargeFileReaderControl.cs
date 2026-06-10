@@ -21,7 +21,7 @@ namespace wxd.files.winforms
         private Button _btnOpenFile = null!, _btnGotoLine = null!;
         private TextBox _txtGotoLine = null!, _txtSearch = null!;
         private CheckBox _chkCaseSensitive = null!, _chkRegex = null!;
-        private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!;
+        private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!, _btnReverseExport = null!;
         private Label _lblStatus = null!, _lblIndexProgress = null!, _lblSearchCount = null!;
         private NumericUpDown _numContextLines = null!;
         private Label _lblContextLines = null!;
@@ -37,7 +37,7 @@ namespace wxd.files.winforms
         private string _lastSearchKeyword = "";
         private bool _lastSearchCaseSensitive;
         private bool _lastSearchRegex;
-        private bool _hasUserNavigated; // 用户在搜索过程中是否已手动跳转过
+        private bool _hasuserNavigated; // 用户在搜索过程中是否已手动跳转过
 
         private string? _filePath;
         private long _fileLength;
@@ -127,10 +127,14 @@ namespace wxd.files.winforms
             _btnExport.FlatAppearance.BorderSize = 1;
             _btnExport.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnExport.Click += OnExport;
+            _btnReverseExport = new Button { Text = "反向导出", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(255, 152, 0), ForeColor = Color.White };
+            _btnReverseExport.FlatAppearance.BorderSize = 1;
+            _btnReverseExport.FlatAppearance.BorderColor = Color.FromArgb(245, 124, 0);
+            _btnReverseExport.Click += OnReverseExport;
             _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
             _lblContextLines.Margin = new Padding(8, 7, 0, 0);
             _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
-            row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _lblSearchCount });
+            row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport, _lblSearchCount });
 
             _topPanel.Controls.Add(row1, 0, 0);
             _topPanel.Controls.Add(separator, 0, 1);
@@ -1446,7 +1450,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _searchResults.Clear();
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
-            _hasUserNavigated = false; // ★ 新搜索开始，重置跳转标记
+            _hasuserNavigated = false; // ★ 新搜索开始，重置跳转标记
             int curLine = GetCurrentLine();
             _ = Task.Run(() => DoSearch(keyword, caseSensitive, useRegex, token, curLine));
         }
@@ -1505,7 +1509,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     if (results.Count > 0)
                     {
                         // ★ 如果用户已经手动跳转过，不再强制跳转到第一个匹配项
-                        if (!_hasUserNavigated)
+                        if (!_hasuserNavigated)
                         {
                             int idx2 = FindNearestIndex(results, nearestLine);
                             NavigateTo(idx2);
@@ -1534,7 +1538,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _lblSearchCount.Text = $"第 {index + 1}/{_searchResults.Count} 个 | 行 {line + 1:N0}";
         }
 
-        private bool UserHasMovedAway()
+        private bool userHasMovedAway()
         {
             if (_lastNavigatedMatchLine < 0) return true;
             if (_lstContent.SelectedIndices.Count > 0 && _lstContent.SelectedIndices[0] != _lastNavigatedMatchLine)
@@ -1557,8 +1561,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
             if (_searchResults.Count > 0)
             {
-                _hasUserNavigated = true; // ★ 标记用户已手动跳转
-                if (UserHasMovedAway())
+                _hasuserNavigated = true; // ★ 标记用户已手动跳转
+                if (userHasMovedAway())
                 {
                     int curLine = GetCurrentLine();
                     int idx2 = FindNearestIndex(_searchResults, curLine);
@@ -1605,8 +1609,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
             if (_searchResults.Count > 0)
             {
-                _hasUserNavigated = true; // ★ 标记用户已手动跳转
-                if (UserHasMovedAway())
+                _hasuserNavigated = true; // ★ 标记用户已手动跳转
+                if (userHasMovedAway())
                 {
                     int curLine = GetCurrentLine();
                     int idx2 = FindNearestIndex(_searchResults, curLine);
@@ -1652,7 +1656,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             }
             if (_searchResults.Count > 0)
             {
-                _hasUserNavigated = true; // ★ 标记用户已手动跳转
+                _hasuserNavigated = true; // ★ 标记用户已手动跳转
                 NavigateTo(0);
                 return;
             }
@@ -1678,7 +1682,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             }
             if (_searchResults.Count > 0)
             {
-                _hasUserNavigated = true; // ★ 标记用户已手动跳转
+                _hasuserNavigated = true; // ★ 标记用户已手动跳转
                 NavigateTo(_searchResults.Count - 1);
                 return;
             }
@@ -1740,6 +1744,194 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
             // 已有搜索结果且条件匹配 → 直接导出
             DoExport();
+        }
+
+        /// <summary>反向导出：排除匹配行，保留不匹配的所有行</summary>
+        private void OnReverseExport(object? s, EventArgs e)
+        {
+            string? sourcePath = _filePath;
+            if (string.IsNullOrEmpty(sourcePath))
+            {
+                MessageBox.Show(ParentForm, "请先打开文件", "提示");
+                return;
+            }
+
+            string keyword = _txtSearch.Text.Trim();
+            if (string.IsNullOrEmpty(keyword))
+            {
+                MessageBox.Show(ParentForm, "请先输入搜索关键词", "提示");
+                return;
+            }
+            if (_lineOffsets == null)
+            {
+                MessageBox.Show(ParentForm, "请等待索引完成", "提示");
+                return;
+            }
+
+            // 搜索条件已变更 → 清空旧结果
+            if (!SearchParamsMatch())
+                _searchResults.Clear();
+
+            // 没有搜索结果 → 先搜索再反向导出
+            if (_searchResults.Count == 0)
+            {
+                _searchCts?.Cancel();
+                _searchCts = new CancellationTokenSource();
+                var token = _searchCts.Token;
+                bool caseSensitive = _chkCaseSensitive.Checked;
+                bool useRegex = _chkRegex.Checked;
+                _lastSearchKeyword = keyword;
+                _lastSearchCaseSensitive = caseSensitive;
+                _lastSearchRegex = useRegex;
+                _lblSearchCount.Text = "搜索中...";
+                _searchCurrentIndex = -1;
+                _lastNavigatedMatchLine = -1;
+
+                Status($"正在搜索 \"{keyword}\"...");
+                _ = Task.Run(() => DoSearchAndReverseExport(keyword, caseSensitive, useRegex, token));
+                return;
+            }
+
+            // 已有搜索结果 → 直接反向导出
+            DoReverseExport();
+        }
+
+        /// <summary>搜索完成后自动反向导出</summary>
+        private void DoSearchAndReverseExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token)
+        {
+            try
+            {
+                var results = new List<int>();
+                StringComparison cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+                Func<string, bool> matcher;
+                if (useRegex)
+                {
+                    var opts = caseSensitive ? System.Text.RegularExpressions.RegexOptions.None : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
+                    var regex = new System.Text.RegularExpressions.Regex(keyword, opts);
+                    matcher = (line) => regex.IsMatch(line);
+                }
+                else
+                {
+                    matcher = (line) => line.Contains(keyword, cmp);
+                }
+
+                int total = _lineOffsets!.Length;
+                for (int i = 0; i < total; i++)
+                {
+                    if (token.IsCancellationRequested) return;
+                    string line = ReadLine(i);
+                    if (!string.IsNullOrEmpty(line) && matcher(line))
+                        results.Add(i);
+                    if (i % 500 == 0)
+                    {
+                        int cnt = results.Count;
+                        int pct = (int)((i + 1L) * 100 / total);
+                        BeginInvoke(() => _lblSearchCount.Text = $"搜索中... {cnt} 个 ({pct}%)");
+                    }
+                }
+
+                BeginInvoke(() =>
+                {
+                    _searchResults = results;
+                    if (results.Count > 0)
+                    {
+                        int idx2 = FindNearestIndex(results, GetCurrentLine());
+                        NavigateTo(idx2);
+                        DoReverseExport();
+                    }
+                    else
+                    {
+                        _searchCurrentIndex = -1;
+                        _lastNavigatedMatchLine = -1;
+                        _lblSearchCount.Text = "未找到匹配，无法反向导出";
+                        Status("未找到匹配行");
+                    }
+                });
+            }
+            catch { }
+        }
+
+        /// <summary>反向导出：利用已有的 _searchResults 索引，导出所有不匹配的行</summary>
+        private void DoReverseExport()
+        {
+            string? sourcePath = _filePath;
+            if (_searchResults.Count == 0) return;
+
+            // 快照：避免后台线程读取时被并发修改
+            var searchResultsSnapshot = _searchResults.ToList();
+            var lineOffsets = _lineOffsets!;
+            string dir = Path.GetDirectoryName(sourcePath)!;
+            string fileName = Path.GetFileName(sourcePath);
+            string sourceExt = Path.GetExtension(sourcePath);
+            string filterPart = SanitizeFileName(_lastSearchKeyword, 50);
+            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
+
+            Status("正在准备反向导出...");
+
+            _ = Task.Run(() =>
+            {
+                // 计算反向导出的总行数 = 总行数 - 匹配行数
+                int totalLines = lineOffsets.Length;
+                int excludedCount = searchResultsSnapshot.Count;
+                int exportCount = totalLines - excludedCount;
+
+                // 命名规则：原始文件名.过滤字符_排除.时间戳.源文件后缀
+                string safeFileName;
+                if (!string.IsNullOrEmpty(filterPart))
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}_排除.{timestamp}{sourceExt}";
+                else
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}_排除.{timestamp}{sourceExt}";
+
+                string outName = safeFileName;
+                string outPath = Path.Combine(dir, outName);
+
+                BeginInvoke(() => Status($"正在反向导出 {exportCount} 行到 {outName}..."));
+
+                try
+                {
+                    using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
+                    int matchIdx = 0;
+                    int exported = 0;
+
+                    for (int lineIdx = 0; lineIdx < totalLines; lineIdx++)
+                    {
+                        // 如果当前行在匹配列表中 → 跳过
+                        if (matchIdx < excludedCount && searchResultsSnapshot[matchIdx] == lineIdx)
+                        {
+                            matchIdx++;
+                            continue;
+                        }
+                        // 不在匹配列表中 → 输出
+                        string lineText = ReadLine(lineIdx);
+                        sw.WriteLine(lineText);
+                        exported++;
+                    }
+                    sw.Flush();
+
+                    BeginInvoke(() =>
+                    {
+                        Status($"已反向导出 {exported} 行 -> {outName}");
+                        string msg = "反向导出完成！" + Environment.NewLine +
+                                     Environment.NewLine +
+                                     "文件: " + outName + Environment.NewLine +
+                                     "路径: " + dir + Environment.NewLine +
+                                     "总行数: " + totalLines.ToString("N0") + Environment.NewLine +
+                                     "排除行: " + excludedCount.ToString("N0") + Environment.NewLine +
+                                     "导出行: " + exported.ToString("N0");
+                        MessageBox.Show(ParentForm, msg, "导出成功");
+                        try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke(() =>
+                    {
+                        MessageBox.Show(ParentForm, $"反向导出失败: {ex.Message}", "错误");
+                        Status("反向导出失败");
+                    });
+                }
+            });
         }
 
         /// <summary>搜索完成后自动导出</summary>
