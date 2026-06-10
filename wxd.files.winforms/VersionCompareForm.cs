@@ -905,12 +905,15 @@ namespace wxd.files.winforms
                 // 传入原始文件路径和 rootDir：让构造函数加载关联配置（_columnLinks、_fileRemarks 等），
                 // 数据由后续 SetDataTable 注入（构造函数中 filePath 为空时跳过自动文件加载）
                 var rootDir = Path.GetDirectoryName(_filePath);
-                _leftView = new TableBrowserControl(_filePath,
-                    rootDir: rootDir,
-                    frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
-                    uniqueColumnIndex: _uniqueColumnIndex, mappingRowIndex: _mappingRowIndex,
-                    lightweight: false)
-                { Dock = DockStyle.Fill };
+                var leftOptions = new TableBrowserOptions(_filePath)
+                {
+                    RootDir = rootDir,
+                    FrozenRows = _frozenRows,
+                    HeaderRowIndex = _headerRowIndex,
+                    UniqueColumnIndex = _uniqueColumnIndex,
+                    MappingRowIndex = _mappingRowIndex,
+                };
+                _leftView = new TableBrowserControl(leftOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
                     _leftView.SetColumnVisibility(_columnVisibility);
                 leftPanel.Controls.Add(_leftView, 0, 1);
@@ -919,12 +922,15 @@ namespace wxd.files.winforms
             if (_rightView == null && rightPanel != null)
             {
                 var rootDir = Path.GetDirectoryName(_filePath);
-                _rightView = new TableBrowserControl(_filePath,
-                    rootDir: rootDir,
-                    frozenRows: _frozenRows, headerRowIndex: _headerRowIndex,
-                    uniqueColumnIndex: _uniqueColumnIndex, mappingRowIndex: _mappingRowIndex,
-                    lightweight: false)
-                { Dock = DockStyle.Fill };
+                var rightOptions = new TableBrowserOptions(_filePath)
+                {
+                    RootDir = rootDir,
+                    FrozenRows = _frozenRows,
+                    HeaderRowIndex = _headerRowIndex,
+                    UniqueColumnIndex = _uniqueColumnIndex,
+                    MappingRowIndex = _mappingRowIndex,
+                };
+                _rightView = new TableBrowserControl(rightOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
                     _rightView.SetColumnVisibility(_columnVisibility);
                 rightPanel.Controls.Add(_rightView, 0, 1);

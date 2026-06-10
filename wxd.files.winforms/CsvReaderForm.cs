@@ -1427,7 +1427,13 @@ namespace wxd.files.winforms
                 }
             }
 
-            Control viewer = new TableBrowserControl(filePath, _paneIndex, _currentDir, initialContentFilter: _lastContentSearchKeyword) { Dock = DockStyle.Fill };
+            var options = new TableBrowserOptions(filePath)
+            {
+                PaneIndex = _paneIndex,
+                RootDir = _currentDir,
+                InitialContentFilter = _lastContentSearchKeyword,
+            };
+            Control viewer = new TableBrowserControl(options) { Dock = DockStyle.Fill };
 
             // 创建新标签页（有备注时显示"备注名 (文件名)"）
             var tabPage = new TabPage(GetFileDisplayText(filePath))
@@ -1461,7 +1467,8 @@ namespace wxd.files.winforms
 
                 // 在新独立窗口中打开关联文件，标题栏也使用备注名显示
                 var displayName = GetFileDisplayText(linkedPath);
-                var standaloneForm = new CsvReaderStandaloneForm(linkedPath, displayName: displayName);
+                var linkOptions = new TableBrowserOptions(linkedPath) { RootDir = _currentDir };
+                var standaloneForm = new CsvReaderStandaloneForm(linkOptions, new LinkOpenOptions { DisplayName = displayName });
                 standaloneForm.Show(this);
             }
         }

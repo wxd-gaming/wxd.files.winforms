@@ -202,9 +202,7 @@ namespace wxd.files.winforms
                     ExcelUniqueColumnIndex = cfg.ExcelUniqueColumnIndex,
                     CsvMappingRowIndex = cfg.CsvMappingRowIndex,
                     ExcelMappingRowIndex = cfg.ExcelMappingRowIndex,
-                    ColumnLinks = cfg.ColumnLinks,
-                    FileRemarks = cfg.FileRemarks,
-                    ColumnVisibility = cfg.ColumnVisibility
+                    FileSettings = cfg.FileSettings,
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, json);
@@ -266,7 +264,12 @@ namespace wxd.files.winforms
 
             // 1. 优先从文件读取
             var fileCfg = ReadDirConfigFromFile(directoryPath);
-            if (fileCfg != null) return fileCfg;
+            if (fileCfg != null)
+            {
+                // ★ 自动迁移旧数据
+                MigrateLegacyData(fileCfg);
+                return fileCfg;
+            }
 
             // 2. 回退到 ConfigurationManager（旧数据兼容）
             var configs = GetDirConfigsFromConfigManager();
@@ -299,9 +302,7 @@ namespace wxd.files.winforms
                 ExcelFrozenRows = DefaultValue,
                 CsvHeaderRowIndex = -1,
                 ExcelHeaderRowIndex = -1,
-                ColumnLinks = new(),
-                FileRemarks = new(),
-                ColumnVisibility = new(),
+                FileSettings = new(),
                 LastModified = DateTime.UtcNow,
                 LastAccessed = DateTime.UtcNow
             };
@@ -362,24 +363,54 @@ namespace wxd.files.winforms
             SaveDirConfig(directoryPath, cfg => cfg.ExcelFrozenRows = Math.Max(0, Math.Min(8, value)));
         }
 
-        /// <summary>获取指定目录的列关联列表</summary>
+        /// <summary>获取指定目录的列关联列表（从 FileSettings 聚合所有文件的 ColumnLinks）</summary>
         public static List<ColumnLinkConfig> GetColumnLinksByDirectory(string directoryPath)
         {
             var cfg = TryGetDirConfig(directoryPath);
-            return cfg?.ColumnLinks ?? new();
+            if (cfg == null) return new();
+            return cfg.FileSettings.Values
+                .Where(fc => fc.ColumnLinks != null)
+                .SelectMany(fc => fc.ColumnLinks!)
+                .ToList();
         }
 
-        /// <summary>设置指定目录的列关联列表</summary>
+        /// <summary>设置指定目录的列关联列表（按 SourceFile 分组写入 FileSettings）</summary>
         public static void SetColumnLinksByDirectory(string directoryPath, List<ColumnLinkConfig> links)
         {
-            SaveDirConfig(directoryPath, cfg => cfg.ColumnLinks = links ?? new());
+            if (string.IsNullOrEmpty(directoryPath)) return;
+            var dirCfg = GetOrCreateDirConfig(directoryPath);
+
+            // 清除所有文件的旧 ColumnLinks
+            foreach (var fc in dirCfg.FileSettings.Values)
+                fc.ColumnLinks = null;
+
+            // 按 SourceFile 分组写入
+            if (links != null && links.Count > 0)
+            {
+                foreach (var g in links.GroupBy(l => l.SourceFile))
+                    GetOrCreateFileConfig(dirCfg, g.Key).ColumnLinks = g.ToList();
+            }
+
+            // 清理空条目
+            var emptyKeys = dirCfg.FileSettings
+                .Where(kv => kv.Value.IsEmpty)
+                .Select(kv => kv.Key).ToList();
+            foreach (var key in emptyKeys)
+                dirCfg.FileSettings.Remove(key);
+
+            dirCfg.LastModified = DateTime.UtcNow;
+            dirCfg.LastAccessed = DateTime.UtcNow;
+            WriteDirConfigToFile(directoryPath, dirCfg);
         }
 
-        /// <summary>获取指定目录的文件备注映射表</summary>
+        /// <summary>获取指定目录的文件备注映射表（从 FileSettings 提取 Remark）</summary>
         public static Dictionary<string, string> GetFileRemarksByDirectory(string directoryPath)
         {
             var cfg = TryGetDirConfig(directoryPath);
-            return cfg?.FileRemarks ?? new();
+            if (cfg == null) return new();
+            return cfg.FileSettings
+                .Where(kv => !string.IsNullOrEmpty(kv.Value.Remark))
+                .ToDictionary(kv => kv.Key, kv => kv.Value.Remark!);
         }
 
         /// <summary>设置指定目录中某个文件的备注名</summary>
@@ -387,42 +418,47 @@ namespace wxd.files.winforms
         {
             SaveDirConfig(directoryPath, cfg =>
             {
-                if (string.IsNullOrEmpty(remark))
-                    cfg.FileRemarks.Remove(relativePath);
-                else
-                    cfg.FileRemarks[relativePath] = remark;
+                var fc = GetOrCreateFileConfig(cfg, relativePath);
+                fc.Remark = string.IsNullOrEmpty(remark) ? null : remark;
+                CleanupFileConfig(cfg, relativePath);
             });
         }
 
-        /// <summary>获取指定目录中某个文件的列可见性配置</summary>
-        public static bool[]? GetColumnVisibility(string directoryPath, string relativePath)
+        /// <summary>获取指定目录中某个文件的列可见性配置（从 HiddenColumns 还原 bool[]）</summary>
+        public static bool[]? GetColumnVisibility(string directoryPath, string relativePath, int columnCount = 0)
         {
             if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return null;
             var cfg = TryGetDirConfig(directoryPath);
-            if (cfg == null || !cfg.ColumnVisibility.TryGetValue(relativePath, out var bitmap))
+            if (cfg == null || !cfg.FileSettings.TryGetValue(relativePath, out var fileCfg))
                 return null;
-            try
-            {
-                var parts = bitmap.Split(',');
-                var result = new bool[parts.Length];
-                for (int i = 0; i < parts.Length; i++)
-                    result[i] = parts[i] == "true";
-                return result;
-            }
-            catch
-            {
-                return null;
-            }
+            if (fileCfg.HiddenColumns == null || fileCfg.HiddenColumns.Count == 0)
+                return null; // 全部显示
+
+            // columnCount 为 0 时从隐藏列索引推断（取最大索引+1）
+            int count = columnCount > 0 ? columnCount : (fileCfg.HiddenColumns.Any() ? fileCfg.HiddenColumns.Max() + 1 : 0);
+            if (count <= 0) return null;
+
+            var states = new bool[count];
+            for (int i = 0; i < count; i++)
+                states[i] = !fileCfg.HiddenColumns.Contains(i);
+            return states;
         }
 
-        /// <summary>设置指定目录中某个文件的列可见性配置</summary>
+        /// <summary>设置指定目录中某个文件的列可见性配置（只存隐藏列索引）</summary>
         public static void SetColumnVisibility(string directoryPath, string relativePath, bool[] states)
         {
             if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath) || states == null) return;
+            var hiddenCols = new HashSet<int>();
+            for (int i = 1; i < states.Length; i++) // 第0列永远可见，不记录
+            {
+                if (!states[i]) hiddenCols.Add(i);
+            }
+
             SaveDirConfig(directoryPath, cfg =>
             {
-                var bitmap = string.Join(",", states.Select(b => b ? "true" : "false"));
-                cfg.ColumnVisibility[relativePath] = bitmap;
+                var fc = GetOrCreateFileConfig(cfg, relativePath);
+                fc.HiddenColumns = hiddenCols.Count > 0 ? hiddenCols : null;
+                CleanupFileConfig(cfg, relativePath);
             });
         }
 
@@ -502,6 +538,36 @@ namespace wxd.files.winforms
         public static void SetExcelMappingRowIndexByDirectory(string directoryPath, int value)
         {
             SaveDirConfig(directoryPath, cfg => cfg.ExcelMappingRowIndex = value);
+        }
+
+        /// <summary>获取指定文件的唯一列索引（文件级优先，否则回退目录级）</summary>
+        public static int GetFileUniqueColumn(string directoryPath, string relativePath, TableFileType fileType)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return -1;
+            var cfg = TryGetDirConfig(directoryPath);
+            if (cfg == null) return -1;
+
+            // 优先文件级
+            if (cfg.FileSettings.TryGetValue(relativePath, out var fileCfg)
+                && fileCfg.UniqueColumnIndex.HasValue)
+                return fileCfg.UniqueColumnIndex.Value;
+
+            // 回退目录级
+            return fileType == TableFileType.Csv
+                ? cfg.CsvUniqueColumnIndex
+                : cfg.ExcelUniqueColumnIndex;
+        }
+
+        /// <summary>设置指定文件的唯一列索引</summary>
+        public static void SetFileUniqueColumn(string directoryPath, string relativePath, int columnIndex)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return;
+            SaveDirConfig(directoryPath, cfg =>
+            {
+                var fc = GetOrCreateFileConfig(cfg, relativePath);
+                fc.UniqueColumnIndex = columnIndex;
+                CleanupFileConfig(cfg, relativePath);
+            });
         }
 
         #endregion
@@ -675,5 +741,73 @@ namespace wxd.files.winforms
         {
             // 设置已经在属性setter中保存，这里是为了兼容之前的调用
         }
+
+        #region 文件级配置辅助方法
+
+        /// <summary>获取或创建文件配置条目</summary>
+        private static FileConfig GetOrCreateFileConfig(DirectoryFrozenConfig cfg, string relativePath)
+        {
+            if (!cfg.FileSettings.TryGetValue(relativePath, out var fileCfg))
+            {
+                fileCfg = new FileConfig();
+                cfg.FileSettings[relativePath] = fileCfg;
+            }
+            return fileCfg;
+        }
+
+        /// <summary>清理空配置条目（所有字段都为默认值时删除）</summary>
+        private static void CleanupFileConfig(DirectoryFrozenConfig cfg, string relativePath)
+        {
+            if (cfg.FileSettings.TryGetValue(relativePath, out var fileCfg) && fileCfg.IsEmpty)
+                cfg.FileSettings.Remove(relativePath);
+        }
+
+        /// <summary>自动迁移旧数据到新 FileSettings 结构</summary>
+        private static void MigrateLegacyData(DirectoryFrozenConfig cfg)
+        {
+            bool migrated = false;
+
+            // 1. ColumnLinks → 按 SourceFile 分组写入 FileSettings
+            if (cfg.ColumnLinks != null && cfg.ColumnLinks.Count > 0)
+            {
+                foreach (var g in cfg.ColumnLinks.GroupBy(l => l.SourceFile))
+                    GetOrCreateFileConfig(cfg, g.Key).ColumnLinks = g.ToList();
+                cfg.ColumnLinks = null;
+                migrated = true;
+            }
+
+            // 2. FileRemarks → FileSettings[relPath].Remark
+            if (cfg.FileRemarks != null && cfg.FileRemarks.Count > 0)
+            {
+                foreach (var kv in cfg.FileRemarks)
+                {
+                    if (!string.IsNullOrEmpty(kv.Value))
+                        GetOrCreateFileConfig(cfg, kv.Key).Remark = kv.Value;
+                }
+                cfg.FileRemarks = null;
+                migrated = true;
+            }
+
+            // 3. ColumnVisibility → FileSettings[relPath].HiddenColumns
+            if (cfg.ColumnVisibility != null && cfg.ColumnVisibility.Count > 0)
+            {
+                foreach (var kv in cfg.ColumnVisibility)
+                {
+                    var parts = kv.Value.Split(',');
+                    var hidden = new HashSet<int>();
+                    for (int i = 1; i < parts.Length; i++) // 跳过第0列
+                        if (parts[i] == "false") hidden.Add(i);
+                    if (hidden.Count > 0)
+                        GetOrCreateFileConfig(cfg, kv.Key).HiddenColumns = hidden;
+                }
+                cfg.ColumnVisibility = null;
+                migrated = true;
+            }
+
+            if (migrated)
+                WriteDirConfigToFile(cfg.DirectoryPath, cfg);
+        }
+
+        #endregion
     }
 }

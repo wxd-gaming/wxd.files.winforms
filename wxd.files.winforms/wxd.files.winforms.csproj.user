@@ -13,6 +13,9 @@
     <Compile Update="CustomCommandManagerForm.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="DuplicateDetailForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="FileBrowserPanel.cs">
       <SubType>UserControl</SubType>
     </Compile>

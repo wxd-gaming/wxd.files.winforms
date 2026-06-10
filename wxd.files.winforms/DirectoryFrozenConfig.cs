@@ -39,12 +39,39 @@ public class DirectoryFrozenConfig
     /// <summary>最后访问时间</summary>
     public DateTime LastAccessed { get; set; } = DateTime.UtcNow;
 
-    /// <summary>列关联配置列表（按目录存储）</summary>
-    public List<ColumnLinkConfig> ColumnLinks { get; set; } = new();
+    // ========== 文件级配置（新）==========
+    /// <summary>文件级配置（key: 文件相对路径, value: 文件配置）</summary>
+    public Dictionary<string, FileConfig> FileSettings { get; set; } = new();
 
-    /// <summary>文件备注名映射（key: 相对路径, value: 备注名）</summary>
-    public Dictionary<string, string> FileRemarks { get; set; } = new();
+    // ========== 已废弃（仅用于兼容旧数据，迁移后自动清空）==========
+    [Obsolete("已迁移到 FileSettings.ColumnLinks")]
+    public List<ColumnLinkConfig>? ColumnLinks { get; set; }
 
-    /// <summary>列显隐配置（key: 文件相对路径, value: 逗号分隔的bool字符串，如 "true,false,true,..."）</summary>
-    public Dictionary<string, string> ColumnVisibility { get; set; } = new();
+    [Obsolete("已迁移到 FileSettings.Remark")]
+    public Dictionary<string, string>? FileRemarks { get; set; }
+
+    [Obsolete("已迁移到 FileSettings.HiddenColumns")]
+    public Dictionary<string, string>? ColumnVisibility { get; set; }
+}
+
+/// <summary>单个文件的配置（只记录与默认值不同的项，减少 JSON 体积）</summary>
+public class FileConfig
+{
+    /// <summary>备注名（null = 无备注）</summary>
+    public string? Remark { get; set; }
+
+    /// <summary>唯一列索引（null = 使用目录级默认）</summary>
+    public int? UniqueColumnIndex { get; set; }
+
+    /// <summary>隐藏的列索引集合（null 或空 = 全部显示）。只记录被取消勾选的列</summary>
+    public HashSet<int>? HiddenColumns { get; set; }
+
+    /// <summary>列关联配置列表（按 SourceFile 分组存储）</summary>
+    public List<ColumnLinkConfig>? ColumnLinks { get; set; }
+
+    /// <summary>是否所有字段都是默认值（可用于清理空条目）</summary>
+    public bool IsEmpty =>
+        Remark == null && UniqueColumnIndex == null &&
+        (HiddenColumns == null || HiddenColumns.Count == 0) &&
+        (ColumnLinks == null || ColumnLinks.Count == 0);
 }

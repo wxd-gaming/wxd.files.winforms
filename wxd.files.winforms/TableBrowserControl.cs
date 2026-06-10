@@ -24,6 +24,7 @@ namespace wxd.files.winforms
         private Button _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
+        private Label _lblFileName = new();
         private Label _lblInfo = new();
         private Label _lblCellPos = new();
         private Panel _pnlLoading = new();
@@ -55,6 +56,23 @@ namespace wxd.files.winforms
         private ComboBox? _cboUniqueColumn;
         private bool[]? _externalColumnStates = null;
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
+
+        // ==================== 过滤防抖 ====================
+        private CancellationTokenSource? _filterDebounceCts;
+        private const int FilterDebounceMs = 300;
+
+        /// <summary>唯一列重复警告文本（null = 无警告），用于状态栏持久提示</summary>
+        private string? _duplicateWarningText = null;
+        /// <summary>唯一列重复值完整列表（供详情窗体使用）</summary>
+        private List<DuplicateGroup> _duplicateDetails = new();
+
+        /// <summary>重复值分组数据</summary>
+        public class DuplicateGroup
+        {
+            public string Value { get; set; } = "";
+            public int Count { get; set; }
+            public List<int> RowIndices { get; set; } = new();
+        }
 
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
@@ -98,40 +116,53 @@ namespace wxd.files.winforms
         private string FrozenDir => !string.IsNullOrEmpty(_rootDir) ? _rootDir : Path.GetDirectoryName(_filePath) ?? "";
 
         // ==================== 构造函数 ====================
-        public TableBrowserControl(string filePath, int paneIndex = -1, string? rootDir = null,
-            int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "",
-            bool lightweight = false, int uniqueColumnIndex = -1, int mappingRowIndex = -1)
+        /// <summary>使用配置对象构造（推荐）</summary>
+        public TableBrowserControl(TableBrowserOptions options)
         {
-            _filePath = filePath;
-            _paneIndex = paneIndex;
-            _rootDir = rootDir;
-            _lightweight = lightweight;
+            if (options == null) throw new ArgumentNullException(nameof(options));
+
+            _filePath = options.FilePath;
+            _paneIndex = options.PaneIndex;
+            _rootDir = options.RootDir;
+            _lightweight = options.Lightweight;
             // ★ 先确定文件类型，后续配置读取需要用到
-            _fileType = DetectFileType(filePath);
-            if (frozenRows >= 0) { _frozenRows = frozenRows; _frozenRowsOverridden = true; }
-            _initialContentFilter = initialContentFilter;
+            _fileType = DetectFileType(options.FilePath);
+            if (options.FrozenRows >= 0) { _frozenRows = options.FrozenRows; _frozenRowsOverridden = true; }
+            _initialContentFilter = options.InitialContentFilter;
 
             var dir = FrozenDir;
 
             // ★ 表头行：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
-            if (headerRowIndex >= 0)
-                _headerRowIndex = headerRowIndex;
+            if (options.HeaderRowIndex >= 0)
+                _headerRowIndex = options.HeaderRowIndex;
             else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
                 _headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
             else if (!string.IsNullOrEmpty(dir))
                 _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
 
-            // ★ 唯一列：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
-            if (uniqueColumnIndex >= 0)
-                _uniqueColumnIndex = uniqueColumnIndex;
-            else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
-                _uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+            // ★ 唯一列：传入值 > 文件级配置 > 目录级配置 > 默认 0
+            if (options.UniqueColumnIndex >= 0)
+            {
+                _uniqueColumnIndex = options.UniqueColumnIndex;
+            }
             else if (!string.IsNullOrEmpty(dir))
-                _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+            {
+                var relPath = GetCurrentRelativePath();
+                var fileCol = CsvSettings.GetFileUniqueColumn(dir, relPath, _fileType);
+                if (fileCol >= 0)
+                    _uniqueColumnIndex = fileCol;
+                else if (_fileType == TableFileType.Csv)
+                    _uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+                else
+                    _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+
+                if (_uniqueColumnIndex < 0)
+                    _uniqueColumnIndex = 0; // 默认第一列
+            }
 
             // ★ 映射行：优先使用传入值，否则从配置回退读取（不受 dir 为空限制）
-            if (mappingRowIndex >= 0)
-                _mappingRowIndex = mappingRowIndex;
+            if (options.MappingRowIndex >= 0)
+                _mappingRowIndex = options.MappingRowIndex;
             else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
                 _mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
             else if (!string.IsNullOrEmpty(dir))
@@ -162,6 +193,24 @@ namespace wxd.files.winforms
                 _fileType = TableFileType.Csv; // 默认类型
             }
         }
+
+        /// <summary>旧构造函数（已废弃，委托给新构造函数）</summary>
+        [Obsolete("请使用 TableBrowserControl(TableBrowserOptions) 代替")]
+        public TableBrowserControl(string filePath, int paneIndex = -1, string? rootDir = null,
+            int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "",
+            bool lightweight = false, int uniqueColumnIndex = -1, int mappingRowIndex = -1)
+            : this(new TableBrowserOptions(filePath)
+            {
+                PaneIndex = paneIndex,
+                RootDir = rootDir,
+                FrozenRows = frozenRows,
+                HeaderRowIndex = headerRowIndex,
+                InitialContentFilter = initialContentFilter,
+                Lightweight = lightweight,
+                UniqueColumnIndex = uniqueColumnIndex,
+                MappingRowIndex = mappingRowIndex,
+            })
+        { }
 
         private static TableFileType DetectFileType(string path)
         {
@@ -399,10 +448,8 @@ namespace wxd.files.winforms
                 _uniqueColumnIndex = _cboUniqueColumn.SelectedIndex > 0 ? _cboUniqueColumn.SelectedIndex - 1 : -1;
                 if (!string.IsNullOrEmpty(FrozenDir))
                 {
-                    if (_fileType == TableFileType.Csv)
-                        CsvSettings.SetCsvUniqueColumnIndexByDirectory(FrozenDir, _uniqueColumnIndex);
-                    else
-                        CsvSettings.SetExcelUniqueColumnIndexByDirectory(FrozenDir, _uniqueColumnIndex);
+                    var relPath = GetCurrentRelativePath();
+                    CsvSettings.SetFileUniqueColumn(FrozenDir, relPath, _uniqueColumnIndex);
                 }
                 CsvSettings.Save();
                 CheckUniqueColumnDuplicates();
@@ -497,7 +544,7 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            txtContentFilter.TextChanged += (s, e) => ApplyFilters();
+            txtContentFilter.TextChanged += (s, e) => DebounceFilter();
             txtContentFilter.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Escape) { txtContentFilter.Text = ""; e.Handled = true; }
@@ -520,7 +567,7 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 2, 10, 0),
                 BackColor = Color.FromArgb(242, 249, 255)
             };
-            txtAdvancedFilter.TextChanged += (s, e) => ApplyFilters();
+            txtAdvancedFilter.TextChanged += (s, e) => DebounceFilter();
             txtAdvancedFilter.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Escape) { txtAdvancedFilter.Text = ""; e.Handled = true; }
@@ -690,28 +737,41 @@ namespace wxd.files.winforms
                 Padding = new Padding(0)
             };
 
-            // 使用 TableLayoutPanel 来实现左右布局
+            // 使用 TableLayoutPanel 来实现三列布局
             var statusTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 2,
+                ColumnCount = 3,
                 RowCount = 1,
                 BackColor = Color.Transparent,
-                Padding = new Padding(0),
+                Padding = new Padding(4, 0, 4, 0),
                 Margin = new Padding(0)
             };
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));  // 文件名
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 信息区
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));  // 单元格坐标
 
-            // _lblInfo 放左侧
+            // 列0: 文件名
+            _lblFileName = new Label
+            {
+                Text = "",
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = _colorLightTextSecondary,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Dock = DockStyle.Fill,
+            };
+            statusTable.Controls.Add(_lblFileName, 0, 0);
+
+            // 列1: _lblInfo 信息区
             _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
             _lblInfo.Dock = DockStyle.Fill;
-            statusTable.Controls.Add(_lblInfo, 0, 0);
+            statusTable.Controls.Add(_lblInfo, 1, 0);
 
-            // _lblCellPos 放右侧
+            // 列2: _lblCellPos 右侧坐标
             _lblCellPos.TextAlign = ContentAlignment.MiddleRight;
             _lblCellPos.Dock = DockStyle.Fill;
-            statusTable.Controls.Add(_lblCellPos, 1, 0);
+            statusTable.Controls.Add(_lblCellPos, 2, 0);
 
             _pnlStatus.Controls.Add(statusTable);
             Controls.Add(_pnlStatus);
@@ -911,7 +971,7 @@ namespace wxd.files.winforms
 
             _columnCheckStates = new bool[_dataTable.Columns.Count];
             var relPath = GetCurrentRelativePath();
-            var savedStates = CsvSettings.GetColumnVisibility(FrozenDir, relPath);
+            var savedStates = CsvSettings.GetColumnVisibility(FrozenDir, relPath, _dataTable.Columns.Count);
             if (savedStates != null && savedStates.Length == _columnCheckStates.Length)
             {
                 _columnCheckStates = savedStates;
@@ -928,6 +988,7 @@ namespace wxd.files.winforms
 
             UpdateColumnSelectorButton();
             RebuildHighlightRows();
+            _lblFileName.Text = GetDisplayFileName();
             _lblInfo.Text = infoText;
 
             if (_lightweight)
@@ -1330,6 +1391,9 @@ namespace wxd.files.winforms
             ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
             RebuildHighlightRows();
             RefreshGridLayout();
+
+            // ★ 重新加载后重新检测唯一列重复
+            CheckUniqueColumnDuplicates();
         }
 
         private void ReloadCsvFile()
@@ -1444,8 +1508,8 @@ namespace wxd.files.winforms
                 }
 
                 var contentFilter = _txtContentFilter.Text.Trim();
-                var visibleRows = GetVisibleRows(contentFilter);
-                RefreshFilteredDisplay(visibleRows);
+                var visibleRowIndices = GetVisibleRowIndices(contentFilter);
+                RefreshFilteredDisplay(visibleRowIndices);
             }
             else
             {
@@ -1485,11 +1549,18 @@ namespace wxd.files.winforms
             // 不再设置原生 ToolTipText，列标题悬停由 DataGridLinkToolTip.OnGridCellMouseMove 统一处理
         }
 
-        /// <summary>检查唯一列是否有重复值，如有则弹窗警告</summary>
-        private void CheckUniqueColumnDuplicates()
+        /// <summary>检查唯一列是否有重复值，如有则弹窗警告并在状态栏显示红色提示</summary>
+        /// <returns>true = 存在重复值</returns>
+        private bool CheckUniqueColumnDuplicates()
         {
-            if (_uniqueColumnIndex < 0 || _uniqueColumnIndex >= _dataTable.Columns.Count) return;
-            if (_dataTable.Rows.Count <= _frozenRows) return;
+            // ★ 先清除之前的警告状态
+            _duplicateWarningText = null;
+            _duplicateDetails.Clear();
+
+            if (_uniqueColumnIndex < 0 || _uniqueColumnIndex >= _dataTable.Columns.Count)
+            { RestoreInfoStyle(); return false; }
+            if (_dataTable.Rows.Count <= _frozenRows)
+            { RestoreInfoStyle(); return false; }
 
             // ★ 获取列显示名（映射名(列名) 格式）
             string colDisplayName = $"Col{_uniqueColumnIndex}";
@@ -1514,38 +1585,118 @@ namespace wxd.files.winforms
 
             var duplicates = _dataTable.AsEnumerable()
                 .Skip(_frozenRows)
-                .GroupBy(r => r[_uniqueColumnIndex]?.ToString()?.Trim() ?? "")
+                .Select((r, idx) => (Row: r, DataTableIndex: _frozenRows + idx))
+                .GroupBy(x => x.Row[_uniqueColumnIndex]?.ToString()?.Trim() ?? "")
                 .Where(g => !string.IsNullOrEmpty(g.Key) && g.Count() > 1)
+                .OrderByDescending(g => g.Count())
                 .ToList();
 
-            if (duplicates.Any())
+            if (!duplicates.Any())
             {
-                var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"列 \"{colDisplayName}\" 存在重复值：");
-                sb.AppendLine();
-                foreach (var g in duplicates.Take(10))
-                {
-                    sb.AppendLine($"值 \"{g.Key}\" 重复 {g.Count()} 次：");
-                    int lineNum = 0;
-                    foreach (var row in g.Take(10))
-                    {
-                        // 在 DataTable 中的实际索引
-                        var dtIndex = _dataTable.Rows.IndexOf(row);
-                        int fileRowNum = dtIndex + 1; // 1-based 显示行号
-                        // 如果能从 _fileData 获取原始文件行号则用
-                        if (dtIndex >= 0 && dtIndex < _fileData.Rows.Count)
-                            fileRowNum = _fileData.Rows[dtIndex].OriginalRowIndex + 1;
-                        sb.AppendLine($"  行 {fileRowNum}: {g.Key}");
-                        lineNum++;
-                    }
-                    if (g.Count() > 10)
-                        sb.AppendLine($"  ... 还有 {g.Count() - 10} 行");
-                }
-                if (duplicates.Count > 10)
-                    sb.AppendLine($"... 还有 {duplicates.Count - 10} 个重复值");
+                RestoreInfoStyle();
+                return false;
+            }
 
-                MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            // ★ 保存完整数据
+            _duplicateDetails = duplicates.Select(g => new DuplicateGroup
+            {
+                Value = g.Key,
+                Count = g.Count(),
+                RowIndices = g.Select(x => x.DataTableIndex).ToList(),
+            }).ToList();
+
+            var totalDupCount = duplicates.Count;
+            var totalRedundant = duplicates.Sum(g => g.Count() - 1);
+
+            // ★ MessageBox：只显示前3组，每组最多5行
+            var sb = new StringBuilder();
+            sb.AppendLine($"列 \"{colDisplayName}\" 存在重复值：");
+            sb.AppendLine($"共 {totalDupCount} 个重复值，{totalRedundant} 处冗余");
+            sb.AppendLine();
+
+            int showGroups = Math.Min(3, duplicates.Count);
+            for (int i = 0; i < showGroups; i++)
+            {
+                var g = duplicates[i];
+                sb.AppendLine($"▸ 值 \"{g.Key}\" 重复 {g.Count()} 次：");
+                int showRows = Math.Min(5, g.Count());
+                foreach (var x in g.Take(showRows))
+                {
+                    int fileRowNum = x.DataTableIndex < _fileData.Rows.Count
+                        ? _fileData.Rows[x.DataTableIndex].OriginalRowIndex + 1
+                        : x.DataTableIndex + 1;
+                    sb.AppendLine($"    行 {fileRowNum}");
+                }
+                if (g.Count() > 5)
+                    sb.AppendLine($"    ... 还有 {g.Count() - 5} 行");
+            }
+            if (duplicates.Count > 3)
+                sb.AppendLine($"... 还有 {duplicates.Count - 3} 个重复值组未显示");
+            sb.AppendLine();
+            sb.AppendLine("点击状态栏可查看完整详情");
+
+            MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+            // ★ 状态栏：简短摘要 + 可点击
+            _duplicateWarningText = totalDupCount <= 3
+                ? $"⚠ 唯一列\"{colDisplayName}\"有{totalDupCount}个重复值({totalRedundant}处冗余)"
+                : $"⚠ 唯一列\"{colDisplayName}\"有{totalDupCount}个重复值({totalRedundant}处冗余)…点击查看详情";
+
+            ApplyDuplicateWarningStyle();
+            return true;
+        }
+
+        /// <summary>应用重复警告样式到状态栏</summary>
+        private void ApplyDuplicateWarningStyle()
+        {
+            if (_duplicateWarningText == null) return;
+            _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+            _lblInfo.Text = _duplicateWarningText;
+            _lblInfo.Cursor = Cursors.Hand;
+            _lblInfo.Click += LblInfo_Click_ShowDuplicates;
+            _pnlStatus.BackColor = Color.FromArgb(255, 235, 235);
+        }
+
+        /// <summary>恢复状态栏正常样式</summary>
+        private void RestoreInfoStyle()
+        {
+            _duplicateWarningText = null;
+            _duplicateDetails.Clear();
+            _lblInfo.ForeColor = _colorLightTextSecondary;
+            _lblInfo.Cursor = Cursors.Default;
+            _lblInfo.Click -= LblInfo_Click_ShowDuplicates;
+            _pnlStatus.BackColor = Color.FromArgb(245, 250, 255);
+        }
+
+        /// <summary>点击状态栏标签 → 弹出重复值详情窗体</summary>
+        private void LblInfo_Click_ShowDuplicates(object? sender, EventArgs e)
+        {
+            if (_duplicateDetails.Count == 0) return;
+            var form = new DuplicateDetailForm(_duplicateDetails, _fileData, this);
+            form.ShowDialog(this);
+        }
+
+        /// <summary>导航到指定行（供外部调用，如重复值详情窗体）</summary>
+        public void NavigateToRow(int dataTableRowIndex)
+        {
+            if (_dataGrid.Rows.Count == 0) return;
+
+            for (int i = 0; i < _dataGrid.Rows.Count; i++)
+            {
+                var row = _dataGrid.Rows[i];
+                if (row.DataBoundItem is DataRowView drv)
+                {
+                    var dtRow = _dataTable.Rows.IndexOf(drv.Row);
+                    if (dtRow == dataTableRowIndex)
+                    {
+                        _dataGrid.ClearSelection();
+                        _dataGrid.Rows[i].Selected = true;
+                        _dataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, i - 5);
+                        _dataGrid.CurrentCell = _dataGrid.Rows[i].Cells[Math.Min(1, _dataGrid.Columns.Count - 1)];
+                        return;
+                    }
+                }
             }
         }
 
@@ -1619,39 +1770,269 @@ namespace wxd.files.winforms
                 if (_columnCheckStates[i]) checkedCount++;
             int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
             int checkedData = Math.Max(0, checkedCount - 1);
-            _btnSelectColumns.Text = "列管理";
+            _btnSelectColumns.Text = $"列管理({checkedData}/{dataColumns})";
             _btnSelectColumns.ForeColor = checkedData < dataColumns ? Color.Red : _colorLightText;
         }
 
         // ==================== 行过滤 ====================
-        private void ApplyFilters() => RefreshGridLayout();
-
-        private List<DataRow> GetVisibleRows(string contentFilter)
+        private async void DebounceFilter()
         {
-            var visibleRows = new List<DataRow>();
-            var advFilter = _txtAdvancedFilter.Text.Trim();
-            for (int i = _frozenRows; i < _dataTable.Rows.Count; i++)
+            _filterDebounceCts?.Cancel();
+            _filterDebounceCts = new CancellationTokenSource();
+            var token = _filterDebounceCts.Token;
+            try
             {
-                var row = _dataTable.Rows[i];
-                bool contentMatch = string.IsNullOrEmpty(contentFilter);
-                if (!contentMatch)
-                {
-                    var processedFilter = contentFilter.Replace("||", " | ").Replace("&&", " & ");
-                    foreach (var colIndex in _visibleColumnIndices)
-                    {
-                        var cellValue = row[colIndex]?.ToString() ?? "";
-                        if (MatchesFilter(cellValue, processedFilter))
-                        { contentMatch = true; break; }
-                    }
-                }
-                bool advMatch = string.IsNullOrEmpty(advFilter);
-                if (!advMatch) advMatch = EvaluateExpression(row, advFilter, _visibleColumnIndices);
-                if (contentMatch && advMatch) visibleRows.Add(row);
+                await Task.Delay(FilterDebounceMs, token);
+                if (!token.IsCancellationRequested)
+                    ApplyFilters();
             }
-            return visibleRows;
+            catch (TaskCanceledException) { /* 被新输入取消 */ }
         }
 
-        private void RefreshFilteredDisplay(List<DataRow> visibleRows)
+        private void ApplyFilters() => RefreshGridLayout();
+
+        /// <summary>过滤结果：返回行号列表（直接走 FileTableData.Cells，零装箱）</summary>
+        private List<int> GetVisibleRowIndices(string contentFilter)
+        {
+            var result = new List<int>(_fileData.Rows.Count - _frozenRows);
+            var advFilter = _txtAdvancedFilter.Text.Trim();
+
+            // ★ 预编译高级过滤表达式（只解析一次）
+            FilterNode? compiledExpr = null;
+            if (!string.IsNullOrEmpty(advFilter))
+                compiledExpr = CompileExpression(advFilter);
+
+            // 内容过滤预处理
+            bool hasContentFilter = !string.IsNullOrEmpty(contentFilter);
+            string processedContentFilter = hasContentFilter
+                ? contentFilter.Replace("||", " | ").Replace("&&", " & ")
+                : "";
+
+            for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
+            {
+                var cells = _fileData.Rows[i].Cells;
+
+                // 内容过滤
+                if (hasContentFilter)
+                {
+                    bool contentMatch = false;
+                    foreach (var colIdx in _visibleColumnIndices)
+                    {
+                        if (colIdx < cells.Count &&
+                            MatchesFilter(cells[colIdx], processedContentFilter))
+                        { contentMatch = true; break; }
+                    }
+                    if (!contentMatch) continue;
+                }
+
+                // 高级过滤
+                if (compiledExpr != null && !EvaluateCompiled(cells, compiledExpr))
+                    continue;
+
+                result.Add(i);
+            }
+            return result;
+        }
+
+        // ==================== 预编译过滤表达式 AST ====================
+        /// <summary>过滤表达式 AST 节点</summary>
+        private abstract class FilterNode { }
+
+        private class BinOpNode : FilterNode
+        {
+            public string Op = "";          // "and" / "or"
+            public FilterNode? Left;
+            public FilterNode? Right;
+        }
+
+        private class CondNode : FilterNode
+        {
+            public string? ColumnName;    // 原始列名字符串（指定列过滤时）
+            public int ColumnIndex = -1;   // 预解析的列索引，-1 表示全列搜索
+            public string CompareOp = "";  // "=", "!=", ">", "<", ">=", "<=", "like", "" (全列模糊)
+            public string Value = "";      // 比较值（已去引号）
+            public bool IsNumeric;
+            public double NumericValue;
+        }
+
+        /// <summary>将字符串表达式编译为 AST（只解析一次，每行复用）</summary>
+        private FilterNode? CompileExpression(string expr)
+        {
+            expr = expr.Trim();
+            if (string.IsNullOrEmpty(expr)) return null;
+
+            // 去外层括号
+            while (expr.StartsWith("(") && expr.EndsWith(")") && IsBalanced(expr))
+                expr = expr.Substring(1, expr.Length - 2).Trim();
+
+            // 找最外层 or / and（or 优先短路）
+            int parenDepth = 0, orPos = -1, andPos = -1;
+            for (int i = 0; i < expr.Length; i++)
+            {
+                if (expr[i] == '(') parenDepth++;
+                else if (expr[i] == ')') parenDepth--;
+                else if (parenDepth == 0)
+                {
+                    if (i + 2 < expr.Length && char.ToLower(expr[i]) == 'o' && char.ToLower(expr[i + 1]) == 'r'
+                        && (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i + 2]))
+                        && (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
+                    { orPos = i; break; }
+                    if (i + 3 < expr.Length && char.ToLower(expr[i]) == 'a' && char.ToLower(expr[i + 1]) == 'n'
+                        && char.ToLower(expr[i + 2]) == 'd'
+                        && (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i + 3]))
+                        && (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
+                    { if (andPos < 0) andPos = i; i += 3; }
+                }
+            }
+
+            if (orPos >= 0)
+            {
+                return new BinOpNode
+                {
+                    Op = "or",
+                    Left = CompileExpression(expr.Substring(0, orPos).Trim())!,
+                    Right = CompileExpression(expr.Substring(orPos + 2).Trim())!
+                };
+            }
+            if (andPos >= 0)
+            {
+                return new BinOpNode
+                {
+                    Op = "and",
+                    Left = CompileExpression(expr.Substring(0, andPos).Trim())!,
+                    Right = CompileExpression(expr.Substring(andPos + 3).Trim())!
+                };
+            }
+
+            return CompileCondition(expr);
+        }
+
+        private CondNode CompileCondition(string condition)
+        {
+            condition = condition.Trim();
+            string op = ""; int opPos = -1;
+
+            var likeIdx = condition.IndexOf(" like ", StringComparison.OrdinalIgnoreCase);
+            if (likeIdx >= 0) { op = "like"; opPos = likeIdx; }
+            else
+            {
+                // 按长度降序查找，避免 >= 被 > 误匹配
+                var geIdx = FindOperator(condition, ">=");
+                var leIdx = FindOperator(condition, "<=");
+                var neqIdx = FindOperator(condition, "!=");
+                var ltgtIdx = FindOperator(condition, "<>");
+                var gtIdx = FindOperator(condition, ">");
+                var ltIdx = FindOperator(condition, "<");
+                var eqIdx = FindOperator(condition, "=");
+
+                if (geIdx >= 0) { op = ">="; opPos = geIdx; }
+                else if (leIdx >= 0) { op = "<="; opPos = leIdx; }
+                else if (neqIdx >= 0) { op = "!="; opPos = neqIdx; }
+                else if (ltgtIdx >= 0) { op = "<>"; opPos = ltgtIdx; }
+                else if (gtIdx >= 0) { op = ">"; opPos = gtIdx; }
+                else if (ltIdx >= 0) { op = "<"; opPos = ltIdx; }
+                else if (eqIdx >= 0) { op = "="; opPos = eqIdx; }
+            }
+
+            if (opPos < 0)
+            {
+                // 无操作符 → 全列模糊匹配
+                return new CondNode { ColumnIndex = -1, CompareOp = "", Value = condition };
+            }
+
+            var rawColumnName = condition.Substring(0, opPos).Trim();
+            int opRealLen = op == "like" ? " like ".Length : op.Length;
+            var rawValue = condition.Substring(opPos + opRealLen).Trim();
+            var value = rawValue;
+            if ((value.StartsWith("'") && value.EndsWith("'")) ||
+                (value.StartsWith("\"") && value.EndsWith("\"")))
+                value = value.Substring(1, value.Length - 2);
+
+            // 保存原始列名，求值时再解析列索引（因为列名可能对应表头行）
+            var columnName = rawColumnName.Trim();
+            return new CondNode
+            {
+                ColumnName = !string.IsNullOrEmpty(columnName) && char.IsLetter(columnName[0]) ? columnName : null,
+                ColumnIndex = -1,  // 求值时再解析
+                CompareOp = op,
+                Value = value,
+                IsNumeric = op != "like" && double.TryParse(value, out var nv),
+                NumericValue = op != "like" && double.TryParse(value, out nv) ? nv : 0
+            };
+        }
+
+        /// <summary>对 AST 求值（零装箱，直接从 List&lt;string&gt; 读取）</summary>
+        private bool EvaluateCompiled(List<string> cells, FilterNode node)
+        {
+            switch (node)
+            {
+                case BinOpNode bin:
+                    bool left = EvaluateCompiled(cells, bin.Left!);
+                    if (bin.Op == "or" && left) return true;   // OR 短路
+                    if (bin.Op == "and" && !left) return false; // AND 短路
+                    return EvaluateCompiled(cells, bin.Right!);
+
+                case CondNode cond:
+                    return EvaluateConditionFast(cells, cond);
+            }
+            return true;
+        }
+
+        private bool EvaluateConditionFast(List<string> cells, CondNode cond)
+        {
+            if (string.IsNullOrEmpty(cond.CompareOp))
+            {
+                // 无操作符：全列模糊匹配
+                foreach (var colIdx in _visibleColumnIndices)
+                {
+                    if (colIdx < cells.Count &&
+                        cells[colIdx].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            // 有操作符 + 指定列名 → 解析列索引
+            int colIndex = -1;
+            if (cond.ColumnIndex >= 0)
+            {
+                colIndex = cond.ColumnIndex;
+            }
+            else if (!string.IsNullOrEmpty(cond.ColumnName))
+            {
+                colIndex = ResolveColumnIndex(cond.ColumnName);
+                if (colIndex < 0)
+                {
+                    // 列名没找到 → 尝试全列模糊匹配（兼容旧行为）
+                    foreach (var ci in _visibleColumnIndices)
+                    {
+                        if (ci < cells.Count &&
+                            cells[ci].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                            return true;
+                    }
+                    return false;
+                }
+                // 缓存解析结果
+                cond.ColumnIndex = colIndex;
+            }
+            else
+            {
+                // 无列名但有操作符 → 全列模糊匹配
+                foreach (var ci in _visibleColumnIndices)
+                {
+                    if (ci < cells.Count &&
+                        cells[ci].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            if (colIndex < 0 || colIndex >= cells.Count) return false;
+            string cellValue = cells[colIndex];
+            return CompareValue(cellValue, cond.Value, cond.CompareOp);
+        }
+
+        private void RefreshFilteredDisplay(List<int> visibleRowIndices)
         {
             var filteredTable = new DataTable();
             // ★ 不再添加 __RowNum__ 隐藏列；行号通过 _fileData.Rows[origIdx].OriginalRowIndex 追踪
@@ -1660,21 +2041,25 @@ namespace wxd.files.winforms
                 var sourceCol = _dataTable.Columns[colIndex];
                 filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string)); // ★ 统一 string 避免类型冲突
             }
-            // ★ 记录每个 filteredTable 行对应的原始 _dataTable 行索引（用于修复冻结行偏移导致的 Tag 错位）
-            var originalIndices = new List<int>();
-            foreach (var sourceRow in visibleRows)
+
+            foreach (var origRowIdx in visibleRowIndices)
             {
                 var newRow = filteredTable.NewRow();
                 for (int i = 0; i < _visibleColumnIndices.Count; i++)
-                    newRow[i] = sourceRow[_visibleColumnIndices[i]];
+                {
+                    int colIdx = _visibleColumnIndices[i];
+                    newRow[i] = colIdx < _dataTable.Columns.Count
+                        ? (_dataTable.Rows[origRowIdx][colIdx] ?? "")
+                        : "";
+                }
                 filteredTable.Rows.Add(newRow);
-                originalIndices.Add(_dataTable.Rows.IndexOf(sourceRow));
             }
+
             _dataGrid.DataSource = filteredTable;
-            // ★ 同步设置 Tag（DataSource 赋值后行已创建），使用原始行索引修复冻结行偏移
-            for (int i = 0; i < _dataGrid.Rows.Count && i < originalIndices.Count; i++)
+            // ★ 同步设置 Tag（DataSource 赋值后行已创建），使用原始行索引
+            for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
             {
-                int origIdx = originalIndices[i];
+                int origIdx = visibleRowIndices[i];
                 if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
                     _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
             }
@@ -1702,7 +2087,14 @@ namespace wxd.files.winforms
                     }
                 }
             }
-            _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRows.Count} 行";
+            _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRowIndices.Count} 行";
+
+            // ★ 如果有重复警告，追加警告文本并保持红色
+            if (_duplicateWarningText != null)
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text += $"  |  {_duplicateWarningText}";
+            }
         }
 
         // ==================== 排序 ====================
@@ -1920,6 +2312,9 @@ namespace wxd.files.winforms
             {
                 MessageBox.Show(this, $"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+
+            // ★ 保存后重新检测唯一列重复
+            CheckUniqueColumnDuplicates();
         }
 
         private void SaveExcelFile()
@@ -1959,6 +2354,9 @@ namespace wxd.files.winforms
                 }
                 MessageBox.Show(this, $"保存Excel文件失败:{Environment.NewLine}{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+
+            // ★ 保存后重新检测唯一列重复
+            CheckUniqueColumnDuplicates();
         }
 
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
@@ -2036,7 +2434,23 @@ namespace wxd.files.winforms
                     var displayName = Path.GetFileName(targetFullPath);
                     if (remarks.TryGetValue(link.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
                         displayName = remark + " (" + Path.GetFileName(targetFullPath) + ")";
-                    var standaloneForm = new CsvReaderStandaloneForm(targetFullPath, link.TargetColumnIndex, cellValue, _frozenRows, link.TargetColumnName, _headerRowIndex, isLinkedFromCell: true, linkConfig: link, displayName: displayName);
+                    var linkOpts = new TableBrowserOptions(targetFullPath)
+                    {
+                        RootDir = FrozenDir,
+                        FrozenRows = _frozenRows,
+                        HeaderRowIndex = _headerRowIndex,
+                        MappingRowIndex = _mappingRowIndex,
+                    };
+                    var linkOpen = new LinkOpenOptions
+                    {
+                        HighlightColumnIndex = link.TargetColumnIndex,
+                        HighlightValue = cellValue,
+                        HighlightColumnName = link.TargetColumnName,
+                        LinkConfig = link,
+                        DisplayName = displayName,
+                        IsLinkedFromCell = true,
+                    };
+                    var standaloneForm = new CsvReaderStandaloneForm(linkOpts, linkOpen);
                     standaloneForm.Show(this);
                 };
             }
@@ -2069,6 +2483,16 @@ namespace wxd.files.winforms
         {
             if (!string.IsNullOrEmpty(FrozenDir) && _filePath.StartsWith(FrozenDir, StringComparison.OrdinalIgnoreCase))
                 return _filePath.Substring(FrozenDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFileName(_filePath);
+        }
+
+        /// <summary>获取状态栏显示文件名（优先使用备注名）</summary>
+        private string GetDisplayFileName()
+        {
+            var relPath = GetCurrentRelativePath();
+            var remark = _fileRemarks.GetValueOrDefault(relPath ?? "");
+            if (!string.IsNullOrEmpty(remark))
+                return $"{remark} ({Path.GetFileName(_filePath)})";
             return Path.GetFileName(_filePath);
         }
 
@@ -2131,110 +2555,11 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== 表达式过滤 ====================
-        private bool EvaluateExpression(DataRow row, string expr, List<int> columnsToSearch)
-        {
-            expr = expr.Trim();
-            if (string.IsNullOrEmpty(expr)) return true;
-            while (expr.StartsWith("(") && expr.EndsWith(")") && IsBalanced(expr))
-                expr = expr.Substring(1, expr.Length - 2).Trim();
-
-            int parenDepth = 0, orPos = -1, andPos = -1;
-            for (int i = 0; i < expr.Length; i++)
-            {
-                if (expr[i] == '(') parenDepth++;
-                else if (expr[i] == ')') parenDepth--;
-                else if (parenDepth == 0)
-                {
-                    if (i + 2 < expr.Length && (expr[i] == 'o' || expr[i] == 'O') && (expr[i + 1] == 'r' || expr[i + 1] == 'R')
-                        && (i + 2 >= expr.Length || !char.IsLetterOrDigit(expr[i + 2])) && (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
-                    { orPos = i; break; }
-                    if (i + 3 < expr.Length && (expr[i] == 'a' || expr[i] == 'A') && (expr[i + 1] == 'n' || expr[i + 1] == 'N')
-                        && (expr[i + 2] == 'd' || expr[i + 2] == 'D') && (i + 3 >= expr.Length || !char.IsLetterOrDigit(expr[i + 3]))
-                        && (i == 0 || !char.IsLetterOrDigit(expr[i - 1])))
-                    { if (andPos < 0) andPos = i; i += 3; }
-                }
-            }
-            if (orPos >= 0)
-            {
-                return EvaluateExpression(row, expr.Substring(0, orPos).Trim(), columnsToSearch) ||
-                       EvaluateExpression(row, expr.Substring(orPos + 2).Trim(), columnsToSearch);
-            }
-            if (andPos >= 0)
-            {
-                return EvaluateExpression(row, expr.Substring(0, andPos).Trim(), columnsToSearch) &&
-                       EvaluateExpression(row, expr.Substring(andPos + 3).Trim(), columnsToSearch);
-            }
-            return EvaluateCondition(row, expr, columnsToSearch);
-        }
-
         private bool IsBalanced(string s)
         {
             int d = 0;
             foreach (char c in s) { if (c == '(') d++; else if (c == ')') d--; if (d < 0) return false; }
             return d == 0;
-        }
-
-        private bool EvaluateCondition(DataRow row, string condition, List<int> columnsToSearch)
-        {
-            condition = condition.Trim();
-            string op = ""; int opPos = -1;
-            var likeIdx = condition.IndexOf(" like ", StringComparison.OrdinalIgnoreCase);
-            if (likeIdx >= 0) { op = "like"; opPos = likeIdx; }
-            else
-            {
-                var geIdx = FindOperator(condition, ">=");
-                var leIdx = FindOperator(condition, "<=");
-                var neqIdx = FindOperator(condition, "!=");
-                var ltgtIdx = FindOperator(condition, "<>");
-                var gtIdx = FindOperator(condition, ">");
-                var ltIdx = FindOperator(condition, "<");
-                var eqIdx = FindOperator(condition, "=");
-                if (geIdx >= 0) { op = ">="; opPos = geIdx; }
-                else if (leIdx >= 0) { op = "<="; opPos = leIdx; }
-                else if (neqIdx >= 0) { op = "!="; opPos = neqIdx; }
-                else if (ltgtIdx >= 0) { op = "<>"; opPos = ltgtIdx; }
-                else if (gtIdx >= 0) { op = ">"; opPos = gtIdx; }
-                else if (ltIdx >= 0) { op = "<"; opPos = ltIdx; }
-                else if (eqIdx >= 0) { op = "="; opPos = eqIdx; }
-            }
-
-            if (opPos < 0)
-            {
-                foreach (var colIndex in columnsToSearch)
-                {
-                    var cellValue = row[colIndex]?.ToString() ?? "";
-                    if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-                }
-                return false;
-            }
-
-            var rawColumnName = condition.Substring(0, opPos).Trim();
-            int opRealLen = op == "like" ? " like ".Length : op.Length;
-            var rawValue = condition.Substring(opPos + opRealLen).Trim();
-            var columnName = rawColumnName.Trim();
-            var value = rawValue;
-            if ((value.StartsWith("'") && value.EndsWith("'")) || (value.StartsWith("\"") && value.EndsWith("\"")))
-                value = value.Substring(1, value.Length - 2);
-
-            if (!string.IsNullOrEmpty(columnName) && char.IsLetter(columnName[0]))
-            {
-                int colIndex = ResolveColumnIndex(columnName);
-                if (colIndex >= 0 && columnsToSearch.Contains(colIndex))
-                    return CompareValue(row[colIndex]?.ToString() ?? "", value, op);
-                foreach (var ci in columnsToSearch)
-                {
-                    var cellValue = row[ci]?.ToString() ?? "";
-                    if (cellValue.IndexOf(condition.Trim(), StringComparison.OrdinalIgnoreCase) >= 0) return true;
-                }
-                return false;
-            }
-            foreach (var colIndex in columnsToSearch)
-            {
-                var cellValue = row[colIndex]?.ToString() ?? "";
-                if (cellValue.IndexOf(condition, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            }
-            return false;
         }
 
         private int ResolveColumnIndex(string columnName)
@@ -2555,6 +2880,13 @@ namespace wxd.files.winforms
             _lblInfo.Text = string.IsNullOrEmpty(infoText)
                 ? $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"
                 : infoText;
+
+            // ★ 如果有重复警告，追加警告文本并保持红色
+            if (_duplicateWarningText != null)
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text += $"  |  {_duplicateWarningText}";
+            }
 
             // 隐藏"重新加载"和"历史记录"按钮（避免版本对比中无限嵌套）
             if (_btnReload != null) _btnReload.Visible = false;
