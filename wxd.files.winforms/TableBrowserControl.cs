@@ -230,24 +230,37 @@ namespace wxd.files.winforms
             if (linkConfig != null && linkConfig.ValueExtractionEnabled && !string.IsNullOrEmpty(value))
             {
                 _highlightValues = linkConfig.ExtractValues(value);
-                if (_highlightValues.Count == 1 && !string.IsNullOrEmpty(linkConfig.MultiValueDelimiter) && value.Contains(linkConfig.MultiValueDelimiter))
+                // 如果 ExtractValues 只返回了一个值，但原始值包含多层切割，尝试用 ExtractSteps 手动展开
+                if (_highlightValues.Count == 1 && linkConfig.ExtractSteps.Count > 0)
                 {
-                    var groups = value.Split(new[] { linkConfig.MultiValueDelimiter }, StringSplitOptions.RemoveEmptyEntries);
                     var fallback = new List<string>();
-                    foreach (var g in groups)
+                    // 只对第一层做切割展开（后续层交给 ExtractValues）
+                    var firstStep = linkConfig.ExtractSteps[0];
+                    if (!string.IsNullOrEmpty(firstStep.Delimiter))
                     {
-                        var trimmed = g.Trim();
-                        if (!string.IsNullOrEmpty(trimmed))
+                        var groups = value.Split(new[] { firstStep.Delimiter }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var g in groups)
                         {
-                            if (!string.IsNullOrEmpty(linkConfig.ExtractDelimiter))
+                            var trimmed = g.Trim();
+                            if (!string.IsNullOrEmpty(trimmed))
                             {
-                                var parts = trimmed.Split(new[] { linkConfig.ExtractDelimiter }, StringSplitOptions.None);
-                                if (linkConfig.ExtractPartIndex >= 0 && linkConfig.ExtractPartIndex < parts.Length)
-                                    fallback.Add(parts[linkConfig.ExtractPartIndex].Trim());
+                                if (linkConfig.ExtractSteps.Count > 1)
+                                {
+                                    // 有后续步骤：对每组应用剩余步骤
+                                    var subSteps = linkConfig.ExtractSteps.Skip(1).ToList();
+                                    var tempConfig = new ColumnLinkConfig
+                                    {
+                                        ValueExtractionEnabled = true,
+                                        ExtractSteps = subSteps
+                                    };
+                                    var subValues = tempConfig.ExtractValues(trimmed);
+                                    fallback.AddRange(subValues);
+                                }
                                 else
+                                {
                                     fallback.Add(trimmed);
+                                }
                             }
-                            else { fallback.Add(trimmed); }
                         }
                     }
                     if (fallback.Count > 1) _highlightValues = fallback.Distinct().ToList();

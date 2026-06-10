@@ -3,7 +3,17 @@ using System.Collections.Generic;
 
 namespace wxd.files.winforms
 {
-    /// <summary>列关联配置：基于列索引的跨文件关联（支持值提取）</summary>
+    /// <summary>单层切割步骤</summary>
+    public class ExtractStep
+    {
+        /// <summary>分隔符（如 "|"、"#"、":"、"-" 等）</summary>
+        public string Delimiter { get; set; } = "";
+
+        /// <summary>切割后取第几段（0-based），-1 表示保留全部片段不取段</summary>
+        public int PartIndex { get; set; } = 0;
+    }
+
+    /// <summary>列关联配置：基于列索引的跨文件关联（支持多层值提取）</summary>
     public class ColumnLinkConfig
     {
         /// <summary>源文件相对路径</summary>
@@ -24,19 +34,72 @@ namespace wxd.files.winforms
         /// <summary>目标文件中显示列的表头名称（用于提示显示）</summary>
         public string TargetDisplayColumnName { get; set; } = "";
 
-        #region 值提取规则（用于处理如 "4002#1" -> 提取 "4002" 的场景）
+        #region 值提取规则（多层切割）
 
         /// <summary>是否启用值提取（默认 false 表示完全匹配）</summary>
         public bool ValueExtractionEnabled { get; set; } = false;
 
-        /// <summary>分隔符（如 "#"、"-"、"|" 等），空字符串表示按位置提取</summary>
+        /// <summary>多层切割步骤列表（替代旧的两层切割）。默认：| 切全部 → # 取第0段</summary>
+        public List<ExtractStep> ExtractSteps { get; set; } = new()
+        {
+            new ExtractStep { Delimiter = "|", PartIndex = -1 },
+            new ExtractStep { Delimiter = "#", PartIndex = 0 }
+        };
+
+        #region 旧字段（仅用于 JSON 反序列化兼容，新代码不要直接读写）
+        /// <summary>[已废弃] 请使用 ExtractSteps</summary>
+        [Obsolete("已迁移到 ExtractSteps")]
         public string ExtractDelimiter { get; set; } = "";
 
-        /// <summary>提取的分段索引（0-based），例如 "4002#1" 用 "#" 分隔后，取 index=0 得到 "4002"</summary>
+        /// <summary>[已废弃] 请使用 ExtractSteps</summary>
+        [Obsolete("已迁移到 ExtractSteps")]
         public int ExtractPartIndex { get; set; } = 0;
 
-        /// <summary>多值分隔符（如 "|"），用于将整个值拆分为多组再各自提取。为空表示不启用多值模式</summary>
+        /// <summary>[已废弃] 请使用 ExtractSteps</summary>
+        [Obsolete("已迁移到 ExtractSteps")]
         public string MultiValueDelimiter { get; set; } = "";
+
+        /// <summary>从旧字段迁移到 ExtractSteps（应在反序列化后调用）</summary>
+        public void MigrateFromOldFields()
+        {
+            // 如果已有步骤列表则跳过（说明已是新格式或已迁移）
+            if (ExtractSteps.Count > 0) return;
+
+            // 尝试从旧字段重建
+            #pragma warning disable 612, 618
+            bool hasOldMulti = !string.IsNullOrEmpty(MultiValueDelimiter);
+            bool hasOldExtract = !string.IsNullOrEmpty(ExtractDelimiter) || ExtractPartIndex > 0;
+            #pragma warning restore 612, 618
+
+            if (hasOldMulti || hasOldExtract)
+            {
+                ExtractSteps.Clear();
+                #pragma warning disable 612, 618
+                if (hasOldMulti)
+                {
+                    ExtractSteps.Add(new ExtractStep { Delimiter = MultiValueDelimiter, PartIndex = -1 });
+                }
+                if (hasOldExtract)
+                {
+                    ExtractSteps.Add(new ExtractStep
+                    {
+                        Delimiter = string.IsNullOrEmpty(ExtractDelimiter) ? "#" : ExtractDelimiter,
+                        PartIndex = ExtractPartIndex
+                    });
+                }
+                #pragma warning restore 612, 618
+            }
+            else
+            {
+                // 无旧数据，设置默认值
+                ExtractSteps = new List<ExtractStep>
+                {
+                    new ExtractStep { Delimiter = "|", PartIndex = -1 },
+                    new ExtractStep { Delimiter = "#", PartIndex = 0 }
+                };
+            }
+        }
+        #endregion
 
         /// <summary>
         /// 从原始值中提取用于关联匹配的实际值（单个值，向后兼容）
@@ -48,9 +111,12 @@ namespace wxd.files.winforms
         }
 
         /// <summary>
-        /// 从原始值中提取用于关联匹配的所有实际值（支持多值切割）
-        /// 流程：先按 MultiValueDelimiter 拆分为多组，每组再按 ExtractDelimiter 提取 ExtractPartIndex
-        /// 例如 "100500201#1|100500202#1" 先按 "|" 拆分，每组按 "#" 取 index=0，得到 ["100500201", "100500202"]
+        /// 从原始值中提取用于关联匹配的所有实际值（支持多层切割）
+        /// 遍历 ExtractSteps，每步按分隔符切割当前值列表：
+        ///   PartIndex >= 0 → 切割后取指定段
+        ///   PartIndex == -1 → 切割后保留全部片段
+        /// 例如 "2#1|3#1" → [|:-1, #:0] → ["2","3"]
+        /// 例如 "1:2#1|2:3#1" → [|:-1, :-1, #:0] → ["1","2"]
         /// </summary>
         public List<string> ExtractValues(string originalValue)
         {
@@ -61,39 +127,64 @@ namespace wxd.files.winforms
                 return result;
             }
 
+            // 确保旧数据已迁移
+            MigrateFromOldFields();
+
+            if (ExtractSteps.Count == 0)
+            {
+                result.Add(originalValue);
+                return result;
+            }
+
             try
             {
-                // 第一步：按多值分隔符拆分
-                var groups = string.IsNullOrEmpty(MultiValueDelimiter)
-                    ? new[] { originalValue }
-                    : originalValue.Split(new[] { MultiValueDelimiter }, StringSplitOptions.RemoveEmptyEntries);
+                // 初始值为整个字符串
+                var current = new List<string> { originalValue };
 
-                foreach (var group in groups)
+                for (int stepIdx = 0; stepIdx < ExtractSteps.Count; stepIdx++)
                 {
-                    var trimmedGroup = group.Trim();
-                    if (string.IsNullOrEmpty(trimmedGroup)) continue;
+                    var step = ExtractSteps[stepIdx];
+                    var next = new List<string>();
 
-                    string extracted;
-                    if (string.IsNullOrEmpty(ExtractDelimiter))
+                    foreach (var part in current)
                     {
-                        // 无分隔符模式：按字符位置截取
-                        if (ExtractPartIndex >= 0 && ExtractPartIndex < trimmedGroup.Length)
-                            extracted = trimmedGroup.Substring(0, ExtractPartIndex + 1);
+                        if (string.IsNullOrEmpty(step.Delimiter))
+                        {
+                            // 无分隔符：按字符位置截取（向后兼容）
+                            if (step.PartIndex >= 0 && step.PartIndex < part.Length)
+                                next.Add(part.Substring(0, step.PartIndex + 1));
+                            else
+                                next.Add(part);
+                        }
                         else
-                            extracted = trimmedGroup;
+                        {
+                            var parts = part.Split(new[] { step.Delimiter }, StringSplitOptions.None);
+                            if (step.PartIndex >= 0)
+                            {
+                                // 取指定段
+                                if (step.PartIndex < parts.Length)
+                                    next.Add(parts[step.PartIndex].Trim());
+                            }
+                            else
+                            {
+                                // PartIndex == -1：保留全部片段
+                                foreach (var p in parts)
+                                {
+                                    var trimmed = p.Trim();
+                                    if (!string.IsNullOrEmpty(trimmed))
+                                        next.Add(trimmed);
+                                }
+                            }
+                        }
                     }
-                    else
-                    {
-                        // 有分隔符模式：按分隔符拆分后取指定段
-                        var parts = trimmedGroup.Split(new[] { ExtractDelimiter }, StringSplitOptions.None);
-                        if (ExtractPartIndex >= 0 && ExtractPartIndex < parts.Length)
-                            extracted = parts[ExtractPartIndex].Trim();
-                        else
-                            extracted = trimmedGroup;
-                    }
+                    current = next;
+                    if (current.Count == 0) break;
+                }
 
-                    if (!string.IsNullOrEmpty(extracted) && !result.Contains(extracted))
-                        result.Add(extracted);
+                foreach (var v in current)
+                {
+                    if (!string.IsNullOrEmpty(v) && !result.Contains(v))
+                        result.Add(v);
                 }
 
                 if (result.Count == 0)

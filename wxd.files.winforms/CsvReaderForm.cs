@@ -2460,15 +2460,17 @@ namespace wxd.files.winforms
         private Button _btnSetDisplayCol = new();       // 设置显示列的按钮
         public int SelectedColumnIndex => _selectedTargetColIndex;
         public string SelectedColumnName => _selectedTargetColumnName ?? "";
-        // 值提取规则控件
+        // 值提取规则控件（多层切割）
         private CheckBox _chkExtractEnabled = new();
-        private Label _lblDelimiter = new();
-        private TextBox _txtDelimiter = new();
-        private Label _lblPartIndex = new();
-        private NumericUpDown _nudPartIndex = new();
-        // 多值分隔符控件
-        private Label _lblMultiValueDelimiter = new();
-        private TextBox _txtMultiValueDelimiter = new();
+        private ListBox _lstSteps = new();           // 切割步骤列表
+        private Button _btnAddStep = new();          // 添加步骤
+        private Button _btnDeleteStep = new();       // 删除步骤
+        private Label _lblStepDelimiter = new();     // 分隔符标签
+        private TextBox _txtStepDelimiter = new();   // 分隔符输入
+        private Label _lblStepPartIndex = new();     // 取段标签
+        private ComboBox _cboStepPartIndex = new();  // 取段下拉
+        private Button _btnUpdateStep = new();       // 更新选中步骤
+        private Label _lblExtractPreview = new();    // 预览标签
 
         public ColumnLinkSetupDialog(
             List<(string display, string fullPath)> fileEntries,
@@ -2524,9 +2526,11 @@ namespace wxd.files.winforms
             if (_existingLink != null)
             {
                 _chkExtractEnabled.Checked = _existingLink.ValueExtractionEnabled;
-                _txtDelimiter.Text = _existingLink.ExtractDelimiter ?? "";
-                _nudPartIndex.Value = Math.Max(0, _existingLink.ExtractPartIndex);
-                _txtMultiValueDelimiter.Text = _existingLink.MultiValueDelimiter ?? "";
+                _existingLink.MigrateFromOldFields();
+                // 填充 ListBox
+                RefreshStepList();
+                if (_lstSteps.Items.Count > 0)
+                    _lstSteps.SelectedIndex = 0;
             }
 
             if (_existingLink != null)
@@ -2569,9 +2573,7 @@ namespace wxd.files.winforms
                 TargetDisplayColumnName = _selectedDisplayColumnName,
                 // 值提取规则
                 ValueExtractionEnabled = _chkExtractEnabled.Checked,
-                ExtractDelimiter = _txtDelimiter.Text.Trim(),
-                ExtractPartIndex = (int)_nudPartIndex.Value,
-                MultiValueDelimiter = _txtMultiValueDelimiter.Text.Trim()
+                ExtractSteps = GetExtractStepsFromUI()
             };
         }
 
@@ -2821,11 +2823,130 @@ namespace wxd.files.winforms
             }
         }
 
+        // ==================== 切割步骤管理 ====================
+        private void RefreshStepList()
+        {
+            _lstSteps.BeginUpdate();
+            _lstSteps.Items.Clear();
+            var steps = _existingLink?.ExtractSteps ?? new List<ExtractStep>();
+            for (int i = 0; i < steps.Count; i++)
+            {
+                var step = steps[i];
+                string desc = step.PartIndex >= 0
+                    ? $"{i + 1}. 用 \"{step.Delimiter}\" 切割 → 取第 {step.PartIndex} 段"
+                    : $"{i + 1}. 用 \"{step.Delimiter}\" 切割 → 保留全部";
+                _lstSteps.Items.Add(desc);
+            }
+            _lstSteps.EndUpdate();
+        }
+
+        private void OnStepSelected(object? sender, EventArgs e)
+        {
+            if (_lstSteps.SelectedIndex < 0) return;
+            var steps = _existingLink?.ExtractSteps;
+            if (steps == null || _lstSteps.SelectedIndex >= steps.Count) return;
+            var step = steps[_lstSteps.SelectedIndex];
+
+            _txtStepDelimiter.Text = step.Delimiter;
+            // 映射 PartIndex 到 ComboBox 索引：-1→0, 0→1, 1→2, ...
+            int cbIdx = step.PartIndex + 1;
+            if (cbIdx >= 0 && cbIdx < _cboStepPartIndex.Items.Count)
+                _cboStepPartIndex.SelectedIndex = cbIdx;
+        }
+
+        private void AddStep()
+        {
+            if (_existingLink == null) return;
+            _existingLink.MigrateFromOldFields();
+            _existingLink.ExtractSteps.Add(new ExtractStep { Delimiter = "#", PartIndex = 0 });
+            RefreshStepList();
+            _lstSteps.SelectedIndex = _lstSteps.Items.Count - 1;
+            UpdatePreview();
+        }
+
+        private void DeleteStep()
+        {
+            if (_existingLink == null || _lstSteps.SelectedIndex < 0) return;
+            if (_existingLink.ExtractSteps.Count <= 1) return; // 至少保留一步
+            _existingLink.ExtractSteps.RemoveAt(_lstSteps.SelectedIndex);
+            RefreshStepList();
+            if (_lstSteps.Items.Count > 0)
+                _lstSteps.SelectedIndex = 0;
+            UpdatePreview();
+        }
+
+        private void UpdateStep()
+        {
+            if (_existingLink == null || _lstSteps.SelectedIndex < 0) return;
+            var steps = _existingLink.ExtractSteps;
+            if (_lstSteps.SelectedIndex >= steps.Count) return;
+
+            var step = steps[_lstSteps.SelectedIndex];
+            step.Delimiter = _txtStepDelimiter.Text.Trim();
+            if (string.IsNullOrEmpty(step.Delimiter)) step.Delimiter = "#";
+
+            int cbIdx = _cboStepPartIndex.SelectedIndex;
+            step.PartIndex = cbIdx - 1; // 0→-1, 1→0, 2→1, ...
+
+            RefreshStepList();
+            _lstSteps.SelectedIndex = Math.Min(_lstSteps.SelectedIndex, _lstSteps.Items.Count - 1);
+            UpdatePreview();
+        }
+
+        private List<ExtractStep> GetExtractStepsFromUI()
+        {
+            if (_existingLink != null)
+            {
+                _existingLink.MigrateFromOldFields();
+                return _existingLink.ExtractSteps;
+            }
+            // 默认
+            return new List<ExtractStep>
+            {
+                new ExtractStep { Delimiter = "|", PartIndex = -1 },
+                new ExtractStep { Delimiter = "#", PartIndex = 0 }
+            };
+        }
+
+        private void UpdatePreview()
+        {
+            var steps = GetExtractStepsFromUI();
+            if (steps.Count == 0 || !_chkExtractEnabled.Checked)
+            {
+                _lblExtractPreview.Text = "预览: 未启用提取";
+                return;
+            }
+
+            // 构建步骤描述
+            var stepDescs = new List<string>();
+            foreach (var s in steps)
+            {
+                stepDescs.Add(s.PartIndex >= 0 ? $"\"{s.Delimiter}\"切取{s.PartIndex}段" : $"\"{s.Delimiter}\"切全部");
+            }
+            string flow = string.Join(" → ", stepDescs);
+
+            // 模拟提取
+            var tempConfig = new ColumnLinkConfig
+            {
+                ValueExtractionEnabled = true,
+                ExtractSteps = steps
+            };
+            string sample1 = "2#1|3#1";
+            string sample2 = "1:2#1|2:3#1";
+            var result1 = tempConfig.ExtractValues(sample1);
+            var result2 = tempConfig.ExtractValues(sample2);
+            string r1 = $"[{string.Join(",", result1.Select(v => $"\"{v}\""))}]";
+            string r2 = $"[{string.Join(",", result2.Select(v => $"\"{v}\""))}]";
+
+            _lblExtractPreview.Text = $"预览: {flow}  |  例 \"{sample1}\"→{r1}  \"{sample2}\"→{r2}";
+        }
+        // ==================== 结束切割步骤管理 ====================
+
         private void InitializeComponent()
         {
             SuspendLayout();
             Text = "列关联设置 - 列 " + _sourceColumnIndex;
-            ClientSize = new Size(500, 560);
+            ClientSize = new Size(500, 630);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Color.FromArgb(242, 249, 255);
@@ -2878,8 +2999,8 @@ namespace wxd.files.winforms
             // ===== 值提取规则区域 =====
             var grpExtract = new GroupBox
             {
-                Text = "值提取规则（可选）— 用于从复合格式中提取部分内容匹配",
-                Location = new Point(10, 355), Size = new Size(480, 105),
+                Text = "值提取规则（可选）— 多层切割：从复合格式中提取部分内容匹配",
+                Location = new Point(10, 355), Size = new Size(480, 175),
                 Font = new Font("Microsoft YaHei UI", 8f), ForeColor = Color.FromArgb(55, 65, 81)
             };
 
@@ -2892,69 +3013,138 @@ namespace wxd.files.winforms
             };
             _chkExtractEnabled.CheckedChanged += (s, e) =>
             {
-                _lblDelimiter.Enabled = _chkExtractEnabled.Checked;
-                _txtDelimiter.Enabled = _chkExtractEnabled.Checked;
-                _lblPartIndex.Enabled = _chkExtractEnabled.Checked;
-                _nudPartIndex.Enabled = _chkExtractEnabled.Checked;
-                _lblMultiValueDelimiter.Enabled = _chkExtractEnabled.Checked;
-                _txtMultiValueDelimiter.Enabled = _chkExtractEnabled.Checked;
+                bool en = _chkExtractEnabled.Checked;
+                _lstSteps.Enabled = en;
+                _btnAddStep.Enabled = en;
+                _btnDeleteStep.Enabled = en;
+                _txtStepDelimiter.Enabled = en;
+                _cboStepPartIndex.Enabled = en;
+                _btnUpdateStep.Enabled = en;
+                _lblExtractPreview.Visible = en;
+                if (en) UpdatePreview();
             };
             grpExtract.Controls.Add(_chkExtractEnabled);
 
-            _lblDelimiter = new Label { Text = "分隔符:", Location = new Point(10, 46), Size = new Size(50, 18),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
-            grpExtract.Controls.Add(_lblDelimiter);
+            // ===== 切割步骤列表 =====
+            _lstSteps = new ListBox
+            {
+                Location = new Point(10, 42), Size = new Size(350, 70),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                BorderStyle = BorderStyle.FixedSingle, IntegralHeight = false,
+                BackColor = Color.FromArgb(250, 252, 255)
+            };
+            _lstSteps.SelectedIndexChanged += OnStepSelected;
+            grpExtract.Controls.Add(_lstSteps);
 
-            _txtDelimiter = new TextBox { Text = "#", Location = new Point(62, 44), Size = new Size(40, 21),
+            // 添加/删除按钮
+            _btnAddStep = new Button
+            {
+                Text = "＋添加", Location = new Point(368, 42), Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
+            };
+            _btnAddStep.Click += (s, e) => { AddStep(); };
+            grpExtract.Controls.Add(_btnAddStep);
+
+            _btnDeleteStep = new Button
+            {
+                Text = "✕删除", Location = new Point(422, 42), Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(255, 240, 240), ForeColor = Color.FromArgb(180, 40, 40),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(240, 200, 200) }
+            };
+            _btnDeleteStep.Click += (s, e) => { DeleteStep(); };
+            grpExtract.Controls.Add(_btnDeleteStep);
+
+            // ===== 编辑选中步骤 =====
+            _lblStepDelimiter = new Label
+            {
+                Text = "分隔符:", Location = new Point(10, 118), Size = new Size(50, 18),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                ForeColor = Color.FromArgb(55, 65, 81)
+            };
+            grpExtract.Controls.Add(_lblStepDelimiter);
+
+            _txtStepDelimiter = new TextBox
+            {
+                Text = "", Location = new Point(60, 116), Size = new Size(40, 21),
                 Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
-                Enabled = false, PlaceholderText = "# - | ..." };
-            grpExtract.Controls.Add(_txtDelimiter);
+                Enabled = false, PlaceholderText = "# | :"
+            };
+            grpExtract.Controls.Add(_txtStepDelimiter);
 
-            _lblPartIndex = new Label { Text = "取第几段(0起):", Location = new Point(110, 46), Size = new Size(85, 18),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
-            grpExtract.Controls.Add(_lblPartIndex);
+            _lblStepPartIndex = new Label
+            {
+                Text = "取段:", Location = new Point(108, 118), Size = new Size(35, 18),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                ForeColor = Color.FromArgb(55, 65, 81)
+            };
+            grpExtract.Controls.Add(_lblStepPartIndex);
 
-            _nudPartIndex = new NumericUpDown { Value = 0, Minimum = 0, Maximum = 99, Location = new Point(198, 44),
-                Size = new Size(45, 21), Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                TextAlign = System.Windows.Forms.HorizontalAlignment.Right };
-            grpExtract.Controls.Add(_nudPartIndex);
+            _cboStepPartIndex = new ComboBox
+            {
+                Location = new Point(143, 116), Size = new Size(100, 21),
+                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat
+            };
+            _cboStepPartIndex.Items.AddRange(new object[]
+            {
+                "-1 = 保留全部",
+                "0 = 取第 0 段",
+                "1 = 取第 1 段",
+                "2 = 取第 2 段",
+                "3 = 取第 3 段",
+                "4 = 取第 4 段",
+                "5 = 取第 5 段",
+                "6 = 取第 6 段",
+                "7 = 取第 7 段",
+                "8 = 取第 8 段",
+                "9 = 取第 9 段"
+            });
+            _cboStepPartIndex.SelectedIndex = 1; // 默认取第0段
+            grpExtract.Controls.Add(_cboStepPartIndex);
 
-            var lblExample = new Label { Text = "例: \"4002#1\" 用 # 分隔 → 取段0得 \"4002\"",
-                Location = new Point(250, 45), Size = new Size(220, 20),
-                Font = new Font("Microsoft YaHei UI", 7.5f), ForeColor = Color.FromArgb(140, 145, 150) };
-            grpExtract.Controls.Add(lblExample);
+            _btnUpdateStep = new Button
+            {
+                Text = "更新", Location = new Point(250, 114), Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
+            };
+            _btnUpdateStep.Click += (s, e) => { UpdateStep(); };
+            grpExtract.Controls.Add(_btnUpdateStep);
 
-            // 多值分隔符
-            _lblMultiValueDelimiter = new Label { Text = "多值分隔符:", Location = new Point(10, 72), Size = new Size(72, 18),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false, ForeColor = Color.FromArgb(55, 65, 81) };
-            grpExtract.Controls.Add(_lblMultiValueDelimiter);
-
-            _txtMultiValueDelimiter = new TextBox { Text = "|", Location = new Point(85, 70), Size = new Size(40, 21),
-                Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
-                Enabled = false };
-            grpExtract.Controls.Add(_txtMultiValueDelimiter);
-
-            var lblMultiExample = new Label { Text = "例: \"100500201#1|100500202#1\" 先用 | 切分多组 → 各组再用分隔符提取",
-                Location = new Point(130, 71), Size = new Size(340, 20),
-                Font = new Font("Microsoft YaHei UI", 7.5f), ForeColor = Color.FromArgb(140, 145, 150) };
-            grpExtract.Controls.Add(lblMultiExample);
+            // ===== 预览 =====
+            _lblExtractPreview = new Label
+            {
+                Text = "预览: 输入示例 \"2#1|3#1\"  →  结果: [\"2\",\"3\"]",
+                Location = new Point(10, 142), Size = new Size(460, 18),
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                ForeColor = Color.FromArgb(140, 145, 150), Visible = false
+            };
+            grpExtract.Controls.Add(_lblExtractPreview);
             // ===== 结束提取规则区域 =====
 
             Controls.Add(grpExtract);
 
-            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 470), Size = new Size(80, 28),
+            _btnDelete = new Button { Text = "删除关联", Location = new Point(10, 540), Size = new Size(80, 28),
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(239, 68, 68), ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) }, Cursor = Cursors.Hand,
                 Visible = _existingLink != null || !string.IsNullOrEmpty(_selectedTargetPath) };
             _btnDelete.Click += OnDeleteClick;
             Controls.Add(_btnDelete);
 
-            _btnOK = new Button { Text = "确定", Location = new Point(330, 470), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
+            _btnOK = new Button { Text = "确定", Location = new Point(330, 540), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
             Controls.Add(_btnOK);
 
-            _btnCancel = new Button { Text = "取消", Location = new Point(420, 470), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
+            _btnCancel = new Button { Text = "取消", Location = new Point(420, 540), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
             Controls.Add(_btnCancel);
