@@ -77,10 +77,28 @@ if (-not $Version) {
             $currentTag = $currentTag.Substring(1)
         }
     } catch {}
+    # ★ 自动计算下一个版本号（patch 自增）
+    $suggestedVersion = ""
+    if ($currentTag -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
+        $parts = $currentTag -split '\.'
+        $nextPatch = [int]$parts[3] + 1
+        $suggestedVersion = "$($parts[0]).$($parts[1]).$($parts[2]).$nextPatch"
+    }
+
     if ($currentTag) {
         Write-Host "Current version: $currentTag" -ForegroundColor Yellow
     }
+    if ($suggestedVersion) {
+        Write-Host "Suggested next version: $suggestedVersion (press Enter to accept)" -ForegroundColor Green
+    }
+
     $Version = Read-Host "Enter new version number (e.g. 1.0.2.4)"
+
+    # ★ 如果用户直接回车且存在建议版本号，使用建议版本号
+    if (-not $Version -and $suggestedVersion) {
+        $Version = $suggestedVersion
+        Write-Host "Using suggested version: $Version" -ForegroundColor Green
+    }
 }
 
 if (-not $Version) {
@@ -153,6 +171,8 @@ $publishArgs = @(
     "-c", "Release",
     "-o", $PublishDir,
     "-p:Version=$Version",
+    "-p:AssemblyVersion=$Version",
+    "-p:FileVersion=$Version",
     "--self-contained", "false",
     "-p:PublishSingleFile=true",
     "-p:IncludeNativeLibrariesForSelfExtract=true"
@@ -208,6 +228,13 @@ Write-Host "[3/6] Generating MD5 of EXE..." -ForegroundColor Cyan
 
 $md5 = (Get-FileHash $ExePath -Algorithm MD5).Hash.ToLower()
 
+# ★ 校验 MD5 有效性（32位十六进制）
+if ([string]::IsNullOrEmpty($md5) -or $md5.Length -ne 32) {
+    Write-Host "[ERROR] MD5 computation failed or invalid: '$md5'" -ForegroundColor Red
+    Read-Host "Press any key to exit..."
+    exit 1
+}
+
 Write-Host "[3/6] MD5 generated: $md5" -ForegroundColor Green
 
 # ============================================
@@ -234,17 +261,17 @@ Write-Host "[4/6] Tag pushed" -ForegroundColor Green
 Write-Host
 Write-Host "[5/6] Creating Gitee Release..." -ForegroundColor Cyan
 
+# ★ 在 here-string 之前预先拼接 MD5 行，避免 here-string 中子表达式解析异常
 $releaseBody = @"
-## version $TagName
+## $TagName
 
 $ReleaseNotes
 
 ---
 
-**MD5**: `$md5`
+**MD5**: ``$md5``
 **File**: $ExeName
 **Size**: $exeSize MB
-**Time**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 "@
 
 $apiBody = @{

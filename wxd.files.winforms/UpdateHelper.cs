@@ -59,9 +59,9 @@ namespace wxd.files.winforms
         /// <summary>统一检查更新入口（自动/手动都调用此方法）</summary>
         /// <remarks>
         /// 核心逻辑：
-        /// 1. MD5 相同 + 版本号相同 → 无更新
-        /// 2. MD5 相同 + 版本号不同 → 静默更新 Config 版本号，不弹窗
-        /// 3. MD5 不同 → 有更新（弹窗下载文件 + 更新版本号）
+        /// 1. 版本号相同 → 无更新（不弹窗，即使 MD5 不同也可能是编译差异）
+        /// 2. 版本号不同 + MD5 相同 → 静默更新 Config 版本号，不弹窗
+        /// 3. 版本号不同 + MD5 不同或不可比较 → 有更新（弹窗下载文件 + 更新版本号）
         /// </remarks>
         public static async Task<CheckResult?> CheckUpdateAsync()
         {
@@ -238,17 +238,26 @@ namespace wxd.files.winforms
             var remoteVersion = latestRelease.Version;
             var remoteMd5 = latestRelease.Md5;
 
-            // 2. 获取当前版本到最新版本之间的累积更新日志
-            var releaseNotes = await FetchReleaseNotesBetweenAsync(
-                GetCurrentVersion(), remoteVersion).ConfigureAwait(false);
-
-            // 当前程序集版本
-            var currentVersion = Assembly.GetExecutingAssembly().GetName()?.Version?.ToString() ?? "0.0.0.0";
-
-            // 优先使用 config 中记录的版本（防止用户手动覆盖 exe 后版本号不对应）
+            // 2. 先判断版本号是否相同
             var configVersion = GetCurrentVersion();
-            if (!string.IsNullOrEmpty(configVersion))
-                currentVersion = configVersion;
+            var asmVersion = Assembly.GetExecutingAssembly().GetName()?.Version?.ToString() ?? "0.0.0.0";
+            var currentVersion = !string.IsNullOrEmpty(configVersion) ? configVersion : asmVersion;
+
+            bool versionSame = string.Equals(currentVersion, remoteVersion, StringComparison.Ordinal);
+
+            // 3. 获取更新日志
+            string releaseNotes;
+            if (versionSame)
+            {
+                // 版本号相同 → 取最近 3 个版本的更新日志
+                releaseNotes = await FetchRecentReleaseNotesAsync(3).ConfigureAwait(false);
+            }
+            else
+            {
+                // 版本号不同 → 获取当前版本到最新版本之间的累积更新日志
+                releaseNotes = await FetchReleaseNotesBetweenAsync(
+                    currentVersion, remoteVersion).ConfigureAwait(false);
+            }
 
             // 计算本地 exe 的 MD5
             var currentExePath = Application.ExecutablePath;
@@ -258,19 +267,22 @@ namespace wxd.files.winforms
                 currentMd5 = await ComputeFileMd5Async(currentExePath).ConfigureAwait(false);
             }
 
-            // 核心逻辑：以 MD5 为准判断是否需要更新文件
+            // 核心逻辑：版本号优先，MD5 作为辅助
             bool needUpdateFile = false;
-            if (!string.IsNullOrEmpty(currentMd5))
+
+            if (versionSame)
             {
-                if (!string.Equals(currentMd5, remoteMd5, StringComparison.OrdinalIgnoreCase))
-                {
-                    // MD5 不同 → 需要更新文件（无论版本号是否相同）
-                    needUpdateFile = true;
-                }
+                // 版本号相同 → 不需要更新（即使 MD5 不同，可能是编译差异或解析失败）
+                needUpdateFile = false;
+            }
+            else if (!string.IsNullOrEmpty(currentMd5) && !string.IsNullOrEmpty(remoteMd5))
+            {
+                // 版本号不同 + 两边都有有效 MD5 → 以 MD5 为准
+                needUpdateFile = !string.Equals(currentMd5, remoteMd5, StringComparison.OrdinalIgnoreCase);
             }
             else
             {
-                // 无法计算本地 MD5，保守起见标记为需要更新
+                // 版本号不同 + MD5 不可比较 → 保守标记为需要更新
                 needUpdateFile = true;
             }
 
@@ -448,6 +460,60 @@ namespace wxd.files.winforms
                         return ExtractReleaseNotes(latest.Body);
                 }
                 catch { }
+                return "";
+            }
+        }
+
+        /// <summary>获取最近 N 个版本的更新日志</summary>
+        private static async Task<string> FetchRecentReleaseNotesAsync(int count)
+        {
+            try
+            {
+                var json = await _httpClient.GetStringAsync(ReleasesListApi).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                var releases = doc.RootElement;
+
+                static bool TryParseVersion(string? v, out Version? parsed)
+                {
+                    parsed = null;
+                    if (string.IsNullOrEmpty(v)) return false;
+                    var clean = v.StartsWith("v") ? v[1..] : v;
+                    return Version.TryParse(clean, out parsed);
+                }
+
+                var matchedReleases = new List<(Version Ver, string TagName, string Notes)>();
+
+                foreach (var release in releases.EnumerateArray())
+                {
+                    var tagName = release.GetProperty("tag_name").GetString() ?? "";
+                    var verStr = tagName.StartsWith("v") ? tagName[1..] : tagName;
+                    var body = release.GetProperty("body").GetString() ?? "";
+
+                    if (!TryParseVersion(verStr, out var relVer) || relVer == null)
+                        continue;
+
+                    var notes = ExtractReleaseNotes(body);
+                    if (!string.IsNullOrEmpty(notes))
+                    {
+                        matchedReleases.Add((relVer, tagName, notes));
+                    }
+                }
+
+                matchedReleases.Sort((a, b) => b.Ver.CompareTo(a.Ver));
+                var topN = matchedReleases.Take(count).ToList();
+
+                var sb = new StringBuilder();
+                foreach (var (_, tagName, notes) in topN)
+                {
+                    sb.AppendLine($"━━━ {tagName} ━━━");
+                    sb.AppendLine(notes);
+                    sb.AppendLine();
+                }
+
+                return sb.ToString().Trim();
+            }
+            catch
+            {
                 return "";
             }
         }

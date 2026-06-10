@@ -99,6 +99,20 @@ namespace wxd.files.winforms
                 Controls.Add(notesLabel);
                 Controls.Add(_rtbReleaseNotes);
             }
+            else
+            {
+                // 无更新日志时显示友好提示
+                var noNotesLabel = new Label
+                {
+                    Text = "暂无更新记录",
+                    AutoSize = true,
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    Location = new Point(20, notesTop),
+                    ForeColor = _isDark ? Color.FromArgb(150, 150, 150) : Color.FromArgb(160, 160, 160),
+                    BackColor = Color.Transparent
+                };
+                Controls.Add(noNotesLabel);
+            }
 
             // 按钮布局：有更新内容时下移
             int btnTop = hasNotes ? 270 : 100;
