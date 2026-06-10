@@ -24,6 +24,7 @@ namespace wxd.files.winforms
         private Button _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
+        private Label _lblLock = new();
         private Label _lblFileName = new();
         private Label _lblInfo = new();
         private Label _lblCellPos = new();
@@ -56,6 +57,7 @@ namespace wxd.files.winforms
         private ComboBox? _cboUniqueColumn;
         private bool[]? _externalColumnStates = null;
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
+        private bool _isEditLocked = false; // Excel默认锁定编辑，CSV默认解锁
 
         // ==================== 过滤防抖 ====================
         private CancellationTokenSource? _filterDebounceCts;
@@ -127,6 +129,7 @@ namespace wxd.files.winforms
             _lightweight = options.Lightweight;
             // ★ 先确定文件类型，后续配置读取需要用到
             _fileType = DetectFileType(options.FilePath);
+            _isEditLocked = (_fileType == TableFileType.Excel); // Excel默认锁定编辑
             if (options.FrozenRows >= 0) { _frozenRows = options.FrozenRows; _frozenRowsOverridden = true; }
             _initialContentFilter = options.InitialContentFilter;
 
@@ -309,7 +312,7 @@ namespace wxd.files.winforms
                 Padding = new Padding(0),
                 Margin = new Padding(0),
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
-            };            
+            };
             topTable.RowStyles.Clear();
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
@@ -596,17 +599,25 @@ namespace wxd.files.winforms
 
             var flowContent = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill, Height = 30,
-                BackColor = _colorSurface, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false, Padding = new Padding(8, 1, 8, 0), AutoSize = true
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorSurface,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(8, 1, 8, 0),
+                AutoSize = true
             };
             flowContent.Controls.AddRange(new Control[] { lblContentFilter, txtContentFilter });
 
             var flowAdv = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill, Height = 30,
-                BackColor = _colorSurface, FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false, Padding = new Padding(8, 1, 8, 5), AutoSize = true
+                Dock = DockStyle.Fill,
+                Height = 30,
+                BackColor = _colorSurface,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(8, 1, 8, 5),
+                AutoSize = true
             };
             flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
 
@@ -773,21 +784,37 @@ namespace wxd.files.winforms
                 Padding = new Padding(0)
             };
 
-            // 使用 TableLayoutPanel 来实现三列布局
+            // 使用 TableLayoutPanel 来实现四列布局
             var statusTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 3,
+                ColumnCount = 4,
                 RowCount = 1,
                 BackColor = Color.Transparent,
                 Padding = new Padding(4, 0, 4, 0),
                 Margin = new Padding(0)
             };
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));  // 文件名
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 信息区
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));  // 单元格坐标
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));    // 锁图标
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));  // 文件名
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));  // 行列坐标（固定宽度足够）
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 重复提示（占满剩余空间）
 
-            // 列0: 文件名
+            // 列0: 锁图标 🔒/🔓
+            _lblLock = new Label
+            {
+                Text = "",
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = _colorLightTextSecondary,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                Padding = new Padding(0, 0, 4, 0),
+            };
+            _lblLock.Click += OnLockLabelClick;
+            statusTable.Controls.Add(_lblLock, 0, 0);
+
+            // 列1: 文件名
             _lblFileName = new Label
             {
                 Text = "",
@@ -797,17 +824,17 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Dock = DockStyle.Fill,
             };
-            statusTable.Controls.Add(_lblFileName, 0, 0);
+            statusTable.Controls.Add(_lblFileName, 1, 0);
 
-            // 列1: _lblInfo 信息区
-            _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
-            _lblInfo.Dock = DockStyle.Fill;
-            statusTable.Controls.Add(_lblInfo, 1, 0);
-
-            // 列2: _lblCellPos 右侧坐标
-            _lblCellPos.TextAlign = ContentAlignment.MiddleRight;
+            // 列2: _lblCellPos 行列坐标
+            _lblCellPos.TextAlign = ContentAlignment.MiddleLeft;
             _lblCellPos.Dock = DockStyle.Fill;
             statusTable.Controls.Add(_lblCellPos, 2, 0);
+
+            // 列3: _lblInfo 重复提示（左侧，紧跟行列坐标）
+            _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
+            _lblInfo.Dock = DockStyle.Fill;
+            statusTable.Controls.Add(_lblInfo, 3, 0);
 
             _pnlStatus.Controls.Add(statusTable);
             Controls.Add(_pnlStatus);
@@ -823,8 +850,9 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.None,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                ReadOnly = true,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                ReadOnly = false,
+                SelectionMode = DataGridViewSelectionMode.CellSelect,
+                EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
                 ColumnHeadersHeight = 28,
@@ -867,6 +895,8 @@ namespace wxd.files.winforms
             dgv.CellClick += OnCellClick;
             dgv.CellToolTipTextNeeded += OnCellToolTipTextNeeded;
             dgv.SelectionChanged += (s, e) => dgv.Invalidate();
+            dgv.CellBeginEdit += OnCellBeginEdit;
+            dgv.CellEndEdit += OnCellEndEdit;
             return dgv;
         }
 
@@ -1025,7 +1055,9 @@ namespace wxd.files.winforms
             UpdateColumnSelectorButton();
             RebuildHighlightRows();
             _lblFileName.Text = GetDisplayFileName();
-            _lblInfo.Text = infoText;
+            UpdateLockDisplay();
+            _lblCellPos.Text = infoText;
+            _lblInfo.Text = "";
 
             if (_lightweight)
             {
@@ -1703,6 +1735,7 @@ namespace wxd.files.winforms
         {
             _duplicateWarningText = null;
             _duplicateDetails.Clear();
+            _lblInfo.Text = "";
             _lblInfo.ForeColor = _colorLightTextSecondary;
             _lblInfo.Cursor = Cursors.Default;
             _lblInfo.Click -= LblInfo_Click_ShowDuplicates;
@@ -2127,13 +2160,14 @@ namespace wxd.files.winforms
                     }
                 }
             }
-            _lblInfo.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRowIndices.Count} 行";
+            _lblCellPos.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRowIndices.Count} 行";
+            _lblInfo.Text = "";
 
             // ★ 如果有重复警告，追加警告文本并保持红色
             if (_duplicateWarningText != null)
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
-                _lblInfo.Text += $"  |  {_duplicateWarningText}";
+                _lblInfo.Text = _duplicateWarningText;
             }
         }
 
@@ -2238,33 +2272,42 @@ namespace wxd.files.winforms
                 var ext = Path.GetExtension(_filePath).ToLowerInvariant();
                 if (ext == ".xlsx")
                 {
-                    var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                        onSave: newValue =>
-                        {
-                            if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
-                                originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+                    if (_isEditLocked)
+                    {
+                        var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                            onSave: null, readOnly: true, readOnlyMessage: "当前模式不允许编辑（文件已锁定）");
+                        dialog.Show(this);
+                    }
+                    else
+                    {
+                        var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
+                            onSave: newValue =>
                             {
-                                _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
-                                SaveExcelFile();
-
-                                int displayColIndex = _visibleColumnIndices.Count > 0
-                                    ? _visibleColumnIndices.IndexOf(originalColumnIndex)
-                                    : originalColumnIndex;
-                                if (displayColIndex >= 0)
+                                if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
+                                    originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                                 {
-                                    for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                                    _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+                                    SaveExcelFile();
+
+                                    int displayColIndex = _visibleColumnIndices.Count > 0
+                                        ? _visibleColumnIndices.IndexOf(originalColumnIndex)
+                                        : originalColumnIndex;
+                                    if (displayColIndex >= 0)
                                     {
-                                        if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
+                                        for (int i = 0; i < _dataGrid.Rows.Count; i++)
                                         {
-                                            if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
-                                                _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
-                                            break;
+                                            if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
+                                            {
+                                                if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
+                                                    _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        });
-                    dialog.Show(this);
+                            });
+                        dialog.Show(this);
+                    }
                 }
                 else
                 {
@@ -2280,9 +2323,7 @@ namespace wxd.files.winforms
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
             var dgv = (DataGridView)sender!;
             if (dgv == _dataGridHeader) return;
-            var cell = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex];
-            _editingFromFrozen = false;
-            EditCell(cell, dgv);
+            // 双击进入单元格编辑模式（DataGridView EditMode=EditOnKeystrokeOrF2 自动处理）
         }
 
         private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -2291,6 +2332,29 @@ namespace wxd.files.winforms
             var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
             _editingFromFrozen = true;
             EditCell(cell, _dataGridHeader);
+        }
+
+        private void OnCellBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
+        {
+            // 嵌入式模式（历史对比等）禁止编辑
+            if (_isEmbeddedMode) { e.Cancel = true; return; }
+            // 编辑锁定模式禁止编辑（Excel默认锁定）
+            if (_isEditLocked) { e.Cancel = true; return; }
+        }
+
+        private void OnCellEndEdit(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            var newValue = cell.Value?.ToString() ?? "";
+            var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
+
+            if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
+                originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
+            {
+                _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+                SaveCurrentFile();
+            }
         }
 
         private (int rowIndex, int columnIndex) GetOriginalIndices(int displayRowIndex, int displayColumnIndex)
@@ -2448,13 +2512,29 @@ namespace wxd.files.winforms
             ctx.Items.Add(copyItem);
 
             var editItem = new ToolStripMenuItem("编辑");
-            editItem.Click += (s, args) =>
+            if (_isEmbeddedMode || _isEditLocked) editItem.Enabled = false;
+            else
             {
-                var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                _editingFromFrozen = false;
-                EditCell(cell, _dataGrid);
-            };
+                editItem.Click += (s, args) =>
+                {
+                    _dataGrid.CurrentCell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                    _dataGrid.BeginEdit(true);
+                };
+            }
             ctx.Items.Add(editItem);
+
+            var editDialogItem = new ToolStripMenuItem("弹窗编辑");
+            if (_isEmbeddedMode) editDialogItem.Enabled = false;
+            else
+            {
+                editDialogItem.Click += (s, args) =>
+                {
+                    var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                    _editingFromFrozen = false;
+                    EditCell(cell, _dataGrid);
+                };
+            }
+            ctx.Items.Add(editDialogItem);
 
             var linkItem = new ToolStripMenuItem("打开关联表");
             if (link == null) { linkItem.Enabled = false; }
@@ -2520,35 +2600,51 @@ namespace wxd.files.winforms
             ctx.Items.Add(new ToolStripSeparator());
 
             var insertAboveItem = new ToolStripMenuItem("在上方插入行");
-            insertAboveItem.Click += (s, args) =>
+            if (_isEditLocked) insertAboveItem.Enabled = false;
+            else
             {
-                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
-                InsertRowAt(origRowIndex - 1);
-            };
+                insertAboveItem.Click += (s, args) =>
+                {
+                    int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                    InsertRowAt(origRowIndex - 1);
+                };
+            }
             ctx.Items.Add(insertAboveItem);
 
             var insertBelowItem = new ToolStripMenuItem("在下方插入行");
-            insertBelowItem.Click += (s, args) =>
+            if (_isEditLocked) insertBelowItem.Enabled = false;
+            else
             {
-                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
-                InsertRowAt(origRowIndex);
-            };
+                insertBelowItem.Click += (s, args) =>
+                {
+                    int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                    InsertRowAt(origRowIndex);
+                };
+            }
             ctx.Items.Add(insertBelowItem);
 
             var duplicateItem = new ToolStripMenuItem("复制当前行");
-            duplicateItem.Click += (s, args) =>
+            if (_isEditLocked) duplicateItem.Enabled = false;
+            else
             {
-                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
-                DuplicateRowAt(origRowIndex);
-            };
+                duplicateItem.Click += (s, args) =>
+                {
+                    int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                    DuplicateRowAt(origRowIndex);
+                };
+            }
             ctx.Items.Add(duplicateItem);
 
             var deleteItem = new ToolStripMenuItem("删除当前行");
-            deleteItem.Click += (s, args) =>
+            if (_isEditLocked) deleteItem.Enabled = false;
+            else
             {
-                int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
-                DeleteRowAt(origRowIndex);
-            };
+                deleteItem.Click += (s, args) =>
+                {
+                    int origRowIndex = GetOriginalRowIndexFromDisplay(e.RowIndex);
+                    DeleteRowAt(origRowIndex);
+                };
+            }
             ctx.Items.Add(deleteItem);
 
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
@@ -2569,6 +2665,46 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(remark))
                 return $"{remark} ({Path.GetFileName(_filePath)})";
             return Path.GetFileName(_filePath);
+        }
+
+        /// <summary>点击锁图标：切换编辑锁定/解锁状态</summary>
+        private void OnLockLabelClick(object? sender, EventArgs e)
+        {
+            if (!_isEditLocked)
+            {
+                // 解锁状态 → 重新锁定
+                _isEditLocked = true;
+                UpdateLockDisplay();
+                return;
+            }
+
+            // 锁定状态 → 弹出确认框解锁
+            var result = MessageBox.Show(this,
+                "⚠️ 警告：Excel文件如果包含公式、宏定义等，编辑后保存可能导致这些内容丢失。\n确认要解锁编辑吗？",
+                "解锁编辑确认",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning);
+
+            if (result == DialogResult.OK)
+            {
+                _isEditLocked = false;
+                UpdateLockDisplay();
+            }
+        }
+
+        /// <summary>更新状态栏锁图标和文件名显示</summary>
+        private void UpdateLockDisplay()
+        {
+            if (_isEditLocked)
+            {
+                _lblLock.Text = "🔒 锁定";
+                _lblLock.ForeColor = _colorLightTextSecondary;
+            }
+            else
+            {
+                _lblLock.Text = "✏️ 可编辑";
+                _lblLock.ForeColor = Color.FromArgb(22, 163, 74); // 绿色，表示可编辑
+            }
         }
 
         // ==================== 行号绘制 ====================
@@ -2952,15 +3088,16 @@ namespace wxd.files.winforms
             }
 
             RebuildHighlightRows();
-            _lblInfo.Text = string.IsNullOrEmpty(infoText)
+            _lblCellPos.Text = string.IsNullOrEmpty(infoText)
                 ? $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"
                 : infoText;
+            _lblInfo.Text = "";
 
             // ★ 如果有重复警告，追加警告文本并保持红色
             if (_duplicateWarningText != null)
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
-                _lblInfo.Text += $"  |  {_duplicateWarningText}";
+                _lblInfo.Text = _duplicateWarningText;
             }
 
             // 隐藏"重新加载"和"历史记录"按钮（避免版本对比中无限嵌套）
