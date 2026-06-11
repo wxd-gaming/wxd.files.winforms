@@ -198,22 +198,24 @@ namespace wxd.files.winforms
                 var ext = Path.GetExtension(fullPath).ToLowerInvariant();
                 if (ext == ".csv")
                 {
-                    string contentData = File.ReadAllText(fullPath, Encoding.UTF8);
-                    var lines = SplitCsvLinesStatic(contentData);
+                    // ★ 使用 FileDataCache 统一读取（支持 FileShare.ReadWrite）
+                    var targetDir = Path.GetDirectoryName(fullPath) ?? "";
+                    var dirCache = FileDataCache.GetDirectoryCache(targetDir);
+                    var relPath = dirCache.ToRelative(fullPath);
+                    dirCache.EnsureLoaded(relPath);
+                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+
                     var dt = new DataTable();
-                    // 以第一行为参照确定列数
-                    if (lines.Count > 0)
+                    if (readOnlyData.Columns.Count > 0)
                     {
-                        var firstParts = ParseCsvLineStatic(lines[0]);
-                        for (int i = 0; i < firstParts.Length; i++)
+                        for (int i = 0; i < readOnlyData.Columns.Count; i++)
                             dt.Columns.Add($"Col{i}", typeof(string));
-                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, lines.Count);
+                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, readOnlyData.Rows.Count);
                         for (int r = 0; r < maxRows; r++)
                         {
-                            var parts = ParseCsvLineStatic(lines[r]);
                             var row = dt.NewRow();
-                            for (int i = 0; i < Math.Min(parts.Length, dt.Columns.Count); i++)
-                                row[i] = parts[i];
+                            for (int i = 0; i < Math.Min(readOnlyData.Columns.Count, dt.Columns.Count); i++)
+                                row[i] = readOnlyData.Rows[r][i]?.ToString() ?? "";
                             dt.Rows.Add(row);
                         }
                     }
@@ -318,21 +320,24 @@ namespace wxd.files.winforms
                 var ext = Path.GetExtension(_selectedTargetPath).ToLowerInvariant();
                 if (ext == ".csv")
                 {
-                    string contentData = File.ReadAllText(_selectedTargetPath, Encoding.UTF8);
-                    var lines = SplitCsvLinesStatic(contentData);
+                    // ★ 使用 FileDataCache 统一读取
+                    var targetDir = Path.GetDirectoryName(_selectedTargetPath) ?? "";
+                    var dirCache = FileDataCache.GetDirectoryCache(targetDir);
+                    var relPath = dirCache.ToRelative(_selectedTargetPath);
+                    dirCache.EnsureLoaded(relPath);
+                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+
                     var dt = new DataTable();
-                    if (lines.Count > 0)
+                    if (readOnlyData.Columns.Count > 0)
                     {
-                        var firstParts = ParseCsvLineStatic(lines[0]);
-                        for (int i = 0; i < firstParts.Length; i++)
+                        for (int i = 0; i < readOnlyData.Columns.Count; i++)
                             dt.Columns.Add($"Col{i}", typeof(string));
-                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, lines.Count);
+                        int maxRows = Math.Min(_frozenRows > 0 ? _frozenRows : 2, readOnlyData.Rows.Count);
                         for (int r = 0; r < maxRows; r++)
                         {
-                            var parts = ParseCsvLineStatic(lines[r]);
                             var row = dt.NewRow();
-                            for (int i = 0; i < Math.Min(parts.Length, dt.Columns.Count); i++)
-                                row[i] = parts[i];
+                            for (int i = 0; i < Math.Min(readOnlyData.Columns.Count, dt.Columns.Count); i++)
+                                row[i] = readOnlyData.Rows[r][i]?.ToString() ?? "";
                             dt.Rows.Add(row);
                         }
                     }
@@ -740,51 +745,7 @@ namespace wxd.files.winforms
             ResumeLayout(false);
         }
 
-        private static List<string> SplitCsvLinesStatic(string data)
-        {
-            var lines = new List<string>();
-            var sb = new StringBuilder();
-            bool inQuotes = false;
-            for (int i = 0; i < data.Length; i++)
-            {
-                char c = data[i];
-                if (c == '\u0022') inQuotes = !inQuotes;
-                else if (!inQuotes && c == '\u000A')
-                {
-                    lines.Add(sb.ToString());
-                    sb.Clear();
-                }
-                else if (!inQuotes && c == '\u000D')
-                {
-                    if (i + 1 < data.Length && data[i + 1] == '\u000A') i++;
-                    lines.Add(sb.ToString());
-                    sb.Clear();
-                }
-                else sb.Append(c);
-            }
-            if (sb.Length > 0) lines.Add(sb.ToString());
-            return lines;
-        }
-
-        private static string[] ParseCsvLineStatic(string line)
-        {
-            var result = new List<string>();
-            var sb = new StringBuilder();
-            bool inQuotes = false;
-            for (int i = 0; i < line.Length; i++)
-            {
-                char c = line[i];
-                if (c == '\u0022')
-                {
-                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '\u0022') { sb.Append('\u0022'); i++; }
-                    else inQuotes = !inQuotes;
-                }
-                else if (c == ',' && !inQuotes) { result.Add(sb.ToString().Trim()); sb.Clear(); }
-                else sb.Append(c);
-            }
-            result.Add(sb.ToString());
-            return result.ToArray();
-        }
+        // ★ SplitCsvLinesStatic 和 ParseCsvLineStatic 已删除，统一使用 DirectoryCache.SplitCsvLines / ParseCsvLine
 
         /// <summary>根据目标文件路径获取其表头行索引（从设置中读取）</summary>
         private static int GetTargetHeaderRowIndexStatic(string targetFullPath)

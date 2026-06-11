@@ -1811,9 +1811,35 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>逐行搜索CSV文件内容（简化版）</summary>
+        /// <summary>逐行搜索CSV文件内容（简化版，优先使用缓存）</summary>
         private static bool SearchCsvContentSimple(string filePath, string keyword)
         {
+            // ★ 优先尝试从缓存读取
+            try
+            {
+                var dir = Path.GetDirectoryName(filePath) ?? "";
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    var dirCache = FileDataCache.GetDirectoryCache(dir);
+                    var relPath = dirCache.ToRelative(filePath);
+                    dirCache.EnsureLoaded(relPath);
+                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+
+                    foreach (DataRow row in readOnlyData.Rows)
+                    {
+                        foreach (var item in row.ItemArray)
+                        {
+                            var val = item?.ToString() ?? "";
+                            if (val.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                                return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+            catch { }
+
+            // 回退到磁盘读取
             var encodings = new[] { Encoding.UTF8, Encoding.GetEncoding("GBK"), Encoding.Default };
             foreach (var encoding in encodings)
             {
@@ -1834,9 +1860,35 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>搜索Excel文件内容</summary>
+        /// <summary>搜索Excel文件内容（优先使用缓存）</summary>
         private static bool SearchExcelContent(string filePath, string keyword)
         {
+            // ★ 优先尝试从缓存读取
+            try
+            {
+                var dir = Path.GetDirectoryName(filePath) ?? "";
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    var dirCache = FileDataCache.GetDirectoryCache(dir);
+                    var relPath = dirCache.ToRelative(filePath);
+                    dirCache.EnsureLoaded(relPath);
+                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+
+                    foreach (DataRow row in readOnlyData.Rows)
+                    {
+                        foreach (var item in row.ItemArray)
+                        {
+                            var val = item?.ToString() ?? "";
+                            if (val.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                                return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+            catch { }
+
+            // 回退到磁盘读取
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
