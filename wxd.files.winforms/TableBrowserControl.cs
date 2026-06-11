@@ -73,8 +73,8 @@ namespace wxd.files.winforms
         private bool _enteringEditMode = false;       // 防止事件重入标志
         private bool _isNewRowForEdit = false;        // 是否为新增行（Esc时删除该行）
         private int _editingRowOrigIndex = -1;        // 编辑行的原始行索引
-        /// <summary>行编辑模式中已修改的单元格集合（用于红色背景标记，使用原始行列索引以便在 Grid 重建后仍有效）</summary>
-        private HashSet<(int originalRow, int originalCol)> _modifiedCellsInEdit = new();
+        /// <summary>行编辑模式中已修改的单元格集合（按原始行索引分组，key=原始行索引，value=该行已修改的列索引集合，不同行互不影响）</summary>
+        private Dictionary<int, HashSet<int>> _modifiedCellsInEdit = new();
         private bool _syncingColumnWidth = false;     // 列宽同步防重入
         private bool _syncingScroll = false;           // 滚动同步防重入
 
@@ -2592,7 +2592,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>行编辑模式中单元格值变更事件：记录已修改的单元格并刷新背景色（使用原始行列索引存储，Grid 重建后仍有效）</summary>
+        /// <summary>行编辑模式中单元格值变更事件：记录已修改的单元格并刷新背景色（按行分组存储，Grid 重建后仍有效）</summary>
         private void OnCellValueChangedInEdit(object? sender, DataGridViewCellEventArgs e)
         {
             if (_editingRowIndex < 0) return;
@@ -2608,10 +2608,26 @@ namespace wxd.files.winforms
                 // 转换为原始行列索引
                 var (origRow, origCol) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
 
+                // 按行分组存储
                 if (currentValue != originalValue)
-                    _modifiedCellsInEdit.Add((origRow, origCol));
+                {
+                    if (!_modifiedCellsInEdit.TryGetValue(origRow, out var cols))
+                    {
+                        cols = new HashSet<int>();
+                        _modifiedCellsInEdit[origRow] = cols;
+                    }
+                    cols.Add(origCol);
+                }
                 else
-                    _modifiedCellsInEdit.Remove((origRow, origCol));
+                {
+                    // 改回原始值，从该行的已修改集合中移除
+                    if (_modifiedCellsInEdit.TryGetValue(origRow, out var cols))
+                    {
+                        cols.Remove(origCol);
+                        if (cols.Count == 0)
+                            _modifiedCellsInEdit.Remove(origRow);
+                    }
+                }
 
                 // 刷新该单元格背景色
                 _dataGrid.InvalidateCell(e.ColumnIndex, e.RowIndex);
@@ -2771,7 +2787,7 @@ namespace wxd.files.winforms
                 {
                     // 判断该单元格是否被修改过
                     var (modOrigRow, modOrigCol) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
-                    if (_modifiedCellsInEdit.Contains((modOrigRow, modOrigCol)))
+                    if (_modifiedCellsInEdit.TryGetValue(modOrigRow, out var modCols) && modCols.Contains(modOrigCol))
                     {
                         e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);  // 浅红色（已修改单元格）
                         e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
@@ -2798,7 +2814,7 @@ namespace wxd.files.winforms
                             if (_modifiedCellsInEdit.Count > 0)
                             {
                                 var (modOrigRow2, modOrigCol2) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
-                                if (_modifiedCellsInEdit.Contains((modOrigRow2, modOrigCol2)))
+                                if (_modifiedCellsInEdit.TryGetValue(modOrigRow2, out var modCols2) && modCols2.Contains(modOrigCol2))
                                 {
                                     e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
                                     e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
@@ -3593,8 +3609,9 @@ namespace wxd.files.winforms
 
                 _editingRowIndex = displayRowIndex;
 
-                // 清空已修改单元格记录
-                _modifiedCellsInEdit.Clear();
+                // 只清除当前行的已修改单元格记录（不影响其他行的标记）
+                if (_editingRowOrigIndex >= 0)
+                    _modifiedCellsInEdit.Remove(_editingRowOrigIndex);
 
                 // 获取原始行索引（如果 _editingRowOrigIndex 尚未被外部设置）
                 if (_editingRowOrigIndex < 0)
@@ -3690,8 +3707,8 @@ namespace wxd.files.winforms
                         if (saved)
                         {
                             _unsavedRowIndices.Clear();
-                            // 保存成功，清除已修改单元格标记
-                            _modifiedCellsInEdit.Clear();
+                            // 保存成功，清除该行的已修改单元格标记（不影响其他行）
+                            _modifiedCellsInEdit.Remove(origIndex);
                         }
                         else
                         {
@@ -3745,8 +3762,9 @@ namespace wxd.files.winforms
                 // 恢复只读
                 _dataGrid.ReadOnly = true;
 
-                // 清理已修改单元格记录
-                _modifiedCellsInEdit.Clear();
+                // 只清除当前行的已修改单元格记录（取消编辑时该行的修改被撤销）
+                if (origIndex >= 0)
+                    _modifiedCellsInEdit.Remove(origIndex);
 
                 // 先结束当前单元格编辑
                 if (_dataGrid.IsCurrentCellInEditMode)

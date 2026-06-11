@@ -1587,10 +1587,11 @@ namespace wxd.files.winforms
 
         private bool _tabCloseHandlerAdded = false;
 
-        private void CloseTab(int tabIndex)
+        /// <summary>关闭指定页签，返回是否成功关闭（false = 用户取消）</summary>
+        private bool CloseTab(int tabIndex)
         {
             if (tabIndex < 0 || tabIndex >= _tabContent.TabPages.Count)
-                return;
+                return false;
 
             var tabPage = _tabContent.TabPages[tabIndex];
 
@@ -1600,7 +1601,7 @@ namespace wxd.files.winforms
                 if (ctrl is TableBrowserControl browser)
                 {
                     if (!browser.ForceFlushBeforeClose())
-                        return;  // 用户选择不关闭
+                        return false;  // 用户选择不关闭
                     break;
                 }
             }
@@ -1615,6 +1616,7 @@ namespace wxd.files.winforms
 
             // 清除TreeView选中状态，允许重新打开同一文件
             _treeFiles.SelectedNode = null;
+            return true;
         }
 
         /// <summary>▼按钮下拉菜单 — 列出所有打开的标签页</summary>
@@ -1660,7 +1662,10 @@ namespace wxd.files.winforms
                 for (int i = _tabContent.TabPages.Count - 1; i >= 0; i--)
                 {
                     if (i != tabIndex)
-                        CloseTab(i);
+                    {
+                        if (!CloseTab(i))
+                            break;  // 用户取消，停止关闭
+                    }
                 }
             };
             menu.Items.Add(itemCloseOthers);
@@ -1676,13 +1681,35 @@ namespace wxd.files.winforms
         private void CloseAllTabs()
         {
             while (_tabContent.TabPages.Count > 0)
-                CloseTab(0);
+            {
+                if (!CloseTab(0))
+                    break;  // 用户取消，停止关闭
+            }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _loadingCts?.Cancel();
             _contentSearchCancelled = true;
+
+            // 检查所有打开的标签页是否有未保存的修改
+            for (int i = _tabContent.TabPages.Count - 1; i >= 0; i--)
+            {
+                var tabPage = _tabContent.TabPages[i];
+                foreach (Control ctrl in tabPage.Controls)
+                {
+                    if (ctrl is TableBrowserControl browser)
+                    {
+                        if (!browser.ForceFlushBeforeClose())
+                        {
+                            e.Cancel = true;  // 用户取消关闭
+                            return;
+                        }
+                        break;
+                    }
+                }
+            }
+
             base.OnFormClosing(e);
         }
 
