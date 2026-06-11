@@ -1594,6 +1594,17 @@ namespace wxd.files.winforms
 
             var tabPage = _tabContent.TabPages[tabIndex];
 
+            // ★ 关闭前检查是否有未保存的修改
+            foreach (Control ctrl in tabPage.Controls)
+            {
+                if (ctrl is TableBrowserControl browser)
+                {
+                    if (!browser.ForceFlushBeforeClose())
+                        return;  // 用户选择不关闭
+                    break;
+                }
+            }
+
             // 释放标签页中的控件资源
             foreach (Control ctrl in tabPage.Controls)
             {

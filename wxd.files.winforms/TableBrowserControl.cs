@@ -64,6 +64,8 @@ namespace wxd.files.winforms
         private bool _hasUnsavedChanges = false;
         private System.Windows.Forms.Timer? _retrySaveTimer;
         private const int SaveDebounceMs = 3000; // 3秒无操作后自动保存
+        /// <summary>已修改但尚未保存到磁盘的原始行索引集合（用于单元格橙色背景标记）</summary>
+        private HashSet<int> _unsavedRowIndices = new();
 
         // ==================== 行编辑模式 ====================
         private int _editingRowIndex = -1;           // 当前正在编辑的显示行索引（-1=无）
@@ -2620,7 +2622,8 @@ namespace wxd.files.winforms
             return (displayRowIndex + _frozenRows, displayColumnIndex);
         }
 
-        private void SaveCsvFile()
+        /// <returns>true=保存成功, false=保存失败</returns>
+        private bool SaveCsvFile()
         {
             try
             {
@@ -2644,14 +2647,31 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"保存文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                string friendlyMsg;
+                if (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    friendlyMsg = "文件被其他程序占用（如Excel已打开此文件），无法保存。\n" +
+                                  "请关闭其他程序后重试，或另存到其他位置。";
+                }
+                else
+                {
+                    friendlyMsg = $"保存失败：{ex.Message}";
+                }
+                MessageBox.Show(this, friendlyMsg, "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                // 标记脏数据并启动重试定时器（设置 _hasUnsavedChanges、状态栏提示、启动定时器）
+                MarkDirtyAndStartSaveTimer();
+
+                return false;
             }
 
             // ★ 保存后重新检测唯一列重复
             CheckUniqueColumnDuplicates();
+            return true;
         }
 
-        private void SaveExcelFile()
+        /// <returns>true=保存成功, false=保存失败</returns>
+        private bool SaveExcelFile()
         {
             var backupPath = _filePath + "." + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ".bak";
             try
@@ -2686,11 +2706,28 @@ namespace wxd.files.winforms
                         // 还原失败也保留备份文件，用户可手动恢复
                     }
                 }
-                MessageBox.Show(this, $"保存Excel文件失败:{Environment.NewLine}{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                string friendlyMsg;
+                if (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    friendlyMsg = "文件被其他程序占用（如Excel已打开此文件），无法保存。\n" +
+                                  "请关闭其他程序后重试。\n" +
+                                  "备份文件已保留在：" + backupPath;
+                }
+                else
+                {
+                    friendlyMsg = $"保存失败：{ex.Message}";
+                }
+                MessageBox.Show(this, friendlyMsg, "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                // 标记脏数据并启动重试定时器（设置 _hasUnsavedChanges、状态栏提示、启动定时器）
+                MarkDirtyAndStartSaveTimer();
+
+                return false;
             }
 
             // ★ 保存后重新检测唯一列重复
             CheckUniqueColumnDuplicates();
+            return true;
         }
 
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
@@ -2708,14 +2745,30 @@ namespace wxd.files.winforms
                 }
                 else
                 {
-                    // ★ 传入 _dirCache
-                    if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                        _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                    ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _dirCache, _columnLinks);
-                    if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                    // ==================== 未保存行：淡橙色背景 ====================
+                    bool isUnsavedRow = false;
+                    if (_unsavedRowIndices.Count > 0)
                     {
-                        e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
-                        e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                        var tagRow = _dataGrid.Rows[e.RowIndex].Tag as TableRow;
+                        if (tagRow != null && _unsavedRowIndices.Contains(tagRow.OriginalRowIndex))
+                        {
+                            isUnsavedRow = true;
+                            e.CellStyle.BackColor = Color.FromArgb(255, 235, 200);  // 淡橙色
+                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 220, 170);
+                        }
+                    }
+
+                    if (!isUnsavedRow)
+                    {
+                        // ★ 传入 _dirCache
+                        if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
+                            _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
+                        ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _dirCache, _columnLinks);
+                        if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                        {
+                            e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
+                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                        }
                     }
                 }
             }
@@ -3574,10 +3627,27 @@ namespace wxd.files.winforms
                             FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
 
                         // 一次性保存文件
-                        SaveCurrentFile();
+                        bool saved = SaveCurrentFile();
+
+                        if (saved)
+                        {
+                            _unsavedRowIndices.Clear();
+                        }
+                        else
+                        {
+                            // 保存失败，标记这一行为未保存
+                            _hasUnsavedChanges = true;
+                            _unsavedRowIndices.Add(origIndex);
+                        }
 
                         // 刷新显示（重建 Grid 以反映 _dataTable 的变更）
                         RefreshGridLayout();
+
+                        // 如果保存失败，刷新后需要恢复状态栏提示（RefreshGridLayout 会清空 _lblInfo.Text）
+                        if (!saved && _unsavedRowIndices.Count > 0)
+                        {
+                            ShowDirtyIndicator();
+                        }
                     }
                     else
                     {
@@ -3895,12 +3965,13 @@ namespace wxd.files.winforms
         }
 
         /// <summary>统一保存（根据文件类型调用 CSV 或 Excel 保存）</summary>
-        private void SaveCurrentFile()
+        /// <returns>true=保存成功, false=保存失败</returns>
+        private bool SaveCurrentFile()
         {
             if (_fileType == TableFileType.Csv)
-                SaveCsvFile();
+                return SaveCsvFile();
             else
-                SaveExcelFile();
+                return SaveExcelFile();
         }
 
         // ==================== 防抖保存 ====================
@@ -3933,10 +4004,12 @@ namespace wxd.files.winforms
             if (saved)
             {
                 _hasUnsavedChanges = false;
+                _unsavedRowIndices.Clear();
                 // 更新缓存主副本
                 _dirCache?.UpdateCacheFromMemory(relPath, _dataTable,
                     BuildFileData(_dataTable, inheritFrom: null));
                 HideDirtyIndicator();
+                RefreshGridLayout();  // 刷新以移除橙色背景
             }
             else
             {
@@ -3945,8 +4018,8 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>关闭前强制保存</summary>
-        private bool ForceFlushBeforeClose()
+        /// <summary>关闭前强制保存（供外部 CsvReaderForm 等调用）</summary>
+        public bool ForceFlushBeforeClose()
         {
             _retrySaveTimer?.Stop();
             if (!_hasUnsavedChanges) return true;
@@ -3956,7 +4029,7 @@ namespace wxd.files.winforms
 
             // 仍失败 → 弹窗让用户决定
             var result = MessageBox.Show(
-                "文件被占用无法保存，修改仅保留在内存中。\n关闭后修改将丢失，是否继续？",
+                $"文件被占用无法保存，{_unsavedRowIndices.Count} 行修改仅保留在内存中。\n关闭后修改将丢失，是否继续？",
                 "⚠ 保存失败", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             return result == DialogResult.Yes;
         }
@@ -3965,7 +4038,7 @@ namespace wxd.files.winforms
         {
             if (_lblInfo.IsHandleCreated)
             {
-                _lblInfo.Text = "⚠ 文件被占用，修改未保存（等待重试...）";
+                _lblInfo.Text = $"⚠ 文件被占用，{_unsavedRowIndices.Count} 行修改未保存（等待重试...）";
                 _lblInfo.ForeColor = Color.FromArgb(200, 130, 30);
             }
         }
