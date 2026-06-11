@@ -83,6 +83,7 @@ namespace wxd.files.winforms
             grid.ShowCellToolTips = false;
             grid.MouseLeave += (s, e) => Hide();
             grid.CellMouseMove += OnGridCellMouseMove;
+            grid.MouseMove += OnGridMouseMove;
         }
 
         private void OnGridCellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
@@ -108,9 +109,38 @@ namespace wxd.files.winforms
             }
         }
 
+        private void OnGridMouseMove(object? sender, MouseEventArgs e)
+        {
+            if (sender is DataGridView grid && grid == _activeGrid)
+            {
+                var hit = grid.HitTest(e.X, e.Y);
+                if (hit.Type != DataGridViewHitTestType.Cell)
+                {
+                    // 鼠标在空白区域，停止延迟定时器，避免定时器到期后显示残留 tooltip
+                    _hoverTimer?.Stop();
+                    _lastRow = -1;
+                    _lastCol = -1;
+                }
+            }
+        }
+
         private void OnHoverTimerTick(object? sender, EventArgs e)
         {
             _hoverTimer?.Stop();
+
+            // 验证鼠标是否仍在有效单元格上（防止快速划过表格后停在空白处仍显示 tooltip）
+            if (_activeGrid != null)
+            {
+                var pos = _activeGrid.PointToClient(Cursor.Position);
+                var hit = _activeGrid.HitTest(pos.X, pos.Y);
+                if (hit.Type != DataGridViewHitTestType.Cell)
+                {
+                    _lastRow = -1;
+                    _lastCol = -1;
+                    return;
+                }
+            }
+
             Show();
         }
 
