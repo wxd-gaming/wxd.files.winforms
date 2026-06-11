@@ -464,6 +464,12 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>获取最近 N 个版本的更新记录（格式化纯文本），供外部调用</summary>
+        public static async Task<string> GetRecentReleaseNotesAsync(int count)
+        {
+            return await FetchRecentReleaseNotesAsync(count).ConfigureAwait(false);
+        }
+
         /// <summary>获取最近 N 个版本的更新日志</summary>
         private static async Task<string> FetchRecentReleaseNotesAsync(int count)
         {

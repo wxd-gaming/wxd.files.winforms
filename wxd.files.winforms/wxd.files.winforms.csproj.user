@@ -7,6 +7,9 @@
     <Compile Update="CellEditDialog.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="ChangelogForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="ColumnLinkSetupDialog.cs">
       <SubType>Form</SubType>
     </Compile>

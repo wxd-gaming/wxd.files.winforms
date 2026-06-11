@@ -142,7 +142,7 @@ namespace wxd.files.winforms
         {
             _isDark = isDark;
             Text = "关于 - wxd.files.winforms";
-            ClientSize = new Size(700, 530);
+            ClientSize = new Size(700, 720);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -220,7 +220,7 @@ namespace wxd.files.winforms
             _rtbContent = new RichTextBox
             {
                 Location = new Point(16, 62),
-                Size = new Size(668, 380),
+                Size = new Size(668, 570),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 ReadOnly = true,
                 BorderStyle = BorderStyle.None,
@@ -235,7 +235,7 @@ namespace wxd.files.winforms
             // 底栏背景
             var bottomPanel = new Panel
             {
-                Location = new Point(0, 450),
+                Location = new Point(0, 640),
                 Size = new Size(700, 80),
                 BackColor = isDark ? Color.FromArgb(37, 37, 38) : Color.FromArgb(220, 238, 250)
             };
@@ -282,8 +282,8 @@ namespace wxd.files.winforms
             _btnCheckUpdate = new Button
             {
                 Text = "检查更新",
-                Size = new Size(85, 30),
-                Location = new Point(428, 8),
+                Size = new Size(72, 30),
+                Location = new Point(396, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -294,12 +294,28 @@ namespace wxd.files.winforms
             _btnCheckUpdate.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
             _btnCheckUpdate.Click += OnCheckUpdateClick;
 
+            // 更新记录按钮
+            var btnChangelog = new Button
+            {
+                Text = "更新记录",
+                Size = new Size(72, 30),
+                Location = new Point(472, 8),
+                Font = new Font("Microsoft YaHei UI", 10f),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = isDark ? _darkBtnBg : _lightBtnBg,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand
+            };
+            btnChangelog.FlatAppearance.BorderSize = 1;
+            btnChangelog.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
+            btnChangelog.Click += (s, e) => ChangelogForm.ShowChangelog(this, _isDark);
+
             // 强制重装按钮
             _btnForceReinstall = new Button
             {
                 Text = "强制重装",
-                Size = new Size(85, 30),
-                Location = new Point(517, 8),
+                Size = new Size(72, 30),
+                Location = new Point(548, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(255, 152, 0),
@@ -314,8 +330,8 @@ namespace wxd.files.winforms
             _btnClose = new Button
             {
                 Text = "关闭",
-                Size = new Size(80, 30),
-                Location = new Point(606, 8),
+                Size = new Size(72, 30),
+                Location = new Point(624, 8),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -329,7 +345,7 @@ namespace wxd.files.winforms
 
             bottomPanel.Controls.AddRange(new Control[] {
                 _lblStatus, _progressBar, _lblProgressText,
-                _btnCheckUpdate, _btnForceReinstall, _btnClose
+                _btnCheckUpdate, btnChangelog, _btnForceReinstall, _btnClose
             });
 
             Controls.AddRange(new Control[] {

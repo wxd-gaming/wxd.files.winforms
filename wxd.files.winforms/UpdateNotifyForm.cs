@@ -39,7 +39,7 @@ namespace wxd.files.winforms
 
             // 根据是否有更新内容调整窗体高度
             bool hasNotes = !string.IsNullOrEmpty(result.ReleaseNotes);
-            int formHeight = hasNotes ? 380 : 200;
+            int formHeight = hasNotes ? 520 : 200;
             ClientSize = new Size(600, formHeight);
 
             StartPosition = FormStartPosition.CenterScreen;
@@ -86,7 +86,7 @@ namespace wxd.files.winforms
                 {
                     Text = result.ReleaseNotes,
                     Location = new Point(20, notesTop + 22),
-                    Size = new Size(560, 160),
+                    Size = new Size(560, 300),
                     ReadOnly = true,
                     BorderStyle = BorderStyle.FixedSingle,
                     BackColor = _isDark ? Color.FromArgb(45, 45, 48) : Color.White,
@@ -115,7 +115,7 @@ namespace wxd.files.winforms
             }
 
             // 按钮布局：有更新内容时下移
-            int btnTop = hasNotes ? 270 : 100;
+            int btnTop = hasNotes ? 410 : 100;
 
             _btnUpdate = new Button
             {
