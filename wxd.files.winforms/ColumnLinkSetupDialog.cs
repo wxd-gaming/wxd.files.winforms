@@ -39,6 +39,8 @@ namespace wxd.files.winforms
         private ComboBox _cboStepPartIndex = new();  // 取段下拉
         private Button _btnUpdateStep = new();       // 更新选中步骤
         private Label _lblExtractPreview = new();    // 预览标签
+        private bool _hasUnsavedChanges = false;
+        private bool _isLoadingStep = false;
 
         public ColumnLinkSetupDialog(
             List<(string display, string fullPath)> fileEntries,
@@ -427,11 +429,18 @@ namespace wxd.files.winforms
             _lstSteps.EndUpdate();
         }
 
+        private void MarkUnsaved()
+        {
+            if (!_isLoadingStep && _lstSteps.SelectedIndex >= 0)
+                _hasUnsavedChanges = true;
+        }
+
         private void OnStepSelected(object? sender, EventArgs e)
         {
-            if (_lstSteps.SelectedIndex < 0) return;
+            _isLoadingStep = true;
+            if (_lstSteps.SelectedIndex < 0) { _isLoadingStep = false; return; }
             var steps = _existingLink?.ExtractSteps;
-            if (steps == null || _lstSteps.SelectedIndex >= steps.Count) return;
+            if (steps == null || _lstSteps.SelectedIndex >= steps.Count) { _isLoadingStep = false; return; }
             var step = steps[_lstSteps.SelectedIndex];
 
             _txtStepDelimiter.Text = step.Delimiter;
@@ -439,6 +448,7 @@ namespace wxd.files.winforms
             int cbIdx = step.PartIndex + 1;
             if (cbIdx >= 0 && cbIdx < _cboStepPartIndex.Items.Count)
                 _cboStepPartIndex.SelectedIndex = cbIdx;
+            _isLoadingStep = false;
         }
 
         private void AddStep()
@@ -449,6 +459,7 @@ namespace wxd.files.winforms
             RefreshStepList();
             _lstSteps.SelectedIndex = _lstSteps.Items.Count - 1;
             UpdatePreview();
+            _hasUnsavedChanges = false;
         }
 
         private void DeleteStep()
@@ -459,6 +470,7 @@ namespace wxd.files.winforms
             if (_lstSteps.Items.Count > 0)
                 _lstSteps.SelectedIndex = 0;
             UpdatePreview();
+            _hasUnsavedChanges = false;
         }
 
         private void UpdateStep()
@@ -478,6 +490,7 @@ namespace wxd.files.winforms
             RefreshStepList();
             _lstSteps.SelectedIndex = Math.Min(_lstSteps.SelectedIndex, _lstSteps.Items.Count - 1);
             UpdatePreview();
+            _hasUnsavedChanges = false;
         }
 
         private List<ExtractStep> GetExtractStepsFromUI()
@@ -493,6 +506,22 @@ namespace wxd.files.winforms
                 new ExtractStep { Delimiter = "|", PartIndex = -1 },
                 new ExtractStep { Delimiter = "#", PartIndex = 0 }
             };
+        }
+
+        private void OnOKClick(object? sender, EventArgs e)
+        {
+            if (_hasUnsavedChanges)
+            {
+                var result = MessageBox.Show(this,
+                    "切割步骤有未保存的修改（未点击\"更新\"按钮），是否放弃修改？\n\n点击\"是\"将放弃修改并关闭对话框。\n点击\"否\"返回继续编辑。",
+                    "未保存的修改",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (result == DialogResult.No)
+                    return;
+            }
+            DialogResult = DialogResult.OK;
+            Close();
         }
 
         private void UpdatePreview()
@@ -666,6 +695,7 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
                 Enabled = false, PlaceholderText = "# | :"
             };
+            _txtStepDelimiter.TextChanged += (s, e) => MarkUnsaved();
             grpExtract.Controls.Add(_txtStepDelimiter);
 
             _lblStepPartIndex = new Label
@@ -698,6 +728,7 @@ namespace wxd.files.winforms
                 "9 = 取第 9 段"
             });
             _cboStepPartIndex.SelectedIndex = 1; // 默认取第0段
+            _cboStepPartIndex.SelectedIndexChanged += (s, e) => MarkUnsaved();
             grpExtract.Controls.Add(_cboStepPartIndex);
 
             _btnUpdateStep = new Button
@@ -733,7 +764,8 @@ namespace wxd.files.winforms
 
             _btnOK = new Button { Text = "确定", Location = new Point(330, 540), Size = new Size(80, 28), FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
+                Cursor = Cursors.Hand };
+            _btnOK.Click += OnOKClick;
             Controls.Add(_btnOK);
 
             _btnCancel = new Button { Text = "取消", Location = new Point(420, 540), Size = new Size(70, 28), FlatStyle = FlatStyle.Flat,
