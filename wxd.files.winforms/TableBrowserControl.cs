@@ -65,6 +65,8 @@ namespace wxd.files.winforms
         private bool _enteringEditMode = false;       // 防止事件重入标志
         private bool _isNewRowForEdit = false;        // 是否为新增行（Esc时删除该行）
         private int _editingRowOrigIndex = -1;        // 编辑行的原始行索引
+        private bool _syncingColumnWidth = false;     // 列宽同步防重入
+        private bool _syncingScroll = false;           // 滚动同步防重入
 
         // ==================== 过滤防抖 ====================
         private CancellationTokenSource? _filterDebounceCts;
@@ -665,7 +667,7 @@ namespace wxd.files.winforms
             _dataGridHeader.RowHeadersWidth = 50;
             _dataGridHeader.ColumnHeadersVisible = true;
             _dataGridHeader.ReadOnly = true;
-            _dataGridHeader.AllowUserToResizeColumns = false;
+            _dataGridHeader.AllowUserToResizeColumns = true;
             _dataGridHeader.AllowUserToResizeRows = false;
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
@@ -716,6 +718,9 @@ namespace wxd.files.winforms
             {
                 if (_dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
+                // 同步水平滚动偏移到内容行（键盘方向键在固定行导航时联动滚动）
+                if (_dataGrid.HorizontalScrollingOffset != _dataGridHeader.HorizontalScrollingOffset)
+                    _dataGrid.HorizontalScrollingOffset = _dataGridHeader.HorizontalScrollingOffset;
             };
             _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick;
             _dataGridHeader.CellClick += OnCellClick;
@@ -750,15 +755,44 @@ namespace wxd.files.winforms
 
             _dataGrid.Scroll += (s, e) =>
             {
-                _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset;
+                if (_syncingScroll) return;
+                _syncingScroll = true;
+                try { _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset; }
+                finally { _syncingScroll = false; }
             };
             _dataGrid.ColumnWidthChanged += (s, e) =>
             {
-                int dataGridColumnIndex = e.Column.Index;
-                int headerColumnIndex = dataGridColumnIndex;
-                // ★ 不再需要 __RowNum__ 偏移
-                if (headerColumnIndex >= 0 && headerColumnIndex < _dataGridHeader.Columns.Count)
-                    _dataGridHeader.Columns[headerColumnIndex].Width = _dataGrid.Columns[dataGridColumnIndex].Width;
+                if (_syncingColumnWidth) return;
+                _syncingColumnWidth = true;
+                try
+                {
+                    // 全量同步所有列宽（避免键盘导航后索引不一致导致错位）
+                    for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
+                        _dataGridHeader.Columns[i].Width = _dataGrid.Columns[i].Width;
+                }
+                finally { _syncingColumnWidth = false; }
+            };
+
+            // ★ 固定行滚动同步到内容行
+            _dataGridHeader.Scroll += (s, e) =>
+            {
+                if (_syncingScroll) return;
+                _syncingScroll = true;
+                try { _dataGrid.HorizontalScrollingOffset = _dataGridHeader.HorizontalScrollingOffset; }
+                finally { _syncingScroll = false; }
+            };
+
+            // ★ 固定行列宽变化同步到内容行
+            _dataGridHeader.ColumnWidthChanged += (s, e) =>
+            {
+                if (_syncingColumnWidth) return;
+                _syncingColumnWidth = true;
+                try
+                {
+                    for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
+                        _dataGrid.Columns[i].Width = _dataGridHeader.Columns[i].Width;
+                }
+                finally { _syncingColumnWidth = false; }
             };
 
             // 快捷键：Ctrl+D 复制当前行，Delete 删除当前行

@@ -2824,6 +2824,20 @@ namespace wxd.files.winforms
         }
 
         // ==================== 切割步骤管理 ====================
+        /// <summary>确保 _existingLink 不为 null（用于首次添加/更新切割步骤时自动创建）</summary>
+        private void EnsureExistingLink()
+        {
+            if (_existingLink == null)
+            {
+                _existingLink = new ColumnLinkConfig
+                {
+                    SourceFile = _sourceFile,
+                    SourceColumnIndex = _sourceColumnIndex,
+                    ExtractSteps = new List<ExtractStep>()
+                };
+            }
+        }
+
         private void RefreshStepList()
         {
             _lstSteps.BeginUpdate();
@@ -2856,8 +2870,8 @@ namespace wxd.files.winforms
 
         private void AddStep()
         {
-            if (_existingLink == null) return;
-            _existingLink.MigrateFromOldFields();
+            EnsureExistingLink();
+            _existingLink!.MigrateFromOldFields();
             _existingLink.ExtractSteps.Add(new ExtractStep { Delimiter = "#", PartIndex = 0 });
             RefreshStepList();
             _lstSteps.SelectedIndex = _lstSteps.Items.Count - 1;
@@ -2867,7 +2881,6 @@ namespace wxd.files.winforms
         private void DeleteStep()
         {
             if (_existingLink == null || _lstSteps.SelectedIndex < 0) return;
-            if (_existingLink.ExtractSteps.Count <= 1) return; // 至少保留一步
             _existingLink.ExtractSteps.RemoveAt(_lstSteps.SelectedIndex);
             RefreshStepList();
             if (_lstSteps.Items.Count > 0)
@@ -2877,8 +2890,9 @@ namespace wxd.files.winforms
 
         private void UpdateStep()
         {
-            if (_existingLink == null || _lstSteps.SelectedIndex < 0) return;
-            var steps = _existingLink.ExtractSteps;
+            EnsureExistingLink();
+            if (_lstSteps.SelectedIndex < 0) return;
+            var steps = _existingLink!.ExtractSteps;
             if (_lstSteps.SelectedIndex >= steps.Count) return;
 
             var step = steps[_lstSteps.SelectedIndex];
@@ -2911,9 +2925,14 @@ namespace wxd.files.winforms
         private void UpdatePreview()
         {
             var steps = GetExtractStepsFromUI();
-            if (steps.Count == 0 || !_chkExtractEnabled.Checked)
+            if (!_chkExtractEnabled.Checked)
             {
                 _lblExtractPreview.Text = "预览: 未启用提取";
+                return;
+            }
+            if (steps.Count == 0)
+            {
+                _lblExtractPreview.Text = "预览: 已启用提取，但无切割步骤（请添加）";
                 return;
             }
 
