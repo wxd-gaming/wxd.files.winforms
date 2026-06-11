@@ -1219,118 +1219,9 @@ namespace wxd.files.winforms
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
 
-            // 1. 打开文件（和左键单击一样）
-            var mnuOpen = new ToolStripMenuItem("打开文件");
-            mnuOpen.Enabled = System.IO.File.Exists(fullPath);
-            mnuOpen.Click += (s, args) =>
-            {
-                if (System.IO.File.Exists(fullPath))
-                    OpenFile(fullPath, DetectFileType(fullPath));
-            };
-
-            // 2. 编辑文件（用系统默认编辑器打开）
-            var mnuEdit = new ToolStripMenuItem("编辑文件");
-            mnuEdit.Enabled = System.IO.File.Exists(fullPath);
-            mnuEdit.Click += (s, args) =>
-            {
-                if (System.IO.File.Exists(fullPath))
-                {
-                    try
-                    {
-                        // 直接用系统默认程序打开文件（无cmd窗口闪烁）
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = fullPath,
-                            UseShellExecute = true
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show(this, $"无法打开文件: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            };
-
-            // 3. 打开文件夹（定位到该文件）
-            var mnuOpenFolder = new ToolStripMenuItem("打开所在文件夹");
-            mnuOpenFolder.Enabled = !string.IsNullOrEmpty(fullPath);
-            mnuOpenFolder.Click += (s, args) =>
-            {
-                try
-                {
-                    string folderPath = System.IO.File.Exists(fullPath)
-                        ? System.IO.Path.GetDirectoryName(fullPath) ?? ""
-                        : fullPath;
-                    if (!string.IsNullOrEmpty(folderPath) && System.IO.Directory.Exists(folderPath))
-                    {
-                        // explorer /select,"filepath" 可定位到具体文件
-                        string arg = System.IO.File.Exists(fullPath)
-                            ? $"/select,\"{fullPath}\""
-                            : $"\"{folderPath}\"";
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "explorer",
-                            Arguments = arg,
-                            UseShellExecute = true
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, $"无法打开文件夹: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            };
-
-            // 4. 历史记录对比（始终显示，点击时检测 VCS 类型）
+            // 1. 设置别名（仅文件节点可用）
             var isFile = System.IO.File.Exists(fullPath);
-            var mnuHistory = new ToolStripMenuItem("历史记录对比");
-            mnuHistory.Enabled = isFile;
-            mnuHistory.Click += (s, args) =>
-            {
-                if (!System.IO.File.Exists(fullPath)) return;
-                var vcsType = VersionControlHelper.DetectVcs(fullPath);
-                if (vcsType == VcsType.None)
-                {
-                    MessageBox.Show(this,
-                        "此文件不受 SVN 或 Git 管控，无法进行历史记录对比。",
-                        "非受控文件",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                    return;
-                }
-
-                var dir = Path.GetDirectoryName(fullPath) ?? "";
-                var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-                int frozenRows, headerRowIndex, uniqueColumnIndex, mappingRowIndex;
-                if (ext == ".csv")
-                {
-                    frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
-                    headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
-                    uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
-                    mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
-                }
-                else
-                {
-                    frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
-                    headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
-                    uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
-                    mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
-                }
-                // 获取列可见性配置
-                string relPath;
-                if (!string.IsNullOrEmpty(dir) && fullPath.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
-                    relPath = fullPath.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar);
-                else
-                    relPath = Path.GetFileName(fullPath);
-                var columnVisibility = CsvSettings.GetColumnVisibility(dir, relPath);
-                var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
-                    rootDir: _currentDir, columnVisibility: columnVisibility,
-                    uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex);
-                form.Show();
-            };
-
-            // 5. 设置备注名（仅文件节点可用）
-            var mnuRemark = new ToolStripMenuItem("设置备注名");
+            var mnuRemark = new ToolStripMenuItem("设置别名");
             mnuRemark.Enabled = isFile;
             mnuRemark.Click += (s, args) =>
             {
@@ -1339,7 +1230,7 @@ namespace wxd.files.winforms
                 var currentRemark = _fileRemarks.TryGetValue(relativePath, out var r) ? r : "";
                 using var inputForm = new Form
                 {
-                    Text = "设置备注名",
+                    Text = "设置别名",
                     ClientSize = new Size(380, 170),
                     StartPosition = FormStartPosition.CenterParent,
                     FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1349,7 +1240,7 @@ namespace wxd.files.winforms
                 };
                 var lbl = new Label
                 {
-                    Text = "为文件 \"" + Path.GetFileName(fullPath) + "\" 设置备注名：（留空则清除备注）",
+                    Text = "为文件 \"" + Path.GetFileName(fullPath) + "\" 设置别名：（留空则清除别名）",
                     Location = new Point(12, 12), Size = new Size(356, 36),
                     AutoSize = false
                 };
@@ -1403,7 +1294,120 @@ namespace wxd.files.winforms
                 }
             };
 
-            ctx.Items.AddRange(new ToolStripItem[] { mnuOpen, mnuEdit, mnuHistory, mnuOpenFolder, mnuRemark });
+            // 2. 打开表格（和左键单击一样）
+            var mnuOpen = new ToolStripMenuItem("打开表格");
+            mnuOpen.Enabled = System.IO.File.Exists(fullPath);
+            mnuOpen.Click += (s, args) =>
+            {
+                if (System.IO.File.Exists(fullPath))
+                    OpenFile(fullPath, DetectFileType(fullPath));
+            };
+
+            // 3. 编辑表格（用系统默认编辑器打开）
+            var mnuEdit = new ToolStripMenuItem("编辑表格");
+            mnuEdit.Enabled = System.IO.File.Exists(fullPath);
+            mnuEdit.Click += (s, args) => OpenFileInSystemEditor(fullPath);
+
+            // 4. 复制文件名（不含后缀）
+            var mnuCopyFileName = new ToolStripMenuItem("复制文件名");
+            mnuCopyFileName.Enabled = isFile;
+            mnuCopyFileName.Click += (s, args) => CopyFileNameToClipboard(fullPath);
+
+            // 5. 复制文件路径（完整路径）
+            var mnuCopyFilePath = new ToolStripMenuItem("复制文件路径");
+            mnuCopyFilePath.Enabled = isFile;
+            mnuCopyFilePath.Click += (s, args) => CopyFilePathToClipboard(fullPath);
+
+            // 6. 打开文件夹（定位到该文件）
+            var mnuOpenFolder = new ToolStripMenuItem("打开所在文件夹");
+            mnuOpenFolder.Enabled = !string.IsNullOrEmpty(fullPath);
+            mnuOpenFolder.Click += (s, args) =>
+            {
+                try
+                {
+                    string folderPath = System.IO.File.Exists(fullPath)
+                        ? System.IO.Path.GetDirectoryName(fullPath) ?? ""
+                        : fullPath;
+                    if (!string.IsNullOrEmpty(folderPath) && System.IO.Directory.Exists(folderPath))
+                    {
+                        // explorer /select,"filepath" 可定位到具体文件
+                        string arg = System.IO.File.Exists(fullPath)
+                            ? $"/select,\"{fullPath}\""
+                            : $"\"{folderPath}\"";
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "explorer",
+                            Arguments = arg,
+                            UseShellExecute = true
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"无法打开文件夹: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            // 7. 历史记录对比（始终显示，点击时检测 VCS 类型）
+            var mnuHistory = new ToolStripMenuItem("历史记录对比");
+            mnuHistory.Enabled = isFile;
+            mnuHistory.Click += (s, args) =>
+            {
+                if (!System.IO.File.Exists(fullPath)) return;
+                var vcsType = VersionControlHelper.DetectVcs(fullPath);
+                if (vcsType == VcsType.None)
+                {
+                    MessageBox.Show(this,
+                        "此文件不受 SVN 或 Git 管控，无法进行历史记录对比。",
+                        "非受控文件",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                var dir = Path.GetDirectoryName(fullPath) ?? "";
+                var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+                int frozenRows, headerRowIndex, uniqueColumnIndex, mappingRowIndex;
+                if (ext == ".csv")
+                {
+                    frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
+                    headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+                    uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+                    mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
+                }
+                else
+                {
+                    frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
+                    headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+                    uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+                    mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
+                }
+                // 获取列可见性配置
+                string relPath;
+                if (!string.IsNullOrEmpty(dir) && fullPath.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+                    relPath = fullPath.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar);
+                else
+                    relPath = Path.GetFileName(fullPath);
+                var columnVisibility = CsvSettings.GetColumnVisibility(dir, relPath);
+                var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
+                    rootDir: _currentDir, columnVisibility: columnVisibility,
+                    uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex);
+                form.Show();
+            };
+
+            ctx.Items.AddRange(new ToolStripItem[]
+            {
+                mnuRemark,
+                new ToolStripSeparator(),
+                mnuOpen,
+                mnuEdit,
+                new ToolStripSeparator(),
+                mnuCopyFileName,
+                mnuCopyFilePath,
+                new ToolStripSeparator(),
+                mnuOpenFolder,
+                mnuHistory,
+            });
             ctx.Show(_treeFiles, e.Location);
         }
 
@@ -1651,10 +1655,37 @@ namespace wxd.files.winforms
             var menu = new ContextMenuStrip();
             menu.Font = new Font("Microsoft YaHei UI", 9f);
 
+            // 获取当前页签的文件路径
+            var tabPage = _tabContent.TabPages[tabIndex];
+            var filePath = tabPage.Tag as string;
+            var fileExists = !string.IsNullOrEmpty(filePath) && System.IO.File.Exists(filePath);
+
+            // 1. 复制文件名（不含后缀）
+            var mnuCopyFileName = new ToolStripMenuItem("复制文件名");
+            mnuCopyFileName.Enabled = fileExists;
+            mnuCopyFileName.Click += (s, e) => CopyFileNameToClipboard(filePath!);
+            menu.Items.Add(mnuCopyFileName);
+
+            // 2. 复制文件路径（完整路径）
+            var mnuCopyFilePath = new ToolStripMenuItem("复制文件路径");
+            mnuCopyFilePath.Enabled = fileExists;
+            mnuCopyFilePath.Click += (s, e) => CopyFilePathToClipboard(filePath!);
+            menu.Items.Add(mnuCopyFilePath);
+
+            // 3. 编辑文件（用系统默认编辑器打开）
+            var mnuEdit = new ToolStripMenuItem("编辑文件");
+            mnuEdit.Enabled = fileExists;
+            mnuEdit.Click += (s, e) => OpenFileInSystemEditor(filePath!);
+            menu.Items.Add(mnuEdit);
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            // 4. 关闭当前页签
             var itemClose = new ToolStripMenuItem("关闭当前页签");
             itemClose.Click += (s, e) => CloseTab(tabIndex);
             menu.Items.Add(itemClose);
 
+            // 5. 关闭其它页签
             var itemCloseOthers = new ToolStripMenuItem("关闭其它页签");
             itemCloseOthers.Enabled = _tabContent.TabPages.Count > 1;
             itemCloseOthers.Click += (s, e) =>
@@ -1670,6 +1701,7 @@ namespace wxd.files.winforms
             };
             menu.Items.Add(itemCloseOthers);
 
+            // 6. 关闭全部页签
             var itemCloseAll = new ToolStripMenuItem("关闭全部页签");
             itemCloseAll.Enabled = _tabContent.TabPages.Count > 0;
             itemCloseAll.Click += (s, e) => CloseAllTabs();
@@ -1684,6 +1716,52 @@ namespace wxd.files.winforms
             {
                 if (!CloseTab(0))
                     break;  // 用户取消，停止关闭
+            }
+        }
+
+        // ==================== 公共辅助方法 ====================
+
+        /// <summary>复制文件名（不含后缀）到剪贴板</summary>
+        private void CopyFileNameToClipboard(string filePath)
+        {
+            try
+            {
+                Clipboard.SetText(Path.GetFileNameWithoutExtension(filePath));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"复制失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>复制完整文件路径到剪贴板</summary>
+        private void CopyFilePathToClipboard(string filePath)
+        {
+            try
+            {
+                Clipboard.SetText(filePath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"复制失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>用系统默认编辑器打开文件</summary>
+        private void OpenFileInSystemEditor(string filePath)
+        {
+            if (!System.IO.File.Exists(filePath)) return;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = filePath,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"无法打开文件: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
