@@ -59,6 +59,13 @@ namespace wxd.files.winforms
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
         private bool _isEditLocked = false; // Excel默认锁定编辑，CSV默认解锁
 
+        // ==================== 行编辑模式 ====================
+        private int _editingRowIndex = -1;           // 当前正在编辑的显示行索引（-1=无）
+        private string[]? _editingRowOriginalValues;  // 编辑前原始值快照（用于Esc取消）
+        private bool _enteringEditMode = false;       // 防止事件重入标志
+        private bool _isNewRowForEdit = false;        // 是否为新增行（Esc时删除该行）
+        private int _editingRowOrigIndex = -1;        // 编辑行的原始行索引
+
         // ==================== 过滤防抖 ====================
         private CancellationTokenSource? _filterDebounceCts;
         private const int FilterDebounceMs = 300;
@@ -720,6 +727,27 @@ namespace wxd.files.winforms
             _dataGrid.ColumnHeadersVisible = false;
             _dataGrid.CellMouseDown += OnGridCellMouseDown;
 
+            // ==================== 行编辑模式：点击其他行自动退出编辑 ====================
+            _dataGrid.SelectionChanged += (s, e) =>
+            {
+                if (_editingRowIndex < 0) return;
+                if (_enteringEditMode) return;
+
+                // 如果当前选中行不是编辑行，则提交退出编辑
+                if (_dataGrid.CurrentRow != null && _dataGrid.CurrentRow.Index != _editingRowIndex)
+                {
+                    _enteringEditMode = true;
+                    try
+                    {
+                        // 使用 CancelEdit 而非 EndEdit，避免触发 OnCellEndEdit 中的 CurrentCell 跳转（防止重入）
+                        if (_dataGrid.IsCurrentCellInEditMode)
+                            _dataGrid.CancelEdit();
+                        ExitRowEditMode(commit: true);
+                    }
+                    finally { _enteringEditMode = false; }
+                }
+            };
+
             _dataGrid.Scroll += (s, e) =>
             {
                 _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset;
@@ -741,6 +769,32 @@ namespace wxd.files.winforms
 
                 int displayIdx = _dataGrid.CurrentRow.Index;
                 int origIdx = GetOriginalRowIndexFromDisplay(displayIdx);
+
+                // ==================== 行编辑模式快捷键 ====================
+                if (_editingRowIndex >= 0)
+                {
+                    if (e.KeyCode == Keys.Escape)
+                    {
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        CancelRowEditMode();
+                        return;
+                    }
+                    if (e.KeyCode == Keys.Enter && !e.Control)
+                    {
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                        // 先结束当前单元格编辑
+                        if (_dataGrid.IsCurrentCellInEditMode)
+                            _dataGrid.EndEdit();
+                        ExitRowEditMode(commit: true);
+                        return;
+                    }
+                    // 行编辑模式下禁用行操作快捷键
+                    if (e.Control && e.KeyCode == Keys.D) { e.Handled = true; return; }
+                    if (e.KeyCode == Keys.Delete && !e.Control) { e.Handled = true; return; }
+                    return;
+                }
 
                 if (e.Control && e.KeyCode == Keys.D)
                 {
@@ -850,7 +904,7 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.None,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                ReadOnly = false,
+                ReadOnly = true,  // 默认只读（浏览模式），行编辑模式下临时设为false
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
@@ -2107,6 +2161,19 @@ namespace wxd.files.winforms
 
         private void RefreshFilteredDisplay(List<int> visibleRowIndices)
         {
+            // ==================== 行编辑模式：刷新前退出编辑 ====================
+            if (_editingRowIndex >= 0)
+            {
+                _enteringEditMode = true;
+                try
+                {
+                    if (_dataGrid.IsCurrentCellInEditMode)
+                        _dataGrid.EndEdit();
+                    ExitRowEditMode(commit: true);
+                }
+                finally { _enteringEditMode = false; }
+            }
+
             var filteredTable = new DataTable();
             // ★ 不再添加 __RowNum__ 隐藏列；行号通过 _fileData.Rows[origIdx].OriginalRowIndex 追踪
             foreach (var colIndex in _visibleColumnIndices)
@@ -2175,6 +2242,11 @@ namespace wxd.files.winforms
         private void OnColumnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.ColumnIndex < 0 || e.ColumnIndex >= _dataGrid.Columns.Count) return;
+
+            // ==================== 行编辑模式：排序前退出编辑 ====================
+            if (_editingRowIndex >= 0)
+                ExitRowEditMode(commit: true);
+
             if (_sortColumnIndex == e.ColumnIndex)
                 _sortOrder = _sortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
             else { _sortColumnIndex = e.ColumnIndex; _sortOrder = SortOrder.Ascending; }
@@ -2323,7 +2395,9 @@ namespace wxd.files.winforms
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
             var dgv = (DataGridView)sender!;
             if (dgv == _dataGridHeader) return;
-            // 双击进入单元格编辑模式（DataGridView EditMode=EditOnKeystrokeOrF2 自动处理）
+            // 双击进入行编辑模式
+            if (!_isEmbeddedMode && !_isEditLocked)
+                EnterRowEditMode(e.RowIndex);
         }
 
         private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -2340,11 +2414,68 @@ namespace wxd.files.winforms
             if (_isEmbeddedMode) { e.Cancel = true; return; }
             // 编辑锁定模式禁止编辑（Excel默认锁定）
             if (_isEditLocked) { e.Cancel = true; return; }
+
+            // ==================== 行编辑模式 ====================
+            // 如果不是通过 EnterRowEditMode 触发的编辑（即用户直接点击单元格尝试编辑），
+            // 且不在行编辑模式下，则自动进入行编辑模式
+            if (!_enteringEditMode && _editingRowIndex < 0)
+            {
+                e.Cancel = true;
+                EnterRowEditMode(e.RowIndex);
+                return;
+            }
+            // 行编辑模式下，只允许编辑当前编辑行的单元格
+            if (_editingRowIndex >= 0 && e.RowIndex != _editingRowIndex)
+            {
+                e.Cancel = true;
+                return;
+            }
         }
 
         private void OnCellEndEdit(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            // ==================== 行编辑模式 ====================
+            if (_editingRowIndex >= 0)
+            {
+                // 行编辑模式下不逐单元格保存，等整行退出后统一保存
+                // 使用 BeginInvoke 延迟跳转，避免在 EndEdit 调用栈内设置 CurrentCell 导致重入
+                if (e.ColumnIndex < _dataGrid.Columns.Count - 1 && !_enteringEditMode)
+                {
+                    int nextRow = e.RowIndex;
+                    int nextCol = e.ColumnIndex + 1;
+                    BeginInvoke(new Action(() =>
+                    {
+                        // 延迟执行时再次校验：编辑行未变且行仍有效
+                        if (_editingRowIndex == nextRow && nextRow < _dataGrid.Rows.Count)
+                        {
+                            // 检查 CurrentCell 是否已经被用户（Tab/鼠标）移到了目标位置
+                            if (_dataGrid.CurrentCell != null
+                                && _dataGrid.CurrentCell.RowIndex == nextRow
+                                && _dataGrid.CurrentCell.ColumnIndex == nextCol)
+                            {
+                                // DataGridView 已经移到了目标列，只需进入编辑模式
+                                _dataGrid.BeginEdit(true);
+                            }
+                            else
+                            {
+                                // CurrentCell 不在预期位置（如按 Enter 结束编辑），需要手动跳转
+                                _enteringEditMode = true;
+                                try
+                                {
+                                    _dataGrid.CurrentCell = _dataGrid.Rows[nextRow].Cells[nextCol];
+                                    _dataGrid.BeginEdit(true);
+                                }
+                                finally { _enteringEditMode = false; }
+                            }
+                        }
+                    }));
+                }
+                return;
+            }
+
+            // 非行编辑模式下的原有逻辑（正常不会走到这里，因为 ReadOnly=true）
             var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
             var newValue = cell.Value?.ToString() ?? "";
             var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
@@ -2470,11 +2601,20 @@ namespace wxd.files.winforms
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
-                if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                // ==================== 行编辑模式：编辑行浅绿色背景 ====================
+                if (_editingRowIndex >= 0 && e.RowIndex == _editingRowIndex)
                 {
-                    e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                    e.CellStyle.BackColor = Color.FromArgb(230, 255, 230);  // 浅绿色
+                    e.CellStyle.SelectionBackColor = Color.FromArgb(200, 240, 200);
+                }
+                else
+                {
+                    ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
+                    if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
+                    {
+                        e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
+                        e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                    }
                 }
             }
             // 转发给外部事件处理器（如版本对比的差异高亮）
@@ -2522,6 +2662,29 @@ namespace wxd.files.winforms
                 };
             }
             ctx.Items.Add(editItem);
+
+            // ==================== 编辑行菜单 ====================
+            var editRowItem = new ToolStripMenuItem(_editingRowIndex >= 0 ? "退出行编辑" : "编辑行");
+            if (_isEmbeddedMode) { editRowItem.Enabled = false; }
+            else
+            {
+                int targetRow = e.RowIndex;
+                editRowItem.Click += (s, args) =>
+                {
+                    // 先选中右键点击的行
+                    _dataGrid.CurrentCell = _dataGrid.Rows[targetRow].Cells[e.ColumnIndex];
+                    if (_editingRowIndex >= 0)
+                    {
+                        // 如果当前正在编辑，则提交退出
+                        ExitRowEditMode(commit: true);
+                    }
+                    else
+                    {
+                        EnterRowEditMode(targetRow);
+                    }
+                };
+            }
+            ctx.Items.Add(editRowItem);
 
             var editDialogItem = new ToolStripMenuItem("弹窗编辑");
             if (_isEmbeddedMode) editDialogItem.Enabled = false;
@@ -2599,8 +2762,11 @@ namespace wxd.files.winforms
             // ==================== 行操作菜单 ====================
             ctx.Items.Add(new ToolStripSeparator());
 
+            // 行编辑模式下禁用行操作
+            bool rowOpsDisabled = _editingRowIndex >= 0 || _isEditLocked;
+
             var insertAboveItem = new ToolStripMenuItem("在上方插入行");
-            if (_isEditLocked) insertAboveItem.Enabled = false;
+            if (rowOpsDisabled) insertAboveItem.Enabled = false;
             else
             {
                 insertAboveItem.Click += (s, args) =>
@@ -2612,7 +2778,7 @@ namespace wxd.files.winforms
             ctx.Items.Add(insertAboveItem);
 
             var insertBelowItem = new ToolStripMenuItem("在下方插入行");
-            if (_isEditLocked) insertBelowItem.Enabled = false;
+            if (rowOpsDisabled) insertBelowItem.Enabled = false;
             else
             {
                 insertBelowItem.Click += (s, args) =>
@@ -2624,7 +2790,7 @@ namespace wxd.files.winforms
             ctx.Items.Add(insertBelowItem);
 
             var duplicateItem = new ToolStripMenuItem("复制当前行");
-            if (_isEditLocked) duplicateItem.Enabled = false;
+            if (rowOpsDisabled) duplicateItem.Enabled = false;
             else
             {
                 duplicateItem.Click += (s, args) =>
@@ -2636,7 +2802,7 @@ namespace wxd.files.winforms
             ctx.Items.Add(duplicateItem);
 
             var deleteItem = new ToolStripMenuItem("删除当前行");
-            if (_isEditLocked) deleteItem.Enabled = false;
+            if (rowOpsDisabled) deleteItem.Enabled = false;
             else
             {
                 deleteItem.Click += (s, args) =>
@@ -2673,6 +2839,9 @@ namespace wxd.files.winforms
             if (!_isEditLocked)
             {
                 // 解锁状态 → 重新锁定
+                // 如果正在行编辑，先退出编辑模式
+                if (_editingRowIndex >= 0)
+                    ExitRowEditMode(commit: true);
                 _isEditLocked = true;
                 UpdateLockDisplay();
                 return;
@@ -3165,6 +3334,194 @@ namespace wxd.files.winforms
             return (bool[])_columnCheckStates.Clone();
         }
 
+        // ==================== 行编辑模式 ====================
+
+        /// <summary>进入行编辑模式</summary>
+        /// <param name="displayRowIndex">DataGridView 显示行索引</param>
+        private void EnterRowEditMode(int displayRowIndex)
+        {
+            if (_isEmbeddedMode) return;
+            if (_isEditLocked) return;
+            if (displayRowIndex < 0 || displayRowIndex >= _dataGrid.Rows.Count) return;
+
+            // 如果正在编辑同一行，不重复进入
+            if (_editingRowIndex == displayRowIndex) return;
+
+            // 如果正在编辑另一行，先退出
+            if (_editingRowIndex >= 0)
+                ExitRowEditMode(commit: true);
+
+            _enteringEditMode = true;
+            try
+            {
+                // 快照当前行所有单元格值
+                var row = _dataGrid.Rows[displayRowIndex];
+                _editingRowOriginalValues = new string[row.Cells.Count];
+                for (int i = 0; i < row.Cells.Count; i++)
+                    _editingRowOriginalValues[i] = row.Cells[i].Value?.ToString() ?? "";
+
+                _editingRowIndex = displayRowIndex;
+
+                // 获取原始行索引（如果 _editingRowOrigIndex 尚未被外部设置）
+                if (_editingRowOrigIndex < 0)
+                {
+                    if (row.Tag is TableRow tr)
+                        _editingRowOrigIndex = tr.OriginalRowIndex;
+                    else
+                        _editingRowOrigIndex = displayRowIndex + _frozenRows;
+                }
+
+                // 临时解除只读
+                _dataGrid.ReadOnly = false;
+
+                // 刷新行高亮
+                _dataGrid.InvalidateRow(displayRowIndex);
+
+                // 自动定位到第一个可编辑列并进入编辑
+                if (_dataGrid.Columns.Count > 0)
+                {
+                    _dataGrid.CurrentCell = row.Cells[0];
+                    _dataGrid.BeginEdit(true);
+                }
+            }
+            finally { _enteringEditMode = false; }
+        }
+
+        /// <summary>退出行编辑模式（提交修改）</summary>
+        /// <param name="commit">true=提交修改保存文件，false=只退出不保存</param>
+        private void ExitRowEditMode(bool commit)
+        {
+            if (_editingRowIndex < 0) return;
+
+            _enteringEditMode = true;
+            try
+            {
+                int editingRow = _editingRowIndex;
+
+                // 先清除状态，避免事件重入
+                _editingRowIndex = -1;
+                var snapShot = _editingRowOriginalValues;
+                _editingRowOriginalValues = null;
+                int origIndex = _editingRowOrigIndex;
+                _editingRowOrigIndex = -1;
+                bool wasNewRow = _isNewRowForEdit;
+                _isNewRowForEdit = false;
+
+                // 恢复只读
+                _dataGrid.ReadOnly = true;
+
+                if (commit && editingRow >= 0 && editingRow < _dataGrid.Rows.Count && origIndex >= 0)
+                {
+                    bool hasChanges = false;
+                    var row = _dataGrid.Rows[editingRow];
+
+                    // 将 DataGridView 中的修改写回 _dataTable
+                    for (int col = 0; col < row.Cells.Count; col++)
+                    {
+                        var newValue = row.Cells[col].Value?.ToString() ?? "";
+                        var oldValue = snapShot != null && col < snapShot.Length ? snapShot[col] : "";
+
+                        if (newValue != oldValue)
+                        {
+                            hasChanges = true;
+                            // 计算原始列索引
+                            int origCol = col;
+                            if (_visibleColumnIndices.Count > 0 && col < _visibleColumnIndices.Count)
+                                origCol = _visibleColumnIndices[col];
+
+                            if (origIndex < _dataTable.Rows.Count && origCol < _dataTable.Columns.Count)
+                                _dataTable.Rows[origIndex][origCol] = newValue;
+                        }
+                    }
+
+                    if (hasChanges || wasNewRow)
+                    {
+                        // 重建 _fileData
+                        _fileData = BuildFileData(_dataTable, inheritFrom: null);
+
+                        // 重建关联缓存
+                        ColumnLinkChecker.Reset();
+                        if (_columnLinks.Count > 0)
+                            ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+
+                        // 一次性保存文件
+                        SaveCurrentFile();
+
+                        // 刷新显示（重建 Grid 以反映 _dataTable 的变更）
+                        RefreshGridLayout();
+                    }
+                    else
+                    {
+                        // 没有实际修改，只需刷新编辑行的高亮
+                        _dataGrid.InvalidateRow(editingRow);
+                    }
+                }
+                else
+                {
+                    // 不提交，刷新编辑行的高亮
+                    if (editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
+                        _dataGrid.InvalidateRow(editingRow);
+                }
+            }
+            finally { _enteringEditMode = false; }
+        }
+
+        /// <summary>取消行编辑模式（Esc，恢复原始值）</summary>
+        private void CancelRowEditMode()
+        {
+            if (_editingRowIndex < 0) return;
+
+            _enteringEditMode = true;
+            try
+            {
+                int editingRow = _editingRowIndex;
+                _editingRowIndex = -1;
+                var snapShot = _editingRowOriginalValues;
+                _editingRowOriginalValues = null;
+                bool wasNewRow = _isNewRowForEdit;
+                int origIndex = _editingRowOrigIndex;
+                _editingRowOrigIndex = -1;
+                _isNewRowForEdit = false;
+
+                // 恢复只读
+                _dataGrid.ReadOnly = true;
+
+                // 先结束当前单元格编辑
+                if (_dataGrid.IsCurrentCellInEditMode)
+                {
+                    // 不提交，直接取消编辑
+                    _dataGrid.CancelEdit();
+                }
+
+                if (wasNewRow && origIndex >= 0 && origIndex < _dataTable.Rows.Count)
+                {
+                    // 新增行：删除该行
+                    _dataTable.Rows.RemoveAt(origIndex);
+
+                    // 重建 _fileData
+                    _fileData = BuildFileData(_dataTable, inheritFrom: null);
+
+                    // 重建关联缓存
+                    ColumnLinkChecker.Reset();
+                    if (_columnLinks.Count > 0)
+                        ColumnLinkChecker.BuildLinkLookups(_columnLinks, FrozenDir, _filePath);
+
+                    RefreshGridLayout();
+                }
+                else if (snapShot != null && editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
+                {
+                    // 恢复原始值到 DataGridView
+                    var row = _dataGrid.Rows[editingRow];
+                    for (int i = 0; i < Math.Min(snapShot.Length, row.Cells.Count); i++)
+                        row.Cells[i].Value = snapShot[i];
+
+                    // 刷新编辑行的高亮
+                    _dataGrid.InvalidateRow(editingRow);
+                }
+            }
+            finally { _enteringEditMode = false; }
+        }
+
         // ==================== 行操作 ====================
 
         /// <summary>从 DataGridView 显示行索引获取原始 DataTable 行索引</summary>
@@ -3236,8 +3593,30 @@ namespace wxd.files.winforms
             if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
                 _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
 
-            // 即时保存
-            SaveCurrentFile();
+            // 不再即时保存，等行编辑模式退出后统一保存
+
+            // ==================== 自动进入行编辑模式 ====================
+            // 找到新插入行在显示表格中的位置
+            int newOrigIndex;
+            if (afterOriginalRowIndex >= 0 && afterOriginalRowIndex < _dataTable.Rows.Count - 2)
+                newOrigIndex = afterOriginalRowIndex + 1;
+            else if (afterOriginalRowIndex < 0)
+                newOrigIndex = 0;
+            else
+                newOrigIndex = _dataTable.Rows.Count - 1;
+
+            // 在 _dataGrid 中定位到新行
+            int displayRow = -1;
+            for (int i = 0; i < _dataGrid.Rows.Count; i++)
+            {
+                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == newOrigIndex)
+                { displayRow = i; break; }
+            }
+            if (displayRow < 0) displayRow = 0;
+
+            _isNewRowForEdit = true;
+            _editingRowOrigIndex = newOrigIndex;
+            EnterRowEditMode(displayRow);
         }
 
         /// <summary>复制指定行并插入到其下方</summary>
@@ -3295,8 +3674,22 @@ namespace wxd.files.winforms
             if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
                 _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
 
-            // 即时保存
-            SaveCurrentFile();
+            // 不再即时保存，等行编辑模式退出后统一保存
+
+            // ==================== 自动进入行编辑模式 ====================
+            // 找到新复制行在显示表格中的位置
+            int dupOrigIndex = originalRowIndex + 1;
+            int dupDisplayRow = -1;
+            for (int i = 0; i < _dataGrid.Rows.Count; i++)
+            {
+                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == dupOrigIndex)
+                { dupDisplayRow = i; break; }
+            }
+            if (dupDisplayRow < 0) dupDisplayRow = 0;
+
+            _isNewRowForEdit = false;  // 复制行不是新增行，Esc不删除
+            _editingRowOrigIndex = dupOrigIndex;
+            EnterRowEditMode(dupDisplayRow);
         }
 
         /// <summary>删除指定行</summary>
@@ -3311,6 +3704,14 @@ namespace wxd.files.winforms
 
             if (originalRowIndex < 0 || originalRowIndex >= _dataTable.Rows.Count)
                 return;
+
+            // ==================== 行编辑模式：不允许删除正在编辑的行 ====================
+            if (_editingRowIndex >= 0 && _editingRowOrigIndex == originalRowIndex)
+            {
+                MessageBox.Show(this, "请先完成或取消当前行的编辑再删除。",
+                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
             // 冻结行不允许删除
             if (originalRowIndex < _frozenRows)
