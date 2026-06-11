@@ -4,6 +4,15 @@
     <_LastSelectedProfileId>C:\code\wxd.files.winforms\wxd.files.winforms\Properties\PublishProfiles\FolderProfile.pubxml</_LastSelectedProfileId>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Update="CellEditDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="ColumnLinkSetupDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="ColumnManagerDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="CsvReaderForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -31,8 +40,14 @@
     <Compile Update="LargeFileViewer.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="LinkTableSelectorDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="TableBrowserControl.cs">
       <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Update="TargetColumnSelectDialog.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Update="UpdateForm.cs">
       <SubType>Form</SubType>
