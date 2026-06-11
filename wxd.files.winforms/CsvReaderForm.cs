@@ -2124,6 +2124,7 @@ namespace wxd.files.winforms
         private Button _btnOK = new();
         private Button _btnCancel = new();
         private Button _btnLinkManage = new();
+        private TextBox _txtSearch = new();
         private int _lockedColumnIndex = -1;
         private bool[] _checkedStates;
         private string _rootDir = "";
@@ -2166,7 +2167,7 @@ namespace wxd.files.winforms
             return Path.GetFileName(fullPath);
         }
 
-        private void PopulateList(DataTable dataTable, int frozenRows)
+        private void PopulateList(DataTable dataTable, int frozenRows, string filter = "")
         {
             _lvColumns.BeginUpdate();
             _lvColumns.Items.Clear();
@@ -2234,6 +2235,21 @@ namespace wxd.files.winforms
                     l.SourceColumnIndex == col);
                 item.SubItems.Add(link != null ? $"⚡{Path.GetFileNameWithoutExtension(link.TargetFile)}" : "");
 
+                // 过滤：检查所有 SubItems 是否包含搜索词
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    bool match = false;
+                    for (int si = 0; si < item.SubItems.Count; si++)
+                    {
+                        if (item.SubItems[si].Text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            match = true;
+                            break;
+                        }
+                    }
+                    if (!match) continue;
+                }
+
                 _lvColumns.Items.Add(item);
             }
 
@@ -2280,6 +2296,22 @@ namespace wxd.files.winforms
             };
             _btnDeselectAll.Click += (s, e) => SetAllChecked(false);
 
+            // 搜索框
+            _txtSearch = new TextBox
+            {
+                Location = new Point(176, 9),
+                Size = new Size(160, 24),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                PlaceholderText = "搜索列...",
+                ForeColor = Color.FromArgb(20, 60, 100),
+                BackColor = Color.White
+            };
+            _txtSearch.TextChanged += (s, e) =>
+            {
+                PopulateList(_dataTable, _frozenRows, _txtSearch.Text.Trim());
+            };
+
             // ListView — 使用原生 CheckBoxes
             _lvColumns = new ListView
             {
@@ -2297,19 +2329,20 @@ namespace wxd.files.winforms
                 CheckBoxes = true,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable
             };
-            // 阻止第一列取消选中
+            // 阻止锁定列取消选中
             _lvColumns.ItemCheck += (s, e) =>
             {
-                if (e.Index == _lockedColumnIndex && e.NewValue == CheckState.Unchecked)
+                if (_lvColumns.Items[e.Index].Tag is int colIndex &&
+                    colIndex == _lockedColumnIndex && e.NewValue == CheckState.Unchecked)
                 {
                     e.NewValue = CheckState.Checked;
                 }
             };
-            // 同步选中状态
+            // 同步选中状态 — 使用 Tag 中的原始列索引映射
             _lvColumns.ItemChecked += (s, e) =>
             {
-                if (e.Item.Index < _checkedStates.Length)
-                    _checkedStates[e.Item.Index] = e.Item.Checked;
+                if (e.Item.Tag is int colIndex && colIndex < _checkedStates.Length)
+                    _checkedStates[colIndex] = e.Item.Checked;
             };
 
             // 关联管理按钮
@@ -2355,7 +2388,7 @@ namespace wxd.files.winforms
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
 
-            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _lvColumns, _btnLinkManage, _btnOK, _btnCancel });
+            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _txtSearch, _lvColumns, _btnLinkManage, _btnOK, _btnCancel });
             AcceptButton = _btnOK;
             CancelButton = _btnCancel;
 
@@ -2422,15 +2455,19 @@ namespace wxd.files.winforms
         {
             for (int i = 0; i < _lvColumns.Items.Count; i++)
             {
-                if (i == _lockedColumnIndex)
+                var item = _lvColumns.Items[i];
+                if (item.Tag is int colIndex)
                 {
-                    _lvColumns.Items[i].Checked = true;
-                    _checkedStates[i] = true;
-                }
-                else
-                {
-                    _lvColumns.Items[i].Checked = check;
-                    _checkedStates[i] = check;
+                    if (colIndex == _lockedColumnIndex)
+                    {
+                        item.Checked = true;
+                        _checkedStates[colIndex] = true;
+                    }
+                    else
+                    {
+                        item.Checked = check;
+                        _checkedStates[colIndex] = check;
+                    }
                 }
             }
         }
@@ -3239,11 +3276,14 @@ namespace wxd.files.winforms
         private ListView _lvColumns = new();
         private Button _btnOK = new();
         private Button _btnCancel = new();
+        private TextBox _txtSearch = new();
         private int _selectedIndex = -1;
         private string _selectedColumnName = "";        // 选中的列的表头名称
         private int _headerRowIndex = -1;              // 表头行索引
         private bool _hasHeaderRow = false;
         private string _customTitle = "选择目标列";
+        private DataTable _frozenData;                  // 保存原始数据用于过滤重建
+        private int _frozenRows;                        // 保存冻结行数
 
         public int SelectedColumnIndex => _selectedIndex;
         public string SelectedColumnName => _selectedColumnName ?? "";
@@ -3253,6 +3293,8 @@ namespace wxd.files.winforms
             _selectedIndex = initialSelection;
             _headerRowIndex = headerRowIndex;
             _customTitle = title;
+            _frozenData = frozenData;
+            _frozenRows = frozenRows;
             InitializeComponent();
             PopulateList(frozenData, frozenRows);
             if (_selectedIndex >= 0 && _selectedIndex < _lvColumns.Items.Count)
@@ -3262,7 +3304,7 @@ namespace wxd.files.winforms
             }
         }
 
-        private void PopulateList(DataTable frozenData, int frozenRows)
+        private void PopulateList(DataTable frozenData, int frozenRows, string filter = "")
         {
             _lvColumns.BeginUpdate();
             _lvColumns.Items.Clear();
@@ -3309,12 +3351,39 @@ namespace wxd.files.winforms
                     item.SubItems.Add(val);
                 }
 
+                // 过滤：检查所有 SubItems 是否包含搜索词
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    bool match = false;
+                    for (int si = 0; si < item.SubItems.Count; si++)
+                    {
+                        if (item.SubItems[si].Text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            match = true;
+                            break;
+                        }
+                    }
+                    if (!match) continue;
+                }
+
                 _lvColumns.Items.Add(item);
             }
 
-            // 高亮标记表头行所在的列头（ColumnHeader 不支持 BackColor，跳过）
-            
             _lvColumns.EndUpdate();
+
+            // 恢复选中状态（搜索后尝试重新选中之前的列）
+            if (_selectedIndex >= 0)
+            {
+                foreach (ListViewItem item in _lvColumns.Items)
+                {
+                    if (item.Tag is int colIndex && colIndex == _selectedIndex)
+                    {
+                        item.Selected = true;
+                        item.EnsureVisible();
+                        break;
+                    }
+                }
+            }
         }
 
         private void InitializeComponent()
@@ -3330,8 +3399,26 @@ namespace wxd.files.winforms
             MinimizeBox = false; MaximizeBox = false;
             AutoScaleMode = AutoScaleMode.Font;
 
-            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(760, 20),
+            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(240, 20),
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold), ForeColor = Color.FromArgb(31, 41, 55) });
+
+            // 搜索框（靠右对齐，不被标签遮挡）
+            _txtSearch = new TextBox
+            {
+                Location = new Point(260, 8),
+                Size = new Size(200, 24),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                PlaceholderText = "搜索列...",
+                ForeColor = Color.FromArgb(20, 60, 100),
+                BackColor = Color.White
+            };
+            _txtSearch.TextChanged += (s, e) =>
+            {
+                PopulateList(_frozenData, _frozenRows, _txtSearch.Text.Trim());
+            };
+            Controls.Add(_txtSearch);
 
             _lvColumns = new ListView
             {
