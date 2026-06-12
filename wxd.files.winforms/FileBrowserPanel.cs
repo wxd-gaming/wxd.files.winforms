@@ -61,6 +61,9 @@ namespace wxd.files.winforms
         private bool _menuMoreActionsVisible = false;
         private string _savedFilterForCompare = "";
 
+        // ==================== VCS 状态字段 ====================
+        private VcsDirectoryStatus? _vcsStatus;
+
         // ==================== Win32 API ====================
         [DllImport("gdi32.dll", SetLastError = true)]
         private static extern bool DeleteObject(IntPtr hObject);
@@ -486,7 +489,7 @@ namespace wxd.files.winforms
 
             // 更新列表视图
             _lstFiles.BackColor = isDark ? _colorDarkBackColor : Color.White;
-            _lstFiles.ForeColor = _colorTextPrimary;
+            _lstFiles.ForeColor = isDark ? _colorDarkTextPrimary : Color.FromArgb(30, 30, 30);
 
             // 设置 ListView 主题（深色模式使用 Explorer 主题）
             if (isDark)
@@ -948,9 +951,16 @@ namespace wxd.files.winforms
                 // 保留根目录的尾部反斜杠：C:\ 不能 Trim 成 C:
                 var trimmed = path.TrimEnd(Path.DirectorySeparatorChar);
                 if (trimmed.Length == 2 && trimmed[1] == ':')
-                    _currentDir = trimmed + Path.DirectorySeparatorChar;
-                else
-                    _currentDir = trimmed;
+                    trimmed = trimmed + Path.DirectorySeparatorChar;
+
+                // ★ 先清除旧目录的 VCS 缓存（在设置新 _currentDir 之前）
+                if (!string.IsNullOrEmpty(_currentDir) &&
+                    !string.Equals(_currentDir, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    VcsStatusCache.Invalidate(_currentDir);
+                }
+
+                _currentDir = trimmed;
                 // 记录到最近访问历史
                 CsvSettings.AddRecentPath(_currentDir);
                 // 重建下拉框选项（刷新驱动器和最近路径）
@@ -985,6 +995,7 @@ namespace wxd.files.winforms
                     _currentDir = trimmed + Path.DirectorySeparatorChar;
                 else
                     _currentDir = trimmed;
+                VcsStatusCache.Invalidate(_currentDir);
                 CsvSettings.AddRecentPath(_currentDir);
                 RebuildPathComboItems();
                 RefreshUI();
@@ -1128,6 +1139,12 @@ namespace wxd.files.winforms
                         Invoke(() => ApplyFilter());
                     }
                 }
+
+                // 异步刷新 VCS 状态（不阻塞 UI 加载）
+                if (!token.IsCancellationRequested && !string.IsNullOrEmpty(_currentDir))
+                {
+                    _ = InitializeVcsStatusAsync();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -1263,6 +1280,69 @@ namespace wxd.files.winforms
             {
                 MessageBox.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // ==================== VCS 状态集成 ====================
+        /// <summary>初始化 VCS 状态检测（异步刷新，事件驱动 UI 更新）</summary>
+        private async Task InitializeVcsStatusAsync()
+        {
+            if (string.IsNullOrEmpty(_currentDir)) return;
+            if (IsDisposed) return;
+
+            // 先取消旧订阅，再重新订阅（确保不会重复订阅）
+            VcsStatusCache.StatusRefreshed -= OnVcsStatusRefreshed;
+            VcsStatusCache.StatusRefreshed += OnVcsStatusRefreshed;
+
+            // 获取当前目录状态（立即返回，不阻塞），
+            // 缓存缺失或过期时会自动触发后台刷新，刷新完成后通过事件通知
+            _vcsStatus = VcsStatusCache.GetOrRefresh(_currentDir);
+        }
+
+        /// <summary>VCS 状态刷新完成回调 — 更新 ListView 项的前景色</summary>
+        private void OnVcsStatusRefreshed(object? sender, VcsDirectoryStatus status)
+        {
+            if (!string.Equals(status.DirectoryPath, _currentDir, StringComparison.OrdinalIgnoreCase)) return;
+
+            if (InvokeRequired)
+            {
+                try { Invoke(() => OnVcsStatusRefreshed(sender, status)); }
+                catch { }
+                return;
+            }
+
+            if (IsDisposed || _lstFiles.IsDisposed) return;
+
+            _vcsStatus = status;
+
+            // 如果刷新失败，显示错误信息
+            if (!string.IsNullOrEmpty(status.ErrorMessage))
+            {
+                Debug.WriteLine($"[VcsStatusCache] 刷新失败: {status.ErrorMessage}");
+                return;
+            }
+
+            // 遍历列表项更新前景色和文本前缀
+            _lstFiles.BeginUpdate();
+            foreach (ListViewItem item in _lstFiles.Items)
+            {
+                if (item.Tag is FileItemTag tag && !tag.IsDir)
+                {
+                    var fileStatus = VcsStatusCache.GetFileStatus(tag.FullName);
+                    var prefix = VcsStatusCache.GetStatusPrefix(fileStatus);
+                    var baseName = Path.GetFileName(tag.FullName);
+                    if (fileStatus != FileVcsStatus.Normal)
+                    {
+                        item.ForeColor = VcsStatusCache.GetStatusColor(fileStatus);
+                        item.Text = prefix + baseName;
+                    }
+                    else
+                    {
+                        item.ForeColor = _isDark ? _colorDarkTextPrimary : Color.FromArgb(30, 30, 30); // 恢复默认
+                        item.Text = baseName;
+                    }
+                }
+            }
+            _lstFiles.EndUpdate();
         }
 
         // ==================== 过滤逻辑 ====================
@@ -1406,7 +1486,16 @@ namespace wxd.files.winforms
         private void AddListViewItem(string name, string fullName, bool isDir,
                                 DateTime lastWrite = default, long size = 0)
         {
-            var item = new ListViewItem(name);
+            // 对文件应用 VCS 状态前缀（直接查询缓存，不依赖 _vcsStatus 状态）
+            var displayName = name;
+            if (!isDir)
+            {
+                var fileStatus = VcsStatusCache.GetFileStatus(fullName);
+                var prefix = VcsStatusCache.GetStatusPrefix(fileStatus);
+                if (!string.IsNullOrEmpty(prefix))
+                    displayName = prefix + name;
+            }
+            var item = new ListViewItem(displayName);
             item.Tag = new FileItemTag { FullName = fullName, IsDir = isDir };
             // 图片文件使用自定义图片预览，不设置 ToolTipText 避免与预览冲突
             if (!isDir && IsImageExtension(fullName))
@@ -1464,6 +1553,14 @@ namespace wxd.files.winforms
                 item.SubItems.Add(lastWrite == default ? "" : lastWrite.ToString("yyyy-MM-dd HH:mm"));
                 item.SubItems.Add(GetFileType(fullName));
                 item.SubItems.Add(size > 0 ? FormatFileSize(size) : "");
+            }
+
+            // 应用 VCS 状态颜色（直接查询缓存，不依赖 _vcsStatus 状态）
+            if (!isDir)
+            {
+                var fileStatus = VcsStatusCache.GetFileStatus(fullName);
+                if (fileStatus != FileVcsStatus.Normal)
+                    item.ForeColor = VcsStatusCache.GetStatusColor(fileStatus);
             }
 
             _lstFiles.Items.Add(item);

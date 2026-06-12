@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ExcelDataReader;
+using System.Diagnostics;
 
 namespace wxd.files.winforms
 {
@@ -54,6 +55,9 @@ namespace wxd.files.winforms
         private volatile bool _contentSearchCancelled;
         private volatile bool _isContentSearching = false;
         private string _lastContentSearchKeyword = "";
+
+        // ==================== VCS 状态字段 ====================
+        private VcsType _currentVcsType = VcsType.None;
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -168,13 +172,18 @@ namespace wxd.files.winforms
             CreateControls();
             ApplyTheme();
 
-            // 窗体加载完成后设置splitter距离
+            // 窗体加载完成后设置splitter距离，并补充 VCS 状态初始化
             this.Shown += async (s, e) =>
             {
                 await Task.Delay(200);
                 if (_splitContainer.SplitterDistance < 300)
                 {
                     _splitContainer.SplitterDistance = 300;
+                }
+                // 确保 VCS 状态已初始化（构造函数中可能因 Handle 未创建而跳过）
+                if (_currentVcsType == VcsType.None && !string.IsNullOrEmpty(_currentDir))
+                {
+                    _ = InitializeVcsStatusAsync();
                 }
             };
 
@@ -422,19 +431,21 @@ namespace wxd.files.winforms
                 HideSelection = false,
                 ImageList = _imgList,
                 BackColor = _colorSurface,
-                ForeColor = _colorLightText,
+                ForeColor = Color.FromArgb(30, 30, 30),
                 ShowPlusMinus = true,
                 ShowLines = true,
                 ShowRootLines = true,
                 Indent = 19,
                 ItemHeight = 22,
-                PathSeparator = "\\"
+                PathSeparator = "\\",
+                DrawMode = TreeViewDrawMode.OwnerDrawText
             };
             // 节点展开时动态加载子目录
             _treeFiles.BeforeExpand += OnTreeBeforeExpand;
             _treeFiles.NodeMouseClick += OnTreeViewClick;
             _treeFiles.NodeMouseDoubleClick += OnTreeViewDoubleClick;
             _treeFiles.MouseDown += OnTreeViewMouseDown;
+            _treeFiles.DrawNode += OnTreeViewDrawNode;
 
             // 左侧底部状态栏（必须先创建再添加）
             _pnlLeftBottom = new Panel
@@ -536,7 +547,7 @@ namespace wxd.files.winforms
             BackColor = _colorBg;
             _pnlLeft.BackColor = _colorSurface;
             _treeFiles.BackColor = _colorSurface;
-            _treeFiles.ForeColor = _colorLightText;
+            _treeFiles.ForeColor = Color.FromArgb(30, 30, 30);
             _tabContent.BackColor = _colorSurface;
         }
 
@@ -587,7 +598,25 @@ namespace wxd.files.winforms
             if (node.Nodes.Count == 1 && node.Nodes[0].Tag is string placeholder && placeholder == "__placeholder__")
             {
                 node.Nodes.Clear();
-                LoadChildrenToNode(node, fullPath);
+
+                _treeFiles.BeginUpdate();
+                try
+                {
+                    LoadChildrenToNode(node, fullPath);
+                }
+                finally
+                {
+                    _treeFiles.EndUpdate();
+                }
+
+                // 加载子节点后：
+                // 只刷新当前展开目录本身的 VCS 状态（子文件夹展开时再单独刷新）
+                // 注意：VCS 状态刷新是异步的，这里不立即更新节点文本
+                // 等 OnVcsStatusRefreshed 事件触发后再更新 UI，避免同步 File.Exists 开销
+                if (!string.IsNullOrEmpty(fullPath) && Directory.Exists(fullPath))
+                {
+                    _ = VcsStatusCache.RefreshAsync(fullPath);
+                }
             }
         }
 
@@ -606,8 +635,34 @@ namespace wxd.files.winforms
         {
             try
             {
-                // 加载子目录
-                foreach (var subDir in GetSubDirectories(dirPath))
+                var showHidden = CsvSettings.ShowHiddenFiles;
+
+                // ★ 一次性获取所有子目录
+                var subDirs = GetSubDirectories(dirPath);
+
+                // ★ 只扫描匹配扩展名的文件（减少不相关文件的扫描）
+                var csvFiles = new List<string>();
+                var xlsFiles = new List<string>();
+                var xlsxFiles = new List<string>();
+
+                foreach (var file in Directory.EnumerateFiles(dirPath, "*.csv"))
+                {
+                    if (!showHidden) { try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { } }
+                    csvFiles.Add(file);
+                }
+                foreach (var file in Directory.EnumerateFiles(dirPath, "*.xls"))
+                {
+                    if (!showHidden) { try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { } }
+                    xlsFiles.Add(file);
+                }
+                foreach (var file in Directory.EnumerateFiles(dirPath, "*.xlsx"))
+                {
+                    if (!showHidden) { try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { } }
+                    xlsxFiles.Add(file);
+                }
+
+                // 加载子目录 — 对每个子目录轻量检查是否有任何内容（文件或子目录）
+                foreach (var subDir in subDirs)
                 {
                     var dirName = Path.GetFileName(subDir);
                     var dirNode = new TreeNode(dirName)
@@ -619,23 +674,21 @@ namespace wxd.files.winforms
                     dirNode.ImageIndex = GetSystemIconIndex(subDir, true);
                     dirNode.SelectedImageIndex = dirNode.ImageIndex;
 
-                    // 检查子目录下是否有符合条件的文件或子目录，有则添加占位节点以实现展开箭头
-                    if (HasChildFilesOrDirectories(subDir))
+                    // 轻量检查子目录是否有任何条目（文件或子目录），有则添加占位节点
+                    // EnumerateFileSystemEntries.Any() 会在找到第一个条目时停止枚举，非常高效
+                    try
                     {
-                        dirNode.Nodes.Add(new TreeNode("__placeholder__") { Tag = "__placeholder__" });
+                        if (Directory.EnumerateFileSystemEntries(subDir).Any())
+                            dirNode.Nodes.Add(new TreeNode("__placeholder__") { Tag = "__placeholder__" });
                     }
+                    catch { }
 
                     parentNode.Nodes.Add(dirNode);
                 }
 
                 // 加载CSV文件
-                var showHidden = CsvSettings.ShowHiddenFiles;
-                foreach (var file in Directory.GetFiles(dirPath, "*.csv"))
+                foreach (var file in csvFiles)
                 {
-                    if (!showHidden)
-                    {
-                        try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
-                    }
                     var fileNode = new TreeNode(GetFileDisplayText(file))
                     {
                         Tag = file,
@@ -648,31 +701,24 @@ namespace wxd.files.winforms
                 }
 
                 // 加载Excel文件
-                foreach (var ext in new[] { "*.xls", "*.xlsx" })
+                foreach (var file in xlsFiles.Concat(xlsxFiles))
                 {
-                    foreach (var file in Directory.GetFiles(dirPath, ext))
+                    var fileNode = new TreeNode(GetFileDisplayText(file))
                     {
-                        if (!showHidden)
-                        {
-                            try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
-                        }
-                        var fileNode = new TreeNode(GetFileDisplayText(file))
-                        {
-                            Tag = file,
-                            ImageKey = "default",
-                            SelectedImageKey = "default"
-                        };
-                        fileNode.ImageIndex = GetSystemIconIndex(file, false);
-                        fileNode.SelectedImageIndex = fileNode.ImageIndex;
-                        parentNode.Nodes.Add(fileNode);
-                    }
+                        Tag = file,
+                        ImageKey = "default",
+                        SelectedImageKey = "default"
+                    };
+                    fileNode.ImageIndex = GetSystemIconIndex(file, false);
+                    fileNode.SelectedImageIndex = fileNode.ImageIndex;
+                    parentNode.Nodes.Add(fileNode);
                 }
             }
             catch (UnauthorizedAccessException) { }
             catch (Exception) { }
         }
 
-        /// <summary>获取目录下的子目录，自动忽略 .svn 和 .git 等版本控制文件夹，并根据全局设置过滤隐藏文件夹</summary>
+        /// <summary>获取目录下的子目录，自动忽略 .svn、.git、.wxd-work 等非内容文件夹，并根据全局设置过滤隐藏文件夹</summary>
         private static string[] GetSubDirectories(string path)
         {
             if (!Directory.Exists(path)) return Array.Empty<string>();
@@ -692,10 +738,10 @@ namespace wxd.files.winforms
                 .ToArray();
         }
 
-        /// <summary>检查目录名是否为版本控制目录</summary>
+        /// <summary>检查目录名是否为版本控制目录或项目配置目录</summary>
         private static bool IsVcsDir(string dirName)
         {
-            return dirName == ".svn" || dirName == ".git";
+            return dirName == ".svn" || dirName == ".git" || dirName == ".wxd-work";
         }
 
         /// <summary>检查目录下是否有符合条件的文件或子目录</summary>
@@ -736,6 +782,7 @@ namespace wxd.files.winforms
 
             if (dialog.ShowDialog() == DialogResult.OK)
             {
+                VcsStatusCache.Invalidate(_currentDir); // 清除旧目录缓存
                 _currentDir = dialog.SelectedPath;
                 UpdateTitle();
                 LoadFilesAsync();
@@ -748,6 +795,166 @@ namespace wxd.files.winforms
                 Text = $"CSV/Excel阅读器 - {_currentDir}";
             else
                 Text = "CSV/Excel阅读器";
+        }
+
+        // ==================== VCS 状态集成 ====================
+        /// <summary>初始化 VCS 状态检测（异步刷新，事件驱动 UI 更新）</summary>
+        private async Task InitializeVcsStatusAsync()
+        {
+            if (string.IsNullOrEmpty(_currentDir)) return;
+            if (IsDisposed) return;
+
+            _currentVcsType = VersionControlHelper.DetectVcs(_currentDir);
+
+            // 取消之前的订阅
+            VcsStatusCache.StatusRefreshed -= OnVcsStatusRefreshed;
+
+            if (_currentVcsType != VcsType.None)
+            {
+                // 先订阅事件再触发刷新，避免竞态条件（刷新完成但事件还没订阅）
+                VcsStatusCache.StatusRefreshed += OnVcsStatusRefreshed;
+                _ = VcsStatusCache.RefreshAsync(_currentDir);
+            }
+        }
+
+        /// <summary>
+        /// VCS 状态刷新完成回调 — 更新 TreeView 节点文本。
+        /// 不仅处理 _currentDir（根目录）的刷新，也处理子文件夹的独立缓存刷新。
+        /// </summary>
+        private void OnVcsStatusRefreshed(object? sender, VcsDirectoryStatus status)
+        {
+            var refreshDir = status.DirectoryPath;
+
+            // 只关心当前树中已展开的目录（_currentDir 及其子目录）
+            if (!refreshDir.StartsWith(_currentDir, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (InvokeRequired)
+            {
+                try { Invoke(() => OnVcsStatusRefreshed(sender, status)); }
+                catch { }
+                return;
+            }
+
+            if (IsDisposed || _treeFiles.IsDisposed) return;
+
+            // 如果刷新失败，输出调试信息
+            if (!string.IsNullOrEmpty(status.ErrorMessage))
+            {
+                Debug.WriteLine($"[VcsStatusCache] 刷新失败: {status.ErrorMessage}");
+                return;
+            }
+
+            // 找到对应的树节点（从根开始查找）
+            var targetNode = FindTreeNodeByPath(_treeFiles.Nodes, refreshDir);
+            if (targetNode == null)
+            {
+                // 如果是根目录刷新，更新整个树
+                if (string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    _treeFiles.BeginUpdate();
+                    UpdateNodeTextWithVcsStatus(_treeFiles.Nodes);
+                    _treeFiles.EndUpdate();
+                    _treeFiles.Invalidate(); // 触发 DrawNode 重绘，使用新颜色
+                }
+                // 非根目录找不到节点（节点可能还未展开），不做更新
+                return;
+            }
+
+            // 更新该节点下的所有文件节点的文本（添加 VCS 状态前缀）
+            _treeFiles.BeginUpdate();
+            UpdateNodeTextWithVcsStatus(targetNode.Nodes);
+            _treeFiles.EndUpdate();
+
+            // 同时更新该节点本身的文本（如果是文件夹且没有直接文件，文本不会变化，这没问题）
+            UpdateNodeTextWithVcsStatusForSingleNode(targetNode);
+            _treeFiles.Invalidate(); // 触发 DrawNode 重绘，使用新颜色
+        }
+
+        /// <summary>更新单个树节点的文本（如果是文件则添加 VCS 状态前缀）</summary>
+        private void UpdateNodeTextWithVcsStatusForSingleNode(TreeNode node)
+        {
+            var fullPath = node.Tag as string;
+            if (!string.IsNullOrEmpty(fullPath) && File.Exists(fullPath))
+            {
+                var status = VcsStatusCache.GetFileStatus(fullPath);
+                var prefix = VcsStatusCache.GetStatusPrefix(status);
+                var baseText = GetFileDisplayText(fullPath);
+                node.Text = prefix + baseText;
+            }
+        }
+
+        /// <summary>在树节点集合中查找指定路径的节点（递归）</summary>
+        private static TreeNode? FindTreeNodeByPath(TreeNodeCollection nodes, string targetPath)
+        {
+            foreach (TreeNode node in nodes)
+            {
+                if (node.Tag is string nodePath &&
+                    string.Equals(nodePath, targetPath, StringComparison.OrdinalIgnoreCase))
+                    return node;
+                if (node.Nodes.Count > 0)
+                {
+                    var found = FindTreeNodeByPath(node.Nodes, targetPath);
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>递归更新树节点文本，添加 VCS 状态前缀</summary>
+        private void UpdateNodeTextWithVcsStatus(TreeNodeCollection nodes)
+        {
+            foreach (TreeNode node in nodes)
+            {
+                var fullPath = node.Tag as string;
+                if (!string.IsNullOrEmpty(fullPath) && (File.Exists(fullPath) || Directory.Exists(fullPath)))
+                {
+                    var status = VcsStatusCache.GetFileStatus(fullPath);
+                    var prefix = VcsStatusCache.GetStatusPrefix(status);
+                    var baseText = GetFileDisplayText(fullPath);
+                    node.Text = prefix + baseText;
+                }
+                if (node.Nodes.Count > 0)
+                {
+                    UpdateNodeTextWithVcsStatus(node.Nodes);
+                }
+            }
+        }
+
+        /// <summary>OwnerDrawText 绘制节点 — 根据 VCS 状态设置文字颜色</summary>
+        private void OnTreeViewDrawNode(object? sender, DrawTreeNodeEventArgs e)
+        {
+            // 如果节点没有 tag 或者不是文件路径，使用默认绘制
+            // 注意：避免在绘制中调用 File.Exists（文件节点由 LoadChildrenToNode 添加，存在性已确认）
+            if (e.Node.Tag is not string fullPath)
+            {
+                e.DrawDefault = true;
+                return;
+            }
+
+            // 背景：选中/非选中
+            var backColor = (e.State & TreeNodeStates.Selected) != 0
+                ? _colorSelectedBg
+                : _treeFiles.BackColor;
+
+            // 获取 VCS 状态对应的颜色
+            var status = VcsStatusCache.GetFileStatus(fullPath);
+            var textColor = VcsStatusCache.GetStatusColor(status);
+
+            // 绘制背景
+            using var bgBrush = new SolidBrush(backColor);
+            e.Graphics.FillRectangle(bgBrush, e.Bounds);
+
+            // 绘制文字
+            var text = e.Node.Text;
+            var textRect = e.Bounds;
+            // 缩进图标宽度
+            textRect.X += 2;
+            textRect.Width -= 2;
+
+            TextRenderer.DrawText(e.Graphics, text, _treeFiles.Font, textRect, textColor,
+                backColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+                TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
         }
 
         private void OnRefreshClick(object? sender, EventArgs e)
@@ -911,6 +1118,8 @@ namespace wxd.files.winforms
                         _fileRemarks = CsvSettings.GetFileRemarksByDirectory(_currentDir);
                         BuildTreeFromRoot();
                         ApplyFileFilter();
+                        // VCS 状态检测
+                        _ = InitializeVcsStatusAsync();
                     });
                 }
             }

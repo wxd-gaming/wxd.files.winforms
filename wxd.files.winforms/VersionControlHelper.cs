@@ -14,10 +14,14 @@ namespace wxd.files.winforms
 
     public static class VersionControlHelper
     {
-        /// <summary>从文件路径向上查找，判断版本控制类型</summary>
-        public static VcsType DetectVcs(string filePath)
+        /// <summary>
+        /// 从文件/目录路径向上查找，判断版本控制类型。
+        /// 如果传入的是目录路径，会先从该目录本身开始检查（不会跳过它）。
+        /// </summary>
+        public static VcsType DetectVcs(string path)
         {
-            var dir = Path.GetDirectoryName(filePath);
+            // 先确保从目录本身开始检查（Path.GetDirectoryName 会去掉目录名）
+            var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
             while (!string.IsNullOrEmpty(dir))
             {
                 if (Directory.Exists(Path.Combine(dir, ".svn")))
@@ -32,10 +36,10 @@ namespace wxd.files.winforms
         }
 
         /// <summary>获取 VCS 工作目录根路径</summary>
-        public static string GetVcsRoot(string filePath, VcsType vcs)
+        public static string GetVcsRoot(string path, VcsType vcs)
         {
             var marker = vcs == VcsType.Svn ? ".svn" : ".git";
-            var dir = Path.GetDirectoryName(filePath);
+            var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
             while (!string.IsNullOrEmpty(dir))
             {
                 if (Directory.Exists(Path.Combine(dir, marker)))
@@ -44,7 +48,7 @@ namespace wxd.files.winforms
                 if (parent == null) break;
                 dir = parent.FullName;
             }
-            return Path.GetDirectoryName(filePath) ?? "";
+            return Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? "");
         }
 
         /// <summary>获取相对路径（相对于 VCS 根目录）</summary>
