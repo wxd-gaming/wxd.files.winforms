@@ -30,6 +30,10 @@ namespace wxd.files.winforms
             try { Icon = Icon.ExtractAssociatedIcon(options.FilePath); } catch { }
             BackColor = Color.FromArgb(240, 242, 245);
 
+            // 如果是单元格关联打开模式，隐藏工具栏和状态栏，只显示表格
+            if (linkOpt.IsLinkedFromCell)
+                options.ShowMinimalUI = true;
+
             var viewer = new TableBrowserControl(options) { Dock = DockStyle.Fill };
             viewer.SetHighlight(linkOpt.HighlightColumnIndex, linkOpt.HighlightValue, linkOpt.HighlightColumnName, linkOpt.LinkConfig);
             Controls.Add(viewer);

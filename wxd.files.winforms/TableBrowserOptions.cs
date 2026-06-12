@@ -27,6 +27,9 @@ namespace wxd.files.winforms
         public int PaneIndex { get; set; } = -1;
         public bool Lightweight { get; set; } = false;
 
+        /// <summary>true=仅显示表格（固定行+内容行），隐藏所有工具栏和状态栏</summary>
+        public bool ShowMinimalUI { get; set; } = false;
+
         public TableBrowserOptions(string filePath)
         {
             FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));

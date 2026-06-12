@@ -31,6 +31,7 @@ namespace wxd.files.winforms
         private Panel _pnlLoading = new();
         private Panel _pnlTop = new();
         private Panel _pnlStatus = new();
+        private Panel _statusSeparator = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
         private FileTableData _fileData = new();  // 统一数据模型，用于行号追踪
@@ -95,6 +96,13 @@ namespace wxd.files.winforms
             public List<int> RowIndices { get; set; } = new();
         }
 
+        /// <summary>编辑关联表请求事件参数</summary>
+        public class EditLinkTableEventArgs : EventArgs
+        {
+            public string TargetFilePath { get; set; } = "";
+            public string DisplayName { get; set; } = "";
+        }
+
         // ==================== 公开属性 ====================
         public string FilePath => _filePath;
         public TableFileType FileType => _fileType;
@@ -106,6 +114,9 @@ namespace wxd.files.winforms
 
         /// <summary>请求关联打开另一张表事件</summary>
         public event EventHandler? LinkTableRequested;
+
+        /// <summary>在父窗体标签页中编辑打开关联表请求事件</summary>
+        public event EventHandler<EditLinkTableEventArgs>? EditLinkTableRequested;
 
         // 关联表跳转高亮
         private int _highlightColumnIndex = -1;
@@ -200,6 +211,18 @@ namespace wxd.files.winforms
             }
 
             InitializeComponent();
+
+            // 极简 UI 模式：隐藏工具栏和底部状态栏，保留高级过滤行
+            if (options.ShowMinimalUI)
+            {
+                // _pnlTop (TableLayoutPanel): [0]=工具栏, [1]=分隔线, [2]=内容过滤, [3]=高级过滤
+                // 只隐藏前3个，保留高级过滤行
+                if (_pnlTop.Controls.Count > 0) _pnlTop.Controls[0].Visible = false;
+                if (_pnlTop.Controls.Count > 1) _pnlTop.Controls[1].Visible = false;
+                if (_pnlTop.Controls.Count > 2) _pnlTop.Controls[2].Visible = false;
+                _statusSeparator.Visible = false;
+                _pnlStatus.Visible = false;
+            }
 
             // 如果文件路径为空或文件不存在，跳过自动加载（由外部通过 SetDataTable 注入数据）
             if (!string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
@@ -875,7 +898,7 @@ namespace wxd.files.winforms
 
             // ============ 底部状态栏 ============
             // 状态栏顶部分隔线
-            var statusSeparator = new Panel
+            _statusSeparator = new Panel
             {
                 Dock = DockStyle.Bottom,
                 Height = 1,
@@ -883,7 +906,7 @@ namespace wxd.files.winforms
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
-            Controls.Add(statusSeparator);
+            Controls.Add(_statusSeparator);
 
             _pnlStatus = new Panel
             {
@@ -2919,7 +2942,9 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(editDialogItem);
 
-            var linkItem = new ToolStripMenuItem("打开关联表");
+            ctx.Items.Add(new ToolStripSeparator());
+
+            var linkItem = new ToolStripMenuItem("查看关联表");
             if (link == null) { linkItem.Enabled = false; }
             else
             {
@@ -2961,6 +2986,31 @@ namespace wxd.files.winforms
                 };
             }
             ctx.Items.Add(linkItem);
+
+            // "编辑关联表" - 在父窗体标签页中打开
+            var editLinkItem = new ToolStripMenuItem("编辑关联表");
+            if (link == null) { editLinkItem.Enabled = false; }
+            else
+            {
+                editLinkItem.Enabled = linkItem.Enabled;
+                editLinkItem.Click += (s, args) =>
+                {
+                    string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
+                    if (!File.Exists(targetFullPath))
+                    {
+                        MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                    EditLinkTableRequested?.Invoke(this, new EditLinkTableEventArgs
+                    {
+                        TargetFilePath = targetFullPath,
+                        DisplayName = Path.GetFileName(targetFullPath),
+                    });
+                };
+            }
+            ctx.Items.Add(editLinkItem);
+
+            ctx.Items.Add(new ToolStripSeparator());
 
             // 固定Tips
             var pinItem = new ToolStripMenuItem("固定Tips");

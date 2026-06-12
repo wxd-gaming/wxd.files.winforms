@@ -433,7 +433,7 @@ namespace wxd.files.winforms
                 }
 
                 // 底部提示（仅有关联映射行时显示）
-                _hintText = _hasLinkMapping ? "右键 → 打开关联表" : "";
+                _hintText = _hasLinkMapping ? "右键 → 查看关联表" : "";
                 _hintHeight = _hasLinkMapping ? (int)Math.Ceiling(SafeMeasureString(g, _hintText, _hintFont).Height) : 0;
 
                 _owner._dropDownWidth = Math.Min(maxWidth + PaddingH * 2, MaxWidth);

@@ -841,7 +841,7 @@ namespace wxd.files.winforms
   · 【右键菜单】（点击单元格弹出）
     ├ 复制单元格：复制当前单元格内容
     ├ 编辑单元格：直接编辑单元格内容
-    ├ 打开关联表：以独立窗口打开关联的目标文件并高亮匹配行
+    ├ 查看关联表：以独立窗口打开关联的目标文件并高亮匹配行
     └ 固定Tips：将当前单元格的关联提示信息钉在表格上
 
 
@@ -1452,7 +1452,10 @@ namespace wxd.files.winforms
 
             // 注册关联表事件
             if (viewer is TableBrowserControl browserControl)
+            {
                 browserControl.LinkTableRequested += OnViewerLinkTableRequested;
+                browserControl.EditLinkTableRequested += OnViewerEditLinkTableRequested;
+            }
         }
 
         /// <summary>处理查看控件的关联表请求 — 以独立新窗口打开关联文件</summary>
@@ -1474,6 +1477,15 @@ namespace wxd.files.winforms
                 var linkOptions = new TableBrowserOptions(linkedPath) { RootDir = _currentDir };
                 var standaloneForm = new CsvReaderStandaloneForm(linkOptions, new LinkOpenOptions { DisplayName = displayName });
                 standaloneForm.Show(this);
+            }
+        }
+
+        /// <summary>处理编辑关联表请求 — 在当前窗体的标签页中打开关联文件</summary>
+        private void OnViewerEditLinkTableRequested(object? sender, TableBrowserControl.EditLinkTableEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(e.TargetFilePath) && File.Exists(e.TargetFilePath))
+            {
+                OpenFile(e.TargetFilePath, DetectFileType(e.TargetFilePath));
             }
         }
 

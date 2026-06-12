@@ -36,7 +36,8 @@ namespace wxd.files.winforms
         private ImageList _imgList = new();
         private Panel? _pnlToolbar;
         private Panel? _pnlBottom;
-        private Button? _btnOpenExplorer;
+        private Button? _btnMoreActions;
+        private ContextMenuStrip? _menuMoreActions;
         private Button? _btnOpenCsvReader;
         private ComboBox? _cboViewMode;
 
@@ -57,6 +58,7 @@ namespace wxd.files.winforms
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private System.Windows.Forms.Timer? _saveDebounceTimer;
         private bool _hasUnsavedChanges = false;
+        private bool _menuMoreActionsVisible = false;
         private string _savedFilterForCompare = "";
 
         // ==================== Win32 API ====================
@@ -496,32 +498,42 @@ namespace wxd.files.winforms
                 SetWindowTheme(_lstFiles.Handle, null, null);
             }
 
-            // 更新按钮（上级按钮和打开目录按钮统一使用深色模式的蓝色）
-            var btnBackColor = Color.FromArgb(66, 165, 245);  // 天蓝色按钮
+            // 更新按钮 - 柔和融合风格
+            var btnBackColor = Color.FromArgb(100, 181, 246);  // 柔和淡蓝
             var btnForeColor = Color.White;                   // 始终使用白色文字
 
             if (_btnUp != null)
             {
                 _btnUp.BackColor = btnBackColor;
                 _btnUp.ForeColor = btnForeColor;
+                _btnUp.FlatAppearance.BorderSize = 0;
             }
 
-            if (_btnOpenExplorer != null)
+            if (_btnMoreActions != null)
             {
-                _btnOpenExplorer.BackColor = btnBackColor;
-                _btnOpenExplorer.ForeColor = btnForeColor;
+                _btnMoreActions.BackColor = btnBackColor;
+                _btnMoreActions.ForeColor = btnForeColor;
+                _btnMoreActions.FlatAppearance.BorderSize = 0;
             }
 
             if (_btnOpenCsvReader != null)
             {
                 _btnOpenCsvReader.BackColor = btnBackColor;
                 _btnOpenCsvReader.ForeColor = btnForeColor;
+                _btnOpenCsvReader.FlatAppearance.BorderSize = 0;
             }
 
             if (_cboViewMode != null)
             {
                 _cboViewMode.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
                 _cboViewMode.ForeColor = _colorTextPrimary;
+            }
+
+            // 更新更多操作菜单主题
+            if (_menuMoreActions != null)
+            {
+                _menuMoreActions.BackColor = isDark ? Color.FromArgb(45, 45, 48) : SystemColors.Control;
+                _menuMoreActions.ForeColor = _colorTextPrimary;
             }
 
             Invalidate();
@@ -657,34 +669,72 @@ namespace wxd.files.winforms
             {
                 Width = 90,
                 Height = 26,
-                Location = new Point(_pnlBottom.Width - 180, 5),
+                Location = new Point(_pnlBottom.Width - 130, 5),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Text = "阅读器",
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245),
+                BackColor = Color.FromArgb(100, 181, 246),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
+                FlatAppearance = { BorderSize = 0 }
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
-            // 打开资源管理器按钮 - 使用 Anchor 定位在右侧
-            _btnOpenExplorer = new Button
+            // 更多操作折叠按钮 - 使用 Anchor 定位在右侧
+            _btnMoreActions = new Button
             {
-                Width = 80,
+                Width = 32,
                 Height = 26,
-                Location = new Point(_pnlBottom.Width - 84, 5),
+                Location = new Point(_pnlBottom.Width - 38, 5),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Text = "打开目录",
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Text = "···",
+                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
                 Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245),
+                BackColor = Color.FromArgb(100, 181, 246),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
+                FlatAppearance = { BorderSize = 0 }
             };
-            _btnOpenExplorer.Click += OnOpenExplorerClick;
+
+            // 创建下拉菜单
+            _menuMoreActions = new ContextMenuStrip();
+            _menuMoreActions.Items.Add("打开目录", null, OnOpenExplorerClick);
+            _menuMoreActions.Items.Add("日志分析", null, OnLogAnalysisClick);
+            _menuMoreActions.Items.Add("SVN更新", null, OnSvnUpdateClick);
+            _menuMoreActions.Font = new Font("Microsoft YaHei UI", 9f);
+
+            // Ԥ��Ⱦ�˵��Ի�ȡ��ȷ�ĸ߶ȣ���һ����ʾǰ Height Ϊ 0��
+            _menuMoreActions.Show(_btnMoreActions, new Point(-9999, -9999));
+            _menuMoreActions.Hide();
+
+            _menuMoreActions.Closed += (s, e) =>
+            {
+                // 延迟重置标志位，防止 Click 事件重入导致闪一下
+                var timer = new System.Windows.Forms.Timer { Interval = 200 };
+                timer.Tick += (s2, e2) =>
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    _menuMoreActionsVisible = false;
+                };
+                timer.Start();
+            };
+
+            _btnMoreActions.Click += (s, e) =>
+            {
+                if (_menuMoreActions == null) return;
+                if (_menuMoreActionsVisible)
+                {
+                    _menuMoreActions.Close();
+                    _menuMoreActionsVisible = false;
+                }
+                else
+                {
+                    _menuMoreActionsVisible = true;
+                    _menuMoreActions.Show(_btnMoreActions, new Point(_btnMoreActions.Width - _menuMoreActions.Width, -_menuMoreActions.Height - 2));
+                }
+            };
 
             // 文件/文件夹数量标签
             _lblFileCount = new Label
@@ -705,7 +755,7 @@ namespace wxd.files.winforms
             {
                 Height = 29,
                 Location = new Point(136, 4),
-                Size = new Size(_pnlBottom.Width - 328, 29),
+                Size = new Size(_pnlBottom.Width - 272, 29),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle
@@ -749,14 +799,14 @@ namespace wxd.files.winforms
             _pnlBottom.Controls.Add(_lblFileCount);
             _pnlBottom.Controls.Add(_txtFilter);
             _pnlBottom.Controls.Add(_btnOpenCsvReader);
-            _pnlBottom.Controls.Add(_btnOpenExplorer);
+            _pnlBottom.Controls.Add(_btnMoreActions);
 
             // 底部面板大小改变时调整过滤框宽度
             _pnlBottom.Resize += (s, e) =>
             {
                 if (_txtFilter != null && _btnOpenCsvReader != null)
                 {
-                    int newWidth = _pnlBottom.Width - _lblFileCount!.Width - _btnOpenCsvReader.Width - _btnOpenExplorer!.Width - 21;
+                    int newWidth = _pnlBottom.Width - 272;
                     if (newWidth > 50)
                         _txtFilter.Width = newWidth;
                     _txtFilter.Top = (_pnlBottom.Height - _txtFilter.Height) / 2;
@@ -1156,6 +1206,62 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 MessageBox.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ==================== 打开日志分析 ====================
+        private void OnLogAnalysisClick(object? sender, EventArgs e)
+        {
+            try
+            {
+                var viewer = new LargeFileViewer(_currentDir);
+                viewer.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this.FindForm(), $"无法打开日志分析: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ==================== SVN更新 ====================
+        private void OnSvnUpdateClick(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
+                return;
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "svn",
+                    Arguments = $"update \"{_currentDir}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using var process = Process.Start(psi);
+                if (process == null)
+                {
+                    MessageBox.Show(this.FindForm(), "无法启动 SVN 命令行工具（svn.exe），请确保已安装并配置。", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                var output = process.StandardOutput.ReadToEnd();
+                var error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                var msg = process.ExitCode == 0
+                    ? $"SVN 更新完成。\n{output}"
+                    : $"SVN 更新失败（ExitCode: {process.ExitCode}）\n{error}";
+
+                MessageBox.Show(this.FindForm(), msg, "SVN 更新", MessageBoxButtons.OK,
+                    process.ExitCode == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

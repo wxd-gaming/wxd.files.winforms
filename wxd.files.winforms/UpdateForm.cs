@@ -256,7 +256,7 @@ namespace wxd.files.winforms
             // 进度条
             _progressBar = new ProgressBar
             {
-                Location = new Point(16, 34),
+                Location = new Point(16, 42),
                 Size = new Size(300, 18),
                 Visible = false,
                 Style = ProgressBarStyle.Continuous,
@@ -271,19 +271,32 @@ namespace wxd.files.winforms
                 Text = "",
                 AutoSize = false,
                 Size = new Size(45, 18),
-                Location = new Point(320, 34),
+                Location = new Point(320, 42),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = isDark ? _darkStatusFg : _lightStatusFg,
                 BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            // 检查更新按钮（右侧区域，不和左侧状态文字重叠）
+            // 右侧按钮流式面板（从右向左排列，方便新增按钮）
+            var btnPanel = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.RightToLeft,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Location = new Point(380, 8),
+                Size = new Size(310, 30),
+                BackColor = Color.Transparent,
+                Padding = new Padding(0, 0, 6, 0),   // 右边距 6px
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+
+            // 检查更新按钮
             _btnCheckUpdate = new Button
             {
                 Text = "检查更新",
-                Size = new Size(72, 30),
-                Location = new Point(396, 8),
+                Size = new Size(80, 30),
+                Margin = new Padding(4, 0, 0, 0),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -298,8 +311,8 @@ namespace wxd.files.winforms
             var btnChangelog = new Button
             {
                 Text = "更新记录",
-                Size = new Size(72, 30),
-                Location = new Point(472, 8),
+                Size = new Size(80, 30),
+                Margin = new Padding(4, 0, 0, 0),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -314,8 +327,8 @@ namespace wxd.files.winforms
             _btnForceReinstall = new Button
             {
                 Text = "强制重装",
-                Size = new Size(72, 30),
-                Location = new Point(548, 8),
+                Size = new Size(80, 30),
+                Margin = new Padding(4, 0, 0, 0),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(255, 152, 0),
@@ -330,8 +343,8 @@ namespace wxd.files.winforms
             _btnClose = new Button
             {
                 Text = "关闭",
-                Size = new Size(72, 30),
-                Location = new Point(624, 8),
+                Size = new Size(80, 30),
+                Margin = new Padding(4, 0, 0, 0),
                 Font = new Font("Microsoft YaHei UI", 10f),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = isDark ? _darkBtnBg : _lightBtnBg,
@@ -343,9 +356,13 @@ namespace wxd.files.winforms
             _btnClose.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
             _btnClose.Click += (s, e) => Close();
 
+            // RightToLeft 排列时，添加顺序 = 显示顺序从右到左
+            btnPanel.Controls.AddRange(new Control[] {
+                _btnClose, _btnForceReinstall, btnChangelog, _btnCheckUpdate
+            });
+
             bottomPanel.Controls.AddRange(new Control[] {
-                _lblStatus, _progressBar, _lblProgressText,
-                _btnCheckUpdate, btnChangelog, _btnForceReinstall, _btnClose
+                _lblStatus, _progressBar, _lblProgressText, btnPanel
             });
 
             Controls.AddRange(new Control[] {
