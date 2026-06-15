@@ -286,8 +286,7 @@ namespace wxd.files.winforms
         {
             if (_lvColumns.SelectedItems.Count == 0)
             {
-                MessageBox.Show(this, "请先在列表中选择要设置关联的列（点击行选中）", "提示",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "请先在列表中选择要设置关联的列（点击行选中）", "提示", AlertType.Information);
                 return;
             }
             var selectedItem = _lvColumns.SelectedItems[0];

@@ -423,8 +423,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 _lblStatus.Text = "检查更新失败";
-                MessageBox.Show($"检查更新失败：{ex.Message}", "网络错误",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(null, $"检查更新失败：{ex.Message}", "网络错误", AlertType.Warning, exception: ex);
             }
             finally
             {
@@ -443,12 +442,10 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var result = MessageBox.Show(
-                $"当前版本 v{_lastCheckResult.CurrentVersion}，确定要强制重装吗？\n" +
+            var result = AlertForm.Show(null,
+                $"当前版本 v{_lastCheckResult.CurrentVersion}，确定要强制重装吗？" + GlobalConst.NewLine +
                 "将重新下载并覆盖当前程序文件。",
-                "强制重装",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
+                "强制重装", AlertType.Information);
 
             if (result != DialogResult.Yes) return;
 

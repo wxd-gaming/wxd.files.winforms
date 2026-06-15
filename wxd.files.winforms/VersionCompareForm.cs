@@ -569,7 +569,7 @@ namespace wxd.files.winforms
             // ★ 延迟弹出 MessageBox，确保差异化窗口先显示
             BeginInvoke(new Action(() =>
             {
-                MessageBox.Show(this, message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, message, "错误", AlertType.Error);
             }));
         }
 
@@ -912,6 +912,7 @@ namespace wxd.files.winforms
                     HeaderRowIndex = _headerRowIndex,
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
+                    SkipAutoLoad = true,
                 };
                 _leftView = new TableBrowserControl(leftOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -929,6 +930,7 @@ namespace wxd.files.winforms
                     HeaderRowIndex = _headerRowIndex,
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
+                    SkipAutoLoad = true,
                 };
                 _rightView = new TableBrowserControl(rightOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -1353,9 +1355,9 @@ namespace wxd.files.winforms
                             {
                                 rowHasDiff = true;
                                 if (leftVal != null && rightVal == null)
-                                    { leftDiffCols ??= new(); leftDiffCols.Add(col); }
+                                { leftDiffCols ??= new(); leftDiffCols.Add(col); }
                                 else if (leftVal == null && rightVal != null)
-                                    { rightDiffCols ??= new(); rightDiffCols.Add(col); }
+                                { rightDiffCols ??= new(); rightDiffCols.Add(col); }
                                 else
                                 {
                                     leftDiffCols ??= new(); leftDiffCols.Add(col);
@@ -1674,8 +1676,8 @@ namespace wxd.files.winforms
 
             // ★ 以右表（新版本）行顺序为主，归并左表的删除行
             // 确保新增/删除行插入到正确位置，而非追加到最后
-            var leftIdsOrdered = leftIdMap.Keys.ToList();
-            var rightIdsOrdered = rightIdMap.Keys.ToList();
+            var leftIdsOrdered = SortIds(leftIdMap.Keys);
+            var rightIdsOrdered = SortIds(rightIdMap.Keys);
 
             // 创建对齐后的 FileTableData
             var leftAligned = new FileTableData
@@ -1705,52 +1707,54 @@ namespace wxd.files.winforms
                     rightAligned.Rows.Add(CloneRow(rightOriginal.Rows[i], rightOriginal.ColumnNames.Count));
             }
 
-            // ★ 归并算法：以右表ID顺序为主，左表按指针推进
-            int colCount = Math.Max(leftOriginal.ColumnNames.Count, rightOriginal.ColumnNames.Count);
-            int leftPtr = 0;
-
-            foreach (var rightId in rightIdsOrdered)
+            // ★ 合并 leftIdsOrdered 和 rightIdsOrdered 为有序去重列表，统一遍历
+            var allIdsOrdered = new List<string>();
+            int lp = 0, rp = 0;
+            while (lp < leftIdsOrdered.Count || rp < rightIdsOrdered.Count)
             {
-                // 先消耗左表中在 rightId 之前的删除行（左有右无）
-                while (leftPtr < leftIdsOrdered.Count)
+                if (lp >= leftIdsOrdered.Count)
+                    allIdsOrdered.Add(rightIdsOrdered[rp++]);
+                else if (rp >= rightIdsOrdered.Count)
+                    allIdsOrdered.Add(leftIdsOrdered[lp++]);
+                else
                 {
-                    var leftId = leftIdsOrdered[leftPtr];
-                    if (string.Equals(leftId, rightId, StringComparison.OrdinalIgnoreCase))
-                        break; // 左右都有，停
-
-                    // ★ 左表当前ID在右表中存在但还未轮到 → 当前rightId在左表中无对应行，
-                    //   停止消耗左表，让外层逻辑输出"新增行+左侧空白行"
-                    if (rightIdMap.ContainsKey(leftId))
-                        break;
-
-                    // 该左表ID不在右表中 → 删除行
-                    if (!rightIdMap.ContainsKey(leftId))
-                    {
-                        var leftFdIdx = leftIdMap[leftId];
-                        var leftRow = CloneRow(leftOriginal.Rows[leftFdIdx], colCount);
-                        leftRow.DiffType = DiffRowType.Deleted;
-                        leftRow.IsDiffRow = true;
-                        leftAligned.Rows.Add(leftRow);
-                        rightAligned.Rows.Add(CreateBlankRow(leftOriginal.Rows[leftFdIdx].OriginalRowIndex, colCount, DiffRowType.Deleted));
-                    }
-                    leftPtr++;
+                    int cmp = string.Compare(leftIdsOrdered[lp], rightIdsOrdered[rp], StringComparison.OrdinalIgnoreCase);
+                    if (cmp == 0) { allIdsOrdered.Add(leftIdsOrdered[lp]); lp++; rp++; }
+                    else if (cmp < 0) allIdsOrdered.Add(leftIdsOrdered[lp++]);
+                    else allIdsOrdered.Add(rightIdsOrdered[rp++]);
                 }
+            }
 
-                // 输出当前 rightId
-                if (leftPtr < leftIdsOrdered.Count &&
-                    string.Equals(leftIdsOrdered[leftPtr], rightId, StringComparison.OrdinalIgnoreCase))
+            // ★ 按有序 ID 遍历，统一处理三态（匹配/新增/删除）
+            int colCount = Math.Max(leftOriginal.ColumnNames.Count, rightOriginal.ColumnNames.Count);
+
+            foreach (var id in allIdsOrdered)
+            {
+                bool leftHas = leftIdMap.ContainsKey(id);
+                bool rightHas = rightIdMap.ContainsKey(id);
+
+                if (leftHas && rightHas)
                 {
                     // 两表都有 → 匹配行
-                    var leftFdIdx = leftIdMap[rightId];
-                    var rightFdIdx = rightIdMap[rightId];
+                    var leftFdIdx = leftIdMap[id];
+                    var rightFdIdx = rightIdMap[id];
                     leftAligned.Rows.Add(CloneRow(leftOriginal.Rows[leftFdIdx], colCount));
                     rightAligned.Rows.Add(CloneRow(rightOriginal.Rows[rightFdIdx], colCount));
-                    leftPtr++;
+                }
+                else if (leftHas)
+                {
+                    // 左有右无 → 删除行（左数据行 + 右空白行）
+                    var leftFdIdx = leftIdMap[id];
+                    var leftRow = CloneRow(leftOriginal.Rows[leftFdIdx], colCount);
+                    leftRow.DiffType = DiffRowType.Deleted;
+                    leftRow.IsDiffRow = true;
+                    leftAligned.Rows.Add(leftRow);
+                    rightAligned.Rows.Add(CreateBlankRow(leftOriginal.Rows[leftFdIdx].OriginalRowIndex, colCount, DiffRowType.Deleted));
                 }
                 else
                 {
-                    // 右有左无 → 新增行
-                    var rightFdIdx = rightIdMap[rightId];
+                    // 右有左无 → 新增行（左空白行 + 右数据行）
+                    var rightFdIdx = rightIdMap[id];
                     leftAligned.Rows.Add(CreateBlankRow(rightOriginal.Rows[rightFdIdx].OriginalRowIndex, colCount, DiffRowType.Added));
                     var rightRow = CloneRow(rightOriginal.Rows[rightFdIdx], colCount);
                     rightRow.DiffType = DiffRowType.Added;
@@ -1759,23 +1763,17 @@ namespace wxd.files.winforms
                 }
             }
 
-            // ★ 左表剩余的删除行（尾部删除）
-            while (leftPtr < leftIdsOrdered.Count)
-            {
-                var leftId = leftIdsOrdered[leftPtr];
-                if (!rightIdMap.ContainsKey(leftId))
-                {
-                    var leftFdIdx = leftIdMap[leftId];
-                    var leftRow = CloneRow(leftOriginal.Rows[leftFdIdx], colCount);
-                    leftRow.DiffType = DiffRowType.Deleted;
-                    leftRow.IsDiffRow = true;
-                    leftAligned.Rows.Add(leftRow);
-                    rightAligned.Rows.Add(CreateBlankRow(leftOriginal.Rows[leftFdIdx].OriginalRowIndex, colCount, DiffRowType.Deleted));
-                }
-                leftPtr++;
-            }
-
             return (leftAligned, rightAligned);
+        }
+
+        /// <summary>按数值或字典序对ID列表排序</summary>
+        private static List<string> SortIds(IEnumerable<string> ids)
+        {
+            var list = ids.ToList();
+            if (list.Count == 0) return list;
+            if (list.All(id => int.TryParse(id, out _)))
+                return list.OrderBy(id => int.Parse(id)).ToList();
+            return list.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         /// <summary>克隆 TableRow</summary>

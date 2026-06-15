@@ -58,6 +58,12 @@ namespace wxd.files.winforms
 
         // ==================== VCS 状态字段 ====================
         private VcsType _currentVcsType = VcsType.None;
+        private bool _showConflictOnly = false;            // 是否只显示冲突文件
+
+        // ==================== VCS 操作面板控件 ====================
+        private RoundedPanel _pnlVcsActions = new();
+        private Button _btnVcsUpdate = new();
+        private Button _btnResolveConflict = new();
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -221,7 +227,7 @@ namespace wxd.files.winforms
             _pnlLeft.Padding = new Padding(0);
 
             // 左侧顶部工具栏
-            _pnlLeftTop.Height = 150;
+            _pnlLeftTop.Height = 196;
             _pnlLeftTop.Dock = DockStyle.Top;
             _pnlLeftTop.BackColor = _colorSurface;
             _pnlLeftTop.Padding = new Padding(8, 6, 8, 4);
@@ -402,7 +408,50 @@ namespace wxd.files.winforms
             _pnlSearchContainer.Controls.Add(_btnContentSearch);
             _pnlSearchContainer.Controls.Add(_pnlSearchProgress);
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer });
+            // ==================== VCS 操作面板（第四行 - 圆角容器，初始隐藏） ====================
+            _pnlVcsActions = new RoundedPanel
+            {
+                Location = new Point(8, 148),
+                Size = new Size(260, 36),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Visible = false,
+                BackColor = Color.FromArgb(245, 250, 240)
+            };
+
+            _btnVcsUpdate = new Button
+            {
+                Text = "🔄 更新",
+                Location = new Point(8, 4),
+                Size = new Size(100, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(52, 168, 83),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(40, 140, 60), MouseOverBackColor = Color.FromArgb(40, 140, 60) }
+            };
+            _btnVcsUpdate.Click += OnVcsUpdateClick;
+
+            _btnResolveConflict = new Button
+            {
+                Text = "⚠️ 解决冲突",
+                Location = new Point(116, 4),
+                Size = new Size(100, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(200, 50, 50), MouseOverBackColor = Color.FromArgb(200, 50, 50) }
+            };
+            _btnResolveConflict.Click += OnResolveConflictClick;
+
+            _pnlVcsActions.Controls.Add(_btnVcsUpdate);
+            _pnlVcsActions.Controls.Add(_btnResolveConflict);
+
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer, _pnlVcsActions });
 
             // 文件树
             // 初始化图标列表
@@ -537,6 +586,12 @@ namespace wxd.files.winforms
                 _pnlSearchProgress.Width = Math.Max(160, _pnlSearchContainer.Width - 16);
                 _progressBar.Width = Math.Max(60, _txtContentSearch.Width);
                 _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 64, 1);
+
+                // VCS 操作面板自适应宽度
+                _pnlVcsActions.Width = Math.Max(180, w);
+                // 更新按钮和解决冲突按钮在容器内部靠左布局
+                _btnVcsUpdate.Location = new Point(8, 4);
+                _btnResolveConflict.Location = new Point(_btnVcsUpdate.Right + 8, 4);
             };
 
             ResumeLayout(false);
@@ -771,6 +826,14 @@ namespace wxd.files.winforms
 
         private void OnSelectFolderClick(object? sender, EventArgs e)
         {
+            // 退出冲突模式
+            if (_showConflictOnly)
+            {
+                _showConflictOnly = false;
+                _btnResolveConflict.Text = "⚠️ 解决冲突";
+                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+            }
+
             using var dialog = new FolderBrowserDialog
             {
                 Description = "选择包含CSV/Excel文件的目录",
@@ -811,9 +874,33 @@ namespace wxd.files.winforms
 
             if (_currentVcsType != VcsType.None)
             {
+                // 显示 VCS 操作面板
+                ShowVcsPanel(true);
+
                 // 先订阅事件再触发刷新，避免竞态条件（刷新完成但事件还没订阅）
                 VcsStatusCache.StatusRefreshed += OnVcsStatusRefreshed;
                 _ = VcsStatusCache.RefreshAsync(_currentDir);
+            }
+            else
+            {
+                // 无 VCS，隐藏 VCS 操作面板
+                ShowVcsPanel(false);
+            }
+        }
+
+        /// <summary>显示/隐藏 VCS 操作面板</summary>
+        private void ShowVcsPanel(bool show)
+        {
+            if (InvokeRequired)
+            {
+                try { Invoke(() => ShowVcsPanel(show)); } catch { }
+                return;
+            }
+            _pnlVcsActions.Visible = show;
+            if (show)
+            {
+                // 更新按钮文本
+                _btnVcsUpdate.Text = _currentVcsType == VcsType.Svn ? "🔄 SVN更新" : "🔄 Git拉取";
             }
         }
 
@@ -843,6 +930,16 @@ namespace wxd.files.winforms
             {
                 Debug.WriteLine($"[VcsStatusCache] 刷新失败: {status.ErrorMessage}");
                 return;
+            }
+
+            // 检测是否有冲突文件
+            bool hasConflictedFiles = status.FileStatuses.Values.Any(fs => fs == FileVcsStatus.Conflicted);
+            _btnResolveConflict.Visible = hasConflictedFiles || _showConflictOnly;
+
+            // 如果在冲突过滤模式，刷新冲突列表
+            if (_showConflictOnly && string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyFileFilter();
             }
 
             // 找到对应的树节点（从根开始查找）
@@ -959,6 +1056,13 @@ namespace wxd.files.winforms
 
         private void OnRefreshClick(object? sender, EventArgs e)
         {
+            // 退出冲突模式
+            if (_showConflictOnly)
+            {
+                _showConflictOnly = false;
+                _btnResolveConflict.Text = "⚠️ 解决冲突";
+                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+            }
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
             {
                 LoadFilesAsync();
@@ -1087,6 +1191,262 @@ namespace wxd.files.winforms
             HelpForm.ShowHelp(this, "使用说明 - CSV/Excel 阅读器", helpText, CsvSettings.ThemeMode == 0);
         }
 
+        // ==================== VCS 操作按钮事件 ====================
+
+        /// <summary>点击"更新"按钮 — 执行 SVN update 或 Git pull</summary>
+        private async void OnVcsUpdateClick(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || _currentVcsType == VcsType.None)
+            {
+                AlertForm.Show(this, "当前目录不受 SVN 或 Git 管控，无法执行更新操作。",
+                    "提示", AlertType.Information);
+                return;
+            }
+
+            _btnVcsUpdate.Enabled = false;
+            _btnVcsUpdate.Text = "正在更新...";
+
+            try
+            {
+                var vcsName = _currentVcsType == VcsType.Svn ? "SVN" : "Git";
+                var command = _currentVcsType == VcsType.Svn ? "svn update" : "git pull";
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c cd /d \"{_currentDir}\" && {command}",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
+
+                using var process = System.Diagnostics.Process.Start(psi);
+                if (process == null)
+                {
+                    AlertForm.Show(this, $"无法启动 {vcsName} 更新命令。", "错误", AlertType.Error);
+                    return;
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    var errMsg = vcsName + " 更新失败:" + GlobalConst.NewLine + error;
+                    AlertForm.Show(this, errMsg, "更新失败",
+                        AlertType.Warning);
+                }
+                else
+                {
+                    // 检查是否有冲突
+                    bool hasConflict = output.Contains("C ", StringComparison.Ordinal) ||
+                                       output.Contains("Conflict", StringComparison.OrdinalIgnoreCase);
+
+                    var msg = vcsName + " 更新成功!" + GlobalConst.NewLine + GlobalConst.NewLine + output;
+                    if (output.Length > 2000)
+                        msg = msg.Substring(0, 2000) + GlobalConst.NewLine + GlobalConst.NewLine + "...(输出过长已截断)";
+
+                    if (hasConflict)
+                    {
+                        msg += GlobalConst.NewLine + GlobalConst.NewLine + "检测到文件冲突，请使用解决冲突功能处理。";
+                        _btnResolveConflict.Visible = true;
+                    }
+
+                    AlertForm.Show(this, msg, "更新完成",
+                        hasConflict ? AlertType.Warning : AlertType.Information);
+
+                    // 刷新 VCS 状态和文件列表
+                    VcsStatusCache.Invalidate(_currentDir);
+                    await VcsStatusCache.RefreshAsync(_currentDir);
+                    OnRefreshClick(null, EventArgs.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                AlertForm.Show(this, $"更新操作异常: {ex.Message}", "错误", AlertType.Error, exception: ex);
+            }
+            finally
+            {
+                _btnVcsUpdate.Enabled = true;
+                _btnVcsUpdate.Text = "🔄 更新";
+            }
+        }
+
+        /// <summary>点击"解决冲突"按钮 — 切换冲突过滤模式</summary>
+        private async void OnResolveConflictClick(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || _currentVcsType == VcsType.None)
+            {
+                AlertForm.Show(this, "当前目录不受 SVN 或 Git 管控。",
+                    "提示", AlertType.Information);
+                return;
+            }
+
+            // 如果已在冲突模式，退出
+            if (_showConflictOnly)
+            {
+                _showConflictOnly = false;
+                _btnResolveConflict.Text = "⚠️ 解决冲突";
+                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+                _txtFileFilter.Text = "";
+                ApplyFileFilter();
+                return;
+            }
+
+            // 进入冲突模式：检查是否有冲突文件
+            bool hasConflicted = false;
+            var conflictedFiles = new List<string>();
+
+            foreach (var file in _allFiles)
+            {
+                var status = VcsStatusCache.GetFileStatus(file.FullPath);
+                if (status == FileVcsStatus.Conflicted)
+                {
+                    hasConflicted = true;
+                    conflictedFiles.Add(file.FullPath);
+                }
+            }
+
+            if (!hasConflicted)
+            {
+                AlertForm.Show(this, "当前目录下没有检测到冲突文件。",
+                    "提示", AlertType.Information);
+                return;
+            }
+
+            _showConflictOnly = true;
+            _btnResolveConflict.Text = "退出冲突模式";
+            _btnResolveConflict.BackColor = Color.FromArgb(100, 160, 100);
+            _txtFileFilter.Text = "";
+            ApplyFileFilter();
+
+            // 如果有冲突文件，自动打开第一个冲突文件的冲突解决页签
+            if (conflictedFiles.Count > 0)
+            {
+                await OpenConflictResolveInTab(conflictedFiles[0]);
+            }
+        }
+
+        // ==================== 在 TabPage 中打开冲突解决面板 ====================
+        /// <summary>在右侧 TabPage 中打开冲突解决面板</summary>
+        private async Task OpenConflictResolveInTab(string filePath)
+        {
+            if (!System.IO.File.Exists(filePath)) return;
+
+            // 检查是否已打开该文件的冲突解决页签
+            var conflictTag = $"__conflict__{filePath}";
+            foreach (TabPage tab in _tabContent.TabPages)
+            {
+                if (tab.Tag is string tag && tag == conflictTag)
+                {
+                    _tabContent.SelectedTab = tab;
+                    return;
+                }
+            }
+
+            var dir = Path.GetDirectoryName(filePath) ?? "";
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            int frozenRows, headerRowIndex, uniqueColumnIndex, mappingRowIndex;
+            if (ext == ".csv")
+            {
+                frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
+                headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
+                uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
+                mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
+            }
+            else
+            {
+                frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
+                headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
+                uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
+                mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
+            }
+
+            try
+            {
+                // 加载本地版本
+                var localData = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(filePath));
+                if (localData == null)
+                {
+                    AlertForm.Show(this, $"无法读取文件: {filePath}", "错误", AlertType.Error);
+                    return;
+                }
+
+                // 加载远程版本
+                var tempDir = Path.Combine(Path.GetTempPath(), $"wxd_conflict_load_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+
+                string? remoteRevision = null;
+                if (_currentVcsType == VcsType.Git)
+                    remoteRevision = "MERGE_HEAD";
+                else if (_currentVcsType == VcsType.Svn)
+                    remoteRevision = "BASE";
+
+                DataTable? remoteData = null;
+                if (!string.IsNullOrEmpty(remoteRevision))
+                {
+                    var exportResult = await VersionControlHelper.ExportRevisionAsync(
+                        filePath, _currentVcsType, remoteRevision, tempDir);
+                    if (exportResult.Success && exportResult.TempFile != null && File.Exists(exportResult.TempFile))
+                    {
+                        remoteData = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(exportResult.TempFile));
+                    }
+                }
+
+                if (remoteData == null)
+                    remoteData = localData.Copy();
+
+                // 创建冲突解决控件
+                var control = new ConflictResolveControl(filePath, _currentVcsType,
+                    remoteData, localData,
+                    frozenRows, headerRowIndex,
+                    rootDir: _currentDir,
+                    uniqueColumnIndex: uniqueColumnIndex,
+                    mappingRowIndex: mappingRowIndex)
+                {
+                    Dock = DockStyle.Fill
+                };
+
+                var tabPage = new TabPage($"⚠️ 冲突: {Path.GetFileName(filePath)}")
+                {
+                    Tag = conflictTag,
+                    ToolTipText = filePath
+                };
+                tabPage.Controls.Add(control);
+                _tabContent.TabPages.Add(tabPage);
+                _tabContent.SelectedTab = tabPage;
+                AddCloseButtonToTab(tabPage);
+
+                // 监听保存完成事件
+                control.SaveCompleted += (s, e) =>
+                {
+                    // 刷新 VCS 状态
+                    VcsStatusCache.Invalidate(_currentDir);
+                    _ = VcsStatusCache.RefreshAsync(_currentDir);
+
+                    // 如果在冲突模式，刷新冲突列表
+                    if (_showConflictOnly)
+                    {
+                        ApplyFileFilter();
+                    }
+                };
+
+                // 异步加载对比数据
+                await control.LoadComparisonAsync();
+
+                // 清理临时文件
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
+            catch (Exception ex)
+            {
+                AlertForm.Show(this, $"打开冲突解决面板失败: {ex.Message}",
+                    "错误", AlertType.Error, exception: ex);
+            }
+        }
+
         // ==================== 异步加载文件 ====================
         private async void LoadFilesAsync()
         {
@@ -1131,7 +1491,7 @@ namespace wxd.files.winforms
             {
                 this.Invoke(() =>
                 {
-                    MessageBox.Show(this, $"加载文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    AlertForm.Show(this, $"加载文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
                 });
             }
         }
@@ -1259,14 +1619,50 @@ namespace wxd.files.winforms
         {
             var filter = _txtFileFilter.Text.Trim();
 
+            // 冲突过滤模式
+            if (_showConflictOnly)
+            {
+                // 过滤出所有冲突文件
+                var conflictedFiles = _allFiles
+                    .Where(f => VcsStatusCache.GetFileStatus(f.FullPath) == FileVcsStatus.Conflicted)
+                    .OrderBy(f => f.RelativePath)
+                    .ToList();
+
+                if (conflictedFiles.Count == 0)
+                {
+                    _treeFiles.BeginUpdate();
+                    _treeFiles.Nodes.Clear();
+                    _treeFiles.EndUpdate();
+                    _lblFileCount.Text = "无冲突文件";
+                    return;
+                }
+
+                // 如果还有文本过滤，取交集
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
+                    conflictedFiles = conflictedFiles
+                        .Where(f =>
+                        {
+                            var remark = _fileRemarks.TryGetValue(f.RelativePath, out var r) ? r : "";
+                            return MatchesFilter(f.RelativePath, processedFilter) ||
+                                   (!string.IsNullOrEmpty(remark) && MatchesFilter(remark, processedFilter));
+                        })
+                        .ToList();
+                }
+
+                BuildFilteredTreeFromFiles(conflictedFiles);
+                _lblFileCount.Text = $"冲突文件: {conflictedFiles.Count} 个（总{_allFiles.Count}）";
+                return;
+            }
+
+            // 正常过滤逻辑
             if (string.IsNullOrEmpty(filter))
             {
-                // 无过滤：重建正常的延迟加载树
                 BuildTreeFromRoot();
             }
             else
             {
-                // 有过滤：根据匹配文件重建内部全展开树（同时匹配文件名和备注名）
                 var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
                 var matchedFiles = _allFiles
                     .Where(f =>
@@ -1391,6 +1787,15 @@ namespace wxd.files.winforms
         {
             // 只响应左键点击，右键由 OnTreeViewMouseDown 处理
             if (e.Button != MouseButtons.Left) return;
+
+            // 如果在冲突过滤模式，点击文件时退出冲突模式
+            if (_showConflictOnly)
+            {
+                _showConflictOnly = false;
+                _btnResolveConflict.Text = "⚠️ 解决冲突";
+                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+                ApplyFileFilter();
+            }
 
             var fullPath = e.Node.Tag as string ?? "";
             if (System.IO.File.Exists(fullPath))
@@ -1553,7 +1958,7 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, $"无法打开文件夹: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    AlertForm.Show(this, $"无法打开文件夹: {ex.Message}", "错误", AlertType.Error, exception: ex);
                 }
             };
 
@@ -1566,11 +1971,9 @@ namespace wxd.files.winforms
                 var vcsType = VersionControlHelper.DetectVcs(fullPath);
                 if (vcsType == VcsType.None)
                 {
-                    MessageBox.Show(this,
+                    AlertForm.Show(this,
                         "此文件不受 SVN 或 Git 管控，无法进行历史记录对比。",
-                        "非受控文件",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
+                        "非受控文件", AlertType.Information);
                     return;
                 }
 
@@ -1604,6 +2007,15 @@ namespace wxd.files.winforms
                 form.Show();
             };
 
+            // 8. 编辑冲突（仅冲突文件可用）
+            var mnuEditConflict = new ToolStripMenuItem("编辑冲突");
+            mnuEditConflict.Enabled = isFile && VcsStatusCache.GetFileStatus(fullPath) == FileVcsStatus.Conflicted;
+            mnuEditConflict.Click += async (s, args) =>
+            {
+                if (!isFile) return;
+                await OpenConflictResolveInTab(fullPath);
+            };
+
             ctx.Items.AddRange(new ToolStripItem[]
             {
                 mnuRemark,
@@ -1616,6 +2028,8 @@ namespace wxd.files.winforms
                 new ToolStripSeparator(),
                 mnuOpenFolder,
                 mnuHistory,
+                new ToolStripSeparator(),
+                mnuEditConflict,
             });
             ctx.Show(_treeFiles, e.Location);
         }
@@ -1951,7 +2365,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"复制失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, $"复制失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1964,7 +2378,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"复制失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, $"复制失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1982,7 +2396,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"无法打开文件: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, $"无法打开文件: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -2020,12 +2434,12 @@ namespace wxd.files.winforms
             var keyword = _txtContentSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                MessageBox.Show(this, "请输入要搜索的内容关键词", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "请输入要搜索的内容关键词", "提示", AlertType.Information);
                 return;
             }
             if (_allFiles.Count == 0)
             {
-                MessageBox.Show(this, "请先选择目录加载文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "请先选择目录加载文件", "提示", AlertType.Information);
                 return;
             }
             if (_isContentSearching) return;
@@ -2069,7 +2483,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"搜索出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, $"搜索出错: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
 
             // 检查是否被取消
@@ -2095,7 +2509,7 @@ namespace wxd.files.winforms
                 _treeFiles.Nodes.Clear();
                 _treeFiles.EndUpdate();
                 _lblFileCount.Text = $"内容搜索: 未找到包含\"{keyword}\"的文件（总{_allFiles.Count}）";
-                MessageBox.Show(this, $"未找到包含\"{keyword}\"的文件", "搜索结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, $"未找到包含\"{keyword}\"的文件", "搜索结果", AlertType.Information);
             }
 
             _isContentSearching = false;

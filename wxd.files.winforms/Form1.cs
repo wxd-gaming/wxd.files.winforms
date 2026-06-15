@@ -1033,8 +1033,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"执行命令 [{item.Name}] 失败：{ex.Message}", "错误",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(null, $"执行命令 [{item.Name}] 失败：{ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 

@@ -189,7 +189,7 @@ namespace wxd.files.winforms
             var fullPath = _lstFiles.SelectedItems[0].Tag as string ?? "";
             if (!File.Exists(fullPath))
             {
-                MessageBox.Show(this, "文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, "文件不存在", "错误", AlertType.Error);
                 return;
             }
 
@@ -263,7 +263,7 @@ namespace wxd.files.winforms
             }
             catch
             {
-                MessageBox.Show(this, "无法读取目标文件数据", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, "无法读取目标文件数据", "错误", AlertType.Error);
                 return;
             }
 
@@ -306,12 +306,12 @@ namespace wxd.files.winforms
         {
             if (string.IsNullOrEmpty(_selectedTargetPath) || _selectedTargetColIndex < 0)
             {
-                MessageBox.Show(this, "请先选择关联列（双击目标文件）", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "请先选择关联列（双击目标文件）", "提示", AlertType.Information);
                 return;
             }
             if (!File.Exists(_selectedTargetPath))
             {
-                MessageBox.Show(this, "目标文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, "目标文件不存在", "错误", AlertType.Error);
                 return;
             }
 
@@ -380,7 +380,7 @@ namespace wxd.files.winforms
             }
             catch
             {
-                MessageBox.Show(this, "无法读取目标文件数据", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this, "无法读取目标文件数据", "错误", AlertType.Error);
                 return;
             }
 
@@ -512,11 +512,9 @@ namespace wxd.files.winforms
         {
             if (_hasUnsavedChanges)
             {
-                var result = MessageBox.Show(this,
-                    "切割步骤有未保存的修改（未点击\"更新\"按钮），是否放弃修改？\n\n点击\"是\"将放弃修改并关闭对话框。\n点击\"否\"返回继续编辑。",
-                    "未保存的修改",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
+                var result = AlertForm.Show(this,
+                    "切割步骤有未保存的修改（未点击\"更新\"按钮），是否放弃修改？" + GlobalConst.NewLine + GlobalConst.NewLine + "点击\"是\"将放弃修改并关闭对话框。" + GlobalConst.NewLine + "点击\"否\"返回继续编辑。",
+                    "未保存的修改", AlertType.Warning);
                 if (result == DialogResult.No)
                     return;
             }

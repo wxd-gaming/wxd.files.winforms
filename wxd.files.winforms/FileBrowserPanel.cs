@@ -978,7 +978,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"无法访问路径:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
             }
         }
 
@@ -1009,7 +1009,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"无法访问路径:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
             }
         }
 
@@ -1207,7 +1207,7 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this.FindForm(), $"无法打开资源管理器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    AlertForm.Show(this.FindForm(), $"无法打开资源管理器: {ex.Message}", "错误", AlertType.Error, exception: ex);
                 }
             }
         }
@@ -1222,7 +1222,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1236,7 +1236,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this.FindForm(), $"无法打开日志分析: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this.FindForm(), $"无法打开日志分析: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1261,7 +1261,7 @@ namespace wxd.files.winforms
                 using var process = Process.Start(psi);
                 if (process == null)
                 {
-                    MessageBox.Show(this.FindForm(), "无法启动 SVN 命令行工具（svn.exe），请确保已安装并配置。", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    AlertForm.Show(this.FindForm(), "无法启动 SVN 命令行工具（svn.exe），请确保已安装并配置。", "错误", AlertType.Error);
                     return;
                 }
 
@@ -1273,12 +1273,11 @@ namespace wxd.files.winforms
                     ? $"SVN 更新完成。\n{output}"
                     : $"SVN 更新失败（ExitCode: {process.ExitCode}）\n{error}";
 
-                MessageBox.Show(this.FindForm(), msg, "SVN 更新", MessageBoxButtons.OK,
-                    process.ExitCode == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                AlertForm.Show(this.FindForm(), msg, "SVN 更新", AlertType.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1927,7 +1926,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -1950,8 +1949,7 @@ namespace wxd.files.winforms
                 ? $"确定要删除 \"{Path.GetFileName(paths[0])}\" 吗？"
                 : $"确定要删除选中的 {paths.Count} 个项目吗？";
 
-            var result = MessageBox.Show(this.FindForm(), msg, "确认删除",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            var result = AlertForm.Show(this.FindForm(), msg, "确认删除", AlertType.Warning);
             if (result != DialogResult.Yes) return;
 
             try
@@ -2101,7 +2099,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this.FindForm(), $"无法打开:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(this.FindForm(), $"无法打开:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -2214,12 +2212,12 @@ namespace wxd.files.winforms
                         }
                         catch (Exception ex)
                         {
-                            MessageBox.Show(this.FindForm(), $"重命名失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            AlertForm.Show(this.FindForm(), $"重命名失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
                         }
                     }
                     else
                     {
-                        MessageBox.Show(this.FindForm(), "该名称已存在。", "重命名", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        AlertForm.Show(this.FindForm(), "该名称已存在。", "重命名", AlertType.Warning);
                     }
                 }
                 tb.LostFocus -= CommitRename;

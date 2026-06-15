@@ -4,6 +4,9 @@
     <_LastSelectedProfileId>C:\code\wxd.files.winforms\wxd.files.winforms\Properties\PublishProfiles\FolderProfile.pubxml</_LastSelectedProfileId>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Update="AlertForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="CellEditDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -15,6 +18,9 @@
     </Compile>
     <Compile Update="ColumnManagerDialog.cs">
       <SubType>Form</SubType>
+    </Compile>
+    <Compile Update="ConflictResolveControl.cs">
+      <SubType>UserControl</SubType>
     </Compile>
     <Compile Update="CsvReaderForm.cs">
       <SubType>Form</SubType>

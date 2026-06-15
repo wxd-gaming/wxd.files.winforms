@@ -237,8 +237,7 @@ namespace wxd.files.winforms
                 _progressBar.Visible = false;
                 _lblProgressText.Text = "";
 
-                MessageBox.Show($"更新失败：{ex.Message}", "更新错误",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AlertForm.Show(null, $"更新失败：{ex.Message}", "更新错误", AlertType.Error, exception: ex);
 
                 // 恢复关闭功能
                 _btnUpdate.Text = "关闭";

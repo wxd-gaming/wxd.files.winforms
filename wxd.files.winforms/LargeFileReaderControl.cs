@@ -181,7 +181,7 @@ namespace wxd.files.winforms
         public void Open(string path)
         {
             Cleanup();
-            if (!File.Exists(path)) { MessageBox.Show(ParentForm, $"文件不存在: {path}", "错误"); return; }
+            if (!File.Exists(path)) { AlertForm.Show(ParentForm, $"文件不存在: {path}", "错误", AlertType.Error); return; }
 
             _filePath = path;
             _fileLength = new FileInfo(path).Length;
@@ -1392,8 +1392,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
         private void OnGoto(object? s, EventArgs e)
         {
-            if (!int.TryParse(_txtGotoLine.Text, out int ln) || ln < 1) { MessageBox.Show(ParentForm, "请输入有效行号", "提示"); return; }
-            if (ln > _lstContent.VirtualListSize) { MessageBox.Show(ParentForm, $"超出范围，共 {_lstContent.VirtualListSize:N0} 行", "提示"); return; }
+            if (!int.TryParse(_txtGotoLine.Text, out int ln) || ln < 1) { AlertForm.Show(ParentForm, "请输入有效行号", "提示", AlertType.Information); return; }
+            if (ln > _lstContent.VirtualListSize) { AlertForm.Show(ParentForm, $"超出范围，共 {_lstContent.VirtualListSize:N0} 行", "提示", AlertType.Information); return; }
             int idx = ln - 1; _lstContent.EnsureVisible(idx); _lstContent.SelectedIndices.Clear(); _lstContent.SelectedIndices.Add(idx); _lstContent.Focus();
         }
 
@@ -1570,7 +1570,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                         idx2--;
                     if (idx2 < 0)
                     {
-                        MessageBox.Show(ParentForm, "已到顶部，没有更多匹配项", "提示");
+                        AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
                         return;
                     }
                     NavigateTo(idx2);
@@ -1579,7 +1579,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     if (_searchCurrentIndex <= 0)
                     {
-                        MessageBox.Show(ParentForm, "已到顶部，没有更多匹配项", "提示");
+                        AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
                         return;
                     }
                     NavigateTo(_searchCurrentIndex - 1);
@@ -1618,7 +1618,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                         idx2++;
                     if (idx2 >= _searchResults.Count)
                     {
-                        MessageBox.Show(ParentForm, "已到底部，没有更多匹配项", "提示");
+                        AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
                         return;
                     }
                     NavigateTo(idx2);
@@ -1627,7 +1627,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     if (_searchCurrentIndex >= _searchResults.Count - 1)
                     {
-                        MessageBox.Show(ParentForm, "已到底部，没有更多匹配项", "提示");
+                        AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
                         return;
                     }
                     NavigateTo(_searchCurrentIndex + 1);
@@ -1702,19 +1702,19 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string? sourcePath = _filePath;
             if (string.IsNullOrEmpty(sourcePath))
             {
-                MessageBox.Show(ParentForm, "请先打开文件", "提示");
+                AlertForm.Show(ParentForm, "请先打开文件", "提示", AlertType.Information);
                 return;
             }
 
             string keyword = _txtSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                MessageBox.Show(ParentForm, "请先输入搜索关键词", "提示");
+                AlertForm.Show(ParentForm, "请先输入搜索关键词", "提示", AlertType.Information);
                 return;
             }
             if (_lineOffsets == null)
             {
-                MessageBox.Show(ParentForm, "请等待索引完成", "提示");
+                AlertForm.Show(ParentForm, "请等待索引完成", "提示", AlertType.Information);
                 return;
             }
 
@@ -1752,19 +1752,19 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string? sourcePath = _filePath;
             if (string.IsNullOrEmpty(sourcePath))
             {
-                MessageBox.Show(ParentForm, "请先打开文件", "提示");
+                AlertForm.Show(ParentForm, "请先打开文件", "提示", AlertType.Information);
                 return;
             }
 
             string keyword = _txtSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                MessageBox.Show(ParentForm, "请先输入搜索关键词", "提示");
+                AlertForm.Show(ParentForm, "请先输入搜索关键词", "提示", AlertType.Information);
                 return;
             }
             if (_lineOffsets == null)
             {
-                MessageBox.Show(ParentForm, "请等待索引完成", "提示");
+                AlertForm.Show(ParentForm, "请等待索引完成", "提示", AlertType.Information);
                 return;
             }
 
@@ -1919,7 +1919,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                                      "总行数: " + totalLines.ToString("N0") + Environment.NewLine +
                                      "排除行: " + excludedCount.ToString("N0") + Environment.NewLine +
                                      "导出行: " + exported.ToString("N0");
-                        MessageBox.Show(ParentForm, msg, "导出成功");
+                        AlertForm.Show(ParentForm, msg, "导出成功", AlertType.Information);
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
                 }
@@ -1927,7 +1927,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     BeginInvoke(() =>
                     {
-                        MessageBox.Show(ParentForm, $"反向导出失败: {ex.Message}", "错误");
+                        AlertForm.Show(ParentForm, $"反向导出失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
                         Status("反向导出失败");
                     });
                 }
@@ -2078,9 +2078,9 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     BeginInvoke(() =>
                     {
                         Status($"已导出 {totalLines} 行 -> {outName}");
-                        MessageBox.Show(ParentForm,
-                            $"导出完成！\n\n文件: {outName}\n路径: {dir}\n行数: {totalLines:N0}\n匹配行: {searchResultsSnapshot.Count:N0}\n上下行数: {contextLines}",
-                            "导出成功");
+                        AlertForm.Show(ParentForm,
+                            $"导出完成！" + GlobalConst.NewLine + GlobalConst.NewLine + $"文件: {outName}" + GlobalConst.NewLine + $"路径: {dir}" + GlobalConst.NewLine + $"行数: {totalLines:N0}" + GlobalConst.NewLine + $"匹配行: {searchResultsSnapshot.Count:N0}" + GlobalConst.NewLine + $"上下行数: {contextLines}",
+                            "导出成功", AlertType.Information);
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
                 }
@@ -2088,7 +2088,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     BeginInvoke(() =>
                     {
-                        MessageBox.Show(ParentForm, $"导出失败: {ex.Message}", "错误");
+                        AlertForm.Show(ParentForm, $"导出失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
                         Status("导出失败");
                     });
                 }

@@ -59,6 +59,7 @@ namespace wxd.files.winforms
         private bool[]? _externalColumnStates = null;
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
         private bool _isEditLocked = false; // Excel默认锁定编辑，CSV默认解锁
+        private ContextMenuMode _contextMenuMode = ContextMenuMode.Normal; // 右键菜单模式
 
         // ==================== 统一缓存 ====================
         private DirectoryCache? _dirCache; // 目录级缓存（由 FrozenDir 决定）
@@ -157,6 +158,7 @@ namespace wxd.files.winforms
             _paneIndex = options.PaneIndex;
             _rootDir = options.RootDir;
             _lightweight = options.Lightweight;
+            _contextMenuMode = options.ContextMenuMode;
             // ★ 先确定文件类型，后续配置读取需要用到
             _fileType = DetectFileType(options.FilePath);
             _isEditLocked = (_fileType == TableFileType.Excel); // Excel默认锁定编辑
@@ -225,7 +227,7 @@ namespace wxd.files.winforms
             }
 
             // 如果文件路径为空或文件不存在，跳过自动加载（由外部通过 SetDataTable 注入数据）
-            if (!string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
+            if (!options.SkipAutoLoad && !string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
             {
                 if (_fileType == TableFileType.Csv)
                     LoadCsvAsync();
@@ -724,6 +726,7 @@ namespace wxd.files.winforms
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
                 if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && e.ColumnIndex >= 0)
                 {
+                    if (_contextMenuMode == ContextMenuMode.None) return;
                     var cellValue = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
                     var ctx = new ContextMenuStrip();
                     ctx.Font = new Font("Microsoft YaHei UI", 9f);
@@ -1050,7 +1053,7 @@ namespace wxd.files.winforms
             {
                 HideLoadingOverlay();
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, $"加载CSV文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                    this.Invoke(() => AlertForm.Show(this, $"加载CSV文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
             }
         }
 
@@ -1078,7 +1081,7 @@ namespace wxd.files.winforms
             {
                 HideLoadingOverlay();
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, $"加载Excel文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                    this.Invoke(() => AlertForm.Show(this, $"加载Excel文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
             }
         }
 
@@ -1087,7 +1090,7 @@ namespace wxd.files.winforms
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, "CSV文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                    this.Invoke(() => AlertForm.Show(this, "CSV文件不存在", "错误", AlertType.Error));
                 return;
             }
 
@@ -1103,7 +1106,7 @@ namespace wxd.files.winforms
             if (lines.Count == 0)
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, "CSV文件为空", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+                    this.Invoke(() => AlertForm.Show(this, "CSV文件为空", "警告", AlertType.Warning));
                 return;
             }
 
@@ -1138,7 +1141,7 @@ namespace wxd.files.winforms
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, "Excel文件不存在", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                    this.Invoke(() => AlertForm.Show(this, "Excel文件不存在", "错误", AlertType.Error));
                 return;
             }
 
@@ -1146,7 +1149,7 @@ namespace wxd.files.winforms
             if (dataTable == null)
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, "Excel文件没有工作表", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+                    this.Invoke(() => AlertForm.Show(this, "Excel文件没有工作表", "警告", AlertType.Warning));
                 return;
             }
 
@@ -1601,7 +1604,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => MessageBox.Show(this, $"重新加载失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error));
+                    this.Invoke(() => AlertForm.Show(this, $"重新加载失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
                 _columnCheckStates = savedColumnStates;
                 _frozenRows = savedFrozenRows;
                 _txtContentFilter.Text = savedFilter;
@@ -1875,8 +1878,7 @@ namespace wxd.files.winforms
                 sb.AppendLine();
                 sb.AppendLine("点击状态栏可查看完整详情");
 
-                MessageBox.Show(this, sb.ToString(), "唯一列重复警告",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, sb.ToString(), "唯一列重复警告", AlertType.Warning);
             }
 
             // ★ 状态栏：简短摘要 + 可点击（始终更新）
@@ -2727,7 +2729,7 @@ namespace wxd.files.winforms
                 {
                     friendlyMsg = $"保存失败：{ex.Message}";
                 }
-                MessageBox.Show(this, friendlyMsg, "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, friendlyMsg, "保存失败", AlertType.Warning);
 
                 // 标记脏数据并启动重试定时器（设置 _hasUnsavedChanges、状态栏提示、启动定时器）
                 MarkDirtyAndStartSaveTimer();
@@ -2787,7 +2789,7 @@ namespace wxd.files.winforms
                 {
                     friendlyMsg = $"保存失败：{ex.Message}";
                 }
-                MessageBox.Show(this, friendlyMsg, "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, friendlyMsg, "保存失败", AlertType.Warning);
 
                 // 标记脏数据并启动重试定时器（设置 _hasUnsavedChanges、状态栏提示、启动定时器）
                 MarkDirtyAndStartSaveTimer();
@@ -2876,6 +2878,7 @@ namespace wxd.files.winforms
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (_contextMenuMode == ContextMenuMode.None) return;
 
             int adjCol = e.ColumnIndex;
             // ★ 不再需要 __RowNum__ 偏移
@@ -2960,7 +2963,7 @@ namespace wxd.files.winforms
                     string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
                     if (!File.Exists(targetFullPath))
                     {
-                        MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        AlertForm.Show(this, "关联文件不存在: " + link.TargetFile, "错误", AlertType.Error);
                         return;
                     }
                     var remarks = CsvSettings.GetFileRemarksByDirectory(FrozenDir);
@@ -3000,7 +3003,7 @@ namespace wxd.files.winforms
                     string targetFullPath = Path.Combine(FrozenDir, link.TargetFile);
                     if (!File.Exists(targetFullPath))
                     {
-                        MessageBox.Show(this, "关联文件不存在: " + link.TargetFile, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        AlertForm.Show(this, "关联文件不存在: " + link.TargetFile, "错误", AlertType.Error);
                         return;
                     }
                     EditLinkTableRequested?.Invoke(this, new EditLinkTableEventArgs
@@ -3143,11 +3146,9 @@ namespace wxd.files.winforms
             }
 
             // 锁定状态 → 弹出确认框解锁
-            var result = MessageBox.Show(this,
-                "⚠️ 警告：Excel文件如果包含公式、宏定义等，编辑后保存可能导致这些内容丢失。\n确认要解锁编辑吗？",
-                "解锁编辑确认",
-                MessageBoxButtons.OKCancel,
-                MessageBoxIcon.Warning);
+            var result = AlertForm.Show(this,
+                "Excel文件如果包含公式、宏定义等，编辑后保存可能导致这些内容丢失。" + GlobalConst.NewLine + "确认要解锁编辑吗？",
+                "解锁编辑确认", AlertType.Warning);
 
             if (result == DialogResult.OK)
             {
@@ -3632,6 +3633,12 @@ namespace wxd.files.winforms
             return (bool[])_columnCheckStates.Clone();
         }
 
+        /// <summary>设置嵌入式模式（冲突解决等场景使用）。设为 false 可使表格变为可编辑。</summary>
+        public void SetEmbeddedMode(bool embedded)
+        {
+            _isEmbeddedMode = embedded;
+        }
+
         // ==================== 行编辑模式 ====================
 
         /// <summary>进入行编辑模式</summary>
@@ -3878,17 +3885,16 @@ namespace wxd.files.winforms
         {
             if (_isEmbeddedMode)
             {
-                MessageBox.Show(this, "当前状态不支持插入行", "提示",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "当前状态不支持插入行", "提示", AlertType.Information);
                 return;
             }
 
             // 如果有排序，先取消排序
             if (_sortColumnIndex >= 0)
             {
-                var result = MessageBox.Show(this,
+                var result = AlertForm.Show(this,
                     "当前处于排序状态，插入行前需要先取消排序。是否继续？",
-                    "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    "提示", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
                 _sortColumnIndex = -1;
                 _sortOrder = SortOrder.None;
@@ -3961,8 +3967,7 @@ namespace wxd.files.winforms
         {
             if (_isEmbeddedMode)
             {
-                MessageBox.Show(this, "当前状态不支持复制行", "提示",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "当前状态不支持复制行", "提示", AlertType.Information);
                 return;
             }
 
@@ -3972,9 +3977,9 @@ namespace wxd.files.winforms
             // 如果有排序，先取消排序
             if (_sortColumnIndex >= 0)
             {
-                var result = MessageBox.Show(this,
+                var result = AlertForm.Show(this,
                     "当前处于排序状态，复制行前需要先取消排序。是否继续？",
-                    "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    "提示", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
                 _sortColumnIndex = -1;
                 _sortOrder = SortOrder.None;
@@ -4035,8 +4040,7 @@ namespace wxd.files.winforms
         {
             if (_isEmbeddedMode)
             {
-                MessageBox.Show(this, "当前状态不支持删除行", "提示",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AlertForm.Show(this, "当前状态不支持删除行", "提示", AlertType.Information);
                 return;
             }
 
@@ -4046,22 +4050,22 @@ namespace wxd.files.winforms
             // ==================== 行编辑模式：不允许删除正在编辑的行 ====================
             if (_editingRowIndex >= 0 && _editingRowOrigIndex == originalRowIndex)
             {
-                MessageBox.Show(this, "请先完成或取消当前行的编辑再删除。",
-                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, "请先完成或取消当前行的编辑再删除。",
+                    "提示", AlertType.Warning);
                 return;
             }
 
             // 冻结行不允许删除
             if (originalRowIndex < _frozenRows)
             {
-                MessageBox.Show(this, "冻结行不允许删除。请先调整冻结行设置。",
-                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AlertForm.Show(this, "冻结行不允许删除。请先调整冻结行设置。",
+                    "提示", AlertType.Warning);
                 return;
             }
 
-            var result = MessageBox.Show(this,
+            var result = AlertForm.Show(this,
                 $"确认删除第 {originalRowIndex + 1} 行？此操作不可撤销。",
-                "确认删除", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                "确认删除", AlertType.Warning);
             if (result != DialogResult.Yes) return;
 
             // 取消排序
@@ -4164,9 +4168,9 @@ namespace wxd.files.winforms
             if (!_hasUnsavedChanges) return true;
 
             // 仍失败 → 弹窗让用户决定
-            var result = MessageBox.Show(
-                $"文件被占用无法保存，{_unsavedRowIndices.Count} 行修改仅保留在内存中。\n关闭后修改将丢失，是否继续？",
-                "⚠ 保存失败", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            var result = AlertForm.Show(null,
+                $"文件被占用无法保存，{_unsavedRowIndices.Count} 行修改仅保留在内存中。" + GlobalConst.NewLine + "关闭后修改将丢失，是否继续？",
+                "保存失败", AlertType.Warning);
             return result == DialogResult.Yes;
         }
 

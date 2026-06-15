@@ -497,7 +497,7 @@ namespace wxd.files.winforms
             {
                 this.Invoke(() =>
                 {
-                    MessageBox.Show(this, $"加载文件失败:\n{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    AlertForm.Show(this, $"加载文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
                 });
             }
         }

@@ -243,8 +243,7 @@ namespace wxd.files.winforms
                 sb.AppendLine($"{d.Value}\t{d.Count}\t{rowNums}");
             }
             Clipboard.SetText(sb.ToString());
-            MessageBox.Show(this, "已复制到剪贴板", "提示",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            AlertForm.Show(this, "已复制到剪贴板", "提示", AlertType.Information);
         }
     }
 }
