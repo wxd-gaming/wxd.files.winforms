@@ -776,27 +776,6 @@ namespace wxd.files.winforms
             _dataGrid.ColumnHeadersVisible = false;
             _dataGrid.CellMouseDown += OnGridCellMouseDown;
 
-            // ==================== 行编辑模式：点击其他行自动退出编辑 ====================
-            _dataGrid.SelectionChanged += (s, e) =>
-            {
-                if (_editingRowIndex < 0) return;
-                if (_enteringEditMode) return;
-
-                // 如果当前选中行不是编辑行，则提交退出编辑
-                if (_dataGrid.CurrentRow != null && _dataGrid.CurrentRow.Index != _editingRowIndex)
-                {
-                    _enteringEditMode = true;
-                    try
-                    {
-                        // 使用 CancelEdit 而非 EndEdit，避免触发 OnCellEndEdit 中的 CurrentCell 跳转（防止重入）
-                        if (_dataGrid.IsCurrentCellInEditMode)
-                            _dataGrid.CancelEdit();
-                        ExitRowEditMode(commit: true);
-                    }
-                    finally { _enteringEditMode = false; }
-                }
-            };
-
             _dataGrid.Scroll += (s, e) =>
             {
                 if (_syncingScroll) return;
@@ -885,6 +864,19 @@ namespace wxd.files.winforms
                     e.Handled = true;
                     e.SuppressKeyPress = true;
                     DeleteRowAt(origIdx);
+                }
+            };
+
+            // 阻止编辑模式下方向键跳格（通过 PreviewKeyDown 在 DataGridView.ProcessDialogKey 之前拦截）
+            _dataGrid.EditingControlShowing += (s, ev) =>
+            {
+                if (ev.Control is TextBox tb)
+                {
+                    tb.KeyDown -= OnEditTextBoxKeyDown;
+                    tb.KeyDown += OnEditTextBoxKeyDown;
+                    // PreviewKeyDown 在 ProcessDialogKey 之前触发，可阻止 DataGridView 的导航
+                    tb.PreviewKeyDown -= OnEditTextBoxPreviewKeyDown;
+                    tb.PreviewKeyDown += OnEditTextBoxPreviewKeyDown;
                 }
             };
 
@@ -2577,17 +2569,27 @@ namespace wxd.files.winforms
                         // 延迟执行时再次校验：编辑行未变且行仍有效
                         if (_editingRowIndex == nextRow && nextRow < _dataGrid.Rows.Count)
                         {
-                            // 检查 CurrentCell 是否已经被用户（Tab/鼠标）移到了目标位置
+                            // 如果 CurrentCell 已被用户（鼠标点击）移到了其他位置，不再强制跳转
+                            if (_dataGrid.CurrentCell != null
+                                && (_dataGrid.CurrentCell.RowIndex != nextRow
+                                    || _dataGrid.CurrentCell.ColumnIndex != nextCol))
+                            {
+                                // 用户已主动选择了其他单元格，只尝试进入编辑模式
+                                if (_dataGrid.CurrentCell.RowIndex == nextRow)
+                                    _dataGrid.BeginEdit(true);
+                                return;
+                            }
+
+                            // CurrentCell 在预期位置（Tab/Enter 导航），进入编辑模式
                             if (_dataGrid.CurrentCell != null
                                 && _dataGrid.CurrentCell.RowIndex == nextRow
                                 && _dataGrid.CurrentCell.ColumnIndex == nextCol)
                             {
-                                // DataGridView 已经移到了目标列，只需进入编辑模式
                                 _dataGrid.BeginEdit(true);
                             }
                             else
                             {
-                                // CurrentCell 不在预期位置（如按 Enter 结束编辑），需要手动跳转
+                                // 手动跳转到下一列
                                 _enteringEditMode = true;
                                 try
                                 {
@@ -2908,7 +2910,7 @@ namespace wxd.files.winforms
 
             // ==================== 编辑行菜单 ====================
             var editRowItem = new ToolStripMenuItem(_editingRowIndex >= 0 ? "退出行编辑" : "编辑行");
-            if (_isEmbeddedMode) { editRowItem.Enabled = false; }
+            if (_isEmbeddedMode || _isEditLocked) { editRowItem.Enabled = false; }
             else
             {
                 int targetRow = e.RowIndex;
@@ -3672,8 +3674,9 @@ namespace wxd.files.winforms
                         _editingRowOrigIndex = displayRowIndex + _frozenRows;
                 }
 
-                // 临时解除只读
+                // 临时解除只读 + 切换 EditMode 为 EditProgrammatically 阻止方向键导航
                 _dataGrid.ReadOnly = false;
+                _dataGrid.EditMode = DataGridViewEditMode.EditProgrammatically;
 
                 // 刷新行高亮
                 _dataGrid.InvalidateRow(displayRowIndex);
@@ -3711,8 +3714,9 @@ namespace wxd.files.winforms
                 bool wasNewRow = _isNewRowForEdit;
                 _isNewRowForEdit = false;
 
-                // 恢复只读
+                // 恢复只读 + 恢复 EditMode
                 _dataGrid.ReadOnly = true;
+                _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
 
                 // 暂不清理 _modifiedCellsInEdit，保存成功后再清理（保存失败时保留红色标记）
 
@@ -3809,8 +3813,9 @@ namespace wxd.files.winforms
                 _editingRowOrigIndex = -1;
                 _isNewRowForEdit = false;
 
-                // 恢复只读
+                // 恢复只读 + 恢复 EditMode
                 _dataGrid.ReadOnly = true;
+                _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
 
                 // 只清除当前行的已修改单元格记录（取消编辑时该行的修改被撤销）
                 if (origIndex >= 0)
@@ -4180,6 +4185,40 @@ namespace wxd.files.winforms
             {
                 _lblInfo.Text = "";
                 _lblInfo.ForeColor = _colorLightTextSecondary;
+            }
+        }
+
+        /// <summary>编辑模式下阻止左右方向键在文本边界时跳格</summary>
+        /// <summary>在 ProcessDialogKey 之前拦截方向键，阻止 DataGridView 导航</summary>
+        private void OnEditTextBoxPreviewKeyDown(object? sender, PreviewKeyDownEventArgs e)
+        {
+            if (_editingRowIndex >= 0)
+            {
+                if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Right
+                    || e.KeyCode == Keys.Up || e.KeyCode == Keys.Down)
+                {
+                    e.IsInputKey = true; // 告诉 DataGridView：这个键由编辑控件自己处理
+                }
+            }
+        }
+
+        /// <summary>编辑模式下阻止方向键跳格</summary>
+        private void OnEditTextBoxKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (sender is not TextBox tb) return;
+
+            // 上下左右方向键一律阻止，防止跳格
+            if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Right
+                || e.KeyCode == Keys.Up || e.KeyCode == Keys.Down)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+
+                // 左右键：在 TextBox 内模拟光标移动（上/下键不模拟，保持原地）
+                if (e.KeyCode == Keys.Left && tb.SelectionStart > 0)
+                    tb.Select(tb.SelectionStart - 1, 0);
+                else if (e.KeyCode == Keys.Right && tb.SelectionStart < tb.Text.Length)
+                    tb.Select(tb.SelectionStart + 1, 0);
             }
         }
 
