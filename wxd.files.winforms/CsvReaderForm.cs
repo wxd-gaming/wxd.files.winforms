@@ -1205,60 +1205,51 @@ namespace wxd.files.winforms
             try
             {
                 var vcsName = _currentVcsType == VcsType.Svn ? "SVN" : "Git";
-                var command = _currentVcsType == VcsType.Svn ? "svn update" : "git pull";
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c cd /d \"{_currentDir}\" && {command}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                };
+                var result = await VersionControlHelper.UpdateAsync(_currentDir, _currentVcsType);
 
-                using var process = System.Diagnostics.Process.Start(psi);
-                if (process == null)
+                if (!result.Started)
                 {
-                    AlertForm.Show(this, $"无法启动 {vcsName} 更新命令。", "错误", AlertType.Error);
+                    AlertForm.Show(this, result.ErrorMessage ?? "更新失败", "错误", AlertType.Error);
                     return;
                 }
 
-                var output = await process.StandardOutput.ReadToEndAsync();
-                var error = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
+                string msg;
+                AlertType alertType;
 
-                if (process.ExitCode != 0)
+                if (result.HasConflicts)
                 {
-                    var errMsg = vcsName + " 更新失败:" + GlobalConst.NewLine + error;
-                    AlertForm.Show(this, errMsg, "更新失败",
-                        AlertType.Warning);
+                    var conflictSummary = string.Join(GlobalConst.NewLine, result.ConflictLines.Take(20));
+                    if (result.ConflictLines.Count > 20)
+                        conflictSummary += $"{GlobalConst.NewLine}... 以及另外 {result.ConflictLines.Count - 20} 行冲突信息";
+
+                    msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.NewLine}请手动解决冲突后提交。{GlobalConst.NewLine}{GlobalConst.NewLine}冲突详情：{GlobalConst.NewLine}{conflictSummary}";
+                    alertType = AlertType.Warning;
+                }
+                else if (result.Success)
+                {
+                    msg = $"{vcsName} 更新成功!{GlobalConst.NewLine}{GlobalConst.NewLine}{result.Output}";
+                    if (result.Output.Length > 2000)
+                        msg = msg.Substring(0, 2000) + $"{GlobalConst.NewLine}{GlobalConst.NewLine}...(输出过长已截断)";
+                    alertType = AlertType.Information;
                 }
                 else
                 {
-                    // 检查是否有冲突
-                    bool hasConflict = output.Contains("C ", StringComparison.Ordinal) ||
-                                       output.Contains("Conflict", StringComparison.OrdinalIgnoreCase);
-
-                    var msg = vcsName + " 更新成功!" + GlobalConst.NewLine + GlobalConst.NewLine + output;
-                    if (output.Length > 2000)
-                        msg = msg.Substring(0, 2000) + GlobalConst.NewLine + GlobalConst.NewLine + "...(输出过长已截断)";
-
-                    if (hasConflict)
-                    {
-                        msg += GlobalConst.NewLine + GlobalConst.NewLine + "检测到文件冲突，请使用解决冲突功能处理。";
-                        _chkShowConflictOnly.Visible = true;
-                    }
-
-                    AlertForm.Show(this, msg, "更新完成",
-                        hasConflict ? AlertType.Warning : AlertType.Information);
-
-                    // 刷新 VCS 状态和文件列表
-                    VcsStatusCache.Invalidate(_currentDir);
-                    await VcsStatusCache.RefreshAsync(_currentDir);
-                    OnRefreshClick(null, EventArgs.Empty);
+                    var errMsg = $"{vcsName} 更新失败:{GlobalConst.NewLine}{result.Error}";
+                    AlertForm.Show(this, errMsg, "更新失败", AlertType.Warning);
+                    return;
                 }
+
+                if (result.HasConflicts)
+                {
+                    _chkShowConflictOnly.Visible = true;
+                }
+
+                AlertForm.Show(this, msg, "更新完成", alertType);
+
+                // 刷新 VCS 状态和文件列表
+                VcsStatusCache.Invalidate(_currentDir);
+                await VcsStatusCache.RefreshAsync(_currentDir);
+                OnRefreshClick(null, EventArgs.Empty);
             }
             catch (Exception ex)
             {

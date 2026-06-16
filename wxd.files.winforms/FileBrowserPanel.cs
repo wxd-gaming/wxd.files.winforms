@@ -1248,75 +1248,54 @@ namespace wxd.files.winforms
 
             try
             {
-                var psi = new ProcessStartInfo
+                var vcsType = VersionControlHelper.DetectVcs(_currentDir);
+                if (vcsType == VcsType.None)
                 {
-                    FileName = "svn",
-                    Arguments = $"update \"{_currentDir}\" --non-interactive",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                // 在后台线程执行 SVN 进程，避免阻塞 UI
-                var result = await Task.Run(() =>
-                {
-                    using var process = Process.Start(psi);
-                    if (process == null)
-                        return (ExitCode: -1, Output: "", Error: "无法启动进程");
-
-                    var output = process.StandardOutput.ReadToEnd();
-                    var error = process.StandardError.ReadToEnd();
-                    process.WaitForExit();
-                    return (ExitCode: process.ExitCode, Output: output, Error: error);
-                });
-
-                if (result.ExitCode == -1)
-                {
-                    AlertForm.Show(this.FindForm(), "无法启动 SVN 命令行工具（svn.exe），请确保已安装并配置。", "错误", AlertType.Error);
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(), "当前目录不受版本控制（未检测到 .svn 或 .git 目录）。", "提示", AlertType.Information));
                     return;
                 }
 
-                // 检测冲突：SVN 冲突输出通常包含 "Conflict" 关键字或行首 "C " 标记
-                var combined = result.Output + GlobalConst.Lf + result.Error;
-                var conflictLines = combined
-                    .Split(new[] { GlobalConst.Lf }, StringSplitOptions.RemoveEmptyEntries)
-                    .Where(line => line.TrimStart().StartsWith("C ") ||
-                                   line.Contains("Conflict discovered") ||
-                                   line.Contains("conflict", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+                var result = await VersionControlHelper.UpdateAsync(_currentDir, vcsType);
 
+                if (!result.Started)
+                {
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(), result.ErrorMessage ?? "更新失败", "错误", AlertType.Error));
+                    return;
+                }
+
+                var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
                 string msg;
                 AlertType alertType;
 
-                if (conflictLines.Count > 0)
+                if (result.HasConflicts)
                 {
-                    var conflictSummary = string.Join(GlobalConst.Lf, conflictLines.Take(20));
-                    if (conflictLines.Count > 20)
-                        conflictSummary += $"{GlobalConst.Lf}... 以及另外 {conflictLines.Count - 20} 行冲突信息";
+                    var conflictSummary = string.Join(GlobalConst.Lf, result.ConflictLines.Take(20));
+                    if (result.ConflictLines.Count > 20)
+                        conflictSummary += $"{GlobalConst.Lf}... 以及另外 {result.ConflictLines.Count - 20} 行冲突信息";
 
-                    msg = $"SVN 更新完成，但检测到 {conflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
+                    msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
                     alertType = AlertType.Warning;
                 }
-                else if (result.ExitCode == 0)
+                else if (result.Success)
                 {
-                    msg = $"SVN 更新完成。{GlobalConst.Lf}{result.Output}";
+                    msg = $"{vcsName} 更新完成。{GlobalConst.Lf}{result.Output}";
                     alertType = AlertType.Information;
                 }
                 else
                 {
-                    msg = $"SVN 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}";
+                    msg = $"{vcsName} 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}";
                     alertType = AlertType.Error;
                 }
 
-                // 回到 UI 线程弹窗
                 this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), msg, "SVN 更新", alertType));
+                    AlertForm.Show(this.FindForm(), msg, $"{vcsName} 更新", alertType));
             }
             catch (Exception ex)
             {
                 this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
+                    AlertForm.Show(this.FindForm(), $"更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
             }
         }
 

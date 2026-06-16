@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -522,6 +522,156 @@ namespace wxd.files.winforms
                 try { File.Delete(tempFile); } catch { }
                 return result;
             }
+        }
+
+        /// <summary>VCS 更新结果</summary>
+        public class VcsUpdateResult
+        {
+            /// <summary>是否成功启动进程</summary>
+            public bool Started { get; set; }
+
+            /// <summary>进程退出码（-1 表示未启动）</summary>
+            public int ExitCode { get; set; } = -1;
+
+            /// <summary>标准输出</summary>
+            public string Output { get; set; } = "";
+
+            /// <summary>错误输出</summary>
+            public string Error { get; set; } = "";
+
+            /// <summary>错误消息（工具不可用时设置）</summary>
+            public string? ErrorMessage { get; set; }
+
+            /// <summary>检测到的冲突行列表</summary>
+            public List<string> ConflictLines { get; set; } = new();
+
+            /// <summary>是否有冲突</summary>
+            public bool HasConflicts => ConflictLines.Count > 0;
+
+            /// <summary>是否成功完成（ExitCode == 0）</summary>
+            public bool Success => ExitCode == 0;
+        }
+
+        /// <summary>执行 VCS 更新操作（SVN update 或 Git pull）</summary>
+        /// <param name="directory">要更新的目录路径</param>
+        /// <param name="vcs">版本控制类型（Svn 或 Git）</param>
+        /// <returns>更新结果</returns>
+        public static async Task<VcsUpdateResult> UpdateAsync(string directory, VcsType vcs)
+        {
+            var result = new VcsUpdateResult();
+
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            {
+                result.ErrorMessage = "指定的目录不存在。";
+                return result;
+            }
+
+            try
+            {
+                if (vcs == VcsType.Svn)
+                {
+                    var svnExe = FindSvnExe();
+                    if (svnExe == null)
+                    {
+                        result.ErrorMessage = "未找到 SVN 命令行工具（svn.exe）。请安装 TortoiseSVN（需勾选命令行工具）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
+                        return result;
+                    }
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = svnExe,
+                        Arguments = $"update \"{directory}\" --non-interactive",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8
+                    };
+
+                    using var process = Process.Start(psi);
+                    if (process == null)
+                    {
+                        result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）。";
+                        return result;
+                    }
+
+                    var output = await process.StandardOutput.ReadToEndAsync();
+                    var error = await process.StandardError.ReadToEndAsync();
+                    await process.WaitForExitAsync();
+
+                    result.Started = true;
+                    result.ExitCode = process.ExitCode;
+                    result.Output = output;
+                    result.Error = error;
+                }
+                else if (vcs == VcsType.Git)
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "git",
+                        Arguments = $"pull",
+                        WorkingDirectory = directory,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8
+                    };
+
+                    using var process = Process.Start(psi);
+                    if (process == null)
+                    {
+                        result.ErrorMessage = "无法启动 Git 进程。";
+                        return result;
+                    }
+
+                    var output = await process.StandardOutput.ReadToEndAsync();
+                    var error = await process.StandardError.ReadToEndAsync();
+                    await process.WaitForExitAsync();
+
+                    result.Started = true;
+                    result.ExitCode = process.ExitCode;
+                    result.Output = output;
+                    result.Error = error;
+                }
+                else
+                {
+                    result.ErrorMessage = "不支持的版本控制类型。";
+                    return result;
+                }
+
+                // 检测冲突
+                if (result.Started)
+                {
+                    var combined = result.Output + GlobalConst.Lf + result.Error;
+                    result.ConflictLines = combined
+                        .Split(new[] { GlobalConst.Lf, GlobalConst.Cr }, StringSplitOptions.RemoveEmptyEntries)
+                        .Where(line => line.TrimStart().StartsWith("C ") ||
+                                       line.Contains("Conflict discovered") ||
+                                       line.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                var toolName = vcs == VcsType.Svn ? "SVN" : "Git";
+                var installTip = vcs == VcsType.Svn
+                    ? "请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。"
+                    : "请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
+                result.ErrorMessage = $"本功能需要安装 {toolName} 命令行工具。{installTip}";
+            }
+            catch (DirectoryNotFoundException)
+            {
+                result.ErrorMessage = "目录不存在，可能已被移动或删除。";
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = $"更新操作异常：{ex.Message}";
+            }
+
+            return result;
         }
     }
 }
