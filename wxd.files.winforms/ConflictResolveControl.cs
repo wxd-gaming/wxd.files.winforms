@@ -7,6 +7,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ExcelDataReader;
@@ -71,6 +72,9 @@ namespace wxd.files.winforms
         private HashSet<int> _selectedLocalRows = new();
         private (int row, int col)? _selectedRemoteCell;
         private (int row, int col)? _selectedLocalCell;
+
+        // ==================== 滚动同步 ====================
+        private bool _syncingScroll = false;
 
         // ==================== 配色 ====================
         private static readonly Color _colorSurface = Color.White;
@@ -292,8 +296,9 @@ namespace wxd.files.winforms
                 HeaderRowIndex = _headerRowIndex,
                 UniqueColumnIndex = _uniqueColumnIndex,
                 MappingRowIndex = _mappingRowIndex,
+                ContextMenuMode = ContextMenuMode.None,  // 统一冲突解决模式右键菜单
+                SkipAutoLoad = true,
                 ShowMinimalUI = true,
-                ContextMenuMode = ContextMenuMode.None,  // 合并视图禁用右键菜单
             };
             _mergedView = new TableBrowserControl(mergedOptions) { Dock = DockStyle.Fill };
             _mergedView.GetDataGridView().CellFormatting += OnMergedCellFormatting;
@@ -403,7 +408,8 @@ namespace wxd.files.winforms
                     HeaderRowIndex = _headerRowIndex,
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
-                    ContextMenuMode = ContextMenuMode.None,  // 冲突解决模式禁用默认右键菜单
+                    ContextMenuMode = ContextMenuMode.Conflict,  // 统一冲突解决模式右键菜单
+                    ShowMinimalUI = true,
                     SkipAutoLoad = true,                     // 跳过构造函数自动加载，由外部 SetDataTable 注入数据
                 };
                 _remoteView = new TableBrowserControl(options) { Dock = DockStyle.Fill };
@@ -419,7 +425,8 @@ namespace wxd.files.winforms
                     HeaderRowIndex = _headerRowIndex,
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
-                    ContextMenuMode = ContextMenuMode.None,  // 冲突解决模式禁用默认右键菜单
+                    ContextMenuMode = ContextMenuMode.Conflict,  // 统一冲突解决模式右键菜单
+                    ShowMinimalUI = true,
                     SkipAutoLoad = true,                     // 跳过构造函数自动加载，由外部 SetDataTable 注入数据
                 };
                 _localView = new TableBrowserControl(options) { Dock = DockStyle.Fill };
@@ -851,9 +858,10 @@ namespace wxd.files.winforms
                     dgv.RowHeaderMouseClick += OnRemoteRowHeaderClick;
                     dgv.CellMouseClick -= OnRemoteCellClick;
                     dgv.CellMouseClick += OnRemoteCellClick;
-                    dgv.CellMouseDown -= OnConflictGridCellMouseDown;
-                    dgv.CellMouseDown += OnConflictGridCellMouseDown;
                 }
+                // 通过 OnExternalCellMouseDown 统一处理右键菜单（ContextMenuMode.Conflict 模式）
+                _remoteView.OnExternalCellMouseDown -= OnConflictGridCellMouseDown;
+                _remoteView.OnExternalCellMouseDown += OnConflictGridCellMouseDown;
             }
             if (_localView != null)
             {
@@ -864,36 +872,189 @@ namespace wxd.files.winforms
                     dgv.RowHeaderMouseClick += OnLocalRowHeaderClick;
                     dgv.CellMouseClick -= OnLocalCellClick;
                     dgv.CellMouseClick += OnLocalCellClick;
-                    dgv.CellMouseDown -= OnConflictGridCellMouseDown;
-                    dgv.CellMouseDown += OnConflictGridCellMouseDown;
                 }
+                // 通过 OnExternalCellMouseDown 统一处理右键菜单（ContextMenuMode.Conflict 模式）
+                _localView.OnExternalCellMouseDown -= OnConflictGridCellMouseDown;
+                _localView.OnExternalCellMouseDown += OnConflictGridCellMouseDown;
+            }
+
+            // 绑定合并视图右键菜单（通过 OnExternalCellMouseDown）
+            if (_mergedView != null)
+            {
+                _mergedView.OnExternalCellMouseDown -= OnConflictGridCellMouseDown;
+                _mergedView.OnExternalCellMouseDown += OnConflictGridCellMouseDown;
+            }
+
+            // 绑定滚动同步
+            SetupSyncScroll();
+        }
+
+        // ==================== 滚动同步（三个视图联动） ====================
+        private void SetupSyncScroll()
+        {
+            var remoteDgv = _remoteView?.GetDataGridView();
+            var localDgv = _localView?.GetDataGridView();
+            var mergedDgv = _mergedView?.GetDataGridView();
+
+            // 先移除再注册，防止重复注册
+            if (remoteDgv != null)
+            {
+                remoteDgv.Scroll -= OnRemoteGridScroll;
+                remoteDgv.Scroll += OnRemoteGridScroll;
+            }
+            if (localDgv != null)
+            {
+                localDgv.Scroll -= OnLocalGridScroll;
+                localDgv.Scroll += OnLocalGridScroll;
+            }
+            if (mergedDgv != null)
+            {
+                mergedDgv.Scroll -= OnMergedGridScroll;
+                mergedDgv.Scroll += OnMergedGridScroll;
             }
         }
 
-        // ==================== 右键菜单（冲突解决模式） ====================
+        /// <summary>将 sourceDgv 的滚动状态同步到其他两个 DataGridView</summary>
+        private void SyncScrollToOthers(DataGridView sourceDgv, ScrollEventArgs e)
+        {
+            var remoteDgv = _remoteView?.GetDataGridView();
+            var localDgv = _localView?.GetDataGridView();
+            var mergedDgv = _mergedView?.GetDataGridView();
+
+            var targets = new[]
+            {
+                (dgv: remoteDgv, isRemote: true),
+                (dgv: localDgv, isRemote: false),
+                (dgv: mergedDgv, isRemote: false)
+            };
+
+            _syncingScroll = true;
+            try
+            {
+                foreach (var (dgv, _) in targets)
+                {
+                    if (dgv == null || dgv == sourceDgv) continue;
+
+                    if (e.ScrollOrientation == ScrollOrientation.VerticalScroll)
+                    {
+                        // 垂直滚动：仅远程和本地视图行数对齐（通过 BuildAlignedTables），同步有意义
+                        // 合并视图行数可能不同，不同步垂直滚动
+                        if (dgv == remoteDgv || dgv == localDgv)
+                        {
+                            int idx = sourceDgv.FirstDisplayedScrollingRowIndex;
+                            if (dgv.RowCount > 0)
+                                dgv.FirstDisplayedScrollingRowIndex = Math.Min(idx, dgv.RowCount - 1);
+                        }
+                    }
+                    else if (e.ScrollOrientation == ScrollOrientation.HorizontalScroll)
+                    {
+                        // 水平滚动：三个表列结构基本一致，全部同步
+                        dgv.HorizontalScrollingOffset = sourceDgv.HorizontalScrollingOffset;
+                    }
+                }
+            }
+            finally
+            {
+                _syncingScroll = false;
+            }
+        }
+
+        private void OnRemoteGridScroll(object? sender, ScrollEventArgs e)
+        {
+            if (_syncingScroll) return;
+            var dgv = _remoteView?.GetDataGridView();
+            if (dgv == null) return;
+            SyncScrollToOthers(dgv, e);
+        }
+
+        private void OnLocalGridScroll(object? sender, ScrollEventArgs e)
+        {
+            if (_syncingScroll) return;
+            var dgv = _localView?.GetDataGridView();
+            if (dgv == null) return;
+            SyncScrollToOthers(dgv, e);
+        }
+
+        private void OnMergedGridScroll(object? sender, ScrollEventArgs e)
+        {
+            if (_syncingScroll) return;
+            var dgv = _mergedView?.GetDataGridView();
+            if (dgv == null) return;
+            SyncScrollToOthers(dgv, e);
+        }
+
+        // ==================== 右键菜单（冲突解决模式，统一处理远程/本地/合并视图） ====================
         private void OnConflictGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             if (sender is not DataGridView dgv) return;
 
             bool isRemote = dgv == _remoteView?.GetDataGridView();
-            var rowProps = isRemote ? _remoteRowProps : _localRowProps;
-            var rowMap = isRemote ? _remoteRowToOriginal : _localRowToOriginal;
+            bool isLocal = dgv == _localView?.GetDataGridView();
+            bool isMerged = dgv == _mergedView?.GetDataGridView();
 
-            if (e.RowIndex >= rowProps.Count) return;
-            if (e.RowIndex >= rowMap.Count) return;
-            if (rowProps[e.RowIndex].isBlankRow) return;
+            if (isRemote || isLocal)
+            {
+                // === 远程/本地视图右键菜单 ===
+                var rowProps = isRemote ? _remoteRowProps : _localRowProps;
+                var rowMap = isRemote ? _remoteRowToOriginal : _localRowToOriginal;
 
-            int originalRow = rowMap[e.RowIndex];
-            if (originalRow < _frozenRows && originalRow >= 0) return;
+                if (e.RowIndex >= rowProps.Count) return;
+                if (e.RowIndex >= rowMap.Count) return;
+                if (rowProps[e.RowIndex].isBlankRow) return;
 
-            // 选中该行/单元格
-            if (isRemote)
-                OnRemoteCellClick(sender, e);
-            else
-                OnLocalCellClick(sender, e);
+                int originalRow = rowMap[e.RowIndex];
+                if (originalRow < _frozenRows && originalRow >= 0) return;
 
-            ShowConflictContextMenu(dgv, isRemote, originalRow, e.ColumnIndex);
+                // 选中该行/单元格
+                if (isRemote)
+                    OnRemoteCellClick(sender, e);
+                else
+                    OnLocalCellClick(sender, e);
+
+                ShowConflictContextMenu(dgv, isRemote, originalRow, e.ColumnIndex);
+            }
+            else if (isMerged)
+            {
+                // === 合并视图右键菜单（编辑操作） ===
+                ShowMergedContextMenu(dgv, e.RowIndex, e.ColumnIndex);
+            }
+        }
+
+        private void ShowMergedContextMenu(DataGridView dgv, int rowIndex, int colIndex)
+        {
+            var cellValue = dgv.Rows[rowIndex].Cells[colIndex].Value?.ToString() ?? "";
+            var cms = new ContextMenuStrip();
+            cms.Font = new Font("Microsoft YaHei UI", 9f);
+
+            var copyItem = new ToolStripMenuItem("复制");
+            copyItem.Click += (s, ev) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
+            cms.Items.Add(copyItem);
+
+            var editCellItem = new ToolStripMenuItem("编辑单元格");
+            editCellItem.Click += (s, ev) =>
+            {
+                dgv.CurrentCell = dgv.Rows[rowIndex].Cells[colIndex];
+                dgv.BeginEdit(true);
+            };
+            cms.Items.Add(editCellItem);
+
+            cms.Items.Add(new ToolStripSeparator());
+
+            var deleteRowItem = new ToolStripMenuItem("删除行");
+            deleteRowItem.ForeColor = Color.FromArgb(200, 50, 50);
+            deleteRowItem.Click += (s, ev) =>
+            {
+                if (rowIndex >= 0 && rowIndex < _mergedTable.Rows.Count)
+                {
+                    _mergedTable.Rows.RemoveAt(rowIndex);
+                    RefreshMergedView();
+                    _lblInfo.Text = $"已从合并结果中删除行 {rowIndex + 1}";
+                }
+            };
+            cms.Items.Add(deleteRowItem);
+
+            cms.Show(dgv, dgv.PointToClient(Cursor.Position));
         }
 
         private void ShowConflictContextMenu(DataGridView dgv, bool isRemote, int originalRow, int colIndex)
@@ -1545,7 +1706,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 保存 ====================
-        private void SaveMergedResult()
+        private async void SaveMergedResult()
         {
             try
             {
@@ -1555,15 +1716,79 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                string backupPath = _filePath + ".bak";
+                // 备份到 %temp%/wxd-bak/ 目录，带版本号
+                string backupPath = "";
                 try
                 {
                     if (File.Exists(_filePath))
+                    {
+                        var bakDir = Path.Combine(Path.GetTempPath(), "wxd-bak");
+                        Directory.CreateDirectory(bakDir);
+                        var fileName = Path.GetFileNameWithoutExtension(_filePath);
+                        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+                        // 获取 SVN/Git 版本号
+                        string vcsRevision = "";
+                        try
+                        {
+                            var rootDir = Path.GetDirectoryName(_filePath) ?? "";
+                            if (_vcsType == VcsType.Svn)
+                            {
+                                var psi = new ProcessStartInfo
+                                {
+                                    FileName = "svn",
+                                    Arguments = $"info --show-item revision \"{rootDir}\"",
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true
+                                };
+                                using var proc = Process.Start(psi);
+                                if (proc != null)
+                                {
+                                    vcsRevision = (await proc.StandardOutput.ReadToEndAsync()).Trim();
+                                    await proc.WaitForExitAsync();
+                                }
+                            }
+                            else if (_vcsType == VcsType.Git)
+                            {
+                                var psi = new ProcessStartInfo
+                                {
+                                    FileName = "git",
+                                    Arguments = $"rev-parse --short HEAD",
+                                    WorkingDirectory = rootDir,
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true
+                                };
+                                using var proc = Process.Start(psi);
+                                if (proc != null)
+                                {
+                                    vcsRevision = (await proc.StandardOutput.ReadToEndAsync()).Trim();
+                                    await proc.WaitForExitAsync();
+                                }
+                            }
+                        }
+                        catch { }
+
+                        var revisionTag = string.IsNullOrEmpty(vcsRevision) ? "" : $"_{vcsRevision}";
+
+                        backupPath = Path.Combine(bakDir, $"{fileName}_backup{revisionTag}_{timestamp}.bak");
                         File.Copy(_filePath, backupPath, true);
+                    }
                 }
                 catch { }
 
-                SaveDataTableToCsv(_mergedTable, _filePath);
+                // 删除原文件（备份已完成），确保新文件可以覆盖写入
+                try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { }
+
+                // 根据文件扩展名选择保存格式
+                var ext = Path.GetExtension(_filePath).ToLowerInvariant();
+                if (ext == ".xlsx" || ext == ".xls")
+                    SaveDataTableToExcel(_mergedTable, _filePath);
+                else
+                    SaveDataTableToCsv(_mergedTable, _filePath);
 
                 // 清除 VCS 冲突标记
                 try
@@ -1572,8 +1797,9 @@ namespace wxd.files.winforms
                 }
                 catch { }
 
-                _lblInfo.Text = $"已保存到 {Path.GetFileName(_filePath)} (备份: {Path.GetFileName(backupPath)})";
-                AlertForm.Show(ParentForm, "合并结果已保存。" + GlobalConst.NewLine + "原文件已备份为 .bak 文件。", "保存成功", AlertType.Information);
+                var backupInfo = string.IsNullOrEmpty(backupPath) ? "" : $" (备份: {Path.GetFileName(backupPath)})";
+                _lblInfo.Text = $"已保存到 {Path.GetFileName(_filePath)}{backupInfo}";
+                AlertForm.Show(ParentForm, "合并结果已保存。" + GlobalConst.NewLine + "原文件已备份到 wxd-bak 临时文件夹。", "保存成功", AlertType.Information);
 
                 // 触发保存完成事件
                 SaveCompleted?.Invoke(this, EventArgs.Empty);

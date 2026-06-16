@@ -2880,6 +2880,13 @@ namespace wxd.files.winforms
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             if (_contextMenuMode == ContextMenuMode.None) return;
 
+            // ★ Conflict 模式：转发给外部事件处理器（如冲突解决的右键菜单）
+            if (_contextMenuMode == ContextMenuMode.Conflict)
+            {
+                OnExternalCellMouseDown?.Invoke(sender, e);
+                return;
+            }
+
             int adjCol = e.ColumnIndex;
             // ★ 不再需要 __RowNum__ 偏移
             int origCol = adjCol;
@@ -3620,6 +3627,9 @@ namespace wxd.files.winforms
 
         /// <summary>供外部（版本对比等）移除的 CellFormatting 事件占位</summary>
         internal event DataGridViewCellFormattingEventHandler? OnExternalCellFormatting;
+
+        /// <summary>供外部（冲突解决等）使用的 CellMouseDown 事件占位。当 ContextMenuMode.Conflict 时触发。</summary>
+        internal event DataGridViewCellMouseEventHandler? OnExternalCellMouseDown;
 
         /// <summary>设置外部传入的列可见性状态（版本对比等场景使用）。下次 SetDataTable 调用时会优先使用此状态。</summary>
         public void SetColumnVisibility(bool[]? states)

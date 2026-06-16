@@ -63,7 +63,7 @@ namespace wxd.files.winforms
         // ==================== VCS 操作面板控件 ====================
         private RoundedPanel _pnlVcsActions = new();
         private Button _btnVcsUpdate = new();
-        private Button _btnResolveConflict = new();
+        private CheckBox _chkShowConflictOnly = new();
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -433,23 +433,21 @@ namespace wxd.files.winforms
             };
             _btnVcsUpdate.Click += OnVcsUpdateClick;
 
-            _btnResolveConflict = new Button
+            _chkShowConflictOnly = new CheckBox
             {
-                Text = "⚠️ 解决冲突",
-                Location = new Point(116, 4),
-                Size = new Size(100, 28),
+                Text = "仅显示冲突",
+                Location = new Point(116, 6),
+                Size = new Size(100, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(239, 68, 68),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(200, 50, 50), MouseOverBackColor = Color.FromArgb(200, 50, 50) }
+                Checked = false,
+                AutoCheck = false
             };
-            _btnResolveConflict.Click += OnResolveConflictClick;
+            _chkShowConflictOnly.Click += OnShowConflictOnlyClick;
 
             _pnlVcsActions.Controls.Add(_btnVcsUpdate);
-            _pnlVcsActions.Controls.Add(_btnResolveConflict);
+            _pnlVcsActions.Controls.Add(_chkShowConflictOnly);
 
             _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer, _pnlVcsActions });
 
@@ -589,9 +587,9 @@ namespace wxd.files.winforms
 
                 // VCS 操作面板自适应宽度
                 _pnlVcsActions.Width = Math.Max(180, w);
-                // 更新按钮和解决冲突按钮在容器内部靠左布局
+                // 更新按钮和冲突复选框在容器内部靠左布局
                 _btnVcsUpdate.Location = new Point(8, 4);
-                _btnResolveConflict.Location = new Point(_btnVcsUpdate.Right + 8, 4);
+                _chkShowConflictOnly.Location = new Point(_btnVcsUpdate.Right + 8, 5);
             };
 
             ResumeLayout(false);
@@ -830,8 +828,7 @@ namespace wxd.files.winforms
             if (_showConflictOnly)
             {
                 _showConflictOnly = false;
-                _btnResolveConflict.Text = "⚠️ 解决冲突";
-                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+                _chkShowConflictOnly.Checked = false;
             }
 
             using var dialog = new FolderBrowserDialog
@@ -934,7 +931,7 @@ namespace wxd.files.winforms
 
             // 检测是否有冲突文件
             bool hasConflictedFiles = status.FileStatuses.Values.Any(fs => fs == FileVcsStatus.Conflicted);
-            _btnResolveConflict.Visible = hasConflictedFiles || _showConflictOnly;
+            _chkShowConflictOnly.Visible = hasConflictedFiles || _showConflictOnly;
 
             // 如果在冲突过滤模式，刷新冲突列表
             if (_showConflictOnly && string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
@@ -1060,8 +1057,7 @@ namespace wxd.files.winforms
             if (_showConflictOnly)
             {
                 _showConflictOnly = false;
-                _btnResolveConflict.Text = "⚠️ 解决冲突";
-                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+                _chkShowConflictOnly.Checked = false;
             }
             if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
             {
@@ -1252,7 +1248,7 @@ namespace wxd.files.winforms
                     if (hasConflict)
                     {
                         msg += GlobalConst.NewLine + GlobalConst.NewLine + "检测到文件冲突，请使用解决冲突功能处理。";
-                        _btnResolveConflict.Visible = true;
+                        _chkShowConflictOnly.Visible = true;
                     }
 
                     AlertForm.Show(this, msg, "更新完成",
@@ -1275,8 +1271,8 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>点击"解决冲突"按钮 — 切换冲突过滤模式</summary>
-        private async void OnResolveConflictClick(object? sender, EventArgs e)
+        /// <summary>点击"仅显示冲突"复选框 — 切换冲突过滤模式</summary>
+        private async void OnShowConflictOnlyClick(object? sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(_currentDir) || _currentVcsType == VcsType.None)
             {
@@ -1285,12 +1281,12 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // 如果已在冲突模式，退出
+            // 切换状态
             if (_showConflictOnly)
             {
+                // 退出冲突模式
                 _showConflictOnly = false;
-                _btnResolveConflict.Text = "⚠️ 解决冲突";
-                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
+                _chkShowConflictOnly.Checked = false;
                 _txtFileFilter.Text = "";
                 ApplyFileFilter();
                 return;
@@ -1298,7 +1294,6 @@ namespace wxd.files.winforms
 
             // 进入冲突模式：检查是否有冲突文件
             bool hasConflicted = false;
-            var conflictedFiles = new List<string>();
 
             foreach (var file in _allFiles)
             {
@@ -1306,7 +1301,7 @@ namespace wxd.files.winforms
                 if (status == FileVcsStatus.Conflicted)
                 {
                     hasConflicted = true;
-                    conflictedFiles.Add(file.FullPath);
+                    break;
                 }
             }
 
@@ -1318,16 +1313,9 @@ namespace wxd.files.winforms
             }
 
             _showConflictOnly = true;
-            _btnResolveConflict.Text = "退出冲突模式";
-            _btnResolveConflict.BackColor = Color.FromArgb(100, 160, 100);
+            _chkShowConflictOnly.Checked = true;
             _txtFileFilter.Text = "";
             ApplyFileFilter();
-
-            // 如果有冲突文件，自动打开第一个冲突文件的冲突解决页签
-            if (conflictedFiles.Count > 0)
-            {
-                await OpenConflictResolveInTab(conflictedFiles[0]);
-            }
         }
 
         // ==================== 在 TabPage 中打开冲突解决面板 ====================
@@ -1788,20 +1776,19 @@ namespace wxd.files.winforms
             // 只响应左键点击，右键由 OnTreeViewMouseDown 处理
             if (e.Button != MouseButtons.Left) return;
 
-            // 如果在冲突过滤模式，点击文件时退出冲突模式
-            if (_showConflictOnly)
-            {
-                _showConflictOnly = false;
-                _btnResolveConflict.Text = "⚠️ 解决冲突";
-                _btnResolveConflict.BackColor = Color.FromArgb(239, 68, 68);
-                ApplyFileFilter();
-            }
-
             var fullPath = e.Node.Tag as string ?? "";
             if (System.IO.File.Exists(fullPath))
             {
-                var fileType = DetectFileType(fullPath);
-                OpenFile(fullPath, fileType);
+                if (_showConflictOnly)
+                {
+                    // 冲突模式下点击文件打开冲突解决面板
+                    _ = OpenConflictResolveInTab(fullPath);
+                }
+                else
+                {
+                    var fileType = DetectFileType(fullPath);
+                    OpenFile(fullPath, fileType);
+                }
             }
         }
 
@@ -1813,8 +1800,16 @@ namespace wxd.files.winforms
             var fullPath = e.Node.Tag as string ?? "";
             if (System.IO.File.Exists(fullPath))
             {
-                var fileType = DetectFileType(fullPath);
-                OpenFile(fullPath, fileType);
+                if (_showConflictOnly)
+                {
+                    // 冲突模式下双击打开冲突解决面板
+                    _ = OpenConflictResolveInTab(fullPath);
+                }
+                else
+                {
+                    var fileType = DetectFileType(fullPath);
+                    OpenFile(fullPath, fileType);
+                }
             }
         }
 

@@ -7,6 +7,8 @@ namespace wxd.files.winforms
     {
         /// <summary>默认完整右键菜单（编辑、插入行、删除行、关联等）</summary>
         Normal,
+        /// <summary>冲突解决模式右键菜单（使用此单元格、使用此行、删除此行等）</summary>
+        Conflict,
         /// <summary>禁用右键菜单（由外部事件自行处理）</summary>
         None
     }
