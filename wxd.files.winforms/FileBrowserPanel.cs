@@ -60,6 +60,7 @@ namespace wxd.files.winforms
         private bool _hasUnsavedChanges = false;
         private bool _menuMoreActionsVisible = false;
         private string _savedFilterForCompare = "";
+        private ToolStripMenuItem? _menuVcsUpdateItem;
 
         // ==================== VCS 状态字段 ====================
         private VcsDirectoryStatus? _vcsStatus;
@@ -704,7 +705,9 @@ namespace wxd.files.winforms
             _menuMoreActions = new ContextMenuStrip();
             _menuMoreActions.Items.Add("打开目录", null, OnOpenExplorerClick);
             _menuMoreActions.Items.Add("日志分析", null, OnLogAnalysisClick);
-            _menuMoreActions.Items.Add("SVN更新", null, OnSvnUpdateClick);
+            _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
+            _menuVcsUpdateItem.Enabled = false;
+            _menuMoreActions.Items.Add(_menuVcsUpdateItem);
             _menuMoreActions.Font = new Font("Microsoft YaHei UI", 9f);
 
             // Ԥ��Ⱦ�˵��Ի�ȡ��ȷ�ĸ߶ȣ���һ����ʾǰ Height Ϊ 0��
@@ -975,6 +978,8 @@ namespace wxd.files.winforms
                 }
                 // 异步加载文件列表
                 _ = LoadFileListAsync();
+                // 更新更多按钮菜单中的 VCS 更新项文本
+                UpdateVcsMenuText();
             }
             catch (Exception ex)
             {
@@ -1006,6 +1011,8 @@ namespace wxd.files.winforms
                     _saveDebounceTimer?.Start();
                 }
                 await LoadFileListAsync();
+                // 更新更多按钮菜单中的 VCS 更新项文本
+                UpdateVcsMenuText();
             }
             catch (Exception ex)
             {
@@ -1241,6 +1248,36 @@ namespace wxd.files.winforms
         }
 
         // ==================== SVN更新 ====================
+        /// <summary>根据当前目录的 VCS 类型更新更多按钮菜单中的 VCS 更新项文本和启用状态</summary>
+        private void UpdateVcsMenuText()
+        {
+            if (_menuVcsUpdateItem == null) return;
+
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
+            {
+                _menuVcsUpdateItem.Text = "VCS更新";
+                _menuVcsUpdateItem.Enabled = false;
+                return;
+            }
+
+            var vcsType = VersionControlHelper.DetectVcs(_currentDir);
+            switch (vcsType)
+            {
+                case VcsType.Svn:
+                    _menuVcsUpdateItem.Text = "SVN更新";
+                    _menuVcsUpdateItem.Enabled = true;
+                    break;
+                case VcsType.Git:
+                    _menuVcsUpdateItem.Text = "Git更新";
+                    _menuVcsUpdateItem.Enabled = true;
+                    break;
+                default:
+                    _menuVcsUpdateItem.Text = "VCS更新";
+                    _menuVcsUpdateItem.Enabled = false;
+                    break;
+            }
+        }
+
         private async void OnSvnUpdateClick(object? sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
