@@ -1,4 +1,3 @@
-@@ -1,337 +0,0 @@
 # wxd.files.winforms 开发规范与技能指南
 
 > 本文档供 AI 辅助开发使用，涵盖项目架构、编码规范、新增功能和优化功能的标准流程。
@@ -10,21 +9,30 @@
 ### 1.1 基本信息
 - **项目名称**：wxd.files.winforms
 - **框架**：.NET 10.0 + Windows Forms (WinForms)
-- **语言**：C# (.cs 文件统一 UTF-8 编码)
+- **语言**：C#（所有 `.cs` 文件统一 UTF-8 编码）
 - **解决方案文件**：`wxd.files.winforms.slnx`（新格式）
 - **项目文件**：`wxd.files.winforms/wxd.files.winforms.csproj`
-- **入口点**：`wxd.files.winforms/Program.cs` → `Application.Run(new Form1())`
+- **入口点**：`Program.cs` → `Application.Run(new Form1())`
 - **输出类型**：WinExe（Windows 桌面应用）
-- **版本号**：1.0.0.4
+- **版本号**：1.0.0.0（在 `.csproj` 的 `<Version>` 中定义）
 
 ### 1.2 NuGet 依赖
-- `ExcelDataReader` 3.7.0
-- `ExcelDataReader.DataSet` 3.7.0
+| 包名 | 版本 | 用途 |
+|------|------|------|
+| `ExcelDataReader` | 3.7.0 | 读取 Excel 文件 |
+| `ExcelDataReader.DataSet` | 3.7.0 | Excel DataSet 支持 |
+| `MiniExcel` | 1.37.0 | 轻量级 Excel 读写 |
 
-**注意**：添加新 NuGet 包时，必须同时更新 `wxd.files.winforms.csproj` 中的 `<PackageReference>`。
+**注意**：新增 NuGet 包时必须同步更新 `wxd.files.winforms.csproj` 中的 `<PackageReference>`。
 
 ### 1.3 命名空间
-所有代码统一使用命名空间 `wxd.files.winforms`。
+所有代码统一使用命名空间 `wxd.files.winforms`（文件级命名空间声明：`namespace wxd.files.winforms;`）。
+
+### 1.4 编译与输出
+- `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — 允许不安全代码（Win32 API 交互）
+- `<ImplicitUsings>enable</ImplicitUsings>` — 隐式 using
+- `<Nullable>enable</Nullable>` — 启用可空引用类型
+- `<ApplicationIcon>app.ico</ApplicationIcon>` — 应用图标
 
 ---
 
@@ -32,24 +40,91 @@
 
 ### 2.1 文件与类职责
 
+#### 主窗体与布局
 | 文件 | 核心类 | 职责 |
 |------|--------|------|
-| `Program.cs` | `Program` | 应用程序入口，`[STAThread]` |
-| `Form1.cs` | `Form1 : Form` | **主窗体**：多窗格容器、工具栏、主题切换、Loading动画、布局管理 |
+| `Program.cs` | `Program` | 应用程序入口，`[STAThread]`，全局异常捕获（UI线程/非UI线程/Task） |
+| `Form1.cs` | `Form1 : Form` | 主窗体：多窗格容器、工具栏、主题切换、Loading动画、布局管理 |
 | `Form1.Designer.cs` | (partial) | 设计器生成代码（最小化） |
-| `FileBrowserPanel.cs` | `FileBrowserPanel : UserControl` | **单窗格控件**：文件列表、导航、过滤、右键菜单、F2重命名、视图模式 |
-| `CsvReaderForm.cs` | `CsvReaderForm : Form` | **CSV/Excel阅读器**：文件树+多标签页+表格显示+排序+过滤+列关联 |
+
+#### 文件浏览
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `FileBrowserPanel.cs` | `FileBrowserPanel : UserControl` | 单窗格控件：文件列表、导航、过滤、右键菜单、F2重命名、视图模式 |
+| `FileDataCache.cs` | `FileDataCache` | 文件数据缓存（目录文件列表+图标缓存，支持 VCS 状态） |
+| `VcsStatusCache.cs` | `VcsStatusCache` | VCS（SVN/Git）状态缓存，异步获取文件状态 |
+
+#### CSV/Excel 阅读器
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `CsvReaderForm.cs` | `CsvReaderForm : Form` | CSV/Excel 阅读器：文件树+多标签页+表格显示+排序+过滤+列关联 |
 | `CsvReaderStandaloneForm.cs` | `CsvReaderStandaloneForm : Form` | 独立表格查看窗体（列关联跳转时使用，无文件树） |
-| `CsvSettings.cs` | `CsvSettings` (static) | **全局设置管理**：读/写 `ConfigurationManager` 和 `.wxd-work/config.json` |
-| `LargeFileViewer.cs` | `LargeFileViewer : Form` | **大文件阅读器**：文件列表+多标签页 |
-| `LargeFileReaderControl.cs` | `LargeFileReaderControl : UserControl` | **大文件阅读核心**：流式读取、虚拟滚动、搜索、索引、导出 |
-| `WindowsShellContextMenu.cs` | `WindowsShellContextMenu` (static) | **系统右键菜单**：通过 Shell API 调用原生上下文菜单 |
-| `SimpleShellContextMenu.cs` | `SimpleShellContextMenu` (static) | 简化右键菜单（备用方案） |
-| `CustomCommandManagerForm.cs` | `CustomCommandManagerForm : Form` | 自定义命令管理面板（DataGridView编辑） |
-| `CustomCommandItem.cs` | `CustomCommandItem` | 自定义命令数据模型 |
-| `DirectoryFrozenConfig.cs` | `DirectoryFrozenConfig` | 目录级配置数据模型 |
+| `TableBrowserControl.cs` | `TableBrowserControl : UserControl` | 表格浏览核心控件（双 DataGridView + 列显隐 + 过滤 + 排序 + 右键菜单） |
+| `TableBrowserOptions.cs` | `TableBrowserOptions` | TableBrowserControl 统一配置对象（VO） |
+| `FileTableData.cs` | `FileTableData` / `TableRow` | 通用表格数据模型（CSV/Excel 统一） |
+| `DataGridLinkToolTip.cs` | `DataGridLinkToolTip` | DataGridView 关联字段自定义 tooltip |
+| `CellEditDialog.cs` | `CellEditDialog : Form` | 单元格编辑弹窗（支持大文本编辑） |
+
+#### 列关联系统
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
 | `ColumnLinkConfig.cs` | `ColumnLinkConfig` | 列关联配置数据模型（支持值提取） |
 | `ColumnLinkChecker.cs` | `ColumnLinkChecker` (static) | 列关联颜色检查器（跨文件单元格高亮） |
+| `ColumnLinkChecker_SimpleCsv.cs` | (partial) | 简化 CSV 列关联检查扩展 |
+| `ColumnLinkSetupDialog.cs` | `ColumnLinkSetupDialog : Form` | 列关联设置对话框 |
+| `ColumnManagerDialog.cs` | `ColumnManagerDialog : Form` | 列管理对话框（列显隐 + 顺序调整） |
+| `LinkTableSelectorDialog.cs` | `LinkTableSelectorDialog : Form` | 关联表选择对话框 |
+| `TargetColumnSelectDialog.cs` | `TargetColumnSelectDialog : Form` | 目标列选择对话框 |
+
+#### 版本对比系统
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `VersionCompareForm.cs` | `VersionCompareForm : Form` | 版本历史对比（差异计算、行列索引映射、双表同步滚动） |
+| `VersionControlHelper.cs` | `VersionControlHelper` (static) | VCS（SVN/Git）命令行封装 |
+| `VersionHistoryEntry.cs` | `VersionHistoryEntry` | 版本历史记录数据模型 |
+| `ConflictResolveControl.cs` | `ConflictResolveControl : UserControl` | 冲突解决控件（合并编辑器） |
+| `DuplicateDetailForm.cs` | `DuplicateDetailForm : Form` | 重复数据详情查看窗体 |
+
+#### 大文件阅读器
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `LargeFileViewer.cs` | `LargeFileViewer : Form` | 大文件阅读器：文件列表+多标签页 |
+| `LargeFileReaderControl.cs` | `LargeFileReaderControl : UserControl` | 大文件阅读核心：流式读取、虚拟滚动、搜索、索引、导出 |
+
+#### 右键菜单
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `WindowsShellContextMenu.cs` | `WindowsShellContextMenu` (static) | 系统右键菜单：通过 Shell API 调用原生上下文菜单 |
+| `SimpleShellContextMenu.cs` | `SimpleShellContextMenu` (static) | 简化右键菜单（备用方案） |
+
+#### 配置管理
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `CsvSettings.cs` | `CsvSettings` (static) | 全局设置管理：读写 `ConfigurationManager` 和 `.wxd-work/config.json` |
+| `DirectoryFrozenConfig.cs` | `DirectoryFrozenConfig` | 目录级配置数据模型 |
+| `App.config` | — | 应用配置文件（编译后生成 `wxd.files.winforms.dll.config`） |
+
+#### 自定义命令
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `CustomCommandManagerForm.cs` | `CustomCommandManagerForm : Form` | 自定义命令管理面板（DataGridView 编辑） |
+| `CustomCommandItem.cs` | `CustomCommandItem` | 自定义命令数据模型 |
+
+#### 更新系统
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `UpdateForm.cs` | `UpdateForm : Form` | 更新主窗体 |
+| `UpdateHelper.cs` | `UpdateHelper` | 更新辅助类（检查/下载/安装） |
+| `UpdateNotifyForm.cs` | `UpdateNotifyForm : Form` | 更新通知弹窗 |
+
+#### 工具类与辅助
+| 文件 | 核心类 | 职责 |
+|------|--------|------|
+| `AlertForm.cs` | `AlertForm : Form` | 统一弹窗（替代 MessageBox.Show，支持复制+异常输出） |
+| `GlobalConst.cs` | `GlobalConst` (static) | 全局常量（换行符、分隔符），避免硬编码特殊字符 |
+| `NaturalStringComparer.cs` | `NaturalStringComparer` | 自然字符串比较器（数字部分按数值比较） |
+| `HelpForm.cs` | `HelpForm : Form` | 帮助信息窗体 |
+| `ChangelogForm.cs` | `ChangelogForm : Form` | 更新日志窗体 |
 
 ### 2.2 数据流与状态管理
 
@@ -72,7 +147,7 @@
 | 存储位置 | 内容 | 管理类 |
 |----------|------|--------|
 | `wxd.files.winforms.dll.config` | 窗格数量、布局、主题、各窗格目录/过滤/视图、全局冻结行、最近路径、自定义命令 | `CsvSettings` |
-| `{目录}/.wxd-work/config.json` | 该目录的CSV/Excel冻结行、表头行索引、列关联、文件备注 | `CsvSettings` |
+| `{目录}/.wxd-work/config.json` | 该目录的 CSV/Excel 冻结行、表头行索引、列关联、文件备注 | `CsvSettings` |
 
 ---
 
@@ -112,12 +187,14 @@
 ## 四、编码规范
 
 ### 4.1 命名规范
-- **类名**：PascalCase（如 `FileBrowserPanel`、`CsvReaderForm`）
-- **方法名**：PascalCase（如 `NavigateTo`、`ApplyTheme`）
-- **私有字段**：`_camelCase` 前缀下划线（如 `_currentDir`、`_isDark`）
-- **局部变量**：camelCase（如 `panelCount`、`isDark`）
-- **常量**：PascalCase 或 UPPER_SNAKE_CASE（如 `GAP`、`SHGFI_ICON`）
-- **控件**：`_cbo`/`_btn`/`_txt`/`_lst`/`_lbl`/`_pnl`/`_chk` 前缀 + PascalCase
+| 类别 | 格式 | 示例 |
+|------|------|------|
+| 类名 | PascalCase | `FileBrowserPanel`、`CsvReaderForm` |
+| 方法名 | PascalCase | `NavigateTo`、`ApplyTheme` |
+| 私有字段 | `_camelCase` | `_currentDir`、`_isDark` |
+| 局部变量 | camelCase | `panelCount`、`isDark` |
+| 常量 | PascalCase 或 UPPER_SNAKE_CASE | `GAP`、`SHGFI_ICON` |
+| 控件前缀 | `_cbo`/`_btn`/`_txt`/`_lst`/`_lbl`/`_pnl`/`_chk` + PascalCase | `_btnOk`、`_txtFilter` |
 
 ### 4.2 文件编码
 - 所有 `.cs` 文件使用 **UTF-8 编码**
@@ -138,6 +215,18 @@
 - 实现 `Dispose(bool disposing)` 清理托管/非托管资源
 - 定时器在 Dispose 中停止和释放
 - `CancellationTokenSource` 在不再需要时 Cancel 和 Dispose
+
+### 4.6 字符串与换行符
+- **禁止在字符串中直接使用 `\r\n` 或 `\n` 等转义字符**
+- 必须使用 `GlobalConst.NewLine`（`\r\n`）、`GlobalConst.Lf`（`\n`）、`GlobalConst.Cr`（`\r`）替代
+- 使用 `GlobalConst.Tab` 替代 `\t`，`GlobalConst.Space` 替代 `" "`，`GlobalConst.Empty` 替代 `""`
+
+### 4.7 弹窗规范
+- **禁止直接使用 `MessageBox.Show()`**
+- 所有弹窗必须使用 `AlertForm` 系列方法：
+  - `AlertForm.Show(owner, message, title, type, showCopy, exception)` — 通用弹窗
+  - `AlertForm.ShowError(owner, message, title, exception)` — 错误弹窗（自动显示复制按钮）
+  - `AlertForm.ShowException(owner, ex, title)` — 异常弹窗（包含异常信息+复制按钮+输出堆栈）
 
 ---
 
@@ -203,6 +292,7 @@
 - `UnauthorizedAccessException` 静默跳过
 - `ObjectDisposedException` 在异步回调中检查 `IsDisposed`
 - 配置读写失败使用默认值，不影响主流程
+- **全局未捕获异常**由 `Program.cs` 中的 `Application.ThreadException`、`AppDomain.CurrentDomain.UnhandledException`、`TaskScheduler.UnobservedTaskException` 统一捕获并弹窗提示
 
 ---
 
@@ -263,7 +353,51 @@ public void ApplyTheme(bool isDark)
 ```
 
 ### 7.4 自然排序比较器
-参考 `FileBrowserPanel.NaturalSortComparer`：数字部分按数值比较，其余按字符比较。
+参考 `NaturalStringComparer`：数字部分按数值比较，其余按字符串比较（忽略大小写）。
+```csharp
+public class NaturalStringComparer : IComparer<string?>
+{
+    private readonly SortOrder _sortOrder;
+    // 优先尝试 double.TryParse 数值比较，失败则 string.Compare
+}
+```
+
+### 7.5 统一弹窗模式
+```csharp
+// 普通信息
+AlertForm.Show(this, "操作成功", "提示", AlertType.Information);
+
+// 错误（带复制按钮，自动显示堆栈）
+AlertForm.ShowError(this, "文件读取失败", "错误", exception);
+
+// 异常（自动包含堆栈信息）
+AlertForm.ShowException(this, ex, "处理异常");
+```
+
+### 7.6 全局异常捕获模式
+```csharp
+// UI 线程异常
+Application.ThreadException += (sender, e) =>
+{
+    AlertForm.ShowException(null, e.Exception, "UI 线程异常");
+    Environment.Exit(1);
+};
+
+// 非 UI 线程异常
+AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+{
+    if (e.ExceptionObject is Exception ex)
+        AlertForm.ShowException(null, ex, "非 UI 线程未处理异常");
+    Environment.Exit(1);
+};
+
+// Task 未观察异常
+TaskScheduler.UnobservedTaskException += (sender, e) =>
+{
+    AlertForm.ShowException(null, e.Exception, "Task 未处理异常");
+    e.SetObserved();
+};
+```
 
 ---
 
@@ -279,6 +413,9 @@ public void ApplyTheme(bool isDark)
 8. **修改已有代码时优先使用 `replace_in_file`**，避免重写整个文件
 9. **新增 NuGet 包时必须同步更新 `.csproj`**
 10. **所有新建 `.cs` 文件必须是 UTF-8 编码**
+11. **禁止在字符串中直接使用 `\r\n` 或 `\n`**，必须使用 `GlobalConst.NewLine` 等常量
+12. **禁止直接使用 `MessageBox.Show()`**，必须使用 `AlertForm` 系列方法
+13. **禁止在代码中捕获异常后不处理或只写 `Debug.WriteLine`**，必须使用 `AlertForm` 弹窗提示（全局异常由 `Program.cs` 中的事件统一处理）
 
 ---
 
@@ -288,6 +425,7 @@ public void ApplyTheme(bool isDark)
 - 使用 `System.Diagnostics.Trace.WriteLine()` 输出追踪信息
 - 关键路径（右键菜单、保存状态）已预留 Debug 输出
 - 配置文件路径：`ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None)`
+- `AlertForm` 在传入 `exception` 参数时，会自动将完整异常信息输出到 Debug 输出窗口，并追加到弹窗消息文本中显示
 
 ---
 
@@ -295,7 +433,7 @@ public void ApplyTheme(bool isDark)
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
-| 1.0.0.4 | 当前 | 列关联、文件备注、目录级配置、Loading动画、自然排序、视图模式 |
+| 1.0.0.0 | 当前 | 列关联、文件备注、目录级配置、Loading动画、自然排序、视图模式、版本对比、冲突解决、更新系统 |
 
 ---
 
@@ -336,13 +474,3 @@ CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地
 | 版本对比 | `_leftDiffRows` + `_leftRowToOriginalIndex` + `_leftColToOriginalIndex` | 三层索引映射（原始→投影→DGV）、列显隐重建、差异编码 `(row<<16)\|col` |
 
 **修改任何相关代码前，务必先阅读 [skills/CsvReader.md](skills/CsvReader.md)！**
-
-
-## 换行符使用说明
-需要使用换行符文本地方使用GlobalConst类的变量替代不要直接使用在文本内使用\r\n或者\n之类的
-
-## 异常处理
-程序捕获代码异常弹窗或者正常的弹窗提示请使用AlertForm面板进行弹窗
-
-## 需要弹窗提示
-需要使用 MessageBox.Show的地方使用AlertForm面板替代

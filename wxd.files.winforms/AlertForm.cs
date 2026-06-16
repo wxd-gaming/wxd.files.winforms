@@ -40,7 +40,7 @@ namespace wxd.files.winforms
             _showCopy = showCopy;
             _exception = exception;
 
-            // 如果 exception 不为 null，用 StringBuilder 组合后一次性输出到输出窗口
+            // 如果 exception 不为 null，将堆栈信息追加到消息中显示在弹窗，同时输出到输出窗口
             if (exception != null)
             {
                 var sb = new StringBuilder();
@@ -58,6 +58,9 @@ namespace wxd.files.winforms
                 }
                 sb.AppendLine("═══════════════════════════════════════");
                 Debug.Write(sb.ToString());
+
+                // 将堆栈信息追加到弹窗消息文本中，使用方传入了 exception 就自动显示堆栈
+                _message = message + Environment.NewLine + Environment.NewLine + sb.ToString();
             }
 
             Text = title;
