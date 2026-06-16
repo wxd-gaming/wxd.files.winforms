@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -1241,7 +1241,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== SVN更新 ====================
-        private void OnSvnUpdateClick(object? sender, EventArgs e)
+        private async void OnSvnUpdateClick(object? sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
                 return;
@@ -1251,33 +1251,72 @@ namespace wxd.files.winforms
                 var psi = new ProcessStartInfo
                 {
                     FileName = "svn",
-                    Arguments = $"update \"{_currentDir}\"",
+                    Arguments = $"update \"{_currentDir}\" --non-interactive",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
 
-                using var process = Process.Start(psi);
-                if (process == null)
+                // 在后台线程执行 SVN 进程，避免阻塞 UI
+                var result = await Task.Run(() =>
+                {
+                    using var process = Process.Start(psi);
+                    if (process == null)
+                        return (ExitCode: -1, Output: "", Error: "无法启动进程");
+
+                    var output = process.StandardOutput.ReadToEnd();
+                    var error = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+                    return (ExitCode: process.ExitCode, Output: output, Error: error);
+                });
+
+                if (result.ExitCode == -1)
                 {
                     AlertForm.Show(this.FindForm(), "无法启动 SVN 命令行工具（svn.exe），请确保已安装并配置。", "错误", AlertType.Error);
                     return;
                 }
 
-                var output = process.StandardOutput.ReadToEnd();
-                var error = process.StandardError.ReadToEnd();
-                process.WaitForExit();
+                // 检测冲突：SVN 冲突输出通常包含 "Conflict" 关键字或行首 "C " 标记
+                var combined = result.Output + GlobalConst.Lf + result.Error;
+                var conflictLines = combined
+                    .Split(new[] { GlobalConst.Lf }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(line => line.TrimStart().StartsWith("C ") ||
+                                   line.Contains("Conflict discovered") ||
+                                   line.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                var msg = process.ExitCode == 0
-                    ? $"SVN 更新完成。\n{output}"
-                    : $"SVN 更新失败（ExitCode: {process.ExitCode}）\n{error}";
+                string msg;
+                AlertType alertType;
 
-                AlertForm.Show(this.FindForm(), msg, "SVN 更新", AlertType.Information);
+                if (conflictLines.Count > 0)
+                {
+                    var conflictSummary = string.Join(GlobalConst.Lf, conflictLines.Take(20));
+                    if (conflictLines.Count > 20)
+                        conflictSummary += $"{GlobalConst.Lf}... 以及另外 {conflictLines.Count - 20} 行冲突信息";
+
+                    msg = $"SVN 更新完成，但检测到 {conflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
+                    alertType = AlertType.Warning;
+                }
+                else if (result.ExitCode == 0)
+                {
+                    msg = $"SVN 更新完成。{GlobalConst.Lf}{result.Output}";
+                    alertType = AlertType.Information;
+                }
+                else
+                {
+                    msg = $"SVN 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}";
+                    alertType = AlertType.Error;
+                }
+
+                // 回到 UI 线程弹窗
+                this.BeginInvoke(() =>
+                    AlertForm.Show(this.FindForm(), msg, "SVN 更新", alertType));
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                this.BeginInvoke(() =>
+                    AlertForm.Show(this.FindForm(), $"SVN 更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
             }
         }
 
