@@ -1945,14 +1945,14 @@ namespace wxd.files.winforms
                 using var reader = ExcelReaderFactory.CreateReader(fs);
                 var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
                 {
-                    ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
+                    ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = true }
                 });
                 if (dataSet.Tables.Count == 0) return null;
                 var sheet = dataSet.Tables[0];
                 var dataTable = new DataTable();
                 int maxCols = sheet.Columns.Count;
                 for (int i = 0; i < maxCols; i++)
-                    dataTable.Columns.Add(GetExcelColumnName(i), typeof(string));
+                    dataTable.Columns.Add(sheet.Columns[i].ColumnName ?? GetExcelColumnName(i), typeof(string));
                 for (int r = 0; r < sheet.Rows.Count; r++)
                 {
                     var newRow = dataTable.NewRow();
