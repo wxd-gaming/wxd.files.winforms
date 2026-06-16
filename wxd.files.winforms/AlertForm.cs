@@ -158,7 +158,7 @@ namespace wxd.files.winforms
                 ForeColor = Color.White,
                 Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
                 Cursor = Cursors.Hand,
-                DialogResult = DialogResult.OK
+                DialogResult = DialogResult.Yes
             };
             _btnOk.FlatAppearance.BorderSize = 1;
             _btnOk.FlatAppearance.BorderColor = _colorBtnBorder;
@@ -250,6 +250,42 @@ namespace wxd.files.winforms
             AlertType type = AlertType.Information, bool showCopy = false, Exception? exception = null)
         {
             using var form = new AlertForm(title, message, type, showCopy, exception);
+            return form.ShowDialog(owner);
+        }
+
+        /// <summary>显示带"确定"/"取消"按钮的确认弹窗，确定返回 <see cref="DialogResult.Yes"/>，取消返回 <see cref="DialogResult.No"/></summary>
+        public static DialogResult ShowConfirm(IWin32Window owner, string message, string title,
+            AlertType type = AlertType.Warning)
+        {
+            using var form = new AlertForm(title, message, type, showCopy: false, exception: null);
+            // 在底部面板添加"取消"按钮
+            var cancelBtn = new Button
+            {
+                Text = "取消",
+                Size = new Size(90, 30),
+                Anchor = AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(180, 190, 200),
+                ForeColor = Color.White,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.No
+            };
+            cancelBtn.FlatAppearance.BorderSize = 1;
+            cancelBtn.FlatAppearance.BorderColor = Color.FromArgb(160, 170, 180);
+            cancelBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(160, 170, 180);
+
+            // 获取底部面板（最后一个控件）
+            var bottomPanel = form.Controls[^1] as Panel;
+            if (bottomPanel != null)
+            {
+                // 调整确定按钮位置
+                form._btnOk.Location = new Point(bottomPanel.Width - form._btnOk.Width - 10, 6);
+                cancelBtn.Location = new Point(form._btnOk.Left - cancelBtn.Width - 8, 6);
+                bottomPanel.Controls.Add(cancelBtn);
+            }
+
+            form.CancelButton = cancelBtn;
             return form.ShowDialog(owner);
         }
 

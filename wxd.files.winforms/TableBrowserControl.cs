@@ -758,6 +758,8 @@ namespace wxd.files.winforms
                         }
                     };
                     ctx.Items.Add(pinItem2);
+                    // ★ 显示右键菜单前主动隐藏 ToolTip，防止 ToolTip 遮挡右键菜单
+                    _linkToolTip?.Hide();
                     ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
                 }
             };
@@ -3098,6 +3100,8 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(deleteItem);
 
+            // ★ 显示右键菜单前主动隐藏 ToolTip，防止 ToolTip 遮挡右键菜单
+            _linkToolTip?.Hide();
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
 
@@ -3153,11 +3157,11 @@ namespace wxd.files.winforms
             }
 
             // 锁定状态 → 弹出确认框解锁
-            var result = AlertForm.Show(this,
+            var result = AlertForm.ShowConfirm(this,
                 "Excel文件如果包含公式、宏定义等，编辑后保存可能导致这些内容丢失。" + GlobalConst.NewLine + "确认要解锁编辑吗？",
                 "解锁编辑确认", AlertType.Warning);
 
-            if (result == DialogResult.OK)
+            if (result == DialogResult.Yes)
             {
                 _isEditLocked = false;
                 UpdateLockDisplay();
@@ -4073,7 +4077,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var result = AlertForm.Show(this,
+            var result = AlertForm.ShowConfirm(this,
                 $"确认删除第 {originalRowIndex + 1} 行？此操作不可撤销。",
                 "确认删除", AlertType.Warning);
             if (result != DialogResult.Yes) return;

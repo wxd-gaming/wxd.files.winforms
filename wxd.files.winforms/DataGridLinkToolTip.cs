@@ -84,6 +84,8 @@ namespace wxd.files.winforms
             grid.MouseLeave += (s, e) => Hide();
             grid.CellMouseMove += OnGridCellMouseMove;
             grid.MouseMove += OnGridMouseMove;
+            // ★ 鼠标按下时立即隐藏 ToolTip，防止 ToolTip 遮挡右键菜单
+            grid.CellMouseDown += (s, e) => Hide();
         }
 
         private void OnGridCellMouseMove(object? sender, DataGridViewCellMouseEventArgs e)
