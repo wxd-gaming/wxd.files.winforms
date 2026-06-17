@@ -2554,14 +2554,10 @@ namespace wxd.files.winforms
             // ★ 优先尝试从缓存读取
             try
             {
-                var dir = Path.GetDirectoryName(filePath) ?? "";
-                if (!string.IsNullOrEmpty(dir))
-                {
-                    var dirCache = FileDataCache.GetDirectoryCache(dir);
-                    var relPath = dirCache.ToRelative(filePath);
-                    dirCache.EnsureLoaded(relPath);
-                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+                var readOnlyData = FileDataCache.GetDataTableReadOnly(filePath);
 
+                if (readOnlyData != null)
+                {
                     foreach (DataRow row in readOnlyData.Rows)
                     {
                         foreach (var item in row.ItemArray)
@@ -2603,14 +2599,10 @@ namespace wxd.files.winforms
             // ★ 优先尝试从缓存读取
             try
             {
-                var dir = Path.GetDirectoryName(filePath) ?? "";
-                if (!string.IsNullOrEmpty(dir))
-                {
-                    var dirCache = FileDataCache.GetDirectoryCache(dir);
-                    var relPath = dirCache.ToRelative(filePath);
-                    dirCache.EnsureLoaded(relPath);
-                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+                var readOnlyData = FileDataCache.GetDataTableReadOnly(filePath);
 
+                if (readOnlyData != null)
+                {
                     foreach (DataRow row in readOnlyData.Rows)
                     {
                         foreach (var item in row.ItemArray)

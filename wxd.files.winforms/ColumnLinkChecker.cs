@@ -26,33 +26,35 @@ namespace wxd.files.winforms
 
     /// <summary>
     /// 列关联颜色检查器 — 根据跨文件列关联规则为DataGridView单元格着色。
-    /// 所有缓存操作已迁移到 FileDataCache / DirectoryCache。
-    /// 此类仅保留纯查询逻辑，接收 DirectoryCache 实例作为参数。
+    /// 所有缓存操作通过 FileDataCache 静态方法。
     /// </summary>
     public static class ColumnLinkChecker
     {
-        /// <summary>检查指定值在目标表中是否存在（用于右键菜单置灰判断）</summary>
-        /// <param name="dirCache">目录级缓存</param>
-        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
-        /// <returns>true=值有效可打开，false=值无效或不存在</returns>
-        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex,
-            string cellValue, DirectoryCache dirCache, List<ColumnLinkConfig>? columnLinks = null)
+        /// <summary>从绝对路径获取相对路径（相对于 rootDir）</summary>
+        private static string GetRelativePath(string fullPath, string rootDir)
         {
-            if (string.IsNullOrEmpty(cellValue) || dirCache == null) return false;
+            if (fullPath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
+                return fullPath.Substring(rootDir.Length).TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFileName(fullPath);
+        }
 
-            string currentRel = dirCache.ToRelative(filePath);
+        /// <summary>检查指定值在目标表中是否存在</summary>
+        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex,
+            string cellValue, List<ColumnLinkConfig>? columnLinks = null)
+        {
+            if (string.IsNullOrEmpty(cellValue) || string.IsNullOrEmpty(rootDir)) return false;
 
-            // 查找当前列的提取规则
+            string currentRel = GetRelativePath(filePath, rootDir);
+
             var linkConfig = columnLinks?.FirstOrDefault(l =>
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColumnIndex);
 
-            // 如果有提取规则，先提取实际匹配值（支持多值）
             var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
                 ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
 
             string prefix = currentRel + "|" + originalColumnIndex + "->";
-            var lookups = dirCache.GetLookups();
+            var lookups = FileDataCache.GetLookups();
             foreach (var kvp in lookups)
             {
                 if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -63,20 +65,16 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>获取关联字段无效的提示信息（用于 CellToolTipTextNeeded）</summary>
-        /// <param name="dirCache">目录级缓存</param>
-        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
-        /// <returns>提示文本，若单元格无关联或值有效则返回 null</returns>
+        /// <summary>获取关联字段无效的提示信息</summary>
         public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
-            DirectoryCache dirCache, List<ColumnLinkConfig>? columnLinks = null,
+            List<ColumnLinkConfig>? columnLinks = null,
             Dictionary<string, string>? fileRemarks = null)
         {
-            if (dirCache == null) return null;
+            if (string.IsNullOrEmpty(rootDir)) return null;
 
-            string currentRel = dirCache.ToRelative(filePath);
+            string currentRel = GetRelativePath(filePath, rootDir);
 
-            // 计算原始列索引
             int originalColIndex = columnIndex;
             if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
             {
@@ -85,11 +83,9 @@ namespace wxd.files.winforms
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }
 
-            // 获取单元格值
             var cellVal = dataGrid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
             if (string.IsNullOrEmpty(cellVal)) return null;
 
-            // 查找当前列的提取规则
             var linkConfig = columnLinks?.FirstOrDefault(l =>
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
@@ -98,7 +94,7 @@ namespace wxd.files.winforms
                 ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
 
             string prefix = currentRel + "|" + originalColIndex + "->";
-            var lookups = dirCache.GetLookups();
+            var lookups = FileDataCache.GetLookups();
             foreach (var kvp in lookups)
             {
                 if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
@@ -126,20 +122,16 @@ namespace wxd.files.winforms
             return null;
         }
 
-        /// <summary>获取关联字段的显示提示信息（用于 CellToolTipTextNeeded）</summary>
-        /// <param name="dirCache">目录级缓存</param>
-        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
-        /// <returns>提示文本，若单元格无关联或值无效则返回 null</returns>
+        /// <summary>获取关联字段的显示提示信息</summary>
         public static string? GetLinkInfoToolTip(string filePath, string rootDir,
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
-            DirectoryCache dirCache, List<ColumnLinkConfig>? columnLinks = null,
+            List<ColumnLinkConfig>? columnLinks = null,
             Dictionary<string, string>? fileRemarks = null)
         {
-            if (dirCache == null) return null;
+            if (string.IsNullOrEmpty(rootDir)) return null;
 
-            string currentRel = dirCache.ToRelative(filePath);
+            string currentRel = GetRelativePath(filePath, rootDir);
 
-            // 计算原始列索引
             int originalColIndex = columnIndex;
             if (visibleColumnIndices.Count > 0 && columnIndex < dataGrid.Columns.Count)
             {
@@ -148,7 +140,6 @@ namespace wxd.files.winforms
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }
 
-            // 获取单元格值
             var cellVal = dataGrid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
             if (string.IsNullOrEmpty(cellVal)) return null;
 
@@ -160,7 +151,7 @@ namespace wxd.files.winforms
                 ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
 
             string prefix = currentRel + "|" + originalColIndex + "->";
-            var lookups = dirCache.GetLookups();
+            var lookups = FileDataCache.GetLookups();
             foreach (var kvp in lookups)
             {
                 if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
@@ -209,16 +200,14 @@ namespace wxd.files.winforms
             return null;
         }
 
-        /// <summary>检查单元格颜色 — 限匹配当前文件的源关联，不存在则标红，存在则恢复默认（调用方负责跳过固定行）</summary>
-        /// <param name="dirCache">目录级缓存</param>
-        /// <param name="columnLinks">关联配置列表（用于获取提取规则）</param>
+        /// <summary>检查单元格颜色</summary>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir,
-            DirectoryCache dirCache, List<ColumnLinkConfig>? columnLinks = null)
+            List<ColumnLinkConfig>? columnLinks = null)
         {
-            if (dirCache == null) return;
+            if (string.IsNullOrEmpty(rootDir)) return;
 
-            string currentRel = dirCache.ToRelative(filePath);
+            string currentRel = GetRelativePath(filePath, rootDir);
 
             int originalColIndex = e.ColumnIndex;
             if (visibleColumnIndices.Count > 0 && e.ColumnIndex < dataGrid.Columns.Count)
@@ -232,7 +221,7 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
-            var lookups = dirCache.GetLookups();
+            var lookups = FileDataCache.GetLookups();
             foreach (var kvp in lookups)
             {
                 var pipeIdx = kvp.Key.IndexOf('|');

@@ -673,5 +673,54 @@ namespace wxd.files.winforms
 
             return result;
         }
+
+        /// <summary>标记冲突已解决（SVN resolved 或 Git add）</summary>
+        public static void MarkConflictResolved(string filePath, VcsType vcs)
+        {
+            try
+            {
+                if (vcs == VcsType.Svn)
+                {
+                    var svnExe = FindSvnExe();
+                    if (svnExe != null)
+                    {
+                        var psi = new ProcessStartInfo
+                        {
+                            FileName = svnExe,
+                            Arguments = $"resolved \"{filePath}\" --non-interactive",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        };
+                        using var process = Process.Start(psi);
+                        if (process != null)
+                        {
+                            process.WaitForExit(5000);
+                        }
+                    }
+                }
+                else if (vcs == VcsType.Git)
+                {
+                    var root = GetVcsRoot(filePath, VcsType.Git);
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "git",
+                        Arguments = $"add \"{filePath}\"",
+                        WorkingDirectory = root,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using var process = Process.Start(psi);
+                    if (process != null)
+                    {
+                        process.WaitForExit(5000);
+                    }
+                }
+            }
+            catch { }
+        }
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -1784,16 +1784,12 @@ namespace wxd.files.winforms
                 try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { }
 
                 // 根据文件扩展名选择保存格式
-                var ext = Path.GetExtension(_filePath).ToLowerInvariant();
-                if (ext == ".xlsx" || ext == ".xls")
-                    SaveDataTableToExcel(_mergedTable, _filePath);
-                else
-                    SaveDataTableToCsv(_mergedTable, _filePath);
+                FileDataCache.SaveFileDirect(_filePath, _mergedTable);
 
                 // 清除 VCS 冲突标记
                 try
                 {
-                    MarkConflictResolved(_filePath, _vcsType);
+                    VersionControlHelper.MarkConflictResolved(_filePath, _vcsType);
                 }
                 catch { }
 
@@ -1823,10 +1819,18 @@ namespace wxd.files.winforms
             {
                 try
                 {
-                    if (dialog.FilterIndex == 1)
-                        SaveDataTableToCsv(_mergedTable, dialog.FileName);
+                    var delimiter = ',';
+                    var ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
+                    if (ext == ".csv")
+                    {
+                        if (!FileDataCache.SaveFileDirect(dialog.FileName, _mergedTable, delimiter))
+                            throw new IOException("写入CSV文件失败");
+                    }
                     else
-                        SaveDataTableToExcel(_mergedTable, dialog.FileName);
+                    {
+                        if (!FileDataCache.SaveFileDirect(dialog.FileName, _mergedTable))
+                            throw new IOException("写入Excel文件失败");
+                    }
 
                     _lblInfo.Text = $"已另存为: {dialog.FileName}";
                     AlertForm.Show(ParentForm, "合并结果已另存。", "保存成功", AlertType.Information);
@@ -1838,258 +1842,16 @@ namespace wxd.files.winforms
             }
         }
 
-        private void SaveDataTableToCsv(DataTable dt, string path)
-        {
-            var sb = new StringBuilder();
-
-            for (int i = 0; i < dt.Columns.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                sb.Append(EscapeCsvField(dt.Columns[i].ColumnName));
-            }
-            sb.Append("\r\n");
-
-            foreach (DataRow row in dt.Rows)
-            {
-                for (int i = 0; i < dt.Columns.Count; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    sb.Append(EscapeCsvField(row[i]?.ToString() ?? ""));
-                }
-                sb.Append("\r\n");
-            }
-
-            File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-        }
-
-        private static string EscapeCsvField(string field)
-        {
-            if (field.Contains(',') || field.Contains('"') || field.Contains('\n') || field.Contains('\r'))
-                return "\"" + field.Replace("\"", "\"\"") + "\"";
-            return field;
-        }
-
-        private void SaveDataTableToExcel(DataTable dt, string path)
-        {
-            var rows = new List<Dictionary<string, object?>>();
-            foreach (DataRow row in dt.Rows)
-            {
-                var dict = new Dictionary<string, object?>();
-                for (int i = 0; i < dt.Columns.Count; i++)
-                    dict[dt.Columns[i].ColumnName] = row[i];
-                rows.Add(dict);
-            }
-            MiniExcelLibs.MiniExcel.SaveAs(path, rows);
-        }
-
-        // ==================== 静态：文件加载 ====================
-        /// <summary>从文件路径加载 DataTable（自动识别 CSV/Excel）</summary>
         public static DataTable? LoadDataTableFromFile(string filePath)
         {
             if (!File.Exists(filePath)) return null;
 
-            var ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext == ".xls" || ext == ".xlsx")
-                return ReadExcelToDataTable(filePath);
-            else
-                return ReadCsvToDataTable(filePath);
-        }
-
-        private static DataTable? ReadCsvToDataTable(string filePath)
-        {
             try
             {
-                string content;
-                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var reader = new StreamReader(fs, Encoding.UTF8, true))
-                {
-                    content = reader.ReadToEnd();
-                }
-
-                var delimiter = DetectCsvDelimiter(content);
-                var lines = SplitCsvLines(content);
-                if (lines.Count == 0) return null;
-
-                var headers = ParseCsvLine(lines[0], delimiter);
-                var dataTable = new DataTable();
-                var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var header in headers)
-                {
-                    var columnName = header;
-                    int suffix = 1;
-                    while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }
-                    usedNames.Add(columnName);
-                    dataTable.Columns.Add(columnName, typeof(string));
-                }
-
-                for (int i = 1; i < lines.Count; i++)
-                {
-                    var values = ParseCsvLine(lines[i], delimiter);
-                    var row = dataTable.NewRow();
-                    for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
-                        row[j] = values[j];
-                    dataTable.Rows.Add(row);
-                }
-
+                var (dataTable, _) = FileDataCache.LoadFileDirect(filePath);
                 return dataTable;
             }
             catch { return null; }
-        }
-
-        private static DataTable? ReadExcelToDataTable(string filePath)
-        {
-            try
-            {
-                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = ExcelReaderFactory.CreateReader(fs);
-                var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
-                {
-                    ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = true }
-                });
-                if (dataSet.Tables.Count == 0) return null;
-                var sheet = dataSet.Tables[0];
-                var dataTable = new DataTable();
-                int maxCols = sheet.Columns.Count;
-                for (int i = 0; i < maxCols; i++)
-                    dataTable.Columns.Add(sheet.Columns[i].ColumnName ?? GetExcelColumnName(i), typeof(string));
-                for (int r = 0; r < sheet.Rows.Count; r++)
-                {
-                    var newRow = dataTable.NewRow();
-                    for (int c = 0; c < maxCols; c++)
-                        newRow[c] = sheet.Rows[r][c]?.ToString() ?? "";
-                    dataTable.Rows.Add(newRow);
-                }
-                return dataTable;
-            }
-            catch { return null; }
-        }
-
-        private static char DetectCsvDelimiter(string content)
-        {
-            var lines = SplitCsvLines(content);
-            if (lines.Count == 0) return ',';
-            var firstLine = lines[0];
-            var counts = new Dictionary<char, int>
-            {
-                { ',', firstLine.Count(c => c == ',') },
-                { '\t', firstLine.Count(c => c == '\t') },
-                { ';', firstLine.Count(c => c == ';') },
-                { '|', firstLine.Count(c => c == '|') }
-            };
-            return counts.OrderByDescending(kv => kv.Value).First().Key;
-        }
-
-        private static List<string> SplitCsvLines(string content)
-        {
-            var lines = new List<string>();
-            var sb = new StringBuilder();
-            bool inQuotes = false;
-            for (int i = 0; i < content.Length; i++)
-            {
-                char c = content[i];
-                if (c == '"')
-                {
-                    if (inQuotes && i + 1 < content.Length && content[i + 1] == '"')
-                    { sb.Append('"'); i++; continue; }
-                    inQuotes = !inQuotes;
-                    sb.Append(c);
-                }
-                else if (!inQuotes && (c == '\n' || c == '\r'))
-                {
-                    if (c == '\r' && i + 1 < content.Length && content[i + 1] == '\n') i++;
-                    lines.Add(sb.ToString());
-                    sb.Clear();
-                }
-                else { sb.Append(c); }
-            }
-            if (sb.Length > 0) lines.Add(sb.ToString());
-            return lines;
-        }
-
-        private static string[] ParseCsvLine(string line, char delimiter)
-        {
-            var result = new List<string>();
-            var sb = new StringBuilder();
-            bool inQuotes = false;
-            for (int i = 0; i < line.Length; i++)
-            {
-                char c = line[i];
-                if (c == '"')
-                {
-                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
-                    { sb.Append('"'); i++; }
-                    else inQuotes = !inQuotes;
-                }
-                else if (c == delimiter && !inQuotes)
-                { result.Add(sb.ToString()); sb.Clear(); }
-                else sb.Append(c);
-            }
-            result.Add(sb.ToString());
-            return result.ToArray();
-        }
-
-        private static string GetExcelColumnName(int columnIndex)
-        {
-            var result = new StringBuilder();
-            int index = columnIndex;
-            do
-            {
-                result.Insert(0, (char)('A' + (index % 26)));
-                index = index / 26 - 1;
-            } while (index >= 0);
-            return result.ToString();
-        }
-
-        // ==================== 静态：VCS 冲突标记清除 ====================
-        /// <summary>清除 VCS 冲突标记（SVN: svn resolved, Git: git add）</summary>
-        private static void MarkConflictResolved(string filePath, VcsType vcsType)
-        {
-            if (vcsType == VcsType.Svn)
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "svn",
-                    Arguments = $"resolved \"{filePath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var process = Process.Start(psi);
-                if (process != null)
-                {
-                    process.WaitForExit(5000);
-                }
-            }
-            else if (vcsType == VcsType.Git)
-            {
-                var root = VersionControlHelper.GetVcsRoot(filePath, VcsType.Git);
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    Arguments = $"add \"{filePath}\"",
-                    WorkingDirectory = root,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var process = Process.Start(psi);
-                if (process != null)
-                {
-                    process.WaitForExit(5000);
-                }
-            }
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { }
-            }
-            base.Dispose(disposing);
         }
     }
 }

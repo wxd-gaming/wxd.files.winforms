@@ -61,8 +61,8 @@ namespace wxd.files.winforms
         private bool _isEditLocked = false; // Excel默认锁定编辑，CSV默认解锁
         private ContextMenuMode _contextMenuMode = ContextMenuMode.Normal; // 右键菜单模式
 
-        // ==================== 统一缓存 ====================
-        private DirectoryCache? _dirCache; // 目录级缓存（由 FrozenDir 决定）
+        // ==================== 缓存 ====================
+        // 缓存直接通过 FileDataCache 静态方法，不再存储 DirectoryCache 引用
         private bool _hasUnsavedChanges = false;
         private System.Windows.Forms.Timer? _retrySaveTimer;
         private const int SaveDebounceMs = 3000; // 3秒无操作后自动保存
@@ -162,9 +162,6 @@ namespace wxd.files.winforms
             // ★ 先确定文件类型，后续配置读取需要用到
             _fileType = DetectFileType(options.FilePath);
             _isEditLocked = (_fileType == TableFileType.Excel); // Excel默认锁定编辑
-            // ★ 初始化目录级缓存
-            if (!string.IsNullOrEmpty(_rootDir))
-                _dirCache = FileDataCache.GetDirectoryCache(_rootDir);
             if (options.FrozenRows >= 0) { _frozenRows = options.FrozenRows; _frozenRowsOverridden = true; }
             _initialContentFilter = options.InitialContentFilter;
 
@@ -1096,46 +1093,10 @@ namespace wxd.files.winforms
                 return;
             }
 
-            string content;
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(fs, Encoding.UTF8, true))
-            {
-                content = reader.ReadToEnd();
-            }
-
-            _delimiter = DetectDelimiter(content);
-            var lines = SplitCsvLines(content);
-            if (lines.Count == 0)
-            {
-                if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, "CSV文件为空", "警告", AlertType.Warning));
-                return;
-            }
-
-            var headers = ParseCsvLine(lines[0]);
-            var dataTable = new DataTable();
-            var headerTable = new DataTable();
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in headers)
-            {
-                var columnName = header;
-                int suffix = 1;
-                while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }
-                usedNames.Add(columnName);
-                dataTable.Columns.Add(columnName, typeof(string));
-                headerTable.Columns.Add(columnName, typeof(string));
-            }
-
-            for (int i = 0; i < lines.Count; i++)
-            {
-                var values = ParseCsvLine(lines[i]);
-                var row = dataTable.NewRow();
-                for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
-                    row[j] = values[j];
-                dataTable.Rows.Add(row);
-            }
-
-            this.Invoke(() => OnDataLoaded(dataTable, headerTable, $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
+            var (dataTable, fileData) = FileDataCache.LoadFile(_filePath);
+            _delimiter = fileData.Delimiter;
+            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(),
+                $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
         }
 
         private void LoadExcelFile()
@@ -1147,8 +1108,8 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var dataTable = ReadExcelToDataTable(_filePath);
-            if (dataTable == null)
+            var (dataTable, _) = FileDataCache.LoadFile(_filePath);
+            if (dataTable.Rows.Count == 0 && dataTable.Columns.Count == 0)
             {
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, "Excel文件没有工作表", "警告", AlertType.Warning));
@@ -1180,12 +1141,9 @@ namespace wxd.files.winforms
             }
 
             _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
-            // ★ 使用目录级缓存
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
             // ★ 后台异步构建关联 lookup，不阻塞表格显示
-            if (_dirCache != null && _columnLinks.Count > 0)
-                FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+            if (_columnLinks.Count > 0)
+                FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
             UpdateColumnSelectorButton();
             RebuildHighlightRows();
@@ -1362,10 +1320,8 @@ namespace wxd.files.winforms
                 ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
 
             // ★ 查找缓存（使用 _dirCache 替代 ColumnLinkChecker.GetLookups）
-            if (_dirCache == null) return (null, new List<DataGridLinkToolTip.TipLine>(), null);
-
             // ★ 检查关联 lookup 是否正在后台构建中，返回友好提示
-            if (_dirCache.IsLinkLookupBuilding(currentRel))
+            if (FileDataCache.IsLinkLookupBuilding(currentRel))
             {
                 // 获取列名
                 string loadingHeaderName = "";
@@ -1399,7 +1355,7 @@ namespace wxd.files.winforms
 
             string prefix = currentRel + "|" + originalColIndex + "->";
             LinkLookupEntry? lookup = null;
-            foreach (var kvp in _dirCache.GetLookups())
+            foreach (var kvp in FileDataCache.GetLookups())
             {
                 if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1598,7 +1554,7 @@ namespace wxd.files.winforms
                 await Task.Run(() =>
                 {
                     if (_fileType == TableFileType.Csv)
-                        ReloadCsvFile();
+                        LoadCsvFile();
                     else
                         LoadExcelFile();
                 });
@@ -1626,52 +1582,14 @@ namespace wxd.files.winforms
             _txtContentFilter.Text = savedFilter;
             _txtAdvancedFilter.Text = savedAdvFilter;
             UpdateColumnSelectorButton();
-            // ★ 使用目录级缓存
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-            if (_dirCache != null && _columnLinks.Count > 0)
-                FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+            // ★ 后台异步构建关联 lookup，不阻塞表格显示
+            if (_columnLinks.Count > 0)
+                FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
             RebuildHighlightRows();
             RefreshGridLayout();
 
             // ★ 重新加载后重新检测唯一列重复（首次加载，弹 MessageBox）
             CheckUniqueColumnDuplicates(showMessageBox: true);
-        }
-
-        private void ReloadCsvFile()
-        {
-            if (!File.Exists(_filePath)) return;
-            string content;
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(fs, Encoding.UTF8, true))
-                content = reader.ReadToEnd();
-
-            var delimiter = DetectDelimiter(content);
-            var lines = SplitCsvLines(content);
-            if (lines.Count == 0) return;
-
-            var headers = ParseCsvLine(lines[0]);
-            var dataTable = new DataTable();
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in headers)
-            {
-                var columnName = header;
-                int suffix = 1;
-                while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }
-                usedNames.Add(columnName);
-                dataTable.Columns.Add(columnName, typeof(string));
-            }
-
-            for (int i = 0; i < lines.Count; i++)
-            {
-                var values = ParseCsvLine(lines[i]);
-                var row = dataTable.NewRow();
-                for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
-                    row[j] = values[j];
-                dataTable.Rows.Add(row);
-            }
-
-            this.Invoke(() => { _delimiter = delimiter; _dataTable = dataTable; _fileData = BuildFileData(dataTable, _fileData); _headerTable = dataTable.Clone(); });
         }
 
         // ==================== 唯一列下拉刷新 ====================
@@ -1971,11 +1889,9 @@ namespace wxd.files.winforms
                 _columnCheckStates = dialog.GetCheckedStates();
                 _columnLinks = dialog.GetColumnLinks();
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
-                // ★ 使用目录级缓存
-                if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                    _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                if (_dirCache != null && _columnLinks.Count > 0)
-                    FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+                // ★ 后台异步构建关联 lookup
+                if (_columnLinks.Count > 0)
+                    FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
                 CsvSettings.SetColumnVisibility(FrozenDir, GetCurrentRelativePath(), _columnCheckStates);
                 CsvSettings.Save();
                 UpdateColumnSelectorButton();
@@ -2854,10 +2770,8 @@ namespace wxd.files.winforms
 
                     if (!isUnsavedRow)
                     {
-                        // ★ 传入 _dirCache
-                        if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                            _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                        ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _dirCache, _columnLinks);
+                        // ★ 列关联颜色检查
+                        ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
                         if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                         {
                             e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
@@ -2962,10 +2876,7 @@ namespace wxd.files.winforms
             if (link == null) { linkItem.Enabled = false; }
             else
             {
-                // ★ 传入 _dirCache
-                if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                    _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _dirCache, _columnLinks);
+                bool isValid = !string.IsNullOrEmpty(cellValue) && ColumnLinkChecker.IsLinkValueValid(_filePath, FrozenDir, origCol, cellValue, _columnLinks);
                 linkItem.Enabled = isValid;
                 linkItem.Click += (s, args) =>
                 {
@@ -3113,13 +3024,14 @@ namespace wxd.files.winforms
         }
 
         /// <summary>后台异步构建关联 lookup，不阻塞 UI（fire-and-forget，内部防重入）</summary>
-        private void FireAndForgetBuildLinkLookups(DirectoryCache dirCache, List<ColumnLinkConfig> columnLinks, string filePath)
+        private void FireAndForgetBuildLinkLookups(List<ColumnLinkConfig> columnLinks, string filePath)
         {
+            var rootDir = FrozenDir;
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await dirCache.BuildLinkLookupsAsync(columnLinks, filePath);
+                    await FileDataCache.BuildLinkLookupsAsync(rootDir, columnLinks, filePath);
                     // 构建完成后，通知 UI 刷新（让 tooltip 能获取到最新数据）
                     if (this.IsHandleCreated)
                         this.BeginInvoke(() => _dataGrid?.Invalidate());
@@ -3352,44 +3264,6 @@ namespace wxd.files.winforms
             return result.ToString();
         }
 
-        private static DataTable? ReadExcelToDataTable(string filePath)
-        {
-            try
-            {
-                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = ExcelReaderFactory.CreateReader(fs);
-                var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
-                {
-                    ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
-                });
-                if (dataSet.Tables.Count == 0) return null;
-                var sheet = dataSet.Tables[0];
-                var dataTable = new DataTable();
-                int maxCols = sheet.Columns.Count;
-                for (int i = 0; i < maxCols; i++)
-                    dataTable.Columns.Add(ConvertToColumnLetter(i), typeof(string));
-                for (int r = 0; r < sheet.Rows.Count; r++)
-                {
-                    var newRow = dataTable.NewRow();
-                    for (int c = 0; c < maxCols; c++)
-                        newRow[c] = sheet.Rows[r][c]?.ToString() ?? "";
-                    dataTable.Rows.Add(newRow);
-                }
-                return dataTable;
-            }
-            catch { return null; }
-        }
-
-        private static string ConvertToColumnLetter(int index)
-        {
-            var result = new StringBuilder();
-            int num = index;
-            do { result.Insert(0, (char)('A' + (num % 26))); num = num / 26 - 1; } while (num >= 0);
-            return result.ToString();
-        }
-
-        // ==================== 版本历史按钮 ====================
         private void ShowHistoryButtonIfVcs()
         {
             try
@@ -3622,10 +3496,8 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(_rootDir))
             {
                 _columnLinks = CsvSettings.GetColumnLinksByDirectory(_rootDir);
-                if (_dirCache == null)
-                    _dirCache = FileDataCache.GetDirectoryCache(_rootDir);
-                if (_dirCache != null && _columnLinks.Count > 0)
-                    FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+                if (_columnLinks.Count > 0)
+                    FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
             }
         }
 
@@ -3770,11 +3642,9 @@ namespace wxd.files.winforms
                         // 重建 _fileData
                         _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-                        // 重建关联缓存（不再调用 Reset，dirCache 内部管理）
-                        if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                            _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                        if (_dirCache != null && _columnLinks.Count > 0)
-                            FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+                        // 重建关联缓存
+                        if (_columnLinks.Count > 0)
+                            FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
                         // 一次性保存文件
                         bool saved = SaveCurrentFile();
@@ -3858,10 +3728,8 @@ namespace wxd.files.winforms
                     _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
                     // 重建关联缓存
-                    if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                        _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-                    if (_dirCache != null && _columnLinks.Count > 0)
-                        FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+                    if (_columnLinks.Count > 0)
+                        FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
                     RefreshGridLayout();
                 }
@@ -3936,10 +3804,8 @@ namespace wxd.files.winforms
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
             // 重建关联缓存
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-            if (_dirCache != null && _columnLinks.Count > 0)
-                FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+            if (_columnLinks.Count > 0)
+                FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
             // 刷新显示
             RefreshGridLayout();
@@ -4017,10 +3883,8 @@ namespace wxd.files.winforms
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
             // 重建关联缓存
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-            if (_dirCache != null && _columnLinks.Count > 0)
-                FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+            if (_columnLinks.Count > 0)
+                FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
             // 刷新显示
             RefreshGridLayout();
@@ -4100,10 +3964,8 @@ namespace wxd.files.winforms
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
             // 重建关联缓存
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-            if (_dirCache != null && _columnLinks.Count > 0)
-                FireAndForgetBuildLinkLookups(_dirCache, _columnLinks, _filePath);
+            if (_columnLinks.Count > 0)
+                FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
             // 刷新显示
             RefreshGridLayout();
@@ -4144,30 +4006,17 @@ namespace wxd.files.winforms
         {
             if (!_hasUnsavedChanges) return;
 
-            if (_dirCache == null && !string.IsNullOrEmpty(FrozenDir))
-                _dirCache = FileDataCache.GetDirectoryCache(FrozenDir);
-
-            var relPath = GetCurrentRelativePath();
-            bool saved;
-
-            if (_fileType == TableFileType.Csv)
-                saved = _dirCache?.TrySaveCsvToDisk(relPath, _dataTable, _delimiter) ?? false;
-            else
-                saved = _dirCache?.TrySaveExcelToDisk(relPath, _dataTable) ?? false;
+            bool saved = FileDataCache.SaveFile(_filePath, _dataTable, _delimiter);
 
             if (saved)
             {
                 _hasUnsavedChanges = false;
                 _unsavedRowIndices.Clear();
-                // 更新缓存主副本
-                _dirCache?.UpdateCacheFromMemory(relPath, _dataTable,
-                    BuildFileData(_dataTable, inheritFrom: null));
                 HideDirtyIndicator();
-                RefreshGridLayout();  // 刷新以移除橙色背景
+                RefreshGridLayout();
             }
             else
             {
-                // 仍被占用 → 重新启动定时器，继续等待
                 _retrySaveTimer?.Start();
             }
         }

@@ -201,11 +201,7 @@ namespace wxd.files.winforms
                 if (ext == ".csv")
                 {
                     // ★ 使用 FileDataCache 统一读取（支持 FileShare.ReadWrite）
-                    var targetDir = Path.GetDirectoryName(fullPath) ?? "";
-                    var dirCache = FileDataCache.GetDirectoryCache(targetDir);
-                    var relPath = dirCache.ToRelative(fullPath);
-                    dirCache.EnsureLoaded(relPath);
-                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+                    var readOnlyData = FileDataCache.GetDataTableReadOnly(fullPath);
 
                     var dt = new DataTable();
                     if (readOnlyData.Columns.Count > 0)
@@ -323,11 +319,7 @@ namespace wxd.files.winforms
                 if (ext == ".csv")
                 {
                     // ★ 使用 FileDataCache 统一读取
-                    var targetDir = Path.GetDirectoryName(_selectedTargetPath) ?? "";
-                    var dirCache = FileDataCache.GetDirectoryCache(targetDir);
-                    var relPath = dirCache.ToRelative(_selectedTargetPath);
-                    dirCache.EnsureLoaded(relPath);
-                    var readOnlyData = dirCache.GetDataTableReadOnly(relPath);
+                    var readOnlyData = FileDataCache.GetDataTableReadOnly(_selectedTargetPath);
 
                     var dt = new DataTable();
                     if (readOnlyData.Columns.Count > 0)
