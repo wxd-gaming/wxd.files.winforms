@@ -504,13 +504,13 @@ namespace wxd.files.winforms
         {
             if (_hasUnsavedChanges)
             {
-                var result = AlertForm.Show(this,
-                    "切割步骤有未保存的修改（未点击\"更新\"按钮），是否放弃修改？" + GlobalConst.NewLine + GlobalConst.NewLine + "点击\"是\"将放弃修改并关闭对话框。" + GlobalConst.NewLine + "点击\"否\"返回继续编辑。",
+                var result = AlertForm.ShowConfirm(this,
+                    "切割步骤有未保存的修改（未点击\"更新\"按钮），是否放弃修改？" + GlobalConst.NewLine + GlobalConst.NewLine + "点击\"确定\"将放弃修改并关闭对话框。" + GlobalConst.NewLine + "点击\"取消\"返回继续编辑。",
                     "未保存的修改", AlertType.Warning);
                 if (result == DialogResult.No)
                     return;
             }
-            DialogResult = DialogResult.OK;
+            DialogResult = DialogResult.Yes;
             Close();
         }
 

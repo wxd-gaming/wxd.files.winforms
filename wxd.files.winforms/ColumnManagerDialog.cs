@@ -299,7 +299,7 @@ namespace wxd.files.winforms
                     l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
                     l.SourceColumnIndex == colIndex),
                 _headerRowIndex);
-            if (setupDialog.ShowDialog(this) == DialogResult.OK)
+            if (setupDialog.ShowDialog(this) == DialogResult.Yes)
             {
                 _columnLinks.RemoveAll(l =>
                     l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
