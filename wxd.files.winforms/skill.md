@@ -474,3 +474,532 @@ CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地
 | 版本对比 | `_leftDiffRows` + `_leftRowToOriginalIndex` + `_leftColToOriginalIndex` | 三层索引映射（原始→投影→DGV）、列显隐重建、差异编码 `(row<<16)\|col` |
 
 **修改任何相关代码前，务必先阅读 [skills/CsvReader.md](skills/CsvReader.md)！**
+
+---
+
+## 十二、CSV/Excel 数据流规范（读取→写入→展示→版本对比→冲突解决）
+
+> ⚠️ **所有涉及 CSV/Excel 数据的操作都必须遵循本规范！**
+>
+> 本规范描述基于 `FileDataCache`（全局缓存+磁盘IO）和 `FileTableData/TableRow`（数据模型+差异标记）的完整数据流。
+
+### 12.1 核心数据模型
+
+#### 12.1.1 FileTableData — 通用表格数据模型
+
+```csharp
+// FileTableData.cs — CSV/Excel 统一的内存数据结构
+public class FileTableData
+{
+    public string FilePath { get; set; } = "";           // 文件完整路径
+    public string FileName => Path.GetFileName(FilePath); // 文件名
+    public TableFileType Type { get; set; }                // Csv 或 Excel
+    public List<string> ColumnNames { get; set; } = new(); // 列名（CSV=首行，Excel=A/B/C...）
+    public List<TableRow> Rows { get; set; } = new();      // 数据行列表
+    public char Delimiter { get; set; } = ',';              // CSV 分隔符
+}
+```
+
+#### 12.1.2 TableRow — 数据行（含差异标记字段）
+
+```csharp
+// FileTableData.cs — 每行数据 + 版本对比/冲突解决标记
+public class TableRow
+{
+    public List<string> Cells { get; set; } = new();          // 单元格值列表
+    public int OriginalRowIndex { get; set; }                  // 原始行号（0-based，排序/筛选后不变）
+    public bool IsDiffRow { get; set; }                        // 是否为差异行
+    public HashSet<int>? DiffColumns { get; set; }             // 差异列索引集合（null=无差异）
+    public DiffRowType DiffType { get; set; } = DiffRowType.None; // None/Modified/Added/Deleted
+    public bool IsBlankRow { get; set; } = false;              // 空白占位行（版本对齐时插入）
+}
+```
+
+#### 12.1.3 DiffRowType — 差异行类型枚举
+
+```csharp
+public enum DiffRowType
+{
+    None,       // 无差异
+    Modified,   // 两表都有但内容不同
+    Added,      // 只在右表存在（远程新增）
+    Deleted     // 只在左表存在（本地删除）
+}
+```
+
+#### 12.1.4 关键约定
+
+| 约定 | 说明 |
+|------|------|
+| **DataTable + FileTableData 双模型** | 所有读取返回 `(DataTable, FileTableData)` 副本；DataTable 用于 DataGridView 显示，FileTableData 用于差异标记、列关联等 |
+| **OriginalRowIndex 不变** | 排序/筛选/列显隐投影后，`OriginalRowIndex` 始终指向原始 DataTable 的行索引，用于回溯定位 |
+| **差异编码 `(row<<16)|col`** | 单元格差异用 `int` 编码存储在 `HashSet<int>` 中，行号占高16位、列号占低16位 |
+| **深拷贝副本** | `LoadFile()` 返回 `DataTable.Copy()` + `CloneFileData()`，调用方可安全修改不影响缓存 |
+| **只读引用** | `GetDataTableReadOnly()` / `GetFileDataReadOnly()` 返回缓存引用，调用方不应修改 |
+
+### 12.2 读取流程（FileDataCache → 视图）
+
+#### 12.2.1 缓存读取 API
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  调用场景                    │  API                              │
+├──────────────────────────────┼───────────────────────────────────┤
+│  CSV/Excel 阅读器正常加载     │  FileDataCache.LoadFile(path)     │
+│  版本对比加载历史版本文件      │  FileDataCache.LoadFileDirect(path)│
+│  列关联查找目标文件           │  FileDataCache.GetFileDataReadOnly │
+│  冲突解决加载远端/本地文件     │  FileDataCache.LoadFileDirect(path)│
+│  预加载（不阻塞UI）           │  FileDataCache.EnsureLoaded(path) │
+└──────────────────────────────┴───────────────────────────────────┘
+```
+
+**关键区别**：
+- `LoadFile()` — **走缓存**，返回深拷贝副本，自动过期刷新（30分钟），文件被外部修改时自动失效重建
+- `LoadFileDirect()` — **不走缓存**，直接解析文件，用于版本对比加载临时文件、冲突解决加载远端/本地版本
+
+#### 12.2.2 CSV 解析流程（ParseCsvFile）
+
+```
+FileStream(FileShare.ReadWrite) → StreamReader(UTF8+BOM自动检测)
+    → 全文读取 → DetectDelimiter(逗号/制表符/分号/管道符按首行频率)
+    → SplitCsvLines(处理引号内的换行) → ParseCsvLine(处理引号嵌套+转义)
+    → DataTable + FileTableData（首行作为列名，重复列名自动加 _1/_2 后缀）
+```
+
+**关键细节**：
+- `SplitCsvLines()`：逐字符扫描，引号内 `\n` 不分割行，`""` 转义为单个 `"`
+- `ParseCsvLine()`：引号内分隔符不分割字段，`Trim()` 每个字段值
+- 列名重复处理：`while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }`
+
+#### 12.2.3 Excel 解析流程（ParseExcelFile）
+
+```
+FileStream(FileShare.ReadWrite) → ExcelDataReader(UseHeaderRow=false)
+    → AsDataSet → 第一个Sheet → 列名=A/B/C...Z/AA/AB...
+    → DataTable + FileTableData（所有单元格转为 string，null→""）
+```
+
+**关键细节**：
+- `UseHeaderRow=false`：首行作为数据行而非列名，列名用 `GetExcelColumnName()` 生成（A, B, C...）
+- 必须先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` 注册编码提供者
+
+#### 12.2.4 缓存自动失效机制
+
+```csharp
+// GetOrLoadEntry 内部逻辑（调用方持有 _lock）
+if (_entries.TryGetValue(key, out var entry))
+{
+    var fi = new FileInfo(fullPath);
+    // ★ 文件被外部修改（LastWriteTime 或 FileSize 变化）→ 自动失效重建
+    if (fi.Exists && (fi.LastWriteTimeUtc != entry.LastWriteTime || fi.Length != entry.FileSize))
+    {
+        _entries.Remove(key);
+        ClearLinkLookupsForFile(key, dirPath); // 同时清除关联查找缓存
+        entry = LoadAndParseFile(key, fullPath); // 重新解析
+    }
+}
+```
+
+#### 12.2.5 TableBrowserControl 加载流程
+
+```
+LoadCsvFile() / LoadExcelFile()
+    → FileDataCache.LoadFile(_filePath)            // 走缓存，返回深拷贝
+    → var (dataTable, fileData) = ...
+    → _delimiter = fileData.Delimiter               // 保存分隔符（CSV写入时需要）
+    → Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), infoText))
+        → _dataTable = dataTable                    // 主 DataTable（后续编辑/保存的目标）
+        → _fileData = BuildFileData(dataTable, _fileData) // 同步构建 FileTableData
+        → 设置到 DataGridView + 冻结行 Header DataGridView
+```
+
+### 12.3 写入流程（视图 → FileDataCache → 磁盘）
+
+#### 12.3.1 两种写入 API
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  调用场景                    │  API                │ 缓存更新      │
+├──────────────────────────────┼─────────────────────┼───────────────┤
+│  TableBrowserControl 正常保存 │  SaveFile(path, dt) │ 更新缓存+清关联│
+│  冲突解决保存合并结果         │  SaveFileDirect(path,dt)│ 不更新缓存   │
+│  另存为新文件               │  SaveFileDirect(newPath,dt)│ 不更新缓存   │
+└──────────────────────────────┴─────────────────────┴───────────────┘
+```
+
+#### 12.3.2 CSV 写入流程（WriteCsvToDisk）
+
+```
+DataTable → BuildCsvContent(dataTable, delimiter)
+    → 逐行遍历，值含分隔符/引号/换行时自动加引号包裹
+    → Encoding.UTF8.GetBytes(content)
+    → FileStream(FileMode.Create, FileShare.ReadWrite) → Write + Flush
+    → 失败时重试 3 次 × 300ms间隔（IOException=文件被占用）
+```
+
+**关键细节**：
+- **不写列名行**：`BuildCsvContent()` 只写数据行，列名由 `DataTable.Columns` 管理
+- 引号转义：值包含 `delimiter`、`"`、`\n`、`\r` 时 → `"value"` 包裹，内部 `"` → `""`
+- `fs.Flush()` 强制刷新到磁盘
+
+#### 12.3.3 Excel 写入流程（WriteExcelToDisk — 原子备份模式）
+
+```
+步骤1: 备份原文件 → fullPath + ".yyyyMMddHHmmssfff.bak"
+步骤2: 删除原文件 → File.Delete(fullPath)
+步骤3: MiniExcel.SaveAs(fullPath, dataTable, printHeader=false)
+步骤4: 成功 → 删除备份 .bak 文件
+步骤5: 失败 → 还原备份 .bak → 原文件（原子性保证）
+    → 失败时同样重试 3 次 × 300ms间隔
+```
+
+**关键细节**：
+- `printHeader: false`：不写列名行，与 CSV 行为一致
+- 备份文件名包含毫秒级时间戳防止冲突
+- 失败还原逻辑：`try { File.Move(backupPath, fullPath); } catch { }`
+
+#### 12.3.4 TableBrowserControl 防抖保存机制
+
+```
+用户编辑单元格 → _hasUnsavedChanges = true → _unsavedRowIndices.Add(row)
+    → ScheduleAutoSave(): _retrySaveTimer.Stop() + _retrySaveTimer.Start()
+    → 3秒后 TryFlushToDisk():
+        → FileDataCache.SaveFile(_filePath, _dataTable, _delimiter)
+        → 成功: _hasUnsavedChanges=false, HideDirtyIndicator()
+        → 失败: _retrySaveTimer.Start() 继续重试（显示⚠提示）
+    → 关闭前: ForceFlushBeforeClose() → 仍失败则弹窗询问是否丢弃
+```
+
+**关键细节**：
+- `SaveDebounceMs = 3000`（3秒防抖，避免频繁写磁盘）
+- `_unsavedRowIndices` 记录未保存行（橙色背景标记）
+- 失败时不弹窗打断用户，而是后台持续重试 + 状态栏提示
+
+#### 12.3.5 冲突解决保存流程（SaveMergedResult）
+
+```
+步骤1: 备份到 %temp%/wxd-bak/（带SVN/Git版本号标识）
+    → Path.GetTempPath() + "wxd-bak" + "{fileName}_backup{vcsRevision}_{timestamp}.bak"
+步骤2: FileDataCache.SaveFileDirect(_filePath, _mergedTable) — 不走缓存直接写磁盘
+步骤3: 清除VCS冲突标记 → VersionControlHelper.MarkConflictResolved(_filePath, _vcsType)
+步骤4: AlertForm.Show 保存成功提示
+步骤5: 触发 SaveCompleted 事件 → 通知父窗体刷新
+```
+
+### 12.4 展示流程（DataTable → DataGridView）
+
+#### 12.4.1 双 DataGridView 模式
+
+```
+┌───────────────────────────────────────────────────┐
+│  _dataGridHeader (冻结行)                         │
+│  - 显示前 N 行（_frozenRows）                      │
+│  - 列投影与 _dataGrid 主表完全同步                   │
+│  - 不可编辑，始终固定在顶部                          │
+├───────────────────────────────────────────────────┤
+│  _dataGrid (主数据区)                              │
+│  - 显示 _frozenRows 之后的所有行                    │
+│  - 支持编辑、排序、过滤、列显隐                      │
+│  - 行编辑模式：双击→进入编辑→Enter确认/Esc取消       │
+└───────────────────────────────────────────────────┘
+```
+
+#### 12.4.2 列显隐投影机制
+
+```
+_columnCheckStates (bool[], 全列数)
+    → _visibleColumnIndices (List<int>, 只包含可见列索引)
+    → DataGridView 只显示可见列
+    → 冻结行 Header 与主表使用相同的 _visibleColumnIndices
+```
+
+**关键约束**：两个 DataGridView 的列投影必须完全同步，否则冻结行与数据行错位！
+
+#### 12.4.3 FileTableData 在展示中的角色
+
+- `ColumnLinkChecker` 使用 `FileTableData.Rows[i].Cells[colIndex]` 进行关联查找
+- 版本对比和冲突解决使用 `TableRow.IsDiffRow / DiffColumns / DiffType / IsBlankRow` 进行差异高亮
+- `OriginalRowIndex` 用于在 DGV 行索引 → 原始行索引 的映射
+
+### 12.5 版本对比数据流（VersionCompareForm）
+
+#### 12.5.1 数据流概览
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  VersionControlHelper.GetSvnInfo / GetGitLog                  │
+│      → 获取版本历史列表 (List<VersionHistoryEntry>)            │
+│                                                              │
+│  选择两个版本 → VersionControlHelper.ExportFile               │
+│      → 导出到 %temp%/wxd_vcs_diff_{guid}/ 临时目录              │
+│      → left.csv / right.csv (或 .xlsx)                        │
+│                                                              │
+│  FileDataCache.LoadFileDirect(leftPath)                       │
+│  FileDataCache.LoadFileDirect(rightPath)                      │
+│      → (DataTable_left, FileTableData_left)                   │
+│      → (DataTable_right, FileTableData_right)                 │
+│                                                              │
+│  ComputeDiffAsync() → 差异计算                                │
+│  BuildAlignedTables() → 行对齐（双指针归并+空白行插入）          │
+│      → leftAlignedFd / rightAlignedFd (FileTableData)          │
+│                                                              │
+│  BuildDataTableFromFileData() → 转为 DataTable 设置到视图      │
+│  BuildRowIndexMap() → DGV行号→原始行号映射                     │
+│  ApplyDiffHighlight() → CellFormatting 高亮绑定                │
+│  SetupSyncScroll() → 三个视图滚动联动                          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### 12.5.2 差异计算（ComputeDiffAsync）
+
+**ID对齐模式**（`_useIdAlign=true`，优先使用 `_uniqueColumnIndex` 配置列）：
+
+```
+1. 构建 remoteIdMap: id→行索引, localIdMap: id→行索引
+2. 合并所有ID → 遍历每个ID:
+   - 远程有+本地无 → _remoteDiffRows + _remoteDiffCells（全部列标记）
+   - 本地有+远程无 → _localDiffRows + _localDiffCells（全部列标记）
+   - 两边都有 → 逐列比较 → 差异列加入 _remoteDiffCells + _localDiffCells
+     → 共同差异列 = _conflictCells（冲突单元格）
+```
+
+**行号对齐模式**（`_useIdAlign=false`，无ID列时回退）：
+
+```
+1. 逐行逐列比较，同位置不同值 → 标记差异行+差异单元格
+2. 行数不同时，多出的行整体标记为差异
+```
+
+#### 12.5.3 行对齐算法（BuildAlignedTables — 双指针归并）
+
+```
+1. 复制固定行/表头行到 alignedFd（原样保留，不对齐）
+2. 构建 remoteIdMap / localIdMap（ID→Fd行索引）
+3. 合并排序所有ID（SortIds：数值优先排序，否则字典序）
+4. 逐ID遍历:
+   - 两表都有 → 匹配行（原样复制）
+   - 远程有+本地无 → 新增行（远程数据行 + 本地空白行）
+     - remoteRow.DiffType = Added, remoteRow.IsDiffRow = true
+     - localRow = CreateBlankRow(DiffRowType.Added, IsBlankRow=true)
+   - 本地有+远程无 → 删除行（远程空白行 + 本地数据行）
+     - localRow.DiffType = Deleted, localRow.IsDiffRow = true
+     - remoteRow = CreateBlankRow(DiffRowType.Deleted, IsBlankRow=true)
+```
+
+**空白行的作用**：保证远程和本地 alignedFd 行数完全一致，实现逐行同步滚动和高亮。
+
+#### 12.5.4 三层索引映射
+
+```
+DGV显示行索引 → alignedFd行索引 → 原始DataTable行索引
+
+_leftRowToOriginalIndex[i]  = alignedFd.Rows[i+_frozenRows].OriginalRowIndex
+_leftColToOriginalIndex[j]  = 可见列j → 全列索引
+
+差异编码: (originalRow << 16) | colIndex → _leftDiffCells / _rightDiffCells
+```
+
+#### 12.5.5 CellFormatting 高亮规则
+
+```
+isBlankRow=true && DiffType=Added  → _colorBlankRowForAdded (淡绿)
+isBlankRow=true && DiffType=Deleted → _colorBlankRowForDeleted (淡橙)
+DiffType=Added                      → _colorAddedRowBg (浅绿)
+DiffType=Deleted                    → _colorDeletedRowBg (浅橙)
+DiffType=Modified + conflictCell    → _colorConflictBg (深红)
+DiffType=Modified + diffCell        → _colorDiffCellBg (浅红)
+DiffType=Modified + 同行但非差异列   → _colorDiffRowBg (浅黄)
+```
+
+### 12.6 冲突解决数据流（ConflictResolveControl）
+
+#### 12.6.1 数据流概览
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  构造函数参数:                                                │
+│    filePath, vcsType, remoteData, localData                   │
+│    frozenRows, headerRowIndex, uniqueColumnIndex              │
+│                                                              │
+│  LoadComparisonAsync():                                      │
+│    ComputeDiffAsync() → 差异标记                              │
+│    BuildAlignedTables() → 行对齐                               │
+│    SetDataTable() → 设置到远程/本地视图                         │
+│    BuildRowIndexMap() → 行索引映射                             │
+│    ApplyDiffHighlight() → 高亮绑定                             │
+│    InitializeMergedTable() → 初始合并结果（默认=本地版本）        │
+│                                                              │
+│  用户操作 → UseRemoteSelected / UseLocalSelected / 编辑合并表  │
+│    → 更新 _mergedTable 行内容                                  │
+│                                                              │
+│  SaveMergedResult():                                         │
+│    备份到 %temp%/wxd-bak/                                      │
+│    FileDataCache.SaveFileDirect(_filePath, _mergedTable)       │
+│    MarkConflictResolved → 清除VCS冲突标记                      │
+│    SaveCompleted事件 → 通知父窗体刷新                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### 12.6.2 三区域布局
+
+```
+┌─────────────────────────────────────────────────┐
+│  工具栏: ←使用远程此行 | 使用本地此行→ | 保存 |     │
+│         全部使用远程 | 全部使用本地 | 全选远程 |     │
+│         全选本地 | 状态信息                       │
+├────────────────────────┬────────────────────────┤
+│  远程版本（左）          │  本地版本（右）          │
+│  _remoteView            │  _localView            │
+│  CellFormatting=差异高亮 │  CellFormatting=差异高亮│
+│  选中行→蓝色背景         │  选中行→绿色背景         │
+├────────────────────────┴────────────────────────┤
+│  合并结果（下）                                    │
+│  _mergedView (可编辑)                              │
+│  CellFormatting=冲突单元格高亮                      │
+└─────────────────────────────────────────────────┘
+```
+
+#### 12.6.3 行选择与合并操作
+
+```
+点击远程行头 → _selectedRemoteRows.Add(originalRow) + _selectionFromRemote=true
+点击本地行头 → _selectedLocalRows.Add(originalRow) + _selectionFromRemote=false
+Ctrl+点击 → 多选 | Shift+点击 → 范围选
+
+UseRemoteSelected():
+  → 遍历 _selectedRemoteRows
+  → 在 _mergedTable 中找到对应行 → 替换为远程版本内容
+  → _selectedRemoteCell != null 时只替换单个单元格
+
+UseLocalSelected(): 同理，替换为本地版本
+
+UseAllRemote(): 所有差异行使用远程版本
+UseAllLocal(): 所有差异行使用本地版本
+```
+
+#### 12.6.4 初始化合并表（InitializeMergedTable）
+
+```
+_mergedTable = _localData.Copy()  // ★ 默认=本地版本作为基底
+→ 用户通过 UseRemoteSelected / UseLocalSelected 逐行替换差异
+→ 也可直接在 _mergedView 中编辑单元格
+```
+
+#### 12.6.5 查找合并行（FindMergedRowById）
+
+```
+使用ID列对齐 → 在 _mergedTable 中查找对应ID的行索引
+无ID对齐 → 回退到原始行索引直接定位
+```
+
+### 12.7 关联查找数据流（ColumnLink + LinkLookup）
+
+#### 12.7.1 数据流概览
+
+```
+ColumnLinkConfig (配置) → BuildLinkKey(sourceRel|srcCol->targetRel:targetCol|extract:...)
+    → _linkLookups[key] = LinkLookupEntry
+        → Values: HashSet<string> (目标列所有唯一值)
+        → DisplayNames: Dictionary<string,string> (ID→显示名映射)
+
+BuildLinkLookupsAsync():
+    → 防重入检查（_buildingLinkLookups）
+    → 遍历所有 columnLinks
+    → 异步加载目标文件到缓存
+    → BuildLinkLookupFromMaster(FileTableData, targetColIndex, linkConfig)
+    → 值提取: linkConfig.ValueExtractionEnabled → ExtractSteps处理
+```
+
+#### 12.7.2 关联查找缓存失效
+
+```
+SaveFile(updateCache=true) → ClearLinkLookupsForFile → 懒重建（下次访问时）
+InvalidateFile() → 同时清除 _entries + _linkLookups
+```
+
+### 12.8 数据模型转换规则
+
+#### 12.8.1 DataTable ↔ FileTableData 转换
+
+```
+// ParseFile → (DataTable, FileTableData)
+DataTable.Columns = headers / A,B,C... (列名)
+DataTable.Rows[r][c] = cellValue (string)
+FileTableData.ColumnNames = 同 DataTable.Columns
+FileTableData.Rows[r].Cells[c] = 同 DataTable.Rows[r][c]
+FileTableData.Rows[r].OriginalRowIndex = r (0-based)
+
+// BuildFileDataFromDataTable — 从DataTable重建FileTableData
+// BuildDataTableFromFileData — 从FileTableData重建DataTable（版本对比/冲突解决用）
+
+// CloneFileData — 深拷贝（复制所有字段包括 DiffColumns HashSet）
+```
+
+#### 12.8.2 禁止的做法
+
+| ❌ 禁止 | ✅ 正确 |
+|---------|---------|
+| 直接修改 `GetDataTableReadOnly()` 返回的 DataTable | 使用 `LoadFile()` 获取副本后修改 |
+| 修改 `GetFileDataReadOnly()` 返回的 FileTableData | 使用 `GetFileDataCopy()` 获取副本 |
+| 版本对比时忽略 `_frozenRows` 偏移 | `BuildRowIndexMap()` 跳过前 `_frozenRows` 行 |
+| 冲突解决时用 `SaveFile()` 而非 `SaveFileDirect()` | 用 `SaveFileDirect()` 不走缓存 |
+| 编辑后不设 `_hasUnsavedChanges=true` | 每次编辑后必须标记并调度防抖保存 |
+| 忽略 `_delimiter` 保存时传入错误分隔符 | `SaveFile(path, dt, _delimiter)` 传入正确分隔符 |
+
+### 12.9 完整数据流图
+
+```
+                    ┌─────────────────┐
+                    │   磁盘文件        │
+                    │  .csv / .xlsx    │
+                    └────────┬────────┘
+                             │
+            ┌────────────────┼────────────────┐
+            │  FileDataCache (全局缓存)          │
+            │                                │
+            │  ParseCsvFile / ParseExcelFile  │
+            │  → (DataTable, FileTableData)   │
+            │                                │
+            │  LoadFile() ───深拷贝副本────→ TableBrowserControl（阅读器）
+            │  LoadFileDirect() ─直接解析─→ VersionCompareForm（版本对比）
+            │  LoadFileDirect() ─直接解析─→ ConflictResolveControl（冲突解决）
+            │  GetFileDataReadOnly() ───→ ColumnLinkChecker（列关联查找）
+            │                                │
+            │  SaveFile() ←──防抖保存──← TableBrowserControl（阅读器编辑）
+            │  SaveFileDirect() ←─直接保存─← ConflictResolveControl（冲突合并）
+            │                                │
+            │  InvalidateFile() ←──外部修改──← FileSystemWatcher / 用户操作
+            │  ClearLinkLookups ←──缓存失效──← SaveFile / InvalidateFile
+            └────────────────┬────────────────┘
+                             │
+                    ┌────────┴────────┐
+                    │   磁盘文件        │
+                    │  .csv / .xlsx    │
+                    └─────────────────┘
+```
+
+### 12.10 性能参数速查
+
+| 参数 | 值 | 来源 |
+|------|----|------|
+| 缓存过期时间 | 30分钟 | `FileDataCache.ExpireDuration` |
+| 缓存Key格式 | `Path.GetFullPath(path).ToLowerInvariant()` | `NormalizePath()` |
+| 写入重试次数 | 3次 | `WriteCsvToDisk` / `WriteExcelToDisk` |
+| 写入重试间隔 | 300ms | `Thread.Sleep(300)` |
+| 防抖保存延迟 | 3秒 | `TableBrowserControl.SaveDebounceMs` |
+| Excel备份格式 | `{file}.{timestamp}.bak` | `WriteExcelToDisk` |
+| 冲突备份目录 | `%temp%/wxd-bak/` | `SaveMergedResult` |
+| 版本对比临时目录 | `%temp%/wxd_vcs_diff_{guid}/` | `VersionCompareForm` |
+| 冲突解决临时目录 | `%temp%/wxd_conflict_{guid}/` | `ConflictResolveControl` |
+| 差异编码 | `(row<<16)|col` | `_leftDiffCells` / `_conflictCells` |
+| ID列默认值 | 第0列（`_uniqueColumnIndex=-1`时） | `DetectIdColumn()` |
+| FileStream共享模式 | `FileShare.ReadWrite` | `ParseCsvFile` / `ParseExcelFile` |
+| Excel列名生成 | A,B,C...Z,AA,AB... | `GetExcelColumnName()` |
+| CSV分隔符检测 | 按首行频率：逗号/制表符/分号/管道符 | `DetectDelimiter()` |
+
+---
+
+**文档版本**: 2.0.0
+**最后更新**: 2026-06-17
+**适用范围**: wxd.files.winforms CSV/Excel 数据流全链路
+**核心类**: FileDataCache.cs / FileTableData.cs / TableBrowserControl.cs / VersionCompareForm.cs / ConflictResolveControl.cs
