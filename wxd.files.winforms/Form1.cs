@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -957,9 +958,15 @@ namespace wxd.files.winforms
             var commands = CsvSettings.GetCustomCommands();
             if (commands.Count == 0 || _flowPanel == null) return;
 
-            for (int i = 0; i < commands.Count; i++)
+            // 按分组归类：独立按钮 + 分组按钮
+            var standalone = commands.Where(c => string.IsNullOrWhiteSpace(c.GroupName)).ToList();
+            var grouped = commands.Where(c => !string.IsNullOrWhiteSpace(c.GroupName))
+                                  .GroupBy(c => c.GroupName)
+                                  .ToList();
+
+            // 先渲染独立按钮
+            foreach (var cmd in standalone)
             {
-                var cmd = commands[i];
                 Color btnColor;
                 try { btnColor = ColorTranslator.FromHtml(cmd.ButtonColor); }
                 catch { btnColor = Color.FromArgb(123, 31, 162); }
@@ -978,24 +985,87 @@ namespace wxd.files.winforms
                     Tag = cmd
                 };
 
-                // Tooltip：显示执行的命令和工作目录
+                SetButtonTooltip(btn, cmd);
+                btn.Click += OnCmdActionButtonClick;
+
+                _cmdActionButtons.Add(btn);
+                _flowPanel.Controls.Add(btn);
+            }
+
+            // 再渲染分组按钮（下拉菜单）
+            foreach (var group in grouped)
+            {
+                var firstCmd = group.First();
+                Color groupColor;
+                try { groupColor = ColorTranslator.FromHtml(firstCmd.ButtonColor); }
+                catch { groupColor = Color.FromArgb(123, 31, 162); }
+
+                var groupBtn = new Button
+                {
+                    Text = group.Key + " ▾",
+                    Size = new Size(95, 26),
+                    Font = new Font("Microsoft YaHei UI", 9f),
+                    Cursor = Cursors.Hand,
+                    BackColor = groupColor,
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(100, 30, 140) },
+                    Margin = new Padding(2, 2, 2, 0),
+                    Tag = group.ToList()
+                };
+
+                var tipNames = group.Select(c => c.Name).ToList();
+                var groupTip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 300, ReshowDelay = 100 };
+                groupTip.SetToolTip(groupBtn, string.Join("\n", tipNames));
+
+                groupBtn.Click += OnGroupButtonClick;
+
+                _cmdActionButtons.Add(groupBtn);
+                _flowPanel.Controls.Add(groupBtn);
+            }
+        }
+
+        // ==================== 分组按钮点击：弹出下拉菜单 ====================
+        private void OnGroupButtonClick(object? sender, EventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not List<CustomCommandItem> groupCommands)
+                return;
+
+            var isDark = _currentTheme == ThemeMode.Dark;
+            var menu = new ContextMenuStrip
+            {
+                BackColor = isDark ? Color.FromArgb(45, 45, 48) : Color.White,
+                ForeColor = isDark ? Color.White : Color.FromArgb(30, 30, 30),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ShowImageMargin = false
+            };
+
+            foreach (var cmd in groupCommands)
+            {
+                var menuItem = new ToolStripMenuItem(cmd.Name)
+                {
+                    Tag = cmd,
+                    ForeColor = isDark ? Color.White : Color.FromArgb(30, 30, 30),
+                    BackColor = Color.Transparent,
+                    Font = new Font("Microsoft YaHei UI", 9f)
+                };
                 var tipParts = new List<string>();
                 if (!string.IsNullOrWhiteSpace(cmd.Command))
                     tipParts.Add($"命令: {cmd.Command}");
                 if (!string.IsNullOrWhiteSpace(cmd.WorkDir))
                     tipParts.Add($"目录: {cmd.WorkDir}");
                 if (tipParts.Count > 0)
+                    menuItem.ToolTipText = string.Join("\n", tipParts);
+
+                menuItem.Click += (s2, e2) =>
                 {
-                    var tip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 300, ReshowDelay = 100 };
-                    tip.SetToolTip(btn, string.Join("\n", tipParts));
-                }
-
-                btn.Click += OnCmdActionButtonClick;
-
-                _cmdActionButtons.Add(btn);
-                // 在流式布局面板末尾追加
-                _flowPanel.Controls.Add(btn);
+                    if (s2 is ToolStripMenuItem mi && mi.Tag is CustomCommandItem item)
+                        ExecuteCustomCommand(item);
+                };
+                menu.Items.Add(menuItem);
             }
+
+            menu.Show(btn, new Point(0, btn.Height));
         }
 
         // ==================== 动态命令按钮点击 ====================
@@ -1004,10 +1074,15 @@ namespace wxd.files.winforms
             if (sender is not Button btn || btn.Tag is not CustomCommandItem item)
                 return;
 
+            ExecuteCustomCommand(item);
+        }
+
+        /// <summary>执行自定义命令</summary>
+        private void ExecuteCustomCommand(CustomCommandItem item)
+        {
             var cmd = item.Command;
             if (string.IsNullOrWhiteSpace(cmd)) return;
 
-            // 将多行命令用 & 连接，实现逐条依次执行
             var lines = cmd.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             var fullCmd = string.Join(" & ", lines);
 
@@ -1022,7 +1097,6 @@ namespace wxd.files.winforms
                     CreateNoWindow = !showWindow
                 };
 
-                // 如果配置了工作目录且存在，则设置工作目录
                 var workDir = item.WorkDir;
                 if (!string.IsNullOrWhiteSpace(workDir) && System.IO.Directory.Exists(workDir))
                 {
@@ -1034,6 +1108,21 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 AlertForm.Show(null, $"执行命令 [{item.Name}] 失败：{ex.Message}", "错误", AlertType.Error, exception: ex);
+            }
+        }
+
+        /// <summary>设置按钮 Tooltip</summary>
+        private static void SetButtonTooltip(Button btn, CustomCommandItem cmd)
+        {
+            var tipParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(cmd.Command))
+                tipParts.Add($"命令: {cmd.Command}");
+            if (!string.IsNullOrWhiteSpace(cmd.WorkDir))
+                tipParts.Add($"目录: {cmd.WorkDir}");
+            if (tipParts.Count > 0)
+            {
+                var tip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 300, ReshowDelay = 100 };
+                tip.SetToolTip(btn, string.Join("\n", tipParts));
             }
         }
 

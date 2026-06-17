@@ -19,4 +19,7 @@ public class CustomCommandItem
 
     /// <summary>按钮颜色（ARGB 十六进制字符串，如 "#7B1FA2"），便于分组</summary>
     public string ButtonColor { get; set; } = "#7B1FA2";
+
+    /// <summary>所属分组名称（留空则作为独立按钮显示，填写分组名则归入分组下拉菜单）</summary>
+    public string GroupName { get; set; } = "";
 }

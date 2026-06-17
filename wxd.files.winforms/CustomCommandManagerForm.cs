@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms;
@@ -75,10 +76,23 @@ public class CustomCommandManagerForm : Form
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
             FillWeight = 10
         };
+        var colGroupName = new DataGridViewComboBoxColumn
+        {
+            HeaderText = "分组",
+            Name = "colGroupName",
+            DataPropertyName = "GroupName",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 15,
+            SortMode = DataGridViewColumnSortMode.NotSortable,
+            FlatStyle = FlatStyle.Flat
+        };
+        // 初始填充已有分组名（后续动态更新）
+        colGroupName.Items.Add(""); // 空值 = 独立按钮（保证数据验证通过）
         _dgv.Columns.Add(colName);
         _dgv.Columns.Add(colCmd);
         _dgv.Columns.Add(colWorkDir);
         _dgv.Columns.Add(colShowWindow);
+        _dgv.Columns.Add(colGroupName);
 
         // 按钮颜色列（只读，点击弹出取色器）
         var colColor = new DataGridViewTextBoxColumn
@@ -108,6 +122,23 @@ public class CustomCommandManagerForm : Form
                 }
                 catch { }
             }
+            // 分组列：空值显示"(独立按钮)"
+            if (_dgv.Columns[e.ColumnIndex].Name == "colGroupName" && e.RowIndex >= 0)
+            {
+                // 直接从数据源获取真实 GroupName，避免 DataError 回滚导致 e.Value 为空
+                var realGroupName = "";
+                if (_dgv.Rows[e.RowIndex].DataBoundItem is CustomCommandItem item)
+                    realGroupName = item.GroupName ?? "";
+                if (string.IsNullOrEmpty(realGroupName))
+                {
+                    e.Value = "(独立按钮)";
+                }
+                else
+                {
+                    e.Value = realGroupName;
+                }
+                e.FormattingApplied = true;
+            }
         };
 
         // 双击工作目录列弹出目录选择对话框
@@ -124,6 +155,66 @@ public class CustomCommandManagerForm : Form
                     if (fbd.ShowDialog() == DialogResult.OK)
                     {
                         item.WorkDir = fbd.SelectedPath;
+                    }
+                }
+            }
+        };
+
+        // 分组列编辑控件：动态刷新分组下拉选项
+        ComboBox? _currentCombo = null; // 追踪当前编辑的 ComboBox，避免重复注册 Leave
+        _dgv.EditingControlShowing += (s, e) =>
+        {
+            if (_dgv.CurrentCell?.OwningColumn?.Name == "colGroupName" && e.Control is ComboBox combo)
+            {
+                // 先移除旧的 Leave 处理
+                if (_currentCombo != null)
+                    _currentCombo.Leave -= OnComboLeave;
+                _currentCombo = combo;
+
+                // 收集已有分组名
+                var existingGroups = new HashSet<string>();
+                foreach (var item in _binding)
+                {
+                    if (!string.IsNullOrWhiteSpace(item.GroupName))
+                        existingGroups.Add(item.GroupName);
+                }
+                combo.Items.Clear();
+                combo.Items.Add(""); // 空值 = 独立按钮
+                foreach (var g in existingGroups.OrderBy(x => x))
+                    combo.Items.Add(g);
+                // 允许用户输入新的分组名
+                combo.DropDownStyle = ComboBoxStyle.DropDown;
+                combo.Leave += OnComboLeave;
+            }
+        };
+
+        // 处理 DataError，阻止无限弹窗，并接受用户输入的新分组名
+        _dgv.DataError += (s, e) =>
+        {
+            // 阻止默认错误对话框弹出
+            e.ThrowException = false;
+
+            // 如果是分组名列，接受用户输入的新值，并同步到 Items 列表
+            if (_dgv.Columns[e.ColumnIndex].Name == "colGroupName"
+                && (e.Context & DataGridViewDataErrorContexts.Commit) != 0
+                && e.RowIndex >= 0)
+            {
+                // 获取编辑控件中用户实际输入的内容
+                if (_dgv.EditingControl is ComboBox combo)
+                {
+                    var inputText = combo.Text?.Trim();
+                    if (!string.IsNullOrEmpty(inputText))
+                    {
+                        // 1. 将新值加入列级别的 Items，下次验证就能通过
+                        if (!colGroupName.Items.Contains(inputText))
+                            colGroupName.Items.Add(inputText);
+
+                        // 2. 强制设置单元格值为用户输入
+                        _dgv.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = inputText;
+
+                        // 3. 结束编辑让 DataGridView 重新验证
+                        _dgv.EndEdit();
+                        return;
                     }
                 }
             }
@@ -238,6 +329,15 @@ public class CustomCommandManagerForm : Form
 
         // 从配置加载
         var list = CsvSettings.GetCustomCommands();
+
+        // 同步列级 Items：将所有已有的分组名加入 ComboBox 列，避免显示空白
+        foreach (var item in list)
+        {
+            var g = item.GroupName ?? "";
+            if (!string.IsNullOrEmpty(g) && !colGroupName.Items.Contains(g))
+                colGroupName.Items.Add(g);
+        }
+
         _binding = new BindingList<CustomCommandItem>(list);
         _dgv.DataSource = _binding;
 
@@ -272,7 +372,8 @@ public class CustomCommandManagerForm : Form
             Command = source.Command,
             WorkDir = source.WorkDir,
             ShowWindow = source.ShowWindow,
-            ButtonColor = source.ButtonColor
+            ButtonColor = source.ButtonColor,
+            GroupName = source.GroupName
         };
         var idx = _binding.IndexOf(source);
         _binding.Insert(idx + 1, copy);
@@ -332,6 +433,19 @@ public class CustomCommandManagerForm : Form
             {
                 tb.Multiline = true;
                 _dgv.Rows[_dgv.CurrentCell.RowIndex].Height = 90;
+            }
+        }
+    }
+
+    /// <summary>分组列 ComboBox 失去焦点时，处理用户输入的新分组名</summary>
+    private void OnComboLeave(object? sender, EventArgs e)
+    {
+        if (sender is ComboBox combo)
+        {
+            // 用户输入新分组名后，确保数据绑定更新
+            if (combo.SelectedItem == null && !string.IsNullOrWhiteSpace(combo.Text))
+            {
+                _dgv.CurrentCell.Value = combo.Text.Trim();
             }
         }
     }
