@@ -14,7 +14,7 @@
         private Label _lblReadOnlyHint = new(); // 只读提示标签
         private readonly Action<string>? _onSave;
 
-        public string CellValue => _txtValue.Text.Replace("\r\n", "\n");
+        public string CellValue => _txtValue.Text.Replace(GlobalConst.CrLf, GlobalConst.Lf);
 
         /// <summary>
         /// 将各种换行符转换为 Windows 格式 (\r\n)，供 RichTextBox 多行模式正确显示
@@ -24,7 +24,9 @@
             if (string.IsNullOrEmpty(text))
                 return text;
             // 先将已有的 \r\n 保护，再处理 \r 和 \n，最后统一输出 \r\n
-            return text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+            return text.Replace(GlobalConst.CrLf, GlobalConst.Lf)
+                       .Replace(GlobalConst.Cr, GlobalConst.Lf)
+                       .Replace(GlobalConst.Lf, GlobalConst.CrLf);
         }
 
         public CellEditDialog(string initialValue, int row, int col, string fileName = "", string colName = "",

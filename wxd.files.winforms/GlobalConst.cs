@@ -25,5 +25,19 @@ namespace wxd.files.winforms
 
         /// <summary>空字符串</summary>
         public const string Empty = "";
+
+        // ========== char 类型常量 ==========
+
+        /// <summary>回车符 \n</summary>
+        public const char CrChar = '\n';
+
+        /// <summary>换行符 \r</summary>
+        public const char LfChar = '\r';
+
+        /// <summary>制表符 \t</summary>
+        public const char TabChar = '\t';
+
+        /// <summary>空格</summary>
+        public const char SpaceChar = ' ';
     }
 }
