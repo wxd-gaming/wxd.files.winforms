@@ -12,6 +12,9 @@ namespace wxd.files.winforms
         [STAThread]
         static void Main()
         {
+
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+
             // 全局异常捕获：UI 线程异常
             Application.ThreadException += (sender, e) =>
             {
@@ -36,7 +39,7 @@ namespace wxd.files.winforms
                 e.SetObserved();
             };
 
-            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            
             ApplicationConfiguration.Initialize();
 
             Application.Run(new Form1());

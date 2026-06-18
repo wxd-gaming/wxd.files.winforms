@@ -29,6 +29,9 @@ namespace wxd.files.winforms
         private Label _lblInfo = new();
         private Label _lblCellPos = new();
         private Panel _pnlLoading = new();
+        private ProgressBar? _loadingProgressBar;
+        private Label? _loadingLabel;
+        private bool _isLoading = false;  // 防重入标志（DoEvents 期间避免二次加载）
         private Panel _pnlTop = new();
         private Panel _pnlStatus = new();
         private Panel _statusSeparator = new();
@@ -922,8 +925,8 @@ namespace wxd.files.winforms
             };
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));    // 锁图标
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));  // 文件名
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));  // 行列坐标（固定宽度足够）
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 重复提示（占满剩余空间）
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 行列坐标（自动适应内容宽度，避免换行）
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 重复提示（自动适应内容宽度，避免换行）
 
             // 列0: 锁图标 🔒/🔓
             _lblLock = new Label
@@ -952,14 +955,18 @@ namespace wxd.files.winforms
             };
             statusTable.Controls.Add(_lblFileName, 1, 0);
 
-            // 列2: _lblCellPos 行列坐标
+            // 列2: _lblCellPos 行列坐标（AutoSize 让列宽跟随内容，避免固定 180px 导致换行）
             _lblCellPos.TextAlign = ContentAlignment.MiddleLeft;
-            _lblCellPos.Dock = DockStyle.Fill;
+            _lblCellPos.AutoSize = true;
+            _lblCellPos.Dock = DockStyle.None;
+            _lblCellPos.Margin = new Padding(2, 3, 10, 3);
             statusTable.Controls.Add(_lblCellPos, 2, 0);
 
-            // 列3: _lblInfo 重复提示（左侧，紧跟行列坐标）
+            // 列3: _lblInfo 重复提示（AutoSize 让列宽跟随内容，避免换行）
             _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
-            _lblInfo.Dock = DockStyle.Fill;
+            _lblInfo.AutoSize = true;
+            _lblInfo.Dock = DockStyle.None;
+            _lblInfo.Margin = new Padding(2, 3, 4, 3);
             statusTable.Controls.Add(_lblInfo, 3, 0);
 
             _pnlStatus.Controls.Add(statusTable);
@@ -1030,6 +1037,8 @@ namespace wxd.files.winforms
         // ==================== 数据加载 ====================
         private async void LoadCsvAsync()
         {
+            if (_isLoading) return;  // ★ 防重入（DoEvents 期间可能触发二次加载）
+            _isLoading = true;
             try
             {
                 if (!this.IsHandleCreated)
@@ -1043,9 +1052,21 @@ namespace wxd.files.winforms
                 var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
                 await Task.Delay(50);
-                await Task.Run(() => LoadCsvFile());
+                // ★ 后台线程：LoadFile（读缓存/解析）
+                var result = await Task.Run(() => LoadCsvFile());
+                if (result != null)
+                {
+                    var (dataTable, fileData, delimiter) = result.Value;
+                    _delimiter = delimiter;
+                    // ★ UI 线程：OnDataLoadedAsync（含分批绑定 + 进度条，冻结行场景后台构建 filteredTable）
+                    await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
+                        $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}");
+                }
                 var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
                 if (elapsed < 200) await Task.Delay((int)(200 - elapsed));
+                // ★ 延迟 400ms 关闭遮罩，让表格完成最终渲染（ResumeLayout 后的布局重算、高亮重绘），
+                //    避免遮罩消失瞬间表格还在刷新导致的闪烁
+                await Task.Delay(400);
                 HideLoadingOverlay();
             }
             catch (Exception ex)
@@ -1054,10 +1075,16 @@ namespace wxd.files.winforms
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, $"加载CSV文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
             }
+            finally
+            {
+                _isLoading = false;
+            }
         }
 
         private async void LoadExcelAsync()
         {
+            if (_isLoading) return;  // ★ 防重入
+            _isLoading = true;
             try
             {
                 if (!this.IsHandleCreated)
@@ -1071,9 +1098,19 @@ namespace wxd.files.winforms
                 var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
                 await Task.Delay(50);
-                await Task.Run(() => LoadExcelFile());
+                // ★ 后台线程：LoadFile（读缓存/解析）
+                var result = await Task.Run(() => LoadExcelFile());
+                if (result != null)
+                {
+                    var (dataTable, fileData) = result.Value;
+                    // ★ UI 线程：OnDataLoadedAsync（含分批绑定 + 进度条）
+                    await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
+                        $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}");
+                }
                 var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
                 if (elapsed < 200) await Task.Delay((int)(200 - elapsed));
+                // ★ 延迟 400ms 关闭遮罩，让表格完成最终渲染，避免闪烁
+                await Task.Delay(400);
                 HideLoadingOverlay();
             }
             catch (Exception ex)
@@ -1082,31 +1119,34 @@ namespace wxd.files.winforms
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, $"加载Excel文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
             }
+            finally
+            {
+                _isLoading = false;
+            }
         }
 
-        private void LoadCsvFile()
+        // ★ 改为返回数据，由调用方（UI 线程）调用 OnDataLoadedAsync
+        //    这样 OnDataLoadedAsync 内的 await 才能在 UI 线程正常工作
+        private (DataTable dataTable, FileTableData fileData, char delimiter)? LoadCsvFile()
         {
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, "CSV文件不存在", "错误", AlertType.Error));
-                return;
+                return null;
             }
 
             var (dataTable, fileData) = FileDataCache.LoadFile(_filePath);
-            _delimiter = fileData.Delimiter;
-            // ★ 直接传递 LoadFile 返回的 fileData，避免 OnDataLoaded 内的 BuildFileData 第三次全量重建
-            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), fileData,
-                $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
+            return (dataTable, fileData, fileData.Delimiter);
         }
 
-        private void LoadExcelFile()
+        private (DataTable dataTable, FileTableData fileData)? LoadExcelFile()
         {
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, "Excel文件不存在", "错误", AlertType.Error));
-                return;
+                return null;
             }
 
             var (dataTable, fileData) = FileDataCache.LoadFile(_filePath);
@@ -1114,15 +1154,12 @@ namespace wxd.files.winforms
             {
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, "Excel文件没有工作表", "警告", AlertType.Warning));
-                return;
+                return null;
             }
-
-            // ★ 直接传递 LoadFile 返回的 fileData，避免 OnDataLoaded 内的 BuildFileData 第三次全量重建
-            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), fileData,
-                $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
+            return (dataTable, fileData);
         }
 
-        private void OnDataLoaded(DataTable dataTable, DataTable headerTable, FileTableData fileData, string infoText)
+        private async Task OnDataLoadedAsync(DataTable dataTable, DataTable headerTable, FileTableData fileData, string infoText)
         {
             _dataTable = dataTable;
             // ★ 直接使用 LoadFile 返回的 FileTableData（首次加载无需 inheritFrom，避免第三次全量遍历）
@@ -1159,27 +1196,15 @@ namespace wxd.files.winforms
             if (_lightweight)
             {
                 // 轻量模式：直接绑定 DataSource，不做额外初始化
-                _dataGrid.DataSource = _dataTable;
-                for (int i = 0; i < _dataGrid.Columns.Count; i++)
-                {
-                    _dataGrid.Columns[i].Width = 120;
-                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
-                }
+                BindDataTableInBatches(_dataTable, configureColumns: true);
                 // 轻量模式：隐藏顶部工具栏
                 _pnlTop.Visible = false;
             }
             else if (_frozenRows > 0)
-                RefreshGridLayout();
+                await RefreshGridLayoutWithProgressAsync();  // ★ 冻结行场景：异步构建 filteredTable + 进度条
             else
             {
-                _dataGrid.DataSource = _dataTable;
-                for (int i = 0; i < _dataGrid.Columns.Count; i++)
-                {
-                    _dataGrid.Columns[i].Width = 120;
-                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
-                }
+                BindDataTableInBatches(_dataTable, configureColumns: true);
             }
 
             if (!string.IsNullOrEmpty(_initialContentFilter))
@@ -1678,20 +1703,123 @@ namespace wxd.files.winforms
                     Dock = DockStyle.Fill,
                     Visible = true
                 };
-                var lbl = new Label
+                _loadingLabel = new Label
                 {
                     Text = "正在加载数据，请稍候...",
                     AutoSize = false,
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 14f, FontStyle.Bold),
+                    Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
                     ForeColor = Color.FromArgb(30, 136, 229),
-                    Dock = DockStyle.Fill
+                    Dock = DockStyle.Top,
+                    Height = 60
                 };
-                _pnlLoading.Controls.Add(lbl);
+                _loadingProgressBar = new ProgressBar
+                {
+                    Minimum = 0,
+                    Maximum = 100,
+                    Value = 0,
+                    Style = ProgressBarStyle.Continuous,
+                    Width = 400,
+                    Height = 24
+                };
+                _pnlLoading.Controls.Add(_loadingProgressBar);
+                _pnlLoading.Controls.Add(_loadingLabel);
                 this.Controls.Add(_pnlLoading);
                 _pnlLoading.BringToFront();
+                // 居中进度条
+                _pnlLoading.Layout += (s, e) =>
+                {
+                    if (_loadingProgressBar != null)
+                    {
+                        _loadingProgressBar.Left = (_pnlLoading.Width - _loadingProgressBar.Width) / 2;
+                        _loadingProgressBar.Top = (_pnlLoading.Height - _loadingProgressBar.Height) / 2 + 20;
+                    }
+                };
                 Application.DoEvents();
             });
+        }
+
+        // 新增：更新加载进度（在分批绑定过程中调用，让进度条刷新）
+        private void UpdateLoadingProgress(int percent, string stageText)
+        {
+            if (_pnlLoading == null || !_pnlLoading.Visible || _pnlLoading.IsDisposed) return;
+            if (_loadingProgressBar != null)
+                _loadingProgressBar.Value = Math.Clamp(percent, 0, 100);
+            if (_loadingLabel != null)
+                _loadingLabel.Text = stageText;
+            _pnlLoading.Refresh();
+            Application.DoEvents();
+        }
+
+        /// <summary>
+        /// 分批构建 DataTable 再一次性绑定到 DataGridView，避免一次性绑定大表导致 UI 长时间冻结。
+        /// 思路：先在【未绑定】的 displayTable 上分批 ImportRow（不触发 DataGridView 事件，极快），
+        /// 每批之间刷新进度条，全部填充完成后一次性绑定。
+        /// 注意：不要在 displayTable 已绑定 DataGridView 的情况下 ImportRow，
+        /// 否则每次 ImportRow 都会触发 ListChanged → DataGridView 同步创建行对象 + 布局，
+        /// 导致 UI 线程被占满，进度条无法刷新。
+        /// 绑定完成后 _dataTable 引用替换为 displayTable，保证后续编辑/排序基于同一份数据。
+        /// </summary>
+        private void BindDataTableInBatches(DataTable sourceTable, bool configureColumns)
+        {
+            int totalRows = sourceTable.Rows.Count;
+            // 小表直接绑定，不走分批（避免无谓开销）
+            if (totalRows <= 500)
+            {
+                _dataGrid.DataSource = sourceTable;
+                if (configureColumns)
+                {
+                    for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                    {
+                        _dataGrid.Columns[i].Width = 120;
+                        _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                        _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    }
+                }
+                return;
+            }
+
+            // ★ 阶段1：创建【未绑定】的 displayTable（只有列结构），分批 ImportRow 填充数据行
+            //    关键：此时 displayTable 未绑定到 DataGridView，ImportRow 不会触发任何 UI 事件，
+            //    Application.DoEvents() 能真正刷新进度条（不会被 DataGridView 布局占满 UI 线程）
+            UpdateLoadingProgress(5, "正在准备数据...");
+            var displayTable = sourceTable.Clone();  // 克隆结构，0 行，未绑定
+
+            int batchSize = 2000;
+            int added = 0;
+            for (int start = 0; start < totalRows; start += batchSize)
+            {
+                int end = Math.Min(start + batchSize, totalRows);
+                for (int i = start; i < end; i++)
+                    displayTable.ImportRow(sourceTable.Rows[i]);
+                added = end;
+                int percent = 5 + (int)((added / (double)totalRows) * 75);  // 5% ~ 80%
+                UpdateLoadingProgress(percent, $"正在加载行数据... {added}/{totalRows}");
+            }
+
+            // ★ 阶段2：数据已全部填充到 displayTable，现在一次性绑定到 DataGridView
+            //    这一步会同步创建所有 DataGridViewRow（约 6-8s），UI 线程会阻塞，
+            //    但进度条已走到 80%，用户知道数据已加载完成，正在渲染
+            UpdateLoadingProgress(85, "正在渲染表格（可能需要数秒，请稍候）...");
+            _dataGrid.DataSource = displayTable;
+
+            // ★ 阶段3：配置列宽/表头（此时 DataGridView 已有行，但列数固定，操作很快）
+            //    用 SuspendLayout/ResumeLayout 包裹，避免每列设置都触发布局重算
+            if (configureColumns)
+            {
+                _dataGrid.SuspendLayout();
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    _dataGrid.Columns[i].Width = 120;
+                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                    _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                }
+                _dataGrid.ResumeLayout(false);
+            }
+
+            // ★ 阶段4：统一引用，保证后续编辑/排序基于同一份数据
+            _dataTable = displayTable;
+            UpdateLoadingProgress(100, "完成");
         }
 
         private void HideLoadingOverlay()
@@ -1704,6 +1832,8 @@ namespace wxd.files.winforms
                     this.Controls.Remove(_pnlLoading);
                     _pnlLoading.Dispose();
                     _pnlLoading = null;
+                    _loadingProgressBar = null;
+                    _loadingLabel = null;
                 }
             });
         }
@@ -1712,6 +1842,8 @@ namespace wxd.files.winforms
         private async void ReloadContentAsync()
         {
             if (!File.Exists(_filePath)) return;
+            if (_isLoading) return;  // ★ 防重入
+            _isLoading = true;
             var savedFilter = _txtContentFilter.Text;
             var savedAdvFilter = _txtAdvancedFilter.Text;
             var savedColumnStates = _columnCheckStates;
@@ -1727,16 +1859,37 @@ namespace wxd.files.winforms
                     this.HandleCreated += handler;
                     await tcs.Task;
                 }
-                await Task.Run(() =>
+                ShowLoadingOverlay();
+                await Task.Delay(50);
+                // ★ 适配 LoadCsvFile/LoadExcelFile 新签名（返回数据）
+                if (_fileType == TableFileType.Csv)
                 {
-                    if (_fileType == TableFileType.Csv)
-                        LoadCsvFile();
-                    else
-                        LoadExcelFile();
-                });
+                    var result = await Task.Run(() => LoadCsvFile());
+                    if (result != null)
+                    {
+                        var (dataTable, fileData, delimiter) = result.Value;
+                        _delimiter = delimiter;
+                        await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
+                            $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}");
+                    }
+                }
+                else
+                {
+                    var result = await Task.Run(() => LoadExcelFile());
+                    if (result != null)
+                    {
+                        var (dataTable, fileData) = result.Value;
+                        await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
+                            $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}");
+                    }
+                }
+                // ★ 延迟 400ms 关闭遮罩，让表格完成最终渲染，避免闪烁
+                await Task.Delay(400);
+                HideLoadingOverlay();
             }
             catch (Exception ex)
             {
+                HideLoadingOverlay();
                 if (this.IsHandleCreated)
                     this.Invoke(() => AlertForm.Show(this, $"重新加载失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex));
                 _columnCheckStates = savedColumnStates;
@@ -1745,6 +1898,10 @@ namespace wxd.files.winforms
                 _txtAdvancedFilter.Text = savedAdvFilter;
                 UpdateColumnSelectorButton();
                 return;
+            }
+            finally
+            {
+                _isLoading = false;
             }
 
             if (savedColumnStates.Length == _dataTable.Columns.Count)
@@ -2372,6 +2529,185 @@ namespace wxd.files.winforms
             if (colIndex < 0 || colIndex >= cells.Count) return false;
             string cellValue = cells[colIndex];
             return CompareValue(cellValue, cond.Value, cond.CompareOp);
+        }
+
+        /// <summary>
+        /// 冻结行场景的异步加载版本（带进度条）。
+        /// 把 filteredTable 构建移到后台线程，用 Progress&lt;T&gt; 报告进度（自动切 UI 线程更新进度条）。
+        /// 构建完成后切回 UI 线程做绑定 + Tag + 列宽。
+        /// 注意：其他场景（过滤/排序/列选择）仍用同步的 RefreshGridLayout，本方法只用于首次加载。
+        /// </summary>
+        private async Task RefreshGridLayoutWithProgressAsync()
+        {
+            if (_dataTable.Columns.Count == 0) return;
+            if (_frozenRows <= 0 || _dataTable.Rows.Count == 0)
+            {
+                RefreshGridLayout();
+                return;
+            }
+
+            // ==================== 阶段1：构建 _headerTable + 绑定 _dataGridHeader（UI 线程，很快） ====================
+            UpdateLoadingProgress(5, "正在准备表头...");
+            _visibleColumnIndices = GetVisibleColumnIndices();
+            _headerTable = new DataTable();
+            foreach (var colIndex in _visibleColumnIndices)
+            {
+                var sourceCol = _dataTable.Columns[colIndex];
+                _headerTable.Columns.Add(sourceCol.ColumnName, sourceCol.DataType);
+            }
+            for (int i = 0; i < Math.Min(_frozenRows, _dataTable.Rows.Count); i++)
+            {
+                var sourceRow = _dataTable.Rows[i];
+                var targetRow = _headerTable.NewRow();
+                for (int j = 0; j < _visibleColumnIndices.Count; j++)
+                    targetRow[j] = sourceRow[_visibleColumnIndices[j]];
+                _headerTable.Rows.Add(targetRow);
+            }
+            _pnlGridContainer.Panel1Collapsed = false;
+            _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
+            _dataGridHeader.DataSource = _headerTable;
+            for (int i = 0; i < _dataGridHeader.Columns.Count; i++)
+            {
+                var colName = _headerTable.Columns[i].ColumnName;
+                var dgvCol = _dataGridHeader.Columns[colName];
+                if (dgvCol != null)
+                {
+                    dgvCol.DisplayIndex = i;
+                    dgvCol.Width = 120;
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                    {
+                        var srcColIdx = _visibleColumnIndices[i];
+                        var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                        dgvCol.HeaderText = headerVal;
+                        SetColumnHeaderToolTip(dgvCol, i, headerVal);
+                    }
+                    else
+                    {
+                        dgvCol.HeaderText = GetExcelColumnName(i);
+                    }
+                    dgvCol.SortMode = DataGridViewColumnSortMode.NotSortable;
+                }
+            }
+            await Task.Yield();  // 让 UI 线程有机会刷新一次
+
+            // ==================== 阶段2：后台线程构建 filteredTable（Progress<T> 自动切 UI 线程更新进度条） ====================
+            var contentFilter = _txtContentFilter.Text.Trim();
+            var visibleRowIndices = GetVisibleRowIndices(contentFilter);
+            var progress = new Progress<(int percent, string text)>(p => UpdateLoadingProgress(p.percent, p.text));
+
+            // ★ 捕获后台线程需要的只读引用（避免后台线程访问 UI 控件）
+            var dataTableRef = _dataTable;
+            var visibleColIndicesRef = _visibleColumnIndices;
+
+            var filteredTable = await Task.Run(() => BuildFilteredTableInBackground(
+                visibleRowIndices, visibleColIndicesRef, dataTableRef, progress));
+
+            // ==================== 阶段3：UI 线程绑定 + Tag + 列宽 ====================
+            // 这一步的 _dataGrid.DataSource = filteredTable 会同步创建所有 DataGridViewRow（约 6-8s），
+            // UI 线程会阻塞，但进度条已走到 85%，用户知道数据已加载完成，正在渲染。
+            UpdateLoadingProgress(85, "正在渲染表格（可能需要数秒，请稍候）...");
+
+            // 行编辑模式：刷新前退出编辑
+            if (_editingRowIndex >= 0)
+            {
+                _enteringEditMode = true;
+                try
+                {
+                    if (_dataGrid.IsCurrentCellInEditMode)
+                        _dataGrid.EndEdit();
+                    ExitRowEditMode(commit: true);
+                }
+                finally { _enteringEditMode = false; }
+            }
+
+            _dataGrid.DataSource = filteredTable;
+
+            // 设置 Tag（使用原始行索引）
+            for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
+            {
+                int origIdx = visibleRowIndices[i];
+                if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
+                    _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
+            }
+
+            // 配置列宽/表头
+            _dataGrid.SuspendLayout();
+            for (int i = 0; i < _dataGrid.Columns.Count; i++)
+            {
+                var colName = filteredTable.Columns[i].ColumnName;
+                var dgvCol = _dataGrid.Columns[colName];
+                if (dgvCol != null)
+                {
+                    dgvCol.DisplayIndex = i;
+                    dgvCol.Width = 120;
+                    dgvCol.SortMode = DataGridViewColumnSortMode.Programmatic;
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                    {
+                        var srcColIdx = _visibleColumnIndices[i];
+                        var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                        dgvCol.HeaderText = headerVal;
+                        SetColumnHeaderToolTip(dgvCol, i, headerVal);
+                    }
+                    else
+                    {
+                        dgvCol.HeaderText = GetExcelColumnName(i);
+                    }
+                }
+            }
+            _dataGrid.ResumeLayout(false);
+
+            _lblCellPos.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRowIndices.Count} 行";
+            _lblInfo.Text = "";
+            if (_duplicateWarningText != null)
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text = _duplicateWarningText;
+            }
+
+            UpdateLoadingProgress(100, "完成");
+        }
+
+        /// <summary>
+        /// 后台线程构建 filteredTable（纯数据操作，不触发 UI 事件）。
+        /// 通过 Progress&lt;T&gt; 报告进度（自动切 UI 线程更新进度条）。
+        /// 逻辑与 RefreshFilteredDisplay 中的构建部分完全一致，只是移到了后台线程执行。
+        /// </summary>
+        private DataTable BuildFilteredTableInBackground(
+            List<int> visibleRowIndices,
+            List<int> visibleColumnIndices,
+            DataTable sourceTable,
+            IProgress<(int percent, string text)> progress)
+        {
+            var filteredTable = new DataTable();
+            foreach (var colIndex in visibleColumnIndices)
+            {
+                var sourceCol = sourceTable.Columns[colIndex];
+                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string));  // 统一 string 避免类型冲突
+            }
+
+            int total = visibleRowIndices.Count;
+            int batchSize = 2000;
+            int added = 0;
+            foreach (var origRowIdx in visibleRowIndices)
+            {
+                var newRow = filteredTable.NewRow();
+                for (int i = 0; i < visibleColumnIndices.Count; i++)
+                {
+                    int colIdx = visibleColumnIndices[i];
+                    newRow[i] = colIdx < sourceTable.Columns.Count
+                        ? (sourceTable.Rows[origRowIdx][colIdx] ?? "")
+                        : "";
+                }
+                filteredTable.Rows.Add(newRow);
+                added++;
+                if (added % batchSize == 0)
+                {
+                    int percent = 10 + (int)((added / (double)total) * 70);  // 10% ~ 80%
+                    progress.Report((percent, $"正在加载行数据... {added}/{total}"));
+                }
+            }
+            progress.Report((80, $"正在加载行数据... {added}/{total}"));
+            return filteredTable;
         }
 
         private void RefreshFilteredDisplay(List<int> visibleRowIndices)
