@@ -472,6 +472,9 @@ namespace wxd.files.winforms
                 dataTable.Columns.Add(columnName, typeof(string));
             }
 
+            // ★ ColumnNames 只需赋值一次（修复循环内 5 万次重复赋值的 bug）
+            fileData.ColumnNames = new List<string>(headers);
+
             for (int i = 0; i < lines.Count; i++)
             {
                 var values = ParseCsvLine(lines[i], delimiter);
@@ -485,7 +488,6 @@ namespace wxd.files.winforms
                     Cells = new List<string>(values),
                     OriginalRowIndex = i
                 };
-                fileData.ColumnNames = new List<string>(headers);
                 fileData.Rows.Add(tableRow);
             }
 
@@ -721,13 +723,14 @@ namespace wxd.files.winforms
                 && fieldLink.TargetDisplayColumnIndex >= 0
                 && fieldLink.TargetDisplayColumnIndex != targetColIndex;
 
-            var rowData = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            var rowRawStrings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var columnNames = new List<string>();
-
             if (fileData.ColumnNames.Count > 0)
                 columnNames = fileData.ColumnNames;
 
+            // ★ 只构建红色高亮必需的 Values + DisplayNames
+            //    RowData / RowRawStrings 不再立即构建（实测 tooltip 不读取这两个字段，
+            //    且大表场景下会拷贝整行导致内存浪费 ~60MB）
+            //    保留空字典以保持 LinkLookupEntry 字段兼容性
             foreach (var row in fileData.Rows)
             {
                 if (targetColIndex >= 0 && targetColIndex < row.Cells.Count)
@@ -742,11 +745,6 @@ namespace wxd.files.winforms
                             if (!string.IsNullOrEmpty(displayVal) && !displayNames.ContainsKey(idVal))
                                 displayNames[idVal] = displayVal;
                         }
-                        if (!rowData.ContainsKey(idVal))
-                        {
-                            rowData[idVal] = row.Cells.ToList();
-                            rowRawStrings[idVal] = string.Join(",", row.Cells);
-                        }
                     }
                 }
             }
@@ -758,8 +756,8 @@ namespace wxd.files.winforms
                 TargetFile = fieldLink?.TargetFile ?? "",
                 TargetColumnName = fieldLink?.TargetColumnName ?? "",
                 DisplayColumnName = fieldLink?.TargetDisplayColumnName ?? "",
-                RowData = rowData,
-                RowRawStrings = rowRawStrings,
+                RowData = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase),
+                RowRawStrings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 ColumnNames = columnNames
             };
         }

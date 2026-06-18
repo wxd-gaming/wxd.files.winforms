@@ -1095,7 +1095,8 @@ namespace wxd.files.winforms
 
             var (dataTable, fileData) = FileDataCache.LoadFile(_filePath);
             _delimiter = fileData.Delimiter;
-            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(),
+            // ★ 直接传递 LoadFile 返回的 fileData，避免 OnDataLoaded 内的 BuildFileData 第三次全量重建
+            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), fileData,
                 $"分隔符: '{_delimiter}' | 行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
         }
 
@@ -1108,7 +1109,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var (dataTable, _) = FileDataCache.LoadFile(_filePath);
+            var (dataTable, fileData) = FileDataCache.LoadFile(_filePath);
             if (dataTable.Rows.Count == 0 && dataTable.Columns.Count == 0)
             {
                 if (this.IsHandleCreated)
@@ -1116,14 +1117,17 @@ namespace wxd.files.winforms
                 return;
             }
 
-            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
+            // ★ 直接传递 LoadFile 返回的 fileData，避免 OnDataLoaded 内的 BuildFileData 第三次全量重建
+            this.Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), fileData,
+                $"行数: {dataTable.Rows.Count} | 列数: {dataTable.Columns.Count}"));
         }
 
-        private void OnDataLoaded(DataTable dataTable, DataTable headerTable, string infoText)
+        private void OnDataLoaded(DataTable dataTable, DataTable headerTable, FileTableData fileData, string infoText)
         {
             _dataTable = dataTable;
-            // ★ 同步构建 FileTableData（继承旧差异信息）
-            _fileData = BuildFileData(dataTable, _fileData);
+            // ★ 直接使用 LoadFile 返回的 FileTableData（首次加载无需 inheritFrom，避免第三次全量遍历）
+            //    BuildFileData 仍保留供排序/过滤/版本对比场景调用
+            _fileData = fileData;
             _headerTable = headerTable.Clone();
 
             _columnCheckStates = new bool[_dataTable.Columns.Count];
