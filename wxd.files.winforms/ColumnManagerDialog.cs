@@ -65,11 +65,11 @@ namespace wxd.files.winforms
             // 第一列：选择
             _lvColumns.Columns.Add("选择", 50, System.Windows.Forms.HorizontalAlignment.Center);
 
-            // 字段名列：显示表头行对应的字段名
+            // 字段名列
             if (_headerRowIndex >= 0 && _headerRowIndex < dataTable.Rows.Count && _headerRowIndex < frozenCount)
                 _lvColumns.Columns.Add($"字段名(行{_headerRowIndex + 1})", 140, System.Windows.Forms.HorizontalAlignment.Left);
 
-            // 映射名列：如果设置了映射行且与表头行不同，显示映射行的值
+            // 映射名列
             if (_mappingRowIndex >= 0 && _mappingRowIndex < dataTable.Rows.Count && _mappingRowIndex < frozenCount
                 && _mappingRowIndex != _headerRowIndex)
                 _lvColumns.Columns.Add($"映射名(行{_mappingRowIndex + 1})", 140, System.Windows.Forms.HorizontalAlignment.Left);
@@ -120,9 +120,18 @@ namespace wxd.files.winforms
                 var link = _columnLinks.Find(l =>
                     l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
                     l.SourceColumnIndex == col);
-                item.SubItems.Add(link != null ? $"⚡{Path.GetFileNameWithoutExtension(link.TargetFile)}" : "");
+                string displayText = "";
+                if (link != null)
+                {
+                    int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
+                    if (linkedFields > 0)
+                        displayText = $"⚡{linkedFields}字段";
+                    else
+                        displayText = "📋格式";
+                }
+                item.SubItems.Add(displayText);
 
-                // 过滤：检查所有 SubItems 是否包含搜索词
+                // 过滤
                 if (!string.IsNullOrEmpty(filter))
                 {
                     bool match = false;
@@ -156,129 +165,82 @@ namespace wxd.files.winforms
             MinimizeBox = false;
             MaximizeBox = false;
 
-            // 全选/取消按钮
             _btnSelectAll = new Button
             {
-                Text = "全选",
-                Location = new Point(10, 8),
-                Size = new Size(70, 26),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
+                Text = "全选", Location = new Point(10, 8), Size = new Size(70, 26),
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
-                BackColor = Color.FromArgb(235, 245, 255),
-                ForeColor = Color.FromArgb(20, 60, 100)
+                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100)
             };
             _btnSelectAll.Click += (s, e) => SetAllChecked(true);
 
             _btnDeselectAll = new Button
             {
-                Text = "取消全选",
-                Location = new Point(88, 8),
-                Size = new Size(80, 26),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
+                Text = "取消全选", Location = new Point(88, 8), Size = new Size(80, 26),
+                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
-                BackColor = Color.FromArgb(235, 245, 255),
-                ForeColor = Color.FromArgb(20, 60, 100)
+                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100)
             };
             _btnDeselectAll.Click += (s, e) => SetAllChecked(false);
 
-            // 搜索框
             _txtSearch = new TextBox
             {
-                Location = new Point(176, 9),
-                Size = new Size(160, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "搜索列...",
-                ForeColor = Color.FromArgb(20, 60, 100),
-                BackColor = Color.White
+                Location = new Point(176, 9), Size = new Size(160, 24),
+                Font = new Font("Microsoft YaHei UI", 9f), BorderStyle = BorderStyle.FixedSingle,
+                PlaceholderText = "搜索列...", ForeColor = Color.FromArgb(20, 60, 100), BackColor = Color.White
             };
-            _txtSearch.TextChanged += (s, e) =>
-            {
-                PopulateList(_dataTable, _frozenRows, _txtSearch.Text.Trim());
-            };
+            _txtSearch.TextChanged += (s, e) => PopulateList(_dataTable, _frozenRows, _txtSearch.Text.Trim());
 
-            // ListView — 使用原生 CheckBoxes
             _lvColumns = new ListView
             {
-                Location = new Point(10, 42),
-                Size = new Size(960, 420),
+                Location = new Point(10, 42), Size = new Size(960, 420),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.White,
-                ForeColor = Color.FromArgb(20, 60, 100),
-                View = View.Details,
-                FullRowSelect = true,
-                HideSelection = false,
-                GridLines = true,
-                CheckBoxes = true,
-                HeaderStyle = ColumnHeaderStyle.Nonclickable
+                BorderStyle = BorderStyle.FixedSingle, Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Color.White, ForeColor = Color.FromArgb(20, 60, 100),
+                View = View.Details, FullRowSelect = true, HideSelection = false,
+                GridLines = true, CheckBoxes = true, HeaderStyle = ColumnHeaderStyle.Nonclickable
             };
-            // 阻止锁定列取消选中
             _lvColumns.ItemCheck += (s, e) =>
             {
                 if (_lvColumns.Items[e.Index].Tag is int colIndex &&
                     colIndex == _lockedColumnIndex && e.NewValue == CheckState.Unchecked)
-                {
                     e.NewValue = CheckState.Checked;
-                }
             };
-            // 同步选中状态 — 使用 Tag 中的原始列索引映射
             _lvColumns.ItemChecked += (s, e) =>
             {
                 if (e.Item.Tag is int colIndex && colIndex < _checkedStates.Length)
                     _checkedStates[colIndex] = e.Item.Checked;
             };
 
-            // 关联管理按钮
             _btnLinkManage = new Button
             {
-                Text = "关联设置",
-                Location = new Point(600, 468),
-                Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(22, 163, 74),
-                ForeColor = Color.White,
+                Text = "关联设置", Location = new Point(600, 468), Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(22, 163, 74), ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61), MouseOverBackColor = Color.FromArgb(21, 128, 61) },
                 Cursor = Cursors.Hand
             };
             _btnLinkManage.Click += OnLinkManageClick;
 
-            // OK 按钮
             _btnOK = new Button
             {
-                Text = "确定",
-                Location = new Point(690, 468),
-                Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.OK,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
+                Text = "确定", Location = new Point(690, 468), Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.OK, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
 
-            // 取消按钮
             _btnCancel = new Button
             {
-                Text = "取消",
-                Location = new Point(780, 468),
-                Size = new Size(70, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
+                Text = "取消", Location = new Point(780, 468), Size = new Size(70, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
+                DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
 
             Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _txtSearch, _lvColumns, _btnLinkManage, _btnOK, _btnCancel });
             AcceptButton = _btnOK;
             CancelButton = _btnCancel;
-
             ResumeLayout(false);
         }
 
@@ -307,7 +269,6 @@ namespace wxd.files.winforms
                 var newLink = setupDialog.GetResult();
                 if (newLink != null)
                     _columnLinks.Add(newLink);
-
                 UpdateLinkColumnInListView();
             }
         }
@@ -323,14 +284,14 @@ namespace wxd.files.winforms
                         l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
                         l.SourceColumnIndex == col);
                     var linkText = item.SubItems[item.SubItems.Count - 1];
-
                     string displayText = "";
                     if (link != null)
                     {
-                        if (!string.IsNullOrEmpty(link.TargetColumnName))
-                            displayText = $"{Path.GetFileNameWithoutExtension(link.TargetFile)} [{link.TargetColumnName}]";
+                        int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
+                        if (linkedFields > 0)
+                            displayText = $"⚡{linkedFields}字段";
                         else
-                            displayText = $"{Path.GetFileNameWithoutExtension(link.TargetFile)}";
+                            displayText = "📋格式";
                     }
                     linkText.Text = displayText;
                 }

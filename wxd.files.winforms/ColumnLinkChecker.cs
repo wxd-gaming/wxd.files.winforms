@@ -22,15 +22,20 @@ namespace wxd.files.winforms
         public string TargetColumnName { get; set; } = "";
         /// <summary>显示列的表头名称</summary>
         public string DisplayColumnName { get; set; } = "";
+
+        /// <summary>ID → 完整行数据（表模式使用：ID → 该行所有单元格值列表）</summary>
+        public Dictionary<string, List<string>> RowData { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>目标文件的列名列表（表模式使用：用于自动生成列头）</summary>
+        public List<string> ColumnNames { get; set; } = new();
+
+        /// <summary>ID → 行原始数据字符串（未切割的整行）</summary>
+        public Dictionary<string, string> RowRawStrings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// 列关联颜色检查器 — 根据跨文件列关联规则为DataGridView单元格着色。
-    /// 所有缓存操作通过 FileDataCache 静态方法。
-    /// </summary>
+    /// <summary>列关联颜色检查器 — 根据跨文件列关联规则为DataGridView单元格着色。</summary>
     public static class ColumnLinkChecker
     {
-        /// <summary>从绝对路径获取相对路径（相对于 rootDir）</summary>
         private static string GetRelativePath(string fullPath, string rootDir)
         {
             if (fullPath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
@@ -38,7 +43,7 @@ namespace wxd.files.winforms
             return Path.GetFileName(fullPath);
         }
 
-        /// <summary>检查指定值在目标表中是否存在</summary>
+        /// <summary>检查指定值在目标表中是否存在（检查所有有关联的字段）</summary>
         public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex,
             string cellValue, List<ColumnLinkConfig>? columnLinks = null)
         {
@@ -50,16 +55,31 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColumnIndex);
 
-            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
+            if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
+                return false;
 
-            string prefix = currentRel + "|" + originalColumnIndex + "->";
+            // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
+            var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
+
             var lookups = FileDataCache.GetLookups();
-            foreach (var kvp in lookups)
+
+            foreach (var fl in linkConfig.FieldLinks)
             {
-                if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(fl.TargetFile)) continue;
+
+                string fieldPrefix = $"{currentRel}|{originalColumnIndex}->field{fl.FieldIndex}->";
+                foreach (var kvp in lookups)
                 {
-                    return matchValues.Any(v => kvp.Value.Values.Contains(v));
+                    if (kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 检查每行该字段的值是否在 lookup 中存在
+                        foreach (var fieldValues in fieldRows)
+                        {
+                            string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
+                            if (!string.IsNullOrEmpty(fieldVal) && kvp.Value.Values.Contains(fieldVal))
+                                return true;
+                        }
+                    }
                 }
             }
             return false;
@@ -90,34 +110,47 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
-            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
+            if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
+                return null;
 
-            string prefix = currentRel + "|" + originalColIndex + "->";
+            // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
+            var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
+
             var lookups = FileDataCache.GetLookups();
-            foreach (var kvp in lookups)
-            {
-                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-                var keyAfterArrow = kvp.Key.Substring(prefix.Length);
-                int extractIdx = keyAfterArrow.IndexOf("|extract:", StringComparison.Ordinal);
-                if (extractIdx >= 0)
-                    keyAfterArrow = keyAfterArrow.Substring(0, extractIdx);
 
-                if (matchValues.Count > 1 && matchValues.All(v => !kvp.Value.Values.Contains(v)))
+            foreach (var fl in linkConfig.FieldLinks)
+            {
+                if (string.IsNullOrEmpty(fl.TargetFile)) continue;
+
+                string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
+                foreach (var kvp in lookups)
                 {
-                    var colonIdx = keyAfterArrow.LastIndexOf(':');
-                    string targetFile = colonIdx > 0 ? keyAfterArrow.Substring(0, colonIdx) : keyAfterArrow;
-                    string targetCol = colonIdx > 0 ? keyAfterArrow.Substring(colonIdx + 1) : "";
-                    string displayTableName = Path.GetFileName(targetFile);
-                    if (fileRemarks != null && fileRemarks.TryGetValue(targetFile, out var remark) && !string.IsNullOrEmpty(remark))
-                        displayTableName = $"{remark} ({Path.GetFileName(targetFile)})";
-                    else if (!string.IsNullOrEmpty(targetCol))
-                        displayTableName = $"{Path.GetFileName(targetFile)} [{targetCol}]";
-                    string displayValue = linkConfig?.ValueExtractionEnabled == true
-                        ? $"{cellVal} (提取: {string.Join(", ", matchValues)})" : cellVal;
-                    return $"关联表 [{displayTableName}] 的关联列中未找到该数据: \"{displayValue}\"";
+                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    bool allFound = true;
+                    var notFoundValues = new List<string>();
+
+                    foreach (var fieldValues in fieldRows)
+                    {
+                        string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
+                        if (!string.IsNullOrEmpty(fieldVal) && !kvp.Value.Values.Contains(fieldVal))
+                        {
+                            allFound = false;
+                            notFoundValues.Add(fieldVal);
+                        }
+                    }
+
+                    if (!allFound)
+                    {
+                        string displayTableName = Path.GetFileName(fl.TargetFile);
+                        if (fileRemarks != null && fileRemarks.TryGetValue(fl.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                            displayTableName = $"{remark} ({Path.GetFileName(fl.TargetFile)})";
+                        else if (!string.IsNullOrEmpty(fl.TargetColumnName))
+                            displayTableName = $"{Path.GetFileName(fl.TargetFile)} [{fl.TargetColumnName}]";
+                        return $"关联表 [{displayTableName}] 第{fl.FieldIndex}段未找到: \"{string.Join(", ", notFoundValues)}\"";
+                    }
+                    break;
                 }
-                break;
             }
             return null;
         }
@@ -147,60 +180,72 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
-            var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
+            if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
+                return null;
 
-            string prefix = currentRel + "|" + originalColIndex + "->";
+            // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
+            var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
+
             var lookups = FileDataCache.GetLookups();
-            foreach (var kvp in lookups)
+
+            var allFieldLines = new List<string>();
+            int totalMatchable = 0;
+            int totalMatched = 0;
+
+            foreach (var fl in linkConfig.FieldLinks)
             {
-                if (!kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrEmpty(fl.TargetFile)) continue;
 
-                string targetFileName = Path.GetFileName(kvp.Value.TargetFile);
-                string displayTableName = targetFileName;
-                if (fileRemarks != null && fileRemarks.TryGetValue(kvp.Value.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
-                    displayTableName = $"{remark} ({targetFileName})";
-                else if (!string.IsNullOrEmpty(kvp.Value.TargetColumnName))
-                    displayTableName = $"{targetFileName} [{kvp.Value.TargetColumnName}]";
-
-                var displayLines = new List<string>();
-                foreach (var mv in matchValues)
+                string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
+                foreach (var kvp in lookups)
                 {
-                    if (kvp.Value.Values.Contains(mv))
+                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string targetFileName = Path.GetFileName(kvp.Value.TargetFile);
+                    string displayTableName = targetFileName;
+                    if (fileRemarks != null && fileRemarks.TryGetValue(kvp.Value.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                        displayTableName = $"{remark} ({targetFileName})";
+                    else if (!string.IsNullOrEmpty(kvp.Value.TargetColumnName))
+                        displayTableName = $"{targetFileName} [{kvp.Value.TargetColumnName}]";
+
+                    allFieldLines.Add($"--- 第{fl.FieldIndex}段: {displayTableName} ---");
+
+                    foreach (var fieldValues in fieldRows)
                     {
-                        if (kvp.Value.DisplayNames.TryGetValue(mv, out var displayName) && !string.IsNullOrEmpty(displayName))
-                            displayLines.Add($"{mv}: {displayName}");
+                        string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
+                        if (string.IsNullOrEmpty(fieldVal)) continue;
+
+                        totalMatchable++;
+                        if (kvp.Value.Values.Contains(fieldVal))
+                        {
+                            totalMatched++;
+                            if (kvp.Value.DisplayNames.TryGetValue(fieldVal, out var displayName) && !string.IsNullOrEmpty(displayName))
+                                allFieldLines.Add($"  {fieldVal}: {displayName}");
+                            else
+                                allFieldLines.Add($"  {fieldVal}: (无显示名)");
+                        }
                         else
-                            displayLines.Add($"{mv}: (无显示名)");
+                        {
+                            allFieldLines.Add($"  {fieldVal}: ❌ 关联表未找到");
+                        }
                     }
-                    else
-                    {
-                        displayLines.Add($"{mv}: 关联表未找到");
-                    }
+                    break;
                 }
-
-                if (displayLines.Count == 0) return null;
-
-                var orderedLines = displayLines
-                    .Where(l => l.Contains("关联表未找到"))
-                    .Concat(displayLines.Where(l => !l.Contains("关联表未找到")))
-                    .ToList();
-
-                var matchedCount = displayLines.Count(l => !l.Contains("关联表未找到"));
-                var sb = new StringBuilder();
-                sb.AppendLine(displayTableName);
-                sb.AppendLine($"已匹配: {matchedCount}/{displayLines.Count}");
-                int maxLines = 15;
-                foreach (var line in orderedLines.Take(maxLines))
-                    sb.AppendLine(line);
-                if (orderedLines.Count > maxLines)
-                    sb.AppendLine($"... 还有 {orderedLines.Count - maxLines} 条未显示");
-                return sb.ToString().TrimEnd('\r', '\n');
             }
-            return null;
+
+            if (allFieldLines.Count == 0) return null;
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"已匹配: {totalMatched}/{totalMatchable}");
+            int maxLines = 20;
+            foreach (var line in allFieldLines.Take(maxLines))
+                sb.AppendLine(line);
+            if (allFieldLines.Count > maxLines)
+                sb.AppendLine($"... 还有 {allFieldLines.Count - maxLines} 条未显示");
+            return sb.ToString().TrimEnd('\r', '\n');
         }
 
-        /// <summary>检查单元格颜色</summary>
+        /// <summary>检查单元格颜色（检查所有有关联的字段）</summary>
         public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir,
             List<ColumnLinkConfig>? columnLinks = null)
@@ -221,46 +266,109 @@ namespace wxd.files.winforms
                 l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
+            if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
+                return;
+
+            var cellValue = e.Value?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(cellValue)) return;
+
+            // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
+            var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
+
             var lookups = FileDataCache.GetLookups();
-            foreach (var kvp in lookups)
+
+            bool hasMissing = false;
+
+            foreach (var fl in linkConfig.FieldLinks)
             {
-                var pipeIdx = kvp.Key.IndexOf('|');
-                if (pipeIdx < 0) continue;
-                var keySourceRel = kvp.Key.Substring(0, pipeIdx);
-                if (!keySourceRel.Equals(currentRel, StringComparison.OrdinalIgnoreCase)) continue;
-                var afterPipe = kvp.Key.Substring(pipeIdx + 1);
-                var arrowIdx = afterPipe.IndexOf("->", StringComparison.Ordinal);
-                if (arrowIdx < 0) continue;
-                var colStr = afterPipe.Substring(0, arrowIdx);
-                if (int.TryParse(colStr, out int srcCol) && srcCol == originalColIndex)
+                if (string.IsNullOrEmpty(fl.TargetFile)) continue;
+
+                string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
+                foreach (var kvp in lookups)
                 {
-                    var cellValue = e.Value?.ToString()?.Trim() ?? "";
+                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    var matchValues = (linkConfig != null && linkConfig.ValueExtractionEnabled)
-                        ? linkConfig.ExtractValues(cellValue) : new List<string> { cellValue };
-
-                    if (!string.IsNullOrEmpty(cellValue) && matchValues.Count > 0)
+                    foreach (var fieldValues in fieldRows)
                     {
-                        bool hasMissing = matchValues.Any(v => !kvp.Value.Values.Contains(v));
-                        if (hasMissing)
+                        string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
+                        if (!string.IsNullOrEmpty(fieldVal) && !kvp.Value.Values.Contains(fieldVal))
                         {
-                            e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
-                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 150, 150);
-                        }
-                        else
-                        {
-                            e.CellStyle.BackColor = dataGrid.DefaultCellStyle.BackColor;
-                            e.CellStyle.SelectionBackColor = dataGrid.DefaultCellStyle.SelectionBackColor;
+                            hasMissing = true;
+                            break;
                         }
                     }
-                    else
-                    {
-                        e.CellStyle.BackColor = dataGrid.DefaultCellStyle.BackColor;
-                        e.CellStyle.SelectionBackColor = dataGrid.DefaultCellStyle.SelectionBackColor;
-                    }
+                    if (hasMissing) break;
+                }
+                if (hasMissing) break;
+            }
+
+            if (hasMissing)
+            {
+                e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
+                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 150, 150);
+            }
+            else
+            {
+                e.CellStyle.BackColor = dataGrid.DefaultCellStyle.BackColor;
+                e.CellStyle.SelectionBackColor = dataGrid.DefaultCellStyle.SelectionBackColor;
+            }
+        }
+
+        private static List<string> SplitByDelimiter(string value, string delimiter)
+        {
+            if (string.IsNullOrEmpty(delimiter) || !value.Contains(delimiter))
+                return new List<string> { value };
+            return value.Split(new[] { delimiter }, StringSplitOptions.None)
+                .Select(s => s.Trim())
+                .ToList();
+        }
+
+        /// <summary>
+        /// 将单元格内容按 ExtractSteps 切割为"行×字段"的二维结构。
+        /// 切割逻辑与 BuildFieldLinkedToolTipContent 完全一致：
+        ///   1. 找多值分隔符（第一个 PartIndex==-1 的步骤的 Delimiter）作为行分隔符
+        ///   2. 用 EffectiveDisplayDelimiter（最后一步的 Delimiter）作为字段分隔符
+        /// 注意：关联配置只用于查询显示，不应改变切割/列数规则。
+        /// </summary>
+        private static List<List<string>> SplitCellToFieldRows(ColumnLinkConfig linkConfig, string cellValue)
+        {
+            var result = new List<List<string>>();
+            if (string.IsNullOrEmpty(cellValue)) return result;
+
+            // 步骤1：找多值分隔符（第一个 PartIndex==-1 的步骤）
+            string multiDelimiter = "|";
+            foreach (var step in linkConfig.ExtractSteps)
+            {
+                if (step.PartIndex == -1 && !string.IsNullOrEmpty(step.Delimiter))
+                {
+                    multiDelimiter = step.Delimiter;
                     break;
                 }
             }
+
+            // 步骤2：用 multiDelimiter 切行
+            string cellDelimiter = linkConfig.EffectiveDisplayDelimiter;
+            var rawLines = cellValue.Split(new[] { multiDelimiter }, StringSplitOptions.None);
+
+            // 步骤3：每行用 cellDelimiter 切字段
+            foreach (var rawLine in rawLines)
+            {
+                var trimmed = rawLine.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+
+                var fieldValues = new List<string>();
+                if (!string.IsNullOrEmpty(cellDelimiter) && trimmed.Contains(cellDelimiter))
+                {
+                    foreach (var p in trimmed.Split(new[] { cellDelimiter }, StringSplitOptions.None))
+                        fieldValues.Add(p.Trim());
+                }
+                else
+                {
+                    fieldValues.Add(trimmed);
+                }
+                result.Add(fieldValues);
+            }
+            return result;
         }
     }
 }

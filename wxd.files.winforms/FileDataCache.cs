@@ -271,13 +271,13 @@ namespace wxd.files.winforms
 
         // ============ 关联查找（LinkLookup，key 保持相对路径格式） ============
 
-        /// <summary>获取关联查找条目（只读，懒构建）</summary>
+        /// <summary>获取关联查找条目（只读，懒构建），按字段索引查找</summary>
         public static LinkLookupEntry? GetLinkLookup(
             string rootDir, string sourceRel, int sourceColIndex,
             string targetRel, int targetColIndex,
-            ColumnLinkConfig? linkConfig)
+            FieldLinkConfig? fieldLink, int fieldIndex)
         {
-            string key = BuildLinkKey(sourceRel, sourceColIndex, targetRel, targetColIndex, linkConfig);
+            string key = BuildLinkKey(sourceRel, sourceColIndex, targetRel, targetColIndex, null, fieldIndex);
 
             LinkLookupEntry? lookup;
             lock (_lock)
@@ -286,14 +286,13 @@ namespace wxd.files.winforms
                     return lookup;
             }
 
-            // 懒构建：目标文件可能尚未加载到缓存
             var targetFullPath = Path.Combine(rootDir, targetRel);
             var targetKey = NormalizePath(targetFullPath);
             lock (_lock)
             {
                 var entry = GetOrLoadEntry(targetKey, targetFullPath);
                 lookup = BuildLinkLookupFromMaster(entry.MasterFileData,
-                    targetColIndex, linkConfig);
+                    targetColIndex, fieldLink);
                 _linkLookups[key] = lookup;
             }
             return lookup;
@@ -348,26 +347,37 @@ namespace wxd.files.winforms
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    string targetFullPath = Path.Combine(rootDir, link.TargetFile);
-                    if (!File.Exists(targetFullPath)) continue;
+                    if (link.FieldLinks == null || link.FieldLinks.Count == 0)
+                        continue;
 
-                    var targetKey = NormalizePath(targetFullPath);
-                    CacheEntry entry = await Task.Run(() =>
+                    foreach (var fl in link.FieldLinks)
                     {
-                        lock (_lock) { return GetOrLoadEntry(targetKey, targetFullPath); }
-                    }, cancellationToken);
+                        if (string.IsNullOrEmpty(fl.TargetFile) || fl.TargetColumnIndex < 0)
+                            continue;
 
-                    string key = BuildLinkKey(sourceRel, link.SourceColumnIndex,
-                        link.TargetFile, link.TargetColumnIndex, link);
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                    var lookup = await Task.Run(() =>
-                        BuildLinkLookupFromMaster(entry.MasterFileData,
-                            link.TargetColumnIndex, link), cancellationToken);
+                        string targetFullPath = Path.Combine(rootDir, fl.TargetFile);
+                        if (!File.Exists(targetFullPath)) continue;
 
-                    lock (_lock)
-                    {
-                        if (!_linkLookups.ContainsKey(key))
-                            _linkLookups[key] = lookup;
+                        var targetKey = NormalizePath(targetFullPath);
+                        CacheEntry entry = await Task.Run(() =>
+                        {
+                            lock (_lock) { return GetOrLoadEntry(targetKey, targetFullPath); }
+                        }, cancellationToken);
+
+                        string key = BuildLinkKey(sourceRel, link.SourceColumnIndex,
+                            fl.TargetFile, fl.TargetColumnIndex, link, fl.FieldIndex);
+
+                        var lookup = await Task.Run(() =>
+                            BuildLinkLookupFromMaster(entry.MasterFileData,
+                                fl.TargetColumnIndex, fl), cancellationToken);
+
+                        lock (_lock)
+                        {
+                            if (!_linkLookups.ContainsKey(key))
+                                _linkLookups[key] = lookup;
+                        }
                     }
                 }
             }
@@ -703,13 +713,20 @@ namespace wxd.files.winforms
         }
 
         private static LinkLookupEntry BuildLinkLookupFromMaster(
-            FileTableData fileData, int targetColIndex, ColumnLinkConfig? linkConfig)
+            FileTableData fileData, int targetColIndex, FieldLinkConfig? fieldLink)
         {
             var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            bool hasDisplayCol = linkConfig != null
-                && linkConfig.TargetDisplayColumnIndex >= 0
-                && linkConfig.TargetDisplayColumnIndex != targetColIndex;
+            bool hasDisplayCol = fieldLink != null
+                && fieldLink.TargetDisplayColumnIndex >= 0
+                && fieldLink.TargetDisplayColumnIndex != targetColIndex;
+
+            var rowData = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var rowRawStrings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var columnNames = new List<string>();
+
+            if (fileData.ColumnNames.Count > 0)
+                columnNames = fileData.ColumnNames;
 
             foreach (var row in fileData.Rows)
             {
@@ -719,11 +736,16 @@ namespace wxd.files.winforms
                     if (!string.IsNullOrEmpty(idVal))
                     {
                         values.Add(idVal);
-                        if (hasDisplayCol && linkConfig!.TargetDisplayColumnIndex < row.Cells.Count)
+                        if (hasDisplayCol && fieldLink!.TargetDisplayColumnIndex < row.Cells.Count)
                         {
-                            var displayVal = row.Cells[linkConfig.TargetDisplayColumnIndex].Trim();
+                            var displayVal = row.Cells[fieldLink.TargetDisplayColumnIndex].Trim();
                             if (!string.IsNullOrEmpty(displayVal) && !displayNames.ContainsKey(idVal))
                                 displayNames[idVal] = displayVal;
+                        }
+                        if (!rowData.ContainsKey(idVal))
+                        {
+                            rowData[idVal] = row.Cells.ToList();
+                            rowRawStrings[idVal] = string.Join(",", row.Cells);
                         }
                     }
                 }
@@ -733,18 +755,21 @@ namespace wxd.files.winforms
             {
                 Values = values,
                 DisplayNames = displayNames,
-                TargetFile = linkConfig?.TargetFile ?? "",
-                TargetColumnName = linkConfig?.TargetColumnName ?? "",
-                DisplayColumnName = linkConfig?.TargetDisplayColumnName ?? ""
+                TargetFile = fieldLink?.TargetFile ?? "",
+                TargetColumnName = fieldLink?.TargetColumnName ?? "",
+                DisplayColumnName = fieldLink?.TargetDisplayColumnName ?? "",
+                RowData = rowData,
+                RowRawStrings = rowRawStrings,
+                ColumnNames = columnNames
             };
         }
 
         private static string BuildLinkKey(
             string sourceRel, int sourceColIndex,
             string targetRel, int targetColIndex,
-            ColumnLinkConfig? linkConfig)
+            ColumnLinkConfig? linkConfig, int fieldIndex = -1)
         {
-            string key = $"{sourceRel}|{sourceColIndex}->{targetRel}:{targetColIndex}";
+            string key = $"{sourceRel}|{sourceColIndex}->field{fieldIndex}->{targetRel}:{targetColIndex}";
             if (linkConfig != null && linkConfig.ValueExtractionEnabled)
             {
                 key += "|extract:";
