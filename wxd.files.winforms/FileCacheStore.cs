@@ -301,5 +301,14 @@ namespace wxd.files.winforms
                 _memBytes.Remove(filePath);
             }
         }
+
+        /// <summary>获取指定文件的内存缓存占用字节数</summary>
+        public static long GetMemorySize(string filePath)
+        {
+            lock (_memLock)
+            {
+                return _memBytes.TryGetValue(filePath, out var bytes) ? bytes : 0;
+            }
+        }
     }
 }

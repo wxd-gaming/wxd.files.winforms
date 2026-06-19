@@ -1,4 +1,4 @@
-ï»¿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 namespace wxd.files.winforms
 {
-    /// <summary>å¤§æ–‡ä»¶é˜…è¯»å™¨æ§ä»¶ï¼Œå¯åµŒå…¥ TabPage</summary>
+    /// <summary>´óÎÄ¼şÔÄ¶ÁÆ÷¿Ø¼ş£¬¿ÉÇ¶Èë TabPage</summary>
     public class LargeFileReaderControl : UserControl
     {
         private Button _btnOpenFile = null!, _btnGotoLine = null!, _btnClearCache = null!;
@@ -23,22 +23,34 @@ namespace wxd.files.winforms
         private ComboBox _cboSearch = null!;
         private CheckBox _chkCaseSensitive = null!, _chkRegex = null!;
         private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!, _btnReverseExport = null!;
-        private Label _lblStatus = null!, _lblIndexProgress = null!, _lblSearchCount = null!;
+        private Label _lblStatus = null!;
         private NumericUpDown _numContextLines = null!;
         private Label _lblContextLines = null!;
+        // ¡ï µ×²¿×´Ì¬À¸
+        private FlowLayoutPanel _statusBar = null!;
+        private Label _lblFileModify = null!, _lblFileSize = null!, _lblFileLines = null!;
+        private Label _lblCacheSize = null!, _lblSearchPos = null!, _lblCurLine = null!;
         private HScrollListView _lstContent = null!;
         private System.Windows.Forms.Timer _timer = null!, _timerScroll = null!;
         private TableLayoutPanel _topPanel = null!;
 
-        // æœç´¢çŠ¶æ€
+        // ËÑË÷×´Ì¬
         private List<int> _searchResults = new();
         private int _searchCurrentIndex = -1;
         private int _lastNavigatedMatchLine = -1;
         private CancellationTokenSource? _searchCts;
-        // â˜… å½“å‰ç”Ÿæ•ˆçš„æœç´¢ keyï¼Œæ ¼å¼ "keyword|caseSensitive|useRegex"
-        // ä¸ _searchResults é…å¯¹ï¼šå½“ _lastSearch ä¸æœç´¢æ¡†å½“å‰ key ä¸€è‡´æ—¶ï¼Œ_searchResults æ‰æœ‰æ•ˆ
+        // ¡ï µ±Ç°ÉúĞ§µÄËÑË÷ key£¬¸ñÊ½ "keyword|caseSensitive|useRegex"
+        // Óë _searchResults Åä¶Ô£ºµ± _lastSearch ÓëËÑË÷¿òµ±Ç° key Ò»ÖÂÊ±£¬_searchResults ²ÅÓĞĞ§
         private string _lastSearch = "";
-        private bool _hasuserNavigated; // ç”¨æˆ·åœ¨æœç´¢è¿‡ç¨‹ä¸­æ˜¯å¦å·²æ‰‹åŠ¨è·³è½¬è¿‡
+        private bool _hasuserNavigated; // ÓÃ»§ÔÚËÑË÷¹ı³ÌÖĞÊÇ·ñÒÑÊÖ¶¯Ìø×ª¹ı
+
+        // ¡ï ¿Ø¼şÄÚ×î½üËÑË÷½á¹û»º´æ£¨Óë FileCacheStore ¶ÀÁ¢£¬²»ÊÜ 5000 ÍòĞĞÏŞÖÆ£©
+        // ½â¾ö£º´ó½á¹û²»»º´æµ½ FileCacheStore Ê±£¬ÇĞ»ØÀ´ÈÔÄÜÁ¢¼´Ìø×ª
+        // Ê¹ÓÃ LinkedList Î¬»¤²åÈëË³Ğò£¬±ãÓÚ LRU ÌÔÌ­
+        private readonly LinkedList<KeyValuePair<string, List<int>>> _recentSearches = new();
+        private long _recentSearchesBytes;
+        private const long MaxRecentSearchesBytes = 800L * 1024 * 1024; // 800MB
+        private const int MaxRecentSearchesCount = 5;
 
         private string? _filePath;
         private long _fileLength;
@@ -54,17 +66,17 @@ namespace wxd.files.winforms
         private readonly ConcurrentDictionary<int, string> _cache = new();
         private volatile int _cS = -1, _cE = -1;
 
-        /// <summary>å½“å‰æ‰“å¼€çš„æ–‡ä»¶çš„å®Œæ•´è·¯å¾„</summary>
+        /// <summary>µ±Ç°´ò¿ªµÄÎÄ¼şµÄÍêÕûÂ·¾¶</summary>
         public string? FilePath => _filePath;
 
         public EventHandler? FileClosed;
-        /// <summary>å¯¼å‡ºæˆåŠŸåè§¦å‘</summary>
+        /// <summary>µ¼³ö³É¹¦ºó´¥·¢</summary>
         public EventHandler? FileExported;
 
         public LargeFileReaderControl()
         {
             InitializeComponent();
-            // â˜… åŠ è½½å…¨å±€æœç´¢å†å²åˆ°ä¸‹æ‹‰æ¡†
+            // ¡ï ¼ÓÔØÈ«¾ÖËÑË÷ÀúÊ·µ½ÏÂÀ­¿ò
             try { RefreshSearchHistory(); } catch { }
         }
 
@@ -72,23 +84,21 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            _btnOpenFile = new Button { Text = "æ‰“å¼€æ–‡ä»¶", Size = new Size(90, 28), Location = new Point(10, 6), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
+            _btnOpenFile = new Button { Text = "´ò¿ªÎÄ¼ş", Size = new Size(90, 28), Location = new Point(10, 6), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
             _btnOpenFile.FlatAppearance.BorderSize = 1;
             _btnOpenFile.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnOpenFile.Click += OnOpen;
-            _btnClearCache = new Button { Text = "æ¸…ç†ç¼“å­˜", Size = new Size(80, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(200, 210, 220), ForeColor = Color.FromArgb(50, 70, 90) };
+            _btnClearCache = new Button { Text = "ÇåÀí»º´æ", Size = new Size(80, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(200, 210, 220), ForeColor = Color.FromArgb(50, 70, 90) };
             _btnClearCache.FlatAppearance.BorderSize = 1;
             _btnClearCache.FlatAppearance.BorderColor = Color.FromArgb(160, 180, 200);
             _btnClearCache.Click += OnClearCache;
-            _btnGotoLine = new Button { Text = "è·³è½¬", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnGotoLine = new Button { Text = "Ìø×ª", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
             _btnGotoLine.FlatAppearance.BorderSize = 1;
             _btnGotoLine.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnGotoLine.Click += OnGoto;
-            _txtGotoLine = new TextBox { Size = new Size(120, 28), PlaceholderText = "è¡Œå·" };
+            _txtGotoLine = new TextBox { Size = new Size(120, 28), PlaceholderText = "ĞĞºÅ" };
             _txtGotoLine.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnGoto(s, e); };
-            _lblIndexProgress = new Label { Text = "å°±ç»ª", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F) };
-            _lblIndexProgress.Margin = new Padding(3, 7, 0, 0);
-            _lblStatus = new Label { Text = "è¯·æ‰“å¼€ä¸€ä¸ªæ–‡æœ¬æ–‡ä»¶", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8.5F) };
+            _lblStatus = new Label { Text = "Çë´ò¿ªÒ»¸öÎÄ±¾ÎÄ¼ş", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8.5F) };
             _lblStatus.Margin = new Padding(3, 7, 0, 0);
 
             _topPanel = new TableLayoutPanel { Dock = DockStyle.Top, Height = 88, ColumnCount = 1, RowCount = 3, BackColor = Color.FromArgb(235, 245, 255) };
@@ -97,13 +107,13 @@ namespace wxd.files.winforms
             _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
 
             var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            row1.Controls.AddRange(new Control[] { _btnOpenFile, _btnClearCache, _txtGotoLine, _btnGotoLine, _lblIndexProgress, _lblStatus });
+            row1.Controls.AddRange(new Control[] { _btnOpenFile, _btnClearCache, _txtGotoLine, _btnGotoLine });
 
             var separator = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(173, 209, 237) };
 
             _cboSearch = new ComboBox { Size = new Size(400, 28), DropDownStyle = ComboBoxStyle.DropDown, AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.ListItems, FlatStyle = FlatStyle.Flat };
             _cboSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnSearch(); };
-            // â˜… ä¸ç›‘å¬ TextChanged æ¸…ç©º _lastSearchï¼šå¯¼èˆªæŒ‰é’®ä¼šè‡ªè¡Œæ¯”è¾ƒæœç´¢æ¡† key ä¸ _lastSearch
+            // ¡ï ²»¼àÌı TextChanged Çå¿Õ _lastSearch£ºµ¼º½°´Å¥»á×ÔĞĞ±È½ÏËÑË÷¿ò key Óë _lastSearch
             _chkCaseSensitive = new CheckBox { Text = "Aa", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
             _chkCaseSensitive.Margin = new Padding(3, 6, 0, 0);
             _chkRegex = new CheckBox { Text = ".*", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
@@ -112,11 +122,11 @@ namespace wxd.files.winforms
             _btnSearchFirst.FlatAppearance.BorderSize = 1;
             _btnSearchFirst.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchFirst.Click += OnSearchFirst;
-            _btnSearchPrev = new Button { Text = "ä¸Šä¸€ä¸ª", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchPrev = new Button { Text = "ÉÏÒ»¸ö", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
             _btnSearchPrev.FlatAppearance.BorderSize = 1;
             _btnSearchPrev.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchPrev.Click += OnSearchPrev;
-            _btnSearchNext = new Button { Text = "ä¸‹ä¸€ä¸ª", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
+            _btnSearchNext = new Button { Text = "ÏÂÒ»¸ö", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
             _btnSearchNext.FlatAppearance.BorderSize = 1;
             _btnSearchNext.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchNext.Click += OnSearchNext;
@@ -124,22 +134,20 @@ namespace wxd.files.winforms
             _btnSearchLast.FlatAppearance.BorderSize = 1;
             _btnSearchLast.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
             _btnSearchLast.Click += OnSearchLast;
-            _lblSearchCount = new Label { Text = "", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F) };
-            _lblSearchCount.Margin = new Padding(3, 7, 0, 0);
 
             var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            _btnExport = new Button { Text = "å¯¼å‡ºç»“æœ", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
+            _btnExport = new Button { Text = "µ¼³ö½á¹û", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
             _btnExport.FlatAppearance.BorderSize = 1;
             _btnExport.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnExport.Click += OnExport;
-            _btnReverseExport = new Button { Text = "åå‘å¯¼å‡º", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(255, 152, 0), ForeColor = Color.White };
+            _btnReverseExport = new Button { Text = "·´Ïòµ¼³ö", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(255, 152, 0), ForeColor = Color.White };
             _btnReverseExport.FlatAppearance.BorderSize = 1;
             _btnReverseExport.FlatAppearance.BorderColor = Color.FromArgb(245, 124, 0);
             _btnReverseExport.Click += OnReverseExport;
-            _lblContextLines = new Label { Text = "ä¸Šä¸‹è¡Œ:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
+            _lblContextLines = new Label { Text = "ÉÏÏÂĞĞ:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
             _lblContextLines.Margin = new Padding(8, 7, 0, 0);
             _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
-            row2.Controls.AddRange(new Control[] { _cboSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport, _lblSearchCount });
+            row2.Controls.AddRange(new Control[] { _cboSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport });
 
             _topPanel.Controls.Add(row1, 0, 0);
             _topPanel.Controls.Add(separator, 0, 1);
@@ -166,7 +174,27 @@ namespace wxd.files.winforms
             _lstContent.MouseDoubleClick += OnDoubleClick;
             _lstContent.DrawSubItem += (s, e) => { };
             _lstContent.DrawColumnHeader += (s, e) => { };
+
+            // ¡ï µ×²¿×´Ì¬À¸£º6 ¸ö Label£¬Á÷Ê½×Ô¶¯ÅÅÁĞ
+            _lblFileModify = MakeStatusLabel("×îºóĞŞ¸Ä£º-");
+            _lblFileSize = MakeStatusLabel("´óĞ¡£º-");
+            _lblFileLines = MakeStatusLabel("ĞĞÊı£º-");
+            _lblCacheSize = MakeStatusLabel("»º´æ£º0B");
+            _lblSearchPos = MakeStatusLabel("");
+            _lblCurLine = MakeStatusLabel("ĞĞ£º1");
+            _statusBar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 24,
+                Padding = new Padding(8, 3, 8, 2),
+                BackColor = Color.FromArgb(235, 245, 255),
+                AutoScroll = false,
+                WrapContents = false
+            };
+            _statusBar.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblFileLines, _lblCacheSize, _lblSearchPos, _lblCurLine });
+
             Controls.Add(_lstContent);
+            Controls.Add(_statusBar);
             Controls.Add(_topPanel);
             ResumeLayout(false);
 
@@ -178,7 +206,7 @@ namespace wxd.files.winforms
 
         private void OnOpen(object? s, EventArgs e)
         {
-            using var d = new OpenFileDialog { Filter = "æ–‡æœ¬æ–‡ä»¶|*.txt;*.log;*.csv;*.json;*.xml;*.cs;*.cpp;*.h;*.py;*.js|æ‰€æœ‰æ–‡ä»¶|*.*" };
+            using var d = new OpenFileDialog { Filter = "ÎÄ±¾ÎÄ¼ş|*.txt;*.log;*.csv;*.json;*.xml;*.cs;*.cpp;*.h;*.py;*.js|ËùÓĞÎÄ¼ş|*.*" };
             if (d.ShowDialog() != DialogResult.OK) return;
             Open(d.FileName);
         }
@@ -186,7 +214,7 @@ namespace wxd.files.winforms
         public void Open(string path)
         {
             Cleanup();
-            if (!File.Exists(path)) { AlertForm.Show(ParentForm, $"æ–‡ä»¶ä¸å­˜åœ¨: {path}", "é”™è¯¯", AlertType.Error); return; }
+            if (!File.Exists(path)) { AlertForm.Show(ParentForm, $"ÎÄ¼ş²»´æÔÚ: {path}", "´íÎó", AlertType.Error); return; }
 
             _filePath = path;
             _fileLength = new FileInfo(path).Length;
@@ -194,8 +222,21 @@ namespace wxd.files.winforms
             _lstContent.HScrollPos = 0;
             _lstContent.MaxContentWidth = _lstContent.ClientRectangle.Width;
 
-            // â˜… æ£€æµ‹æ–‡ä»¶æ˜¯å¦å˜åŒ–ï¼Œå˜åŒ–åˆ™æ¸…ç†ç£ç›˜ç¼“å­˜ï¼ˆåå°æ‰§è¡Œï¼Œä¸é˜»å¡ï¼‰
+            // ¡ï ¼ì²âÎÄ¼şÊÇ·ñ±ä»¯£¬±ä»¯ÔòÇåÀí´ÅÅÌ»º´æ£¨ºóÌ¨Ö´ĞĞ£¬²»×èÈû£©
             try { FileCacheStore.CheckFileValid(path, _fileLength, File.GetLastWriteTime(path)); } catch { }
+
+            // ¡ï µ×²¿×´Ì¬À¸£ºÎÄ¼şĞÅÏ¢£¨´ò¿ªÊ±ÉèÖÃÒ»´Î£©
+            try
+            {
+                var fi = new FileInfo(path);
+                _lblFileModify.Text = $"×îºóĞŞ¸Ä£º{fi.LastWriteTime:yyyy-MM-dd HH:mm:ss}";
+                _lblFileSize.Text = $"´óĞ¡£º{FormatSize(_fileLength)}";
+                _lblFileLines.Text = "ĞĞÊı£ºË÷ÒıÖĞ...";
+                _lblCacheSize.Text = "»º´æ£º0B";
+                _lblSearchPos.Text = "";
+                _lblCurLine.Text = "ĞĞ£º1";
+            }
+            catch { }
 
             int loaded = 0;
             try
@@ -229,15 +270,16 @@ namespace wxd.files.winforms
             }
             _lstContent.InitHScroll();
 
-            Status($"å‰ {loaded} è¡Œå·²åŠ è½½ï¼Œæ­£åœ¨æ„å»ºç´¢å¼•...");
-            _lblIndexProgress.Text = "ç´¢å¼•ä¸­...";
+            Status($"Ç° {loaded} ĞĞÒÑ¼ÓÔØ£¬ÕıÔÚ¹¹½¨Ë÷Òı...");
+            // ¡ï µ×²¿×´Ì¬À¸ÏÔÊ¾Ë÷Òı½ø¶È
+            _lblFileLines.Text = "ĞĞÊı£ºË÷ÒıÖĞ...";
             try { _lstContent.RedrawItems(0, Math.Max(loaded - 1, 0), true); } catch { }
 
             _timer.Start();
             _ = Task.Run(() => BuildIndex());
         }
 
-        // ==================== OwnerDraw ç»˜åˆ¶ ====================
+        // ==================== OwnerDraw »æÖÆ ====================
         private void OnDrawItem(object? s, DrawListViewItemEventArgs e)
         {
             e.DrawDefault = false;
@@ -268,7 +310,7 @@ namespace wxd.files.winforms
                 e.DrawFocusRectangle();
         }
 
-        // ==================== ç´¢å¼•æ„å»º ====================
+        // ==================== Ë÷Òı¹¹½¨ ====================
         private void BuildIndex()
         {
             try
@@ -301,14 +343,18 @@ namespace wxd.files.winforms
             if (_indexReady)
             {
                 _timer.Stop();
-                _lblIndexProgress.Text = $"å®Œæˆ {_idxCount:N0} è¡Œ";
-                Status($"{FormatSize(_fileLength)} | {_idxCount:N0} è¡Œ");
+                Status($"{FormatSize(_fileLength)} | {_idxCount:N0} ĞĞ");
+                // ¡ï µ×²¿×´Ì¬À¸£ºĞĞÊı + µ±Ç°»º´æ´óĞ¡
+                _lblFileLines.Text = $"ĞĞÊı£º{_idxCount:N0}";
+                RefreshCacheSizeStatus();
                 _lstContent.VirtualListSize = _idxCount;
                 _timerScroll.Start();
                 try { _lstContent.RedrawItems(0, Math.Min(_lstContent.VirtualListSize - 1, _lstContent.ClientRectangle.Height / Math.Max(_lstContent.Font.Height + 6, 1)), true); } catch { }
                 return;
             }
-            _lblIndexProgress.Text = $"ç´¢å¼•ä¸­... {_idxCount:N0} è¡Œ ({_idxProg}%)";
+            // ¡ï Ë÷Òı¹¹½¨¹ı³ÌÖĞÊµÊ±Ë¢ĞÂµ×²¿×´Ì¬À¸µÄĞĞÊıºÍ»º´æ´óĞ¡
+            _lblFileLines.Text = $"ĞĞÊı£º{_idxCount:N0} ({_idxProg}%)";
+            RefreshCacheSizeStatus();
         }
 
         private void UpdateScrollPos()
@@ -316,7 +362,10 @@ namespace wxd.files.winforms
             try
             {
                 int line = (_lstContent.TopItem?.Index ?? 0) + 1;
-                _lblIndexProgress.Text = $"è¡Œ {line:N0}/{_idxCount:N0}";
+                // ¡ï µ×²¿×´Ì¬À¸£ºµ±Ç°ĞĞ£¨¹ö¶¯Ê±¸üĞÂ£©
+                _lblCurLine.Text = $"ĞĞ£ºµÚ{line:N0}ĞĞ";
+                // ¡ï Í¬Ê±¶¨Ê±Ë¢ĞÂ»º´æ´óĞ¡£¨»º´æËæÊ±¿ÉÄÜÒòËÑË÷¶øÔö³¤£©
+                RefreshCacheSizeStatus();
             }
             catch { }
         }
@@ -360,6 +409,31 @@ namespace wxd.files.winforms
         private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
         static string FormatSize(long b) { string[] u = ["B", "KB", "MB", "GB", "TB"]; double v = b; int o = 0; while (v >= 1024 && o < 4) { o++; v /= 1024; } return $"{v:0.##}{u[o]}"; }
 
+        /// <summary>´´½¨µ×²¿×´Ì¬À¸µÄ Label</summary>
+        private static Label MakeStatusLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                AutoSize = true,
+                Margin = new Padding(0, 2, 16, 0),
+                ForeColor = Color.FromArgb(90, 130, 170),
+                Font = new Font("Microsoft YaHei UI", 8F),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+        }
+
+        /// <summary>Ë¢ĞÂµ×²¿×´Ì¬À¸µÄ»º´æ´óĞ¡</summary>
+        private void RefreshCacheSizeStatus()
+        {
+            try
+            {
+                long bytes = string.IsNullOrEmpty(_filePath) ? 0 : FileCacheStore.GetMemorySize(_filePath);
+                _lblCacheSize.Text = $"»º´æ£º{FormatSize(bytes)}";
+            }
+            catch { }
+        }
+
         private async void OnDoubleClick(object? s, MouseEventArgs e)
         {
             int idx = _lstContent.SelectedIndices.Count > 0
@@ -374,14 +448,14 @@ namespace wxd.files.winforms
 
             var f = new Form
             {
-                Text = $"è¡Œ {idx + 1}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
+                Text = $"ĞĞ {idx + 1}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
                 MinimizeBox = true, MaximizeBox = true, ShowIcon = false, ShowInTaskbar = false
             };
 
-            // é¡¶éƒ¨å·¥å…·æ 
+            // ¶¥²¿¹¤¾ßÀ¸
             var topPanel = new Panel { Height = 44, Dock = DockStyle.Top, BackColor = Color.FromArgb(235, 245, 255) };
-            var btnFormat = new Button { Text = "æ ¼å¼åŒ–", Size = new Size(90, 30), Location = new Point(10, 7), FlatStyle = FlatStyle.Flat };
-            var btnRaw = new Button { Text = "åŸå§‹", Size = new Size(90, 30), Location = new Point(110, 7), FlatStyle = FlatStyle.Flat };
+            var btnFormat = new Button { Text = "¸ñÊ½»¯", Size = new Size(90, 30), Location = new Point(10, 7), FlatStyle = FlatStyle.Flat };
+            var btnRaw = new Button { Text = "Ô­Ê¼", Size = new Size(90, 30), Location = new Point(110, 7), FlatStyle = FlatStyle.Flat };
 
             void SetActive(Button active, Button inactive)
             {
@@ -401,20 +475,20 @@ namespace wxd.files.winforms
                 Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
                 Font = new Font("Consolas", 10F), ScrollBars = RichTextBoxScrollBars.Both,
                 WordWrap = false, BackColor = Color.White,
-                Text = "æ­£åœ¨æ ¼å¼åŒ–..."
+                Text = "ÕıÔÚ¸ñÊ½»¯..."
             };
 
             string formattedText = "";
             btnFormat.Click += async (_, _) =>
             {
                 SetActive(btnFormat, btnRaw);
-                rtb.Text = "æ­£åœ¨æ„å»º RTF...";
+                rtb.Text = "ÕıÔÚ¹¹½¨ RTF...";
                 rtb.WordWrap = false;
                 rtb.ScrollBars = RichTextBoxScrollBars.Both;
                 var clickDeadline = Deadline.FromSeconds(5.0);
                 string? rtf = null;
                 try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, clickDeadline)).ConfigureAwait(true); }
-                catch { /* è§£æå¤±è´¥ï¼Œæ˜¾ç¤ºåŸå§‹æ–‡æœ¬ */ }
+                catch { /* ½âÎöÊ§°Ü£¬ÏÔÊ¾Ô­Ê¼ÎÄ±¾ */ }
                 if (f.IsDisposed) return;
                 try { rtb.Rtf = rtf ?? originalText; }
                 catch { try { rtb.Text = originalText; } catch { } }
@@ -433,7 +507,7 @@ namespace wxd.files.winforms
 
             f.Show();
 
-            // æ ¼å¼åŒ–åœ¨åå°çº¿ç¨‹å®Œæˆï¼Œå®Œæˆåè‡ªåŠ¨æ˜¾ç¤º RTF
+            // ¸ñÊ½»¯ÔÚºóÌ¨Ïß³ÌÍê³É£¬Íê³Éºó×Ô¶¯ÏÔÊ¾ RTF
             try { formattedText = await Task.Run(() => BuildFormattedText(originalText)).ConfigureAwait(true); }
             catch { formattedText = originalText; }
             if (f.IsDisposed) return;
@@ -441,7 +515,7 @@ namespace wxd.files.winforms
             var autoDeadline = Deadline.FromSeconds(5.0);
             string? rtf = null;
             try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, autoDeadline)).ConfigureAwait(true); }
-            catch { /* è§£æå¤±è´¥ï¼Œæ˜¾ç¤ºåŸå§‹æ–‡æœ¬ */ }
+            catch { /* ½âÎöÊ§°Ü£¬ÏÔÊ¾Ô­Ê¼ÎÄ±¾ */ }
             if (f.IsDisposed) return;
             try { rtb.Rtf = rtf ?? originalText; }
             catch { try { rtb.Text = originalText; } catch { } }
@@ -454,12 +528,12 @@ namespace wxd.files.winforms
             try
             {
                 string? rtf = BuildRtfForLine(formattedText, deadline);
-                rtb.Text = rtf ?? formattedText; // null è¡¨ç¤ºè¶…æ—¶æˆ–è¿‡å¤§ï¼Œç›´æ¥æ˜¾ç¤ºçº¯æ–‡æœ¬
+                rtb.Text = rtf ?? formattedText; // null ±íÊ¾³¬Ê±»ò¹ı´ó£¬Ö±½ÓÏÔÊ¾´¿ÎÄ±¾
             }
             catch { rtb.Text = formattedText; }
         }
 
-        /// <summary>è¶…æ—¶æˆªæ­¢æ£€æŸ¥å™¨ï¼Œé˜²æ­¢å¤æ‚å†…å®¹æ ¼å¼åŒ–å¯¼è‡´å¡æ­»</summary>
+        /// <summary>³¬Ê±½ØÖ¹¼ì²éÆ÷£¬·ÀÖ¹¸´ÔÓÄÚÈİ¸ñÊ½»¯µ¼ÖÂ¿¨ËÀ</summary>
         private readonly struct Deadline
         {
             private readonly long _limitTicks;
@@ -473,7 +547,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>æ„å»ºæ ¼å¼åŒ–æ–‡æœ¬ï¼šJSON ç¼©è¿›æ¢è¡Œï¼Œå…¶ä½™å†…å®¹æŒ‰é€—å·æ¢è¡Œ</summary>
+        /// <summary>¹¹½¨¸ñÊ½»¯ÎÄ±¾£ºJSON Ëõ½ø»»ĞĞ£¬ÆäÓàÄÚÈİ°´¶ººÅ»»ĞĞ</summary>
         private static string BuildFormattedText(string line)
         {
             Deadline deadline = Deadline.Default;
@@ -483,18 +557,18 @@ namespace wxd.files.winforms
             }
             catch (InvalidOperationException ex) when (ex.Message == "__DEADLINE_EXPIRED__")
             {
-                return line; // è¶…æ—¶ä¿åº•ï¼šè¿”å›åŸå§‹æ–‡æœ¬
+                return line; // ³¬Ê±±£µ×£º·µ»ØÔ­Ê¼ÎÄ±¾
             }
             catch
             {
-                return line; // è§£æå¼‚å¸¸ä¿åº•ï¼šè¿”å›åŸå§‹æ–‡æœ¬
+                return line; // ½âÎöÒì³£±£µ×£º·µ»ØÔ­Ê¼ÎÄ±¾
             }
         }
 
-        /// <summary>å†…å®¹ç‰‡æ®µç±»å‹</summary>
+        /// <summary>ÄÚÈİÆ¬¶ÎÀàĞÍ</summary>
         private enum ContentSegType { JsonObject, JsonArray, BracketBlock, PlainText }
 
-        /// <summary>å†…å®¹ç‰‡æ®µ</summary>
+        /// <summary>ÄÚÈİÆ¬¶Î</summary>
         private readonly struct ContentSegment
         {
             public readonly ContentSegType Type;
@@ -511,11 +585,11 @@ namespace wxd.files.winforms
         {
             deadline.ThrowIfExpired();
 
-            // Phase 1: æå–æ‰€æœ‰é¡¶å±‚ç‰‡æ®µï¼šJSONå¯¹è±¡ã€JSONæ•°ç»„ã€ã€ã€‘å—ã€çº¯æ–‡æœ¬
+            // Phase 1: ÌáÈ¡ËùÓĞ¶¥²ãÆ¬¶Î£ºJSON¶ÔÏó¡¢JSONÊı×é¡¢¡¾¡¿¿é¡¢´¿ÎÄ±¾
             var segments = ExtractTopLevelSegments(line, deadline);
             if (segments.Count == 0) return line;
 
-            // Phase 2: æ ¼å¼åŒ–æ¯ä¸ªç‰‡æ®µ
+            // Phase 2: ¸ñÊ½»¯Ã¿¸öÆ¬¶Î
             var sb = new StringBuilder();
             foreach (var seg in segments)
             {
@@ -541,13 +615,13 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-        /// <summary>å°†ä¸€è¡Œæ–‡æœ¬æ‹†åˆ†æˆé¡¶å±‚ç‰‡æ®µåºåˆ—</summary>
+        /// <summary>½«Ò»ĞĞÎÄ±¾²ğ·Ö³É¶¥²ãÆ¬¶ÎĞòÁĞ</summary>
         private static List<ContentSegment> ExtractTopLevelSegments(string line, Deadline deadline)
         {
             var result = new List<ContentSegment>();
             int i = 0;
-            // è®°å½•æ‹¬å·æ·±åº¦ï¼Œç”¨äºåœ¨ã€ã€‘å†…è·³è¿‡åµŒå¥—çš„{}/[]
-            int bracketDepth = -1; // -1 è¡¨ç¤ºä¸åœ¨ã€ã€‘å†…
+            // ¼ÇÂ¼À¨ºÅÉî¶È£¬ÓÃÓÚÔÚ¡¾¡¿ÄÚÌø¹ıÇ¶Ì×µÄ{}/[]
+            int bracketDepth = -1; // -1 ±íÊ¾²»ÔÚ¡¾¡¿ÄÚ
             int bracketStart = -1;
 
             while (i < line.Length)
@@ -556,8 +630,8 @@ namespace wxd.files.winforms
 
                 if (bracketDepth >= 0)
                 {
-                    // åœ¨ã€ã€‘å†…éƒ¨ï¼Œéœ€è¦æ‰¾åˆ°é—­åˆçš„ã€‘
-                    if (line[i] == 'ã€‘')
+                    // ÔÚ¡¾¡¿ÄÚ²¿£¬ĞèÒªÕÒµ½±ÕºÏµÄ¡¿
+                    if (line[i] == '¡¿')
                     {
                         bracketDepth--;
                         if (bracketDepth < 0)
@@ -569,8 +643,8 @@ namespace wxd.files.winforms
                             continue;
                         }
                     }
-                    // åµŒå¥—çš„ã€åªè®¡æ•°ä¸åˆ†å‰²
-                    else if (line[i] == 'ã€')
+                    // Ç¶Ì×µÄ¡¾Ö»¼ÆÊı²»·Ö¸î
+                    else if (line[i] == '¡¾')
                     {
                         bracketDepth++;
                     }
@@ -580,13 +654,13 @@ namespace wxd.files.winforms
 
                 char c = line[i];
 
-                // JSON å¯¹è±¡ { ... }
+                // JSON ¶ÔÏó { ... }
                 if (c == '{')
                 {
                     int end = FindJsonEnd(line, i, '{', '}', deadline);
                     if (end > 0)
                     {
-                        // å…ˆæŠŠä¹‹å‰çš„çº¯æ–‡æœ¬æ”¶å°¾
+                        // ÏÈ°ÑÖ®Ç°µÄ´¿ÎÄ±¾ÊÕÎ²
                         FlushPlainSegments(result, line, i, deadline);
                         result.Add(new ContentSegment(ContentSegType.JsonObject, i, end));
                         i = end + 1;
@@ -594,7 +668,7 @@ namespace wxd.files.winforms
                     }
                 }
 
-                // JSON æ•°ç»„ [ ... ] â€” ä»…å½“å†…å®¹å¯è§£æä¸ºæœ‰æ•ˆ JSON æ—¶æ‰è¯†åˆ«
+                // JSON Êı×é [ ... ] ¡ª ½öµ±ÄÚÈİ¿É½âÎöÎªÓĞĞ§ JSON Ê±²ÅÊ¶±ğ
                 if (c == '[')
                 {
                     int end = FindJsonEnd(line, i, '[', ']', deadline);
@@ -608,12 +682,12 @@ namespace wxd.files.winforms
                             i = end + 1;
                             continue;
                         }
-                        // ä¸æ˜¯æœ‰æ•ˆ JSONï¼Œå½“ä½œæ™®é€šæ–‡æœ¬ç»§ç»­
+                        // ²»ÊÇÓĞĞ§ JSON£¬µ±×÷ÆÕÍ¨ÎÄ±¾¼ÌĞø
                     }
                 }
 
-                // ã€ å—å¼€å§‹
-                if (c == 'ã€')
+                // ¡¾ ¿é¿ªÊ¼
+                if (c == '¡¾')
                 {
                     bracketDepth = 0;
                     bracketStart = i;
@@ -621,18 +695,18 @@ namespace wxd.files.winforms
                     continue;
                 }
 
-                // æ™®é€šå­—ç¬¦ â†’ ç´¯ç§¯åˆ°çº¯æ–‡æœ¬æ®µ
-                // ä½†çº¯æ–‡æœ¬æ®µç”± FlushPlainSegments åœ¨å¤„ç†å®Œç‰¹æ®Šæ®µè½æ—¶åˆ›å»º
-                // æ‰€ä»¥æˆ‘ä»¬å…ˆè·³è¿‡ç‰¹æ®Šå­—ç¬¦ï¼Œåœ¨ FlushPlainSegments ä¸­å–å‰é¢çš„çº¯æ–‡æœ¬
+                // ÆÕÍ¨×Ö·û ¡ú ÀÛ»ıµ½´¿ÎÄ±¾¶Î
+                // µ«´¿ÎÄ±¾¶ÎÓÉ FlushPlainSegments ÔÚ´¦ÀíÍêÌØÊâ¶ÎÂäÊ±´´½¨
+                // ËùÒÔÎÒÃÇÏÈÌø¹ıÌØÊâ×Ö·û£¬ÔÚ FlushPlainSegments ÖĞÈ¡Ç°ÃæµÄ´¿ÎÄ±¾
                 i++;
             }
 
-            // æœ€åçš„çº¯æ–‡æœ¬
+            // ×îºóµÄ´¿ÎÄ±¾
             FlushPlainSegments(result, line, line.Length, deadline);
             return result;
         }
 
-        /// <summary>å°† [prevStart, currStart) èŒƒå›´çš„çº¯æ–‡æœ¬åŠ å…¥ç‰‡æ®µåˆ—è¡¨</summary>
+        /// <summary>½« [prevStart, currStart) ·¶Î§µÄ´¿ÎÄ±¾¼ÓÈëÆ¬¶ÎÁĞ±í</summary>
         private static void FlushPlainSegments(List<ContentSegment> segments, string line, int currStart, Deadline deadline)
         {
             if (segments.Count == 0 && currStart <= 0) return;
@@ -643,14 +717,14 @@ namespace wxd.files.winforms
             int pStart = prevEnd + 1;
             if (pStart >= currStart) return;
 
-            // è·³è¿‡çº¯ç©ºç™½
+            // Ìø¹ı´¿¿Õ°×
             string chunk = line.Substring(pStart, currStart - pStart);
             if (string.IsNullOrWhiteSpace(chunk)) return;
 
             segments.Add(new ContentSegment(ContentSegType.PlainText, pStart, currStart - 1));
         }
 
-        /// <summary>æ£€æŸ¥å­—ç¬¦ä¸²æ˜¯å¦å¯è§£æä¸ºæœ‰æ•ˆçš„ JSON æ•°ç»„</summary>
+        /// <summary>¼ì²é×Ö·û´®ÊÇ·ñ¿É½âÎöÎªÓĞĞ§µÄ JSON Êı×é</summary>
         private static bool IsValidJsonArray(string text, Deadline deadline)
         {
             if (text.Length < 2 || text[0] != '[' || text[^1] != ']') return false;
@@ -662,10 +736,10 @@ namespace wxd.files.winforms
             catch { return false; }
         }
 
-        /// <summary>æ ¼å¼åŒ– JSON å¯¹è±¡/æ•°ç»„ï¼ˆç¾åŒ–ç¼©è¿›ï¼‰</summary>
+        /// <summary>¸ñÊ½»¯ JSON ¶ÔÏó/Êı×é£¨ÃÀ»¯Ëõ½ø£©</summary>
         private static void AppendFormattedJson(StringBuilder sb, string raw, Deadline deadline)
         {
-            // å°è¯•æ ‡å‡† JSON ç¾åŒ–
+            // ³¢ÊÔ±ê×¼ JSON ÃÀ»¯
             string? beautified = TryBeautifyJson(raw, deadline);
             if (beautified != null)
             {
@@ -674,7 +748,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // å°è¯• key=value â†’ JSON è½¬æ¢
+            // ³¢ÊÔ key=value ¡ú JSON ×ª»»
             if (raw[0] == '{')
             {
                 string? kvJson = TryConvertEqualsToJson(raw, deadline);
@@ -686,7 +760,7 @@ namespace wxd.files.winforms
                 }
             }
 
-            // æ•°ç»„ï¼šå°è¯•è½¬æ¢ key=value å¯¹è±¡æ•°ç»„
+            // Êı×é£º³¢ÊÔ×ª»» key=value ¶ÔÏóÊı×é
             if (raw[0] == '[')
             {
                 string? kvArrayJson = TryConvertArrayToJson(raw, deadline);
@@ -698,17 +772,17 @@ namespace wxd.files.winforms
                 }
             }
 
-            // éƒ½å¤±è´¥ â†’ åŸæ ·ä¿ç•™
+            // ¶¼Ê§°Ü ¡ú Ô­Ñù±£Áô
             if (sb.Length > 0) sb.AppendLine();
             sb.Append(raw);
         }
 
-        /// <summary>æ ¼å¼åŒ–ã€ã€‘å—ï¼šæå–å†…éƒ¨ JSON ç¾åŒ–ï¼Œå…¶ä½™æŒ‰é€—å·åˆ†è¡Œ</summary>
+        /// <summary>¸ñÊ½»¯¡¾¡¿¿é£ºÌáÈ¡ÄÚ²¿ JSON ÃÀ»¯£¬ÆäÓà°´¶ººÅ·ÖĞĞ</summary>
         private static void AppendFormattedBracketBlock(StringBuilder sb, string raw, Deadline deadline)
         {
-            // å»æ‰æœ€å¤–å±‚ã€ã€‘
+            // È¥µô×îÍâ²ã¡¾¡¿
             string inner = raw;
-            if (inner.Length >= 2 && inner[0] == 'ã€' && inner[^1] == 'ã€‘')
+            if (inner.Length >= 2 && inner[0] == '¡¾' && inner[^1] == '¡¿')
                 inner = inner.Substring(1, inner.Length - 2);
 
             if (string.IsNullOrWhiteSpace(inner))
@@ -718,7 +792,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // æŸ¥æ‰¾å†…éƒ¨æ˜¯å¦æœ‰ JSON { } æˆ– [ ] å—
+            // ²éÕÒÄÚ²¿ÊÇ·ñÓĞ JSON { } »ò [ ] ¿é
             int jsonStart = -1;
             char jsonOpen = '\0';
             char jsonClose = '\0';
@@ -734,17 +808,17 @@ namespace wxd.files.winforms
                 int jsonEnd = FindJsonEnd(inner, jsonStart, jsonOpen, jsonClose, deadline);
                 if (jsonEnd > jsonStart)
                 {
-                    // æå– JSON å‰çš„æ–‡æœ¬ï¼ˆå¯èƒ½æ˜¯ ClassNameï¼‰
+                    // ÌáÈ¡ JSON Ç°µÄÎÄ±¾£¨¿ÉÄÜÊÇ ClassName£©
                     string prefix = jsonStart > 0 ? inner[..jsonStart].Trim() : "";
                     string jsonRaw = inner.Substring(jsonStart, jsonEnd - jsonStart + 1);
                     string? beautified = TryBeautifyJson(jsonRaw, deadline);
 
-                    // æå– JSON åçš„æ–‡æœ¬
+                    // ÌáÈ¡ JSON ºóµÄÎÄ±¾
                     string suffix = jsonEnd + 1 < inner.Length ? inner[(jsonEnd + 1)..].Trim() : "";
 
                     if (sb.Length > 0) sb.AppendLine();
 
-                    // è¾“å‡ºå‰ç¼€ï¼ˆè¿‡æ»¤å‡ºæ ‡è¯†ç¬¦å­—ç¬¦ï¼‰
+                    // Êä³öÇ°×º£¨¹ıÂË³ö±êÊ¶·û×Ö·û£©
                     if (!string.IsNullOrEmpty(prefix))
                     {
                         int nameEnd = 0;
@@ -768,13 +842,13 @@ namespace wxd.files.winforms
                     if (!string.IsNullOrEmpty(suffix))
                     {
                         sb.AppendLine();
-                        sb.Append("å‰©ä½™: " + suffix);
+                        sb.Append("Ê£Óà: " + suffix);
                     }
                     return;
                 }
             }
 
-            // å†…éƒ¨æ²¡æœ‰ JSON â†’ æŒ‰é€—å·åˆ†ç¦»
+            // ÄÚ²¿Ã»ÓĞ JSON ¡ú °´¶ººÅ·ÖÀë
             if (sb.Length > 0) sb.AppendLine();
             var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             for (int i = 0; i < parts.Length; i++)
@@ -784,20 +858,20 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>æ ¼å¼åŒ–çº¯æ–‡æœ¬ï¼šä¸ç›²ç›®æ‹†åˆ†</summary>
+        /// <summary>¸ñÊ½»¯´¿ÎÄ±¾£º²»Ã¤Ä¿²ğ·Ö</summary>
         private static void AppendFormattedPlainText(StringBuilder sb, string raw, Deadline deadline)
         {
             string text = raw.Trim().TrimStart(',').TrimEnd(',');
             if (string.IsNullOrEmpty(text)) return;
 
-            // åˆ¤æ–­æ˜¯å¦ä¸º Java æ ˆè·Ÿè¸ªï¼ˆåŒ…å« <= ç¬¦å·ï¼‰
+            // ÅĞ¶ÏÊÇ·ñÎª Java Õ»¸ú×Ù£¨°üº¬ <= ·ûºÅ£©
             bool isStackTrace = text.Contains("<=") || text.Contains("->");
-            // åˆ¤æ–­æ˜¯å¦åŒ…å«ä¸­æ–‡
+            // ÅĞ¶ÏÊÇ·ñ°üº¬ÖĞÎÄ
             bool hasChinese = text.Any(c => c >= 0x4E00 && c <= 0x9FFF);
 
             if (isStackTrace)
             {
-                // å †æ ˆè·Ÿè¸ªï¼šæŒ‰ <= åˆ†å‰²æ¢è¡Œï¼Œä¿æŒå¯è¯»æ€§
+                // ¶ÑÕ»¸ú×Ù£º°´ <= ·Ö¸î»»ĞĞ£¬±£³Ö¿É¶ÁĞÔ
                 var stackParts = text.Split(new[] { "<=" }, StringSplitOptions.None);
                 for (int i = 0; i < stackParts.Length; i++)
                 {
@@ -810,14 +884,14 @@ namespace wxd.files.winforms
             }
             else if (hasChinese)
             {
-                // å«ä¸­æ–‡çš„æ—¥å¿—è¡Œï¼šä¿ç•™æ•´è¡Œï¼Œä¸åšé€—å·æ‹†åˆ†ï¼ˆé˜²æ­¢æ‹†åˆ†åŒ…å« = çš„æ··åˆå†…å®¹ï¼‰
+                // º¬ÖĞÎÄµÄÈÕÖ¾ĞĞ£º±£ÁôÕûĞĞ£¬²»×ö¶ººÅ²ğ·Ö£¨·ÀÖ¹²ğ·Ö°üº¬ = µÄ»ìºÏÄÚÈİ£©
                 if (sb.Length > 0) sb.AppendLine();
                 sb.Append(text);
             }
             else
             {
-                // é€šç”¨æ–‡æœ¬ï¼ˆæ— ä¸­æ–‡ï¼‰ï¼šåŒ…å« key=value çš„å¯¹æŒ‰é€—å·æ‹†åˆ†ï¼Œå¦åˆ™æ•´æ®µä¿ç•™
-                bool hasKeyValue = text.Contains('=') || text.Contains("ï¼š");
+                // Í¨ÓÃÎÄ±¾£¨ÎŞÖĞÎÄ£©£º°üº¬ key=value µÄ¶Ô°´¶ººÅ²ğ·Ö£¬·ñÔòÕû¶Î±£Áô
+                bool hasKeyValue = text.Contains('=') || text.Contains("£º");
                 if (hasKeyValue)
                 {
                     var kvParts = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -837,14 +911,14 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>æŒ‰ä¸­æ–‡æ ‡ç‚¹æ‹†åˆ†æ®µ</summary>
+        /// <summary>°´ÖĞÎÄ±êµã²ğ·Ö¶Î</summary>
         private static List<string> SplitChineseText(string text)
         {
             var result = new List<string>();
             var sb = new StringBuilder();
             foreach (char c in text)
             {
-                if (c is 'ï¼Œ' or 'ï¼›' or 'ã€‚' or ',' or ';')
+                if (c is '£¬' or '£»' or '¡£' or ',' or ';')
                 {
                     if (sb.Length > 0)
                     {
@@ -861,7 +935,7 @@ namespace wxd.files.winforms
             return result;
         }
 
-        /// <summary>åœ¨é€—å·åˆ†éš”çš„å­—ç¬¦ä¸²ä¸­æŒ‰é¡¶å±‚ï¼ˆå¿½ç•¥åµŒå¥— {}[]ï¼‰æ‹†åˆ†æˆæ¡ç›®</summary>
+        /// <summary>ÔÚ¶ººÅ·Ö¸ôµÄ×Ö·û´®ÖĞ°´¶¥²ã£¨ºöÂÔÇ¶Ì× {}[]£©²ğ·Ö³ÉÌõÄ¿</summary>
         private static List<string> SplitTopLevelEntries(string s, Deadline deadline)
         {
             var result = new List<string>();
@@ -884,17 +958,17 @@ namespace wxd.files.winforms
             return result;
         }
 
-        /// <summary>ç»™å¤šè¡Œæ–‡æœ¬æ¯è¡Œæ·»åŠ ç¼©è¿›</summary>
+        /// <summary>¸ø¶àĞĞÎÄ±¾Ã¿ĞĞÌí¼ÓËõ½ø</summary>
         private static string IndentBlock(string text, string indent)
         {
             var lines = text.Split('\n');
             return string.Join("\n", lines.Select(l => indent + l));
         }
 
-        /// <summary>å°è¯•ç¾åŒ– JSONï¼Œå¤±è´¥å…ˆä¿®å¤æœªå¼•å· key å†è¯•ï¼Œè¿˜å¤±è´¥è¿”å› null</summary>
+        /// <summary>³¢ÊÔÃÀ»¯ JSON£¬Ê§°ÜÏÈĞŞ¸´Î´ÒıºÅ key ÔÙÊÔ£¬»¹Ê§°Ü·µ»Ø null</summary>
         private static string? TryBeautifyJson(string json, Deadline deadline)
         {
-            // ç¬¬ä¸€æ¬¡å°è¯•åŸæ ·è§£æ
+            // µÚÒ»´Î³¢ÊÔÔ­Ñù½âÎö
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -903,7 +977,7 @@ namespace wxd.files.winforms
             }
             catch { }
 
-            // ä¿®å¤æœªå¼•å·çš„ key åå†è¯•
+            // ĞŞ¸´Î´ÒıºÅµÄ key ºóÔÙÊÔ
             string fixedJson = FixUnquotedKeys(json, deadline);
             if (fixedJson != json)
             {
@@ -918,7 +992,7 @@ namespace wxd.files.winforms
             return null;
         }
 
-        /// <summary>å°† JSON ä¸­æœªåŠ å¼•å·çš„ keyï¼ˆå¦‚ {1:..., key:...}ï¼‰åŠ ä¸Šå¼•å·ï¼Œå¸¦è¶…æ—¶æ£€æŸ¥</summary>
+        /// <summary>½« JSON ÖĞÎ´¼ÓÒıºÅµÄ key£¨Èç {1:..., key:...}£©¼ÓÉÏÒıºÅ£¬´ø³¬Ê±¼ì²é</summary>
         private static string FixUnquotedKeys(string json, Deadline deadline)
         {
             var sb = new StringBuilder(json.Length + 32);
@@ -930,7 +1004,7 @@ namespace wxd.files.winforms
                 if (i % 256 == 0) deadline.ThrowIfExpired();
                 char c = json[i];
 
-                // å­—ç¬¦ä¸²å†…ï¼šåŸæ ·å¤åˆ¶
+                // ×Ö·û´®ÄÚ£ºÔ­Ñù¸´ÖÆ
                 if (inStr)
                 {
                     if (c == '\\') { sb.Append(c); i++; if (i < json.Length) sb.Append(json[i]); continue; }
@@ -941,7 +1015,7 @@ namespace wxd.files.winforms
 
                 if (c is '"' or '\'') { inStr = true; strChar = c; sb.Append(c); continue; }
 
-                // é‡åˆ° { æˆ– , æ—¶ï¼Œæ£€æŸ¥åé¢æ˜¯å¦è·Ÿç€ä¸€ä¸ªæœªå¼•å·çš„ key (word/digits : )
+                // Óöµ½ { »ò , Ê±£¬¼ì²éºóÃæÊÇ·ñ¸ú×ÅÒ»¸öÎ´ÒıºÅµÄ key (word/digits : )
                 if (c is '{' or '[' or ',')
                 {
                     sb.Append(c);
@@ -955,11 +1029,11 @@ namespace wxd.files.winforms
                         while (l < json.Length && char.IsWhiteSpace(json[l])) l++;
                         if (l < json.Length && json[l] is ':' or '=')
                         {
-                            // è¿™æ˜¯æœªå¼•å·çš„ key â†’ åŠ åŒå¼•å·
+                            // ÕâÊÇÎ´ÒıºÅµÄ key ¡ú ¼ÓË«ÒıºÅ
                             sb.Append('"');
                             sb.Append(json, j, k - j);
                             sb.Append("\":");
-                            i = k; // è·³åˆ° : æˆ– =ï¼Œå¾ªç¯ i++ ä¼šå†è·³ä¸€ä½
+                            i = k; // Ìøµ½ : »ò =£¬Ñ­»· i++ »áÔÙÌøÒ»Î»
                             continue;
                         }
                     }
@@ -971,15 +1045,15 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-        /// <summary>å°† key=value æ ¼å¼çš„ { id=123, name=abc } è½¬æ¢ä¸ºæ ‡å‡† JSON</summary>
+        /// <summary>½« key=value ¸ñÊ½µÄ { id=123, name=abc } ×ª»»Îª±ê×¼ JSON</summary>
         private static string? TryConvertEqualsToJson(string text, Deadline deadline)
         {
             if (text.Length < 2 || text[0] != '{' || text[^1] != '}') return null;
             string inner = text.Substring(1, text.Length - 2).Trim();
             if (string.IsNullOrEmpty(inner)) return null;
-            // å¦‚æœåŒ…å«æ ‡å‡† JSON çš„å¼•å·æ ¼å¼ï¼ˆ"key": val æˆ– 'key': valï¼‰ï¼Œäº¤ç”± FixUnquotedKeys å¤„ç†
+            // Èç¹û°üº¬±ê×¼ JSON µÄÒıºÅ¸ñÊ½£¨"key": val »ò 'key': val£©£¬½»ÓÉ FixUnquotedKeys ´¦Àí
             if (inner.Contains("\":")) return null;
-            // æ£€æŸ¥æ˜¯å¦å¤§éƒ¨åˆ†æ¡ç›®æ˜¯ key=value æ ¼å¼
+            // ¼ì²éÊÇ·ñ´ó²¿·ÖÌõÄ¿ÊÇ key=value ¸ñÊ½
             int eqCount = 0, colonCount = 0, totalEntries = 0;
             var entries = SplitTopLevelEntries(inner, deadline);
             foreach (var entry in entries)
@@ -991,7 +1065,7 @@ namespace wxd.files.winforms
                 if (t.Contains(':')) colonCount++;
             }
             if (totalEntries == 0) return null;
-            // è¶…è¿‡ä¸€åŠæ˜¯ = æ ¼å¼æ‰è½¬æ¢
+            // ³¬¹ıÒ»°ëÊÇ = ¸ñÊ½²Å×ª»»
             if (eqCount < totalEntries / 2.0) return null;
 
             var jsonSb = new StringBuilder();
@@ -1019,18 +1093,18 @@ namespace wxd.files.winforms
             return jsonSb.ToString();
         }
 
-        /// <summary>å°è¯•å°†æ•°ç»„å†…å®¹ä» key=value å¯¹è±¡æ ¼å¼è½¬ä¸º JSON æ•°ç»„</summary>
+        /// <summary>³¢ÊÔ½«Êı×éÄÚÈİ´Ó key=value ¶ÔÏó¸ñÊ½×ªÎª JSON Êı×é</summary>
         private static string? TryConvertArrayToJson(string text, Deadline deadline)
         {
             if (text.Length < 2 || text[0] != '[' || text[^1] != ']') return null;
             string inner = text.Substring(1, text.Length - 2).Trim();
             if (string.IsNullOrEmpty(inner)) return null;
-            // å·²åŒ…å«æ ‡å‡† JSON ç»“æ„åˆ™è·³è¿‡
+            // ÒÑ°üº¬±ê×¼ JSON ½á¹¹ÔòÌø¹ı
             if (inner.TrimStart().StartsWith("{")) return null;
-            // æŒ‰é¡¶å±‚é€—å·æ‹†åˆ†æ¡ç›®
+            // °´¶¥²ã¶ººÅ²ğ·ÖÌõÄ¿
             var items = SplitTopLevelEntries(inner, deadline);
             if (items.Count == 0) return null;
-            // æ£€æŸ¥æ˜¯å¦æ¯ä¸ªæ¡ç›®éƒ½åŒ…å« {...}
+            // ¼ì²éÊÇ·ñÃ¿¸öÌõÄ¿¶¼°üº¬ {...}
             bool allHaveBrace = items.All(i => i.Contains('{'));
             if (!allHaveBrace) return null;
 
@@ -1050,7 +1124,7 @@ namespace wxd.files.winforms
                     objJson = TryConvertEqualsToJson(braceContent, deadline);
                 if (objJson != null)
                 {
-                    // åˆå¹¶ prefix å’Œ JSON å¯¹è±¡
+                    // ºÏ²¢ prefix ºÍ JSON ¶ÔÏó
                     if (!string.IsNullOrEmpty(prefix))
                     {
                         var lines = objJson.Split('\n');
@@ -1079,7 +1153,7 @@ namespace wxd.files.winforms
             return jsonSb.ToString();
         }
 
-        /// <summary>è½¬ä¹‰ JSON å­—ç¬¦ä¸²ä¸­çš„ç‰¹æ®Šå­—ç¬¦</summary>
+        /// <summary>×ªÒå JSON ×Ö·û´®ÖĞµÄÌØÊâ×Ö·û</summary>
         private static string EscapeJsonString(string s)
         {
             var sb = new StringBuilder(s.Length);
@@ -1098,32 +1172,32 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-        /// <summary>å°†å€¼æ™ºèƒ½å¤„ç†ï¼šæ•°å­—ä¸åŠ å¼•å·ï¼Œå…¶ä»–åŠ å¼•å·ï¼ˆæ˜¾ç¤ºç”¨ï¼Œä¸è½¬ä¹‰å¼•å·ï¼‰</summary>
+        /// <summary>½«ÖµÖÇÄÜ´¦Àí£ºÊı×Ö²»¼ÓÒıºÅ£¬ÆäËû¼ÓÒıºÅ£¨ÏÔÊ¾ÓÃ£¬²»×ªÒåÒıºÅ£©</summary>
         private static void AppendJsonValue(StringBuilder sb, string val)
         {
             if (string.IsNullOrEmpty(val)) { sb.Append("\"\""); return; }
             // true/false/null
             if (val == "true" || val == "false" || val == "null") { sb.Append(val); return; }
-            // çº¯æ•°å­—
+            // ´¿Êı×Ö
             if (long.TryParse(val, out _) || double.TryParse(val, out _)) { sb.Append(val); return; }
-            // æœ‰ { æˆ– [ çš„å†…å®¹åŸæ ·è¾“å‡º
+            // ÓĞ { »ò [ µÄÄÚÈİÔ­ÑùÊä³ö
             if (val.Contains('{') || val.Contains('[')) { sb.Append(val); return; }
             sb.Append('\"');
             sb.Append(val);
             sb.Append('\"');
         }
 
-        // ==================== æ··åˆå†…å®¹æ ¼å¼åŒ–å¼•æ“ ====================
+        // ==================== »ìºÏÄÚÈİ¸ñÊ½»¯ÒıÇæ ====================
 
-        /// <summary>ç‰‡æ®µç±»å‹</summary>
+        /// <summary>Æ¬¶ÎÀàĞÍ</summary>
         private enum SegType { JsonBlock, KeyValuePair, QuotedString, Number, BooleanNull, PlainText }
 
-        /// <summary>å°†å·²æ ¼å¼åŒ–æ–‡æœ¬ï¼ˆå¤šè¡Œï¼‰æ¸²æŸ“ä¸ºå¸¦è¯­æ³•é«˜äº®çš„ RTF</summary>
+        /// <summary>½«ÒÑ¸ñÊ½»¯ÎÄ±¾£¨¶àĞĞ£©äÖÈ¾Îª´øÓï·¨¸ßÁÁµÄ RTF</summary>
         private static string BuildRtfForLine(string formattedText) => BuildRtfForLine(formattedText, Deadline.Default);
 
         private static string? BuildRtfForLine(string formattedText, Deadline deadline)
         {
-            // è¶…å¤§æ–‡æœ¬è·³è¿‡ RTF ç€è‰²ï¼Œè¿”å› null è¡¨ç¤ºç”¨çº¯æ–‡æœ¬
+            // ³¬´óÎÄ±¾Ìø¹ı RTF ×ÅÉ«£¬·µ»Ø null ±íÊ¾ÓÃ´¿ÎÄ±¾
             if (formattedText.Length > 512 * 1024) return null;
 
             var lines = formattedText.Split('\n');
@@ -1144,13 +1218,13 @@ namespace wxd.files.winforms
                 if (rl.Length == 0) { sb.Append(' '); continue; }
 
                 string trimmed = rl.TrimStart();
-                // åˆ¤æ–­ JSON å—çš„å¼€å§‹/ç»“æŸ
+                // ÅĞ¶Ï JSON ¿éµÄ¿ªÊ¼/½áÊø
                 if (!inJson && trimmed.Length > 0 && (trimmed[0] is '{' or '['))
                     inJson = true;
 
                 if (inJson)
                 {
-                    // JSON å—æ•´ä½“è“è‰²
+                    // JSON ¿éÕûÌåÀ¶É«
                     sb.Append(@"\cf1 ");
                     sb.Append(EscapeRtf(rl));
                     if (trimmed.Length > 0 && (trimmed[^1] is '}' or ']'))
@@ -1158,7 +1232,7 @@ namespace wxd.files.winforms
                 }
                 else
                 {
-                    // é JSON è¡Œ â†’ é€ token è¯­æ³•ç€è‰²
+                    // ·Ç JSON ĞĞ ¡ú Öğ token Óï·¨×ÅÉ«
                     var tokens = TokenizeLine(rl, deadline);
                     foreach (var (type, text) in tokens)
                     {
@@ -1198,7 +1272,7 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-                /// <summary>RTF è½¬ä¹‰ï¼ˆANSI æ¨¡å¼ï¼Œæ‰€æœ‰å­—èŠ‚ç”¨ \'HH hex ç¼–ç ï¼‰</summary>
+                /// <summary>RTF ×ªÒå£¨ANSI Ä£Ê½£¬ËùÓĞ×Ö½ÚÓÃ \'HH hex ±àÂë£©</summary>
         private static string EscapeRtf(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -1228,7 +1302,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             {
                 if (i % 256 == 0) deadline.ThrowIfExpired();
 
-                // 1) JSON å¯¹è±¡ { ... }
+                // 1) JSON ¶ÔÏó { ... }
                 if (line[i] == '{')
                 {
                     int end = FindJsonEnd(line, i, '{', '}', deadline);
@@ -1244,7 +1318,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     }
                 }
 
-                // 2) JSON æ•°ç»„ [ ... ]
+                // 2) JSON Êı×é [ ... ]
                 if (line[i] == '[')
                 {
                     int end = FindJsonEnd(line, i, '[', ']', deadline);
@@ -1260,7 +1334,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     }
                 }
 
-                // 3) é”®å€¼å¯¹ key=value
+                // 3) ¼üÖµ¶Ô key=value
                 var rest = line.AsSpan(i);
                 var kvM = System.Text.RegularExpressions.Regex.Match(rest.ToString(), @"^([\w.@\-]+)\s*=\s*([^,\s;\]\}\)]+)");
                 if (kvM.Success && kvM.Groups[1].Value.Length > 0)
@@ -1270,23 +1344,23 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     continue;
                 }
 
-                // 4) å¼•å·å­—ç¬¦ä¸²
+                // 4) ÒıºÅ×Ö·û´®
                 if (line[i] is '"' or '\'')
                 {
                     char quote = line[i];
                     int end = i + 1;
                     while (end < line.Length && line[end] != quote)
                     {
-                        if (line[end] == '\\') end++; // è·³è¿‡è½¬ä¹‰
+                        if (line[end] == '\\') end++; // Ìø¹ı×ªÒå
                         end++;
                     }
-                    if (end < line.Length) end++; // é—­åˆå¼•å·
+                    if (end < line.Length) end++; // ±ÕºÏÒıºÅ
                     result.Add((SegType.QuotedString, line.Substring(i, end - i)));
                     i = end;
                     continue;
                 }
 
-                // 5) æ•°å­—
+                // 5) Êı×Ö
                 int numStart = i;
                 if (line[i] == '-' && i + 1 < line.Length && char.IsDigit(line[i + 1])) i++;
                 if (i < line.Length && char.IsDigit(line[i]))
@@ -1295,18 +1369,18 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         if ((line[i] is '+' or '-') && i > numStart && line[i - 1] is not 'e' and not 'E')
                         {
-                            // +/- not preceded by scientific notation â†’ end of number
+                            // +/- not preceded by scientific notation ¡ú end of number
                             break;
                         }
                         i++;
                     }
-                    // å›é€€: çº¯æ•°å­—ä¸åº”è¯¥åŒ…å«å­—æ¯åç¼€ï¼ˆé™¤äº† e/E/f/d/mï¼‰
+                    // »ØÍË: ´¿Êı×Ö²»Ó¦¸Ã°üº¬×ÖÄ¸ºó×º£¨³ıÁË e/E/f/d/m£©
                     while (i > numStart + 1 && !char.IsDigit(line[i - 1]) && line[i - 1] is not '.' and not 'f' and not 'd' and not 'm')
                         i--;
                     result.Add((SegType.Number, line.Substring(numStart, i - numStart)));
                     continue;
                 }
-                i = numStart; // ä¸æ˜¯æ•°å­—ï¼Œå›é€€
+                i = numStart; // ²»ÊÇÊı×Ö£¬»ØÍË
 
                 // 6) true / false / null
                 if (i + 3 <= line.Length)
@@ -1322,24 +1396,24 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     }
                 }
 
-                // 7) æ™®é€šæ–‡æœ¬ â€” ç´¯ç§¯åˆ°é‡åˆ°ç‰¹æ®Šå­—ç¬¦ä¸ºæ­¢
+                // 7) ÆÕÍ¨ÎÄ±¾ ¡ª ÀÛ»ıµ½Óöµ½ÌØÊâ×Ö·ûÎªÖ¹
                 int ps = i;
                 while (i < line.Length)
                 {
                     char c = line[i];
                     if (c is '{' or '[' or '"' or '\'') break;
-                    // æ£€æŸ¥æ˜¯å¦æ˜¯ KV èµ·å§‹: word åè·Ÿ =
+                    // ¼ì²éÊÇ·ñÊÇ KV ÆğÊ¼: word ºó¸ú =
                     if (char.IsLetterOrDigit(c) || c is '-' or '.' or '@' or '_')
                     {
                         int j = i;
                         while (j < line.Length && (char.IsLetterOrDigit(line[j]) || line[j] is '.' or '-' or '@' or '_')) j++;
                         if (j < line.Length && line[j] == '=')
                         {
-                            // åé¢æœ‰ =ï¼Œè®© KV åŒ¹é…å™¨å¤„ç†
+                            // ºóÃæÓĞ =£¬ÈÃ KV Æ¥ÅäÆ÷´¦Àí
                             break;
                         }
                     }
-                    // æ£€æŸ¥æ˜¯å¦æ˜¯æ•°å­—/å…³é”®è¯èµ·å§‹
+                    // ¼ì²éÊÇ·ñÊÇÊı×Ö/¹Ø¼ü´ÊÆğÊ¼
                     if (char.IsDigit(c)) break;
                     if (c == '-' && i + 1 < line.Length && char.IsDigit(line[i + 1])) break;
                     if ((c == 't' && i + 3 < line.Length && line.AsSpan(i, 4).SequenceEqual("true")) ||
@@ -1354,10 +1428,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return result;
         }
 
-        /// <summary>æ‰¾åˆ°åŒ¹é…çš„æ‹¬å·ç»“æŸä½ç½®ï¼Œæ”¯æŒåµŒå¥—ï¼ˆæ— è¶…æ—¶ç‰ˆæœ¬ï¼Œä¾› TokenizeLine ç­‰è°ƒç”¨ï¼‰</summary>
+        /// <summary>ÕÒµ½Æ¥ÅäµÄÀ¨ºÅ½áÊøÎ»ÖÃ£¬Ö§³ÖÇ¶Ì×£¨ÎŞ³¬Ê±°æ±¾£¬¹© TokenizeLine µÈµ÷ÓÃ£©</summary>
         private static int FindJsonEnd(string s, int start, char open, char close) => FindJsonEnd(s, start, open, close, Deadline.Default);
 
-        /// <summary>æ‰¾åˆ°åŒ¹é…çš„æ‹¬å·ç»“æŸä½ç½®ï¼Œæ”¯æŒåµŒå¥—ï¼Œå¸¦è¶…æ—¶æ£€æŸ¥</summary>
+        /// <summary>ÕÒµ½Æ¥ÅäµÄÀ¨ºÅ½áÊøÎ»ÖÃ£¬Ö§³ÖÇ¶Ì×£¬´ø³¬Ê±¼ì²é</summary>
         private static int FindJsonEnd(string s, int start, char open, char close, Deadline deadline)
         {
             if (start >= s.Length || s[start] != open) return -1;
@@ -1380,7 +1454,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return -1;
         }
 
-        /// <summary>ç¾åŒ– JSON ç‰‡æ®µï¼ˆç¼©è¿›å±•å¼€ï¼‰</summary>
+        /// <summary>ÃÀ»¯ JSON Æ¬¶Î£¨Ëõ½øÕ¹¿ª£©</summary>
         private static string BeautifyJson(string json) => BeautifyJson(json, Deadline.Default);
 
         private static string BeautifyJson(string json, Deadline deadline)
@@ -1394,18 +1468,18 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             }
             catch
             {
-                return json; // è§£æå¤±è´¥åˆ™åŸæ ·ä¿ç•™
+                return json; // ½âÎöÊ§°ÜÔòÔ­Ñù±£Áô
             }
         }
 
         private void OnGoto(object? s, EventArgs e)
         {
-            if (!int.TryParse(_txtGotoLine.Text, out int ln) || ln < 1) { AlertForm.Show(ParentForm, "è¯·è¾“å…¥æœ‰æ•ˆè¡Œå·", "æç¤º", AlertType.Information); return; }
-            if (ln > _lstContent.VirtualListSize) { AlertForm.Show(ParentForm, $"è¶…å‡ºèŒƒå›´ï¼Œå…± {_lstContent.VirtualListSize:N0} è¡Œ", "æç¤º", AlertType.Information); return; }
+            if (!int.TryParse(_txtGotoLine.Text, out int ln) || ln < 1) { AlertForm.Show(ParentForm, "ÇëÊäÈëÓĞĞ§ĞĞºÅ", "ÌáÊ¾", AlertType.Information); return; }
+            if (ln > _lstContent.VirtualListSize) { AlertForm.Show(ParentForm, $"³¬³ö·¶Î§£¬¹² {_lstContent.VirtualListSize:N0} ĞĞ", "ÌáÊ¾", AlertType.Information); return; }
             int idx = ln - 1; _lstContent.EnsureVisible(idx); _lstContent.SelectedIndices.Clear(); _lstContent.SelectedIndices.Add(idx); _lstContent.Focus();
         }
 
-        // ==================== æœç´¢åŠŸèƒ½ ====================
+        // ==================== ËÑË÷¹¦ÄÜ ====================
 
         private int GetCurrentLine()
         {
@@ -1433,10 +1507,61 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return 0;
         }
 
-        /// <summary>æ ¹æ®æœç´¢æ¡†å’Œé€‰é¡¹è®¡ç®—å½“å‰æœç´¢ key</summary>
+        /// <summary>¸ù¾İËÑË÷¿òºÍÑ¡Ïî¼ÆËãµ±Ç°ËÑË÷ key</summary>
         private string CurrentSearchKey()
         {
             return $"{_cboSearch.Text.Trim()}|{_chkCaseSensitive.Checked}|{_chkRegex.Checked}";
+        }
+
+        /// <summary>
+        /// Ğ´Èë¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¨²»ÊÜ FileCacheStore µÄ 5000 ÍòĞĞÏŞÖÆ£©¡£
+        /// ²ÉÓÃ LRU£º°´×Ü×Ö½ÚÊı 800MB ºÍÌõÊı 5 µÄÉÏÏŞÌÔÌ­×î¾ÉÌõÄ¿¡£
+        /// </summary>
+        private void PutRecentSearch(string key, List<int> results)
+        {
+            // ÏÈÒÆ³ıÍ¬ key ¾ÉÌõÄ¿£¨±ÜÃâÖØ¸´£©
+            var node = _recentSearches.First;
+            while (node != null)
+            {
+                if (node.Value.Key == key)
+                {
+                    _recentSearchesBytes -= EstimateSearchResultBytes(node.Value.Value);
+                    _recentSearches.Remove(node);
+                    break;
+                }
+                node = node.Next;
+            }
+
+            // ¼ÓÈëÁ´±íÎ²²¿£¨×îĞÂ£©
+            _recentSearches.AddLast(new KeyValuePair<string, List<int>>(key, results));
+            _recentSearchesBytes += EstimateSearchResultBytes(results);
+
+            // LRU ÌÔÌ­£º³¬¹ıÌõÊı»ò×Ö½ÚÊıÊ±´ÓÍ·²¿ÒÆ³ı×î¾É
+            while (_recentSearches.Count > MaxRecentSearchesCount || _recentSearchesBytes > MaxRecentSearchesBytes)
+            {
+                if (_recentSearches.Count == 0) break;
+                var oldest = _recentSearches.First!;
+                _recentSearchesBytes -= EstimateSearchResultBytes(oldest.Value.Value);
+                _recentSearches.RemoveFirst();
+            }
+        }
+
+        /// <summary>²éÑ¯¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¬ÃüÖĞÔò·µ»Ø½á¹û£¨²»ÒÆ³ı£¬LRU Ë³Ğò²»±ä£©</summary>
+        private List<int>? TryGetRecentSearch(string key)
+        {
+            foreach (var kv in _recentSearches)
+            {
+                if (kv.Key == key)
+                    return kv.Value;
+            }
+            return null;
+        }
+
+        /// <summary>¹ÀËã List&lt;int&gt; Õ¼ÓÃ×Ö½ÚÊı£¨Ã¿ int 4 ×Ö½Ú + ÁĞ±í¿ªÏú£©</summary>
+        private static long EstimateSearchResultBytes(List<int> list)
+        {
+            // List<int> ÄÚ²¿ int Êı×é£ºcount * 4£¬¼ÓÉÏ List ¶ÔÏó±¾ÉíÔ¼ 32 ×Ö½Ú
+            return (long)list.Count * 4 + 64;
         }
 
         private async void OnSearch()
@@ -1445,23 +1570,24 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         }
 
         /// <summary>
-        /// ç¡®ä¿å½“å‰ _searchResults ä¸æœç´¢æ¡†ä¸€è‡´ï¼š
-        /// 1. è‹¥æœç´¢æ¡† key == _lastSearch â†’ ç›´æ¥ä½¿ç”¨ï¼ˆå‘½ä¸­æˆ–æ­£åœ¨æœç´¢ä¸­ï¼‰
-        /// 2. å¦åˆ™æŸ¥ FileCacheStore ç¼“å­˜ï¼šå‘½ä¸­åˆ™æ›´æ–° _searchResults + _lastSearch
-        /// 3. ç¼“å­˜æœªå‘½ä¸­ â†’ å¯åŠ¨åå°æœç´¢
-        /// è¿”å› true è¡¨ç¤ºç»“æœå·²å°±ç»ªå¯å¯¼èˆªï¼›false è¡¨ç¤ºæ­£åœ¨åå°æœç´¢ä¸­ã€‚
+        /// È·±£µ±Ç° _searchResults ÓëËÑË÷¿òÒ»ÖÂ£º
+        /// 1. ÈôËÑË÷¿ò key == _lastSearch ¡ú Ö±½ÓÊ¹ÓÃ£¨ÃüÖĞ»òÕıÔÚËÑË÷ÖĞ£©
+        /// 2. ·ñÔò²é¿Ø¼şÄÚ×î½üËÑË÷»º´æ _recentSearches£¨²»ÊÜ´óĞ¡ÏŞÖÆ£©
+        /// 3. ÔÙ²é FileCacheStore »º´æ£¨ÊÜ 5000 ÍòĞĞÏŞÖÆ£©
+        /// 4. ¶¼Î´ÃüÖĞ ¡ú Æô¶¯ºóÌ¨ËÑË÷
+        /// ·µ»Ø true ±íÊ¾½á¹ûÒÑ¾ÍĞ÷¿Éµ¼º½£»false ±íÊ¾ÕıÔÚºóÌ¨ËÑË÷ÖĞ¡£
         /// </summary>
         private async Task<bool> EnsureSearchReadyAsync()
         {
             string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                _lblSearchCount.Text = "";
+                _lblSearchPos.Text = "";
                 return false;
             }
             if (_lineOffsets == null)
             {
-                _lblSearchCount.Text = "è¯·ç­‰å¾…ç´¢å¼•å®Œæˆ";
+                _lblSearchPos.Text = "ÇëµÈ´ıË÷ÒıÍê³É";
                 return false;
             }
 
@@ -1469,30 +1595,25 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             bool useRegex = _chkRegex.Checked;
             string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
 
-            // 1. å½“å‰æœç´¢ç»“æœä»ç„¶æœ‰æ•ˆ
+            // 1. µ±Ç°ËÑË÷½á¹ûÈÔÈ»ÓĞĞ§
             if (currentKey == _lastSearch)
             {
-                // æ­£åœ¨åå°æœç´¢ä¸­
+                // ÕıÔÚºóÌ¨ËÑË÷ÖĞ
                 if (_searchCts != null && !_searchCts.IsCancellationRequested)
                     return false;
-                return true; // 0 åŒ¹é…ä¹Ÿç®—å°±ç»ª
+                return true; // 0 Æ¥ÅäÒ²Ëã¾ÍĞ÷
             }
 
-            // â˜… è®°å½•åˆ°å…¨å±€æœç´¢å†å²ï¼ˆåå°å†™ç›˜ï¼‰
+            // ¡ï ¼ÇÂ¼µ½È«¾ÖËÑË÷ÀúÊ·£¨ºóÌ¨Ğ´ÅÌ£©
             SearchHistoryStore.Add(keyword);
             RefreshSearchHistory();
 
-            // 2. æŸ¥ç¼“å­˜ï¼ˆåå°è¯»ç›˜ï¼Œä¸é˜»å¡ UIï¼‰
-            var cached = await FileCacheStore.TryGetSearchResultAsync(_filePath!, currentKey);
-
-            // â˜… await å›æ¥åï¼Œç”¨æˆ·å¯èƒ½å·²åˆ‡æ¢å…³é”®è¯ï¼›è‹¥å·²åˆ‡æ¢ï¼Œä¸¢å¼ƒæœ¬æ¬¡ç»“æœ
-            if (CurrentSearchKey() != currentKey)
-                return false;
-
-            if (cached != null)
+            // 2a. ÏÈ²é¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¨Í¬²½£¬ÎŞ IO£¬²»ÊÜ´óĞ¡ÏŞÖÆ£©
+            var recent = TryGetRecentSearch(currentKey);
+            if (recent != null)
             {
-                _searchResults = cached;
-                _searchCts = null; // ç¼“å­˜å‘½ä¸­ï¼Œæ— åå°ä»»åŠ¡
+                _searchResults = recent;
+                _searchCts = null;
                 _lastSearch = currentKey;
                 _searchCurrentIndex = -1;
                 _lastNavigatedMatchLine = -1;
@@ -1505,17 +1626,47 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 }
                 else
                 {
-                    _lblSearchCount.Text = "æœç´¢å®Œæˆï¼Œ0 ä¸ªåŒ¹é…ï¼ˆç¼“å­˜ï¼‰";
+                    _lblSearchPos.Text = "ËÑË÷Íê³É£¬0 ¸öÆ¥Åä£¨»º´æ£©";
                 }
                 return true;
             }
 
-            // 3. ç¼“å­˜æœªå‘½ä¸­ â†’ åå°æœç´¢
+            // 2b. ÔÙ²é FileCacheStore »º´æ£¨ºóÌ¨¶ÁÅÌ£¬²»×èÈû UI£©
+            var cached = await FileCacheStore.TryGetSearchResultAsync(_filePath!, currentKey);
+
+            // ¡ï await »ØÀ´ºó£¬ÓÃ»§¿ÉÄÜÒÑÇĞ»»¹Ø¼ü´Ê£»ÈôÒÑÇĞ»»£¬¶ªÆú±¾´Î½á¹û
+            if (CurrentSearchKey() != currentKey)
+                return false;
+
+            if (cached != null)
+            {
+                _searchResults = cached;
+                _searchCts = null; // »º´æÃüÖĞ£¬ÎŞºóÌ¨ÈÎÎñ
+                _lastSearch = currentKey;
+                _searchCurrentIndex = -1;
+                _lastNavigatedMatchLine = -1;
+                _hasuserNavigated = false;
+                // ¡ï FileCacheStore ÃüÖĞÒ²Ğ´Èë¿Ø¼şÄÚ×î½ü»º´æ£¬·½±ãÏÂ´ÎÇĞ»»
+                PutRecentSearch(currentKey, cached);
+
+                if (_searchResults.Count > 0)
+                {
+                    int idx2 = FindNearestIndex(_searchResults, GetCurrentLine());
+                    NavigateTo(idx2);
+                }
+                else
+                {
+                    _lblSearchPos.Text = "ËÑË÷Íê³É£¬0 ¸öÆ¥Åä£¨»º´æ£©";
+                }
+                return true;
+            }
+
+            // 3. »º´æÎ´ÃüÖĞ ¡ú ºóÌ¨ËÑË÷
             _searchCts?.Cancel();
             _searchCts = new CancellationTokenSource();
             var token = _searchCts.Token;
             _lastSearch = currentKey;
-            _lblSearchCount.Text = "æœç´¢ä¸­...";
+            _lblSearchPos.Text = "ËÑË÷ÖĞ...";
             _searchResults.Clear();
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
@@ -1525,7 +1676,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return false;
         }
 
-        /// <summary>åˆ·æ–°æœç´¢ä¸‹æ‹‰æ¡†çš„å†å²è®°å½•ï¼ˆä¸å½±å“ _lastSearchï¼Œä¸å½±å“æœç´¢æ¡†è¾“å…¥ï¼‰</summary>
+        /// <summary>Ë¢ĞÂËÑË÷ÏÂÀ­¿òµÄÀúÊ·¼ÇÂ¼£¨²»Ó°Ïì _lastSearch£¬²»Ó°ÏìËÑË÷¿òÊäÈë£©</summary>
         private void RefreshSearchHistory()
         {
             var history = SearchHistoryStore.GetHistory();
@@ -1537,12 +1688,12 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _cboSearch.SelectionLength = 0;
         }
 
-        /// <summary>æ¸…ç†å½“å‰æ–‡ä»¶çš„æœç´¢ç¼“å­˜</summary>
+        /// <summary>ÇåÀíµ±Ç°ÎÄ¼şµÄËÑË÷»º´æ</summary>
         private void OnClearCache(object? s, EventArgs e)
         {
             if (string.IsNullOrEmpty(_filePath))
             {
-                AlertForm.Show(ParentForm, "å½“å‰æœªæ‰“å¼€æ–‡ä»¶", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "µ±Ç°Î´´ò¿ªÎÄ¼ş", "ÌáÊ¾", AlertType.Information);
                 return;
             }
             FileCacheStore.ClearFile(_filePath);
@@ -1550,8 +1701,13 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
             _lastSearch = "";
-            _lblSearchCount.Text = "";
-            AlertForm.Show(ParentForm, "å·²æ¸…ç†å½“å‰æ–‡ä»¶çš„æœç´¢ç¼“å­˜", "æç¤º", AlertType.Information);
+            // ¡ï Çå¿Õ¿Ø¼şÄÚ×î½üËÑË÷»º´æ
+            _recentSearches.Clear();
+            _recentSearchesBytes = 0;
+            _lblSearchPos.Text = "";
+            // ¡ï ÇåÀí»º´æºóË¢ĞÂµ×²¿×´Ì¬À¸µÄ»º´æ´óĞ¡
+            RefreshCacheSizeStatus();
+            AlertForm.Show(ParentForm, "ÒÑÇåÀíµ±Ç°ÎÄ¼şµÄËÑË÷»º´æ", "ÌáÊ¾", AlertType.Information);
         }
 
         private void DoSearch(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, int curLine)
@@ -1584,30 +1740,32 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         int cnt = results.Count;
                         int pct = (int)((i + 1L) * 100 / total);
-                        // â˜… å¢é‡æ›´æ–° _searchResultsï¼Œè®©å¯¼èˆªæŒ‰é’®åœ¨æœç´¢è¿‡ç¨‹ä¸­å°±èƒ½ä½¿ç”¨å·²æœ‰ç»“æœ
+                        // ¡ï ÔöÁ¿¸üĞÂ _searchResults£¬ÈÃµ¼º½°´Å¥ÔÚËÑË÷¹ı³ÌÖĞ¾ÍÄÜÊ¹ÓÃÒÑÓĞ½á¹û
                         if (cnt > 0 && cnt % 500 == 0)
                         {
                             var snapshot = new List<int>(results);
                             BeginInvoke(() => _searchResults = snapshot);
                         }
-                        BeginInvoke(() => _lblSearchCount.Text = $"æœç´¢ä¸­... {cnt} ä¸ª ({pct}%)");
+                        BeginInvoke(() => _lblSearchPos.Text = $"ËÑË÷ÖĞ... {cnt} ¸ö ({pct}%)");
                     }
                 }
 
                 int nearestLine = curLine;
                 BeginInvoke(() =>
                 {
-                    // â˜… å¦‚æœç”¨æˆ·åœ¨æœç´¢æœŸé—´åˆ‡æ¢äº†å…³é”®è¯ï¼Œä¸¢å¼ƒæœ¬æ¬¡ç»“æœ
+                    // ¡ï Èç¹ûÓÃ»§ÔÚËÑË÷ÆÚ¼äÇĞ»»ÁË¹Ø¼ü´Ê£¬¶ªÆú±¾´Î½á¹û
                     string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
                     if (_lastSearch != currentKey) return;
 
                     _searchResults = results;
-                    // â˜… å†™å…¥æœç´¢ç»“æœç¼“å­˜ï¼ˆåå°å†™ç›˜ï¼Œä¸é˜»å¡ UIï¼‰
+                    // ¡ï Ğ´Èë¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¨²»ÊÜ 5000 ÍòĞĞÏŞÖÆ£¬È·±£´ó½á¹ûÇĞ»ØÒ²ÄÜÌø×ª£©
+                    PutRecentSearch(currentKey, results);
+                    // ¡ï Ğ´Èë FileCacheStore ³Ö¾Ã»¯»º´æ£¨ÊÜ 5000 ÍòĞĞÏŞÖÆ£¬ºóÌ¨Ğ´ÅÌ£©
                     _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
 
                     if (results.Count > 0)
                     {
-                        // â˜… å¦‚æœç”¨æˆ·å·²ç»æ‰‹åŠ¨è·³è½¬è¿‡ï¼Œä¸å†å¼ºåˆ¶è·³è½¬åˆ°ç¬¬ä¸€ä¸ªåŒ¹é…é¡¹
+                        // ¡ï Èç¹ûÓÃ»§ÒÑ¾­ÊÖ¶¯Ìø×ª¹ı£¬²»ÔÙÇ¿ÖÆÌø×ªµ½µÚÒ»¸öÆ¥ÅäÏî
                         if (!_hasuserNavigated)
                         {
                             int idx2 = FindNearestIndex(results, nearestLine);
@@ -1615,21 +1773,21 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                         }
                         else
                         {
-                            _lblSearchCount.Text = $"æœç´¢å®Œæˆï¼Œå…± {results.Count} ä¸ªåŒ¹é…";
+                            _lblSearchPos.Text = $"ËÑË÷Íê³É£¬¹² {results.Count} ¸öÆ¥Åä";
                         }
                     }
                     else
                     {
                         _searchCurrentIndex = -1;
                         _lastNavigatedMatchLine = -1;
-                        _lblSearchCount.Text = "æœç´¢å®Œæˆï¼Œ0 ä¸ªåŒ¹é…";
+                        _lblSearchPos.Text = "ËÑË÷Íê³É£¬0 ¸öÆ¥Åä";
                     }
                 });
             }
             catch { }
             finally
             {
-                // â˜…â˜…â˜… Bug ä¿®å¤ï¼šæœç´¢ç»“æŸåæ¸…ç† _searchCtsï¼Œé¿å…å¯¼èˆªæŒ‰é’®è¯¯åˆ¤"æœç´¢ä¸­" â˜…â˜…â˜…
+                // ¡ï¡ï¡ï Bug ĞŞ¸´£ºËÑË÷½áÊøºóÇåÀí _searchCts£¬±ÜÃâµ¼º½°´Å¥ÎóÅĞ"ËÑË÷ÖĞ" ¡ï¡ï¡ï
                 if (_searchCts != null && _searchCts.Token == token)
                 {
                     var cts = _searchCts;
@@ -1648,7 +1806,9 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _lstContent.SelectedIndices.Add(line);
             _lstContent.Focus();
             _lastNavigatedMatchLine = line;
-            _lblSearchCount.Text = $"ç¬¬ {index + 1}/{_searchResults.Count} ä¸ª | è¡Œ {line + 1:N0}";
+            // ¡ï µ×²¿×´Ì¬À¸£ºËÑË÷Î»ÖÃ + µ±Ç°ĞĞ
+            _lblSearchPos.Text = $"ËÑË÷£ºµÚ{index + 1}/{_searchResults.Count}¸ö";
+            _lblCurLine.Text = $"ĞĞ£ºµÚ{line + 1:N0}ĞĞ";
         }
 
         private bool userHasMovedAway()
@@ -1668,12 +1828,16 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             if (!ready)
             {
                 if (_searchCts != null && !_searchCts.IsCancellationRequested)
-                    _lblSearchCount.Text = "æœç´¢ä¸­ï¼Œè¯·ç¨å€™...";
+                    _lblSearchPos.Text = "ËÑË÷ÖĞ£¬ÇëÉÔºò...";
                 return;
             }
-            if (_searchResults.Count == 0) return;
+            if (_searchResults.Count == 0)
+            {
+                AlertForm.Show(ParentForm, "ÎŞÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
+                return;
+            }
 
-            _hasuserNavigated = true; // â˜… æ ‡è®°ç”¨æˆ·å·²æ‰‹åŠ¨è·³è½¬
+            _hasuserNavigated = true; // ¡ï ±ê¼ÇÓÃ»§ÒÑÊÖ¶¯Ìø×ª
             if (userHasMovedAway())
             {
                 int curLine = GetCurrentLine();
@@ -1682,7 +1846,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     idx2--;
                 if (idx2 < 0)
                 {
-                    AlertForm.Show(ParentForm, "å·²åˆ°é¡¶éƒ¨ï¼Œæ²¡æœ‰æ›´å¤šåŒ¹é…é¡¹", "æç¤º", AlertType.Information);
+                    AlertForm.Show(ParentForm, "ÒÑµ½¶¥²¿£¬Ã»ÓĞ¸ü¶àÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
                     return;
                 }
                 NavigateTo(idx2);
@@ -1691,7 +1855,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             {
                 if (_searchCurrentIndex <= 0)
                 {
-                    AlertForm.Show(ParentForm, "å·²åˆ°é¡¶éƒ¨ï¼Œæ²¡æœ‰æ›´å¤šåŒ¹é…é¡¹", "æç¤º", AlertType.Information);
+                    AlertForm.Show(ParentForm, "ÒÑµ½¶¥²¿£¬Ã»ÓĞ¸ü¶àÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
                     return;
                 }
                 NavigateTo(_searchCurrentIndex - 1);
@@ -1704,12 +1868,16 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             if (!ready)
             {
                 if (_searchCts != null && !_searchCts.IsCancellationRequested)
-                    _lblSearchCount.Text = "æœç´¢ä¸­ï¼Œè¯·ç¨å€™...";
+                    _lblSearchPos.Text = "ËÑË÷ÖĞ£¬ÇëÉÔºò...";
                 return;
             }
-            if (_searchResults.Count == 0) return;
+            if (_searchResults.Count == 0)
+            {
+                AlertForm.Show(ParentForm, "ÎŞÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
+                return;
+            }
 
-            _hasuserNavigated = true; // â˜… æ ‡è®°ç”¨æˆ·å·²æ‰‹åŠ¨è·³è½¬
+            _hasuserNavigated = true; // ¡ï ±ê¼ÇÓÃ»§ÒÑÊÖ¶¯Ìø×ª
             if (userHasMovedAway())
             {
                 int curLine = GetCurrentLine();
@@ -1718,7 +1886,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     idx2++;
                 if (idx2 >= _searchResults.Count)
                 {
-                    AlertForm.Show(ParentForm, "å·²åˆ°åº•éƒ¨ï¼Œæ²¡æœ‰æ›´å¤šåŒ¹é…é¡¹", "æç¤º", AlertType.Information);
+                    AlertForm.Show(ParentForm, "ÒÑµ½µ×²¿£¬Ã»ÓĞ¸ü¶àÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
                     return;
                 }
                 NavigateTo(idx2);
@@ -1727,7 +1895,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             {
                 if (_searchCurrentIndex >= _searchResults.Count - 1)
                 {
-                    AlertForm.Show(ParentForm, "å·²åˆ°åº•éƒ¨ï¼Œæ²¡æœ‰æ›´å¤šåŒ¹é…é¡¹", "æç¤º", AlertType.Information);
+                    AlertForm.Show(ParentForm, "ÒÑµ½µ×²¿£¬Ã»ÓĞ¸ü¶àÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
                     return;
                 }
                 NavigateTo(_searchCurrentIndex + 1);
@@ -1740,12 +1908,16 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             if (!ready)
             {
                 if (_searchCts != null && !_searchCts.IsCancellationRequested)
-                    _lblSearchCount.Text = "æœç´¢ä¸­ï¼Œè¯·ç¨å€™...";
+                    _lblSearchPos.Text = "ËÑË÷ÖĞ£¬ÇëÉÔºò...";
                 return;
             }
-            if (_searchResults.Count == 0) return;
+            if (_searchResults.Count == 0)
+            {
+                AlertForm.Show(ParentForm, "ÎŞÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
+                return;
+            }
 
-            _hasuserNavigated = true; // â˜… æ ‡è®°ç”¨æˆ·å·²æ‰‹åŠ¨è·³è½¬
+            _hasuserNavigated = true; // ¡ï ±ê¼ÇÓÃ»§ÒÑÊÖ¶¯Ìø×ª
             NavigateTo(0);
         }
 
@@ -1755,12 +1927,16 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             if (!ready)
             {
                 if (_searchCts != null && !_searchCts.IsCancellationRequested)
-                    _lblSearchCount.Text = "æœç´¢ä¸­ï¼Œè¯·ç¨å€™...";
+                    _lblSearchPos.Text = "ËÑË÷ÖĞ£¬ÇëÉÔºò...";
                 return;
             }
-            if (_searchResults.Count == 0) return;
+            if (_searchResults.Count == 0)
+            {
+                AlertForm.Show(ParentForm, "ÎŞÆ¥ÅäÏî", "ÌáÊ¾", AlertType.Information);
+                return;
+            }
 
-            _hasuserNavigated = true; // â˜… æ ‡è®°ç”¨æˆ·å·²æ‰‹åŠ¨è·³è½¬
+            _hasuserNavigated = true; // ¡ï ±ê¼ÇÓÃ»§ÒÑÊÖ¶¯Ìø×ª
             NavigateTo(_searchResults.Count - 1);
         }
 
@@ -1769,27 +1945,27 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string? sourcePath = _filePath;
             if (string.IsNullOrEmpty(sourcePath))
             {
-                AlertForm.Show(ParentForm, "è¯·å…ˆæ‰“å¼€æ–‡ä»¶", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëÏÈ´ò¿ªÎÄ¼ş", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
             string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                AlertForm.Show(ParentForm, "è¯·å…ˆè¾“å…¥æœç´¢å…³é”®è¯", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëÏÈÊäÈëËÑË÷¹Ø¼ü´Ê", "ÌáÊ¾", AlertType.Information);
                 return;
             }
             if (_lineOffsets == null)
             {
-                AlertForm.Show(ParentForm, "è¯·ç­‰å¾…ç´¢å¼•å®Œæˆ", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëµÈ´ıË÷ÒıÍê³É", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
-            // æœç´¢æ¡ä»¶å·²å˜æ›´ â†’ é‡æ–°æœç´¢å¹¶å¯¼å‡º
+            // ËÑË÷Ìõ¼şÒÑ±ä¸ü ¡ú ÖØĞÂËÑË÷²¢µ¼³ö
             if (CurrentSearchKey() != _lastSearch)
                 _searchResults.Clear();
 
-            // æ²¡æœ‰æœç´¢ç»“æœ â†’ å…ˆæœç´¢å†å¯¼å‡º
+            // Ã»ÓĞËÑË÷½á¹û ¡ú ÏÈËÑË÷ÔÙµ¼³ö
             if (_searchResults.Count == 0)
             {
                 _searchCts?.Cancel();
@@ -1798,46 +1974,46 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 bool caseSensitive = _chkCaseSensitive.Checked;
                 bool useRegex = _chkRegex.Checked;
                 _lastSearch = $"{keyword}|{caseSensitive}|{useRegex}";
-                _lblSearchCount.Text = "æœç´¢ä¸­...";
+                _lblSearchPos.Text = "ËÑË÷ÖĞ...";
                 _searchCurrentIndex = -1;
                 _lastNavigatedMatchLine = -1;
 
-                Status($"æ­£åœ¨æœç´¢ \"{keyword}\"...");
+                Status($"ÕıÔÚËÑË÷ \"{keyword}\"...");
                 _ = Task.Run(() => DoSearchAndExport(keyword, caseSensitive, useRegex, token));
                 return;
             }
 
-            // å·²æœ‰æœç´¢ç»“æœä¸”æ¡ä»¶åŒ¹é… â†’ ç›´æ¥å¯¼å‡º
+            // ÒÑÓĞËÑË÷½á¹ûÇÒÌõ¼şÆ¥Åä ¡ú Ö±½Óµ¼³ö
             DoExport();
         }
 
-        /// <summary>åå‘å¯¼å‡ºï¼šæ’é™¤åŒ¹é…è¡Œï¼Œä¿ç•™ä¸åŒ¹é…çš„æ‰€æœ‰è¡Œ</summary>
+        /// <summary>·´Ïòµ¼³ö£ºÅÅ³ıÆ¥ÅäĞĞ£¬±£Áô²»Æ¥ÅäµÄËùÓĞĞĞ</summary>
         private void OnReverseExport(object? s, EventArgs e)
         {
             string? sourcePath = _filePath;
             if (string.IsNullOrEmpty(sourcePath))
             {
-                AlertForm.Show(ParentForm, "è¯·å…ˆæ‰“å¼€æ–‡ä»¶", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëÏÈ´ò¿ªÎÄ¼ş", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
             string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
-                AlertForm.Show(ParentForm, "è¯·å…ˆè¾“å…¥æœç´¢å…³é”®è¯", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëÏÈÊäÈëËÑË÷¹Ø¼ü´Ê", "ÌáÊ¾", AlertType.Information);
                 return;
             }
             if (_lineOffsets == null)
             {
-                AlertForm.Show(ParentForm, "è¯·ç­‰å¾…ç´¢å¼•å®Œæˆ", "æç¤º", AlertType.Information);
+                AlertForm.Show(ParentForm, "ÇëµÈ´ıË÷ÒıÍê³É", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
-            // æœç´¢æ¡ä»¶å·²å˜æ›´ â†’ æ¸…ç©ºæ—§ç»“æœ
+            // ËÑË÷Ìõ¼şÒÑ±ä¸ü ¡ú Çå¿Õ¾É½á¹û
             if (CurrentSearchKey() != _lastSearch)
                 _searchResults.Clear();
 
-            // æ²¡æœ‰æœç´¢ç»“æœ â†’ å…ˆæœç´¢å†åå‘å¯¼å‡º
+            // Ã»ÓĞËÑË÷½á¹û ¡ú ÏÈËÑË÷ÔÙ·´Ïòµ¼³ö
             if (_searchResults.Count == 0)
             {
                 _searchCts?.Cancel();
@@ -1846,20 +2022,20 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 bool caseSensitive = _chkCaseSensitive.Checked;
                 bool useRegex = _chkRegex.Checked;
                 _lastSearch = $"{keyword}|{caseSensitive}|{useRegex}";
-                _lblSearchCount.Text = "æœç´¢ä¸­...";
+                _lblSearchPos.Text = "ËÑË÷ÖĞ...";
                 _searchCurrentIndex = -1;
                 _lastNavigatedMatchLine = -1;
 
-                Status($"æ­£åœ¨æœç´¢ \"{keyword}\"...");
+                Status($"ÕıÔÚËÑË÷ \"{keyword}\"...");
                 _ = Task.Run(() => DoSearchAndReverseExport(keyword, caseSensitive, useRegex, token));
                 return;
             }
 
-            // å·²æœ‰æœç´¢ç»“æœ â†’ ç›´æ¥åå‘å¯¼å‡º
+            // ÒÑÓĞËÑË÷½á¹û ¡ú Ö±½Ó·´Ïòµ¼³ö
             DoReverseExport();
         }
 
-        /// <summary>æœç´¢å®Œæˆåè‡ªåŠ¨åå‘å¯¼å‡º</summary>
+        /// <summary>ËÑË÷Íê³Éºó×Ô¶¯·´Ïòµ¼³ö</summary>
         private void DoSearchAndReverseExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token)
         {
             try
@@ -1890,17 +2066,20 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         int cnt = results.Count;
                         int pct = (int)((i + 1L) * 100 / total);
-                        BeginInvoke(() => _lblSearchCount.Text = $"æœç´¢ä¸­... {cnt} ä¸ª ({pct}%)");
+                        BeginInvoke(() => _lblSearchPos.Text = $"ËÑË÷ÖĞ... {cnt} ¸ö ({pct}%)");
                     }
                 }
 
                 BeginInvoke(() =>
                 {
-                    // â˜… å¦‚æœç”¨æˆ·åœ¨æœç´¢æœŸé—´åˆ‡æ¢äº†å…³é”®è¯ï¼Œä¸¢å¼ƒæœ¬æ¬¡ç»“æœ
+                    // ¡ï Èç¹ûÓÃ»§ÔÚËÑË÷ÆÚ¼äÇĞ»»ÁË¹Ø¼ü´Ê£¬¶ªÆú±¾´Î½á¹û
                     string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
                     if (_lastSearch != currentKey) return;
 
                     _searchResults = results;
+                    // ¡ï Ğ´Èë¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¨²»ÊÜ 5000 ÍòĞĞÏŞÖÆ£©
+                    PutRecentSearch(currentKey, results);
+                    _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
                     if (results.Count > 0)
                     {
                         int idx2 = FindNearestIndex(results, GetCurrentLine());
@@ -1911,50 +2090,50 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         _searchCurrentIndex = -1;
                         _lastNavigatedMatchLine = -1;
-                        _lblSearchCount.Text = "æœªæ‰¾åˆ°åŒ¹é…ï¼Œæ— æ³•åå‘å¯¼å‡º";
-                        Status("æœªæ‰¾åˆ°åŒ¹é…è¡Œ");
+                        _lblSearchPos.Text = "Î´ÕÒµ½Æ¥Åä£¬ÎŞ·¨·´Ïòµ¼³ö";
+                        Status("Î´ÕÒµ½Æ¥ÅäĞĞ");
                     }
                 });
             }
             catch { }
         }
 
-        /// <summary>åå‘å¯¼å‡ºï¼šåˆ©ç”¨å·²æœ‰çš„ _searchResults ç´¢å¼•ï¼Œå¯¼å‡ºæ‰€æœ‰ä¸åŒ¹é…çš„è¡Œ</summary>
+        /// <summary>·´Ïòµ¼³ö£ºÀûÓÃÒÑÓĞµÄ _searchResults Ë÷Òı£¬µ¼³öËùÓĞ²»Æ¥ÅäµÄĞĞ</summary>
         private void DoReverseExport()
         {
             string? sourcePath = _filePath;
             if (_searchResults.Count == 0) return;
 
-            // å¿«ç…§ï¼šé¿å…åå°çº¿ç¨‹è¯»å–æ—¶è¢«å¹¶å‘ä¿®æ”¹
+            // ¿ìÕÕ£º±ÜÃâºóÌ¨Ïß³Ì¶ÁÈ¡Ê±±»²¢·¢ĞŞ¸Ä
             var searchResultsSnapshot = _searchResults.ToList();
             var lineOffsets = _lineOffsets!;
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
-            // â˜… ä» _lastSearch ä¸­å–å…³é”®è¯éƒ¨åˆ†ï¼ˆæ ¼å¼ "keyword|caseSensitive|useRegex"ï¼‰
+            // ¡ï ´Ó _lastSearch ÖĞÈ¡¹Ø¼ü´Ê²¿·Ö£¨¸ñÊ½ "keyword|caseSensitive|useRegex"£©
             string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
-            Status("æ­£åœ¨å‡†å¤‡åå‘å¯¼å‡º...");
+            Status("ÕıÔÚ×¼±¸·´Ïòµ¼³ö...");
 
             _ = Task.Run(() =>
             {
-                // è®¡ç®—åå‘å¯¼å‡ºçš„æ€»è¡Œæ•° = æ€»è¡Œæ•° - åŒ¹é…è¡Œæ•°
+                // ¼ÆËã·´Ïòµ¼³öµÄ×ÜĞĞÊı = ×ÜĞĞÊı - Æ¥ÅäĞĞÊı
                 int totalLines = lineOffsets.Length;
                 int excludedCount = searchResultsSnapshot.Count;
                 int exportCount = totalLines - excludedCount;
 
-                // å‘½åè§„åˆ™ï¼šåŸå§‹æ–‡ä»¶å.è¿‡æ»¤å­—ç¬¦_æ’é™¤.æ—¶é—´æˆ³.æºæ–‡ä»¶åç¼€
+                // ÃüÃû¹æÔò£ºÔ­Ê¼ÎÄ¼şÃû.¹ıÂË×Ö·û_ÅÅ³ı.Ê±¼ä´Á.Ô´ÎÄ¼şºó×º
                 string safeFileName;
                 if (!string.IsNullOrEmpty(filterPart))
-                    safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}_æ’é™¤.{timestamp}{sourceExt}";
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}_ÅÅ³ı.{timestamp}{sourceExt}";
                 else
-                    safeFileName = $"{SanitizeFileName(fileName, 200)}_æ’é™¤.{timestamp}{sourceExt}";
+                    safeFileName = $"{SanitizeFileName(fileName, 200)}_ÅÅ³ı.{timestamp}{sourceExt}";
 
                 string outName = safeFileName;
                 string outPath = Path.Combine(dir, outName);
 
-                BeginInvoke(() => Status($"æ­£åœ¨åå‘å¯¼å‡º {exportCount} è¡Œåˆ° {outName}..."));
+                BeginInvoke(() => Status($"ÕıÔÚ·´Ïòµ¼³ö {exportCount} ĞĞµ½ {outName}..."));
 
                 try
                 {
@@ -1964,13 +2143,13 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
                     for (int lineIdx = 0; lineIdx < totalLines; lineIdx++)
                     {
-                        // å¦‚æœå½“å‰è¡Œåœ¨åŒ¹é…åˆ—è¡¨ä¸­ â†’ è·³è¿‡
+                        // Èç¹ûµ±Ç°ĞĞÔÚÆ¥ÅäÁĞ±íÖĞ ¡ú Ìø¹ı
                         if (matchIdx < excludedCount && searchResultsSnapshot[matchIdx] == lineIdx)
                         {
                             matchIdx++;
                             continue;
                         }
-                        // ä¸åœ¨åŒ¹é…åˆ—è¡¨ä¸­ â†’ è¾“å‡º
+                        // ²»ÔÚÆ¥ÅäÁĞ±íÖĞ ¡ú Êä³ö
                         string lineText = ReadLine(lineIdx);
                         sw.WriteLine(lineText);
                         exported++;
@@ -1979,15 +2158,15 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
                     BeginInvoke(() =>
                     {
-                        Status($"å·²åå‘å¯¼å‡º {exported} è¡Œ -> {outName}");
-                        string msg = "åå‘å¯¼å‡ºå®Œæˆï¼" + Environment.NewLine +
+                        Status($"ÒÑ·´Ïòµ¼³ö {exported} ĞĞ -> {outName}");
+                        string msg = "·´Ïòµ¼³öÍê³É£¡" + Environment.NewLine +
                                      Environment.NewLine +
-                                     "æ–‡ä»¶: " + outName + Environment.NewLine +
-                                     "è·¯å¾„: " + dir + Environment.NewLine +
-                                     "æ€»è¡Œæ•°: " + totalLines.ToString("N0") + Environment.NewLine +
-                                     "æ’é™¤è¡Œ: " + excludedCount.ToString("N0") + Environment.NewLine +
-                                     "å¯¼å‡ºè¡Œ: " + exported.ToString("N0");
-                        AlertForm.Show(ParentForm, msg, "å¯¼å‡ºæˆåŠŸ", AlertType.Information);
+                                     "ÎÄ¼ş: " + outName + Environment.NewLine +
+                                     "Â·¾¶: " + dir + Environment.NewLine +
+                                     "×ÜĞĞÊı: " + totalLines.ToString("N0") + Environment.NewLine +
+                                     "ÅÅ³ıĞĞ: " + excludedCount.ToString("N0") + Environment.NewLine +
+                                     "µ¼³öĞĞ: " + exported.ToString("N0");
+                        AlertForm.Show(ParentForm, msg, "µ¼³ö³É¹¦", AlertType.Information);
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
                 }
@@ -1995,14 +2174,14 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     BeginInvoke(() =>
                     {
-                        AlertForm.Show(ParentForm, $"åå‘å¯¼å‡ºå¤±è´¥: {ex.Message}", "é”™è¯¯", AlertType.Error, exception: ex);
-                        Status("åå‘å¯¼å‡ºå¤±è´¥");
+                        AlertForm.Show(ParentForm, $"·´Ïòµ¼³öÊ§°Ü: {ex.Message}", "´íÎó", AlertType.Error, exception: ex);
+                        Status("·´Ïòµ¼³öÊ§°Ü");
                     });
                 }
             });
         }
 
-        /// <summary>æœç´¢å®Œæˆåè‡ªåŠ¨å¯¼å‡º</summary>
+        /// <summary>ËÑË÷Íê³Éºó×Ô¶¯µ¼³ö</summary>
         private void DoSearchAndExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token)
         {
             try
@@ -2033,17 +2212,20 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         int cnt = results.Count;
                         int pct = (int)((i + 1L) * 100 / total);
-                        BeginInvoke(() => _lblSearchCount.Text = $"æœç´¢ä¸­... {cnt} ä¸ª ({pct}%)");
+                        BeginInvoke(() => _lblSearchPos.Text = $"ËÑË÷ÖĞ... {cnt} ¸ö ({pct}%)");
                     }
                 }
 
                 BeginInvoke(() =>
                 {
-                    // â˜… å¦‚æœç”¨æˆ·åœ¨æœç´¢æœŸé—´åˆ‡æ¢äº†å…³é”®è¯ï¼Œä¸¢å¼ƒæœ¬æ¬¡ç»“æœ
+                    // ¡ï Èç¹ûÓÃ»§ÔÚËÑË÷ÆÚ¼äÇĞ»»ÁË¹Ø¼ü´Ê£¬¶ªÆú±¾´Î½á¹û
                     string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
                     if (_lastSearch != currentKey) return;
 
                     _searchResults = results;
+                    // ¡ï Ğ´Èë¿Ø¼şÄÚ×î½üËÑË÷»º´æ£¨²»ÊÜ 5000 ÍòĞĞÏŞÖÆ£©
+                    PutRecentSearch(currentKey, results);
+                    _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
                     if (results.Count > 0)
                     {
                         int idx2 = FindNearestIndex(results, GetCurrentLine());
@@ -2054,8 +2236,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     {
                         _searchCurrentIndex = -1;
                         _lastNavigatedMatchLine = -1;
-                        _lblSearchCount.Text = "æœªæ‰¾åˆ°åŒ¹é…ï¼Œæ— æ³•å¯¼å‡º";
-                        Status("æœªæ‰¾åˆ°åŒ¹é…è¡Œ");
+                        _lblSearchPos.Text = "Î´ÕÒµ½Æ¥Åä£¬ÎŞ·¨µ¼³ö";
+                        Status("Î´ÕÒµ½Æ¥ÅäĞĞ");
                     }
                 });
             }
@@ -2069,24 +2251,24 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
             int contextLines = (int)_numContextLines.Value;
 
-            // å¿«ç…§ï¼šé¿å…åå°çº¿ç¨‹è¯»å–æ—¶è¢«å¹¶å‘ä¿®æ”¹
+            // ¿ìÕÕ£º±ÜÃâºóÌ¨Ïß³Ì¶ÁÈ¡Ê±±»²¢·¢ĞŞ¸Ä
             var searchResultsSnapshot = _searchResults.ToList();
             var lineOffsets = _lineOffsets!;
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
-            // â˜… ä» _lastSearch ä¸­å–å…³é”®è¯éƒ¨åˆ†ï¼ˆæ ¼å¼ "keyword|caseSensitive|useRegex"ï¼‰
+            // ¡ï ´Ó _lastSearch ÖĞÈ¡¹Ø¼ü´Ê²¿·Ö£¨¸ñÊ½ "keyword|caseSensitive|useRegex"£©
             string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
-            Status("æ­£åœ¨å‡†å¤‡å¯¼å‡º...");
+            Status("ÕıÔÚ×¼±¸µ¼³ö...");
 
-            // æ‰€æœ‰è€—æ—¶æ“ä½œéƒ½åœ¨åå°çº¿ç¨‹æ‰§è¡Œï¼Œé¿å… UI å¡æ­»
+            // ËùÓĞºÄÊ±²Ù×÷¶¼ÔÚºóÌ¨Ïß³ÌÖ´ĞĞ£¬±ÜÃâ UI ¿¨ËÀ
             _ = Task.Run(() =>
             {
-                // ===== ä»¥ä¸‹å…¨éƒ¨åœ¨åå°çº¿ç¨‹æ‰§è¡Œ =====
+                // ===== ÒÔÏÂÈ«²¿ÔÚºóÌ¨Ïß³ÌÖ´ĞĞ =====
 
-                // åˆå¹¶é‡å çš„ä¸Šä¸‹æ–‡åŒºé—´ï¼Œé¿å…é‡å¤è¾“å‡º
+                // ºÏ²¢ÖØµşµÄÉÏÏÂÎÄÇø¼ä£¬±ÜÃâÖØ¸´Êä³ö
                 var ranges = new List<(int Start, int End)>(searchResultsSnapshot.Count);
                 foreach (int lineIdx in searchResultsSnapshot)
                 {
@@ -2106,7 +2288,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     else
                     {
                         var last = mergedRanges[^1];
-                        if (range.Start <= last.End + 1) // ç›¸é‚»æˆ–é‡å  â†’ åˆå¹¶
+                        if (range.Start <= last.End + 1) // ÏàÁÚ»òÖØµş ¡ú ºÏ²¢
                         {
                             mergedRanges[^1] = (last.Start, Math.Max(last.End, range.End));
                         }
@@ -2117,12 +2299,12 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     }
                 }
 
-                // è®¡ç®—æ€»è¡Œæ•°
+                // ¼ÆËã×ÜĞĞÊı
                 int totalLines = 0;
                 foreach (var (s, e) in mergedRanges)
                     totalLines += (e - s + 1);
 
-                // å‘½åè§„åˆ™ï¼šåŸå§‹æ–‡ä»¶å.è¿‡æ»¤å­—ç¬¦.æ—¶é—´æˆ³.æºæ–‡ä»¶åç¼€
+                // ÃüÃû¹æÔò£ºÔ­Ê¼ÎÄ¼şÃû.¹ıÂË×Ö·û.Ê±¼ä´Á.Ô´ÎÄ¼şºó×º
                 string safeFileName;
                 if (!string.IsNullOrEmpty(filterPart))
                     safeFileName = $"{SanitizeFileName(fileName, 200)}.{filterPart}.{timestamp}{sourceExt}";
@@ -2132,8 +2314,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 string outName = safeFileName;
                 string outPath = Path.Combine(dir, outName);
 
-                // æ›´æ–°çŠ¶æ€ï¼ˆå› UI çº¿ç¨‹ï¼‰
-                BeginInvoke(() => Status($"æ­£åœ¨å¯¼å‡º {totalLines} è¡Œåˆ° {outName}..."));
+                // ¸üĞÂ×´Ì¬£¨»Ø UI Ïß³Ì£©
+                BeginInvoke(() => Status($"ÕıÔÚµ¼³ö {totalLines} ĞĞµ½ {outName}..."));
 
                 try
                 {
@@ -2150,10 +2332,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
                     BeginInvoke(() =>
                     {
-                        Status($"å·²å¯¼å‡º {totalLines} è¡Œ -> {outName}");
+                        Status($"ÒÑµ¼³ö {totalLines} ĞĞ -> {outName}");
                         AlertForm.Show(ParentForm,
-                            $"å¯¼å‡ºå®Œæˆï¼" + GlobalConst.NewLine + GlobalConst.NewLine + $"æ–‡ä»¶: {outName}" + GlobalConst.NewLine + $"è·¯å¾„: {dir}" + GlobalConst.NewLine + $"è¡Œæ•°: {totalLines:N0}" + GlobalConst.NewLine + $"åŒ¹é…è¡Œ: {searchResultsSnapshot.Count:N0}" + GlobalConst.NewLine + $"ä¸Šä¸‹è¡Œæ•°: {contextLines}",
-                            "å¯¼å‡ºæˆåŠŸ", AlertType.Information);
+                            $"µ¼³öÍê³É£¡" + GlobalConst.NewLine + GlobalConst.NewLine + $"ÎÄ¼ş: {outName}" + GlobalConst.NewLine + $"Â·¾¶: {dir}" + GlobalConst.NewLine + $"ĞĞÊı: {totalLines:N0}" + GlobalConst.NewLine + $"Æ¥ÅäĞĞ: {searchResultsSnapshot.Count:N0}" + GlobalConst.NewLine + $"ÉÏÏÂĞĞÊı: {contextLines}",
+                            "µ¼³ö³É¹¦", AlertType.Information);
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
                 }
@@ -2161,20 +2343,20 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 {
                     BeginInvoke(() =>
                     {
-                        AlertForm.Show(ParentForm, $"å¯¼å‡ºå¤±è´¥: {ex.Message}", "é”™è¯¯", AlertType.Error, exception: ex);
-                        Status("å¯¼å‡ºå¤±è´¥");
+                        AlertForm.Show(ParentForm, $"µ¼³öÊ§°Ü: {ex.Message}", "´íÎó", AlertType.Error, exception: ex);
+                        Status("µ¼³öÊ§°Ü");
                     });
                 }
             });
         }
 
-        /// <summary>è¿‡æ»¤æ–‡ä»¶åä¸­çš„éæ³•å­—ç¬¦ï¼Œé¿å…æ–‡ä»¶åˆ›å»ºå¤±è´¥</summary>
+        /// <summary>¹ıÂËÎÄ¼şÃûÖĞµÄ·Ç·¨×Ö·û£¬±ÜÃâÎÄ¼ş´´½¨Ê§°Ü</summary>
         private static string SanitizeFileName(string name, int maxLength = 255)
         {
             if (string.IsNullOrEmpty(name))
                 return "";
             
-            // Windows æ–‡ä»¶åç¦æ­¢çš„å­—ç¬¦ï¼š\/:*?"<>|
+            // Windows ÎÄ¼şÃû½ûÖ¹µÄ×Ö·û£º\/:*?"<>|
             var invalidChars = Path.GetInvalidFileNameChars();
             var sb = new StringBuilder(name.Length);
             foreach (char c in name)
@@ -2182,19 +2364,19 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 if (!invalidChars.Contains(c) && !char.IsControl(c))
                     sb.Append(c);
                 else
-                    sb.Append('_'); // éæ³•å­—ç¬¦æ›¿æ¢ä¸ºä¸‹åˆ’çº¿
+                    sb.Append('_'); // ·Ç·¨×Ö·ûÌæ»»ÎªÏÂ»®Ïß
             }
             
             string result = sb.ToString();
             
-            // å»é™¤å¼€å¤´å’Œç»“å°¾çš„ç©ºæ ¼æˆ–ç‚¹å·ï¼ˆWindows é™åˆ¶ï¼‰
+            // È¥³ı¿ªÍ·ºÍ½áÎ²µÄ¿Õ¸ñ»òµãºÅ£¨Windows ÏŞÖÆ£©
             result = result.TrimStart(' ', '.').TrimEnd(' ', '.');
             
-            // ç©ºæˆ–å…¨æ˜¯ç©ºæ ¼/ç‚¹çš„æƒ…å†µ
+            // ¿Õ»òÈ«ÊÇ¿Õ¸ñ/µãµÄÇé¿ö
             if (string.IsNullOrEmpty(result))
                 return "_";
             
-            // æˆªæ–­åˆ°æœ€å¤§é•¿åº¦ï¼Œä½†ä¿ç•™ç»“å°¾çš„ç»“æ„
+            // ½Ø¶Ïµ½×î´ó³¤¶È£¬µ«±£Áô½áÎ²µÄ½á¹¹
             if (result.Length > maxLength)
                 result = result.Substring(0, maxLength).TrimEnd(' ', '.');
             
@@ -2206,9 +2388,9 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _cancel = true;
             try { _timer.Stop(); } catch { }
             try { _timerScroll?.Stop(); } catch { }
-            // â˜… æå‰ä¿å­˜æ–‡ä»¶è·¯å¾„ï¼Œç”¨äºå¸è½½å†…å­˜ç¼“å­˜ï¼ˆ_filePath æ¥ä¸‹æ¥ä¼šè¢«ç½® nullï¼‰
+            // ¡ï ÌáÇ°±£´æÎÄ¼şÂ·¾¶£¬ÓÃÓÚĞ¶ÔØÄÚ´æ»º´æ£¨_filePath ½ÓÏÂÀ´»á±»ÖÃ null£©
             string? oldPath = _filePath;
-            // â˜… æå‰ç½® nullï¼Œé˜²æ­¢ OnCache/OnRetrieve åœ¨æ¸…ç†è¿‡ç¨‹ä¸­è®¿é—®å·²é‡Šæ”¾çš„èµ„æº
+            // ¡ï ÌáÇ°ÖÃ null£¬·ÀÖ¹ OnCache/OnRetrieve ÔÚÇåÀí¹ı³ÌÖĞ·ÃÎÊÒÑÊÍ·ÅµÄ×ÊÔ´
             _indexReady = false;
             _filePath = null;
             _lineOffsets = null;
@@ -2217,28 +2399,40 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
             _lastSearch = "";
-            // â˜… å…³é—­é¡µç­¾æ—¶å¸è½½å†…å­˜ç¼“å­˜ï¼Œç£ç›˜ä¿ç•™ä¾›ä¸‹æ¬¡æ‰“å¼€
+            // ¡ï Çå¿Õ¿Ø¼şÄÚ×î½üËÑË÷»º´æ
+            _recentSearches.Clear();
+            _recentSearchesBytes = 0;
+            // ¡ï ¹Ø±ÕÒ³Ç©Ê±Ğ¶ÔØÄÚ´æ»º´æ£¬´ÅÅÌ±£Áô¹©ÏÂ´Î´ò¿ª
             if (!string.IsNullOrEmpty(oldPath))
             {
                 try { FileCacheStore.UnloadFile(oldPath); } catch { }
             }
-            // â˜… å…ˆæ¸…ç©º VirtualListSizeï¼Œå¤§å¹…å‡å°‘ ListView åœ¨ Dispose æ—¶çš„æ¸…ç†å¼€é”€
+            // ¡ï ÏÈÇå¿Õ VirtualListSize£¬´ó·ù¼õÉÙ ListView ÔÚ Dispose Ê±µÄÇåÀí¿ªÏú
             try { _lstContent.VirtualListSize = 0; } catch { }
-            // â˜… æ¸…ç©ºç¼“å­˜
+            // ¡ï Çå¿Õ»º´æ
             _cache.Clear();
             _cS = _cE = -1;
-            // â˜… æœ€åå…³é—­æ–‡ä»¶æµ
+            // ¡ï ×îºó¹Ø±ÕÎÄ¼şÁ÷
             lock (_readLock) { _readStream?.Dispose(); _readStream = null; }
             if (IsHandleCreated)
-                try { BeginInvoke(() => _lblSearchCount.Text = ""); } catch { }
+                try
+                {
+                    // ¡ï Ö»Çå¿Õ¶¯Ì¬×´Ì¬ Label£¬²»¶¯ÎÄ¼şÔªĞÅÏ¢£¨ĞŞ¸ÄÈÕÆÚ/´óĞ¡/ĞĞÊı£©
+                    // ÒòÎª Open ·½·¨»áµ÷ÓÃ Cleanup£¬ÈôÓÃ BeginInvoke Òì²½Çå¿Õ»á¸²¸Ç Open ¸ÕÉèÖÃµÄÎÄ¼şĞÅÏ¢
+                    // Í¬²½ÉèÖÃ¼´¿É£¬Label.Text ÎŞĞèÏûÏ¢Ñ­»·
+                    _lblSearchPos.Text = "";
+                    _lblCacheSize.Text = "»º´æ£º0B";
+                    _lblCurLine.Text = "ĞĞ£º1";
+                }
+                catch { }
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                // â˜… ä¸å†é‡å¤è°ƒç”¨ Cleanup()ï¼ŒCloseTab å·²ç»è°ƒç”¨è¿‡äº†
-                // åªé‡Šæ”¾ WinForms æ§ä»¶æœ¬èº«
+                // ¡ï ²»ÔÙÖØ¸´µ÷ÓÃ Cleanup()£¬CloseTab ÒÑ¾­µ÷ÓÃ¹ıÁË
+                // Ö»ÊÍ·Å WinForms ¿Ø¼ş±¾Éí
                 _timer?.Dispose();
                 _timerScroll?.Dispose();
                 _searchCts?.Dispose();
@@ -2248,7 +2442,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
     }
 
     /// <summary>
-    /// è‡ªå®šä¹‰ ListViewï¼šé‡å†™ WndProc å¤„ç†æ°´å¹³æ»šåŠ¨ï¼Œç”¨ Win32 API æ§åˆ¶çœŸæ­£çš„æ°´å¹³æ»šåŠ¨
+    /// ×Ô¶¨Òå ListView£ºÖØĞ´ WndProc ´¦ÀíË®Æ½¹ö¶¯£¬ÓÃ Win32 API ¿ØÖÆÕæÕıµÄË®Æ½¹ö¶¯
     /// </summary>
     public class HScrollListView : ListView
     {
