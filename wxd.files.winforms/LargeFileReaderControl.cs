@@ -18,8 +18,9 @@ namespace wxd.files.winforms
     /// <summary>大文件阅读器控件，可嵌入 TabPage</summary>
     public class LargeFileReaderControl : UserControl
     {
-        private Button _btnOpenFile = null!, _btnGotoLine = null!;
-        private TextBox _txtGotoLine = null!, _txtSearch = null!;
+        private Button _btnOpenFile = null!, _btnGotoLine = null!, _btnClearCache = null!;
+        private TextBox _txtGotoLine = null!;
+        private ComboBox _cboSearch = null!;
         private CheckBox _chkCaseSensitive = null!, _chkRegex = null!;
         private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!, _btnReverseExport = null!;
         private Label _lblStatus = null!, _lblIndexProgress = null!, _lblSearchCount = null!;
@@ -34,9 +35,9 @@ namespace wxd.files.winforms
         private int _searchCurrentIndex = -1;
         private int _lastNavigatedMatchLine = -1;
         private CancellationTokenSource? _searchCts;
-        private string _lastSearchKeyword = "";
-        private bool _lastSearchCaseSensitive;
-        private bool _lastSearchRegex;
+        // ★ 当前生效的搜索 key，格式 "keyword|caseSensitive|useRegex"
+        // 与 _searchResults 配对：当 _lastSearch 与搜索框当前 key 一致时，_searchResults 才有效
+        private string _lastSearch = "";
         private bool _hasuserNavigated; // 用户在搜索过程中是否已手动跳转过
 
         private string? _filePath;
@@ -63,6 +64,8 @@ namespace wxd.files.winforms
         public LargeFileReaderControl()
         {
             InitializeComponent();
+            // ★ 加载全局搜索历史到下拉框
+            try { RefreshSearchHistory(); } catch { }
         }
 
         private void InitializeComponent()
@@ -73,6 +76,10 @@ namespace wxd.files.winforms
             _btnOpenFile.FlatAppearance.BorderSize = 1;
             _btnOpenFile.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
             _btnOpenFile.Click += OnOpen;
+            _btnClearCache = new Button { Text = "清理缓存", Size = new Size(80, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(200, 210, 220), ForeColor = Color.FromArgb(50, 70, 90) };
+            _btnClearCache.FlatAppearance.BorderSize = 1;
+            _btnClearCache.FlatAppearance.BorderColor = Color.FromArgb(160, 180, 200);
+            _btnClearCache.Click += OnClearCache;
             _btnGotoLine = new Button { Text = "跳转", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
             _btnGotoLine.FlatAppearance.BorderSize = 1;
             _btnGotoLine.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
@@ -90,19 +97,17 @@ namespace wxd.files.winforms
             _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
 
             var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            row1.Controls.AddRange(new Control[] { _btnOpenFile, _txtGotoLine, _btnGotoLine, _lblIndexProgress, _lblStatus });
+            row1.Controls.AddRange(new Control[] { _btnOpenFile, _btnClearCache, _txtGotoLine, _btnGotoLine, _lblIndexProgress, _lblStatus });
 
             var separator = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(173, 209, 237) };
 
-            _txtSearch = new TextBox { Size = new Size(320, 28), PlaceholderText = "搜索..." };
-            _txtSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnSearch(); };
-            _txtSearch.TextChanged += (s, e) => { _lastSearchKeyword = ""; };
+            _cboSearch = new ComboBox { Size = new Size(400, 28), DropDownStyle = ComboBoxStyle.DropDown, AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.ListItems, FlatStyle = FlatStyle.Flat };
+            _cboSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnSearch(); };
+            // ★ 不监听 TextChanged 清空 _lastSearch：导航按钮会自行比较搜索框 key 与 _lastSearch
             _chkCaseSensitive = new CheckBox { Text = "Aa", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
             _chkCaseSensitive.Margin = new Padding(3, 6, 0, 0);
-            _chkCaseSensitive.CheckedChanged += (s, e) => { _searchResults.Clear(); _searchCurrentIndex = -1; _lblSearchCount.Text = ""; _lastSearchKeyword = ""; };
             _chkRegex = new CheckBox { Text = ".*", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
             _chkRegex.Margin = new Padding(3, 6, 0, 0);
-            _chkRegex.CheckedChanged += (s, e) => { _searchResults.Clear(); _searchCurrentIndex = -1; _lblSearchCount.Text = ""; _lastSearchKeyword = ""; };
             _btnSearchFirst = new Button { Text = "|<", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
             _btnSearchFirst.FlatAppearance.BorderSize = 1;
             _btnSearchFirst.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
@@ -134,7 +139,7 @@ namespace wxd.files.winforms
             _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
             _lblContextLines.Margin = new Padding(8, 7, 0, 0);
             _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
-            row2.Controls.AddRange(new Control[] { _txtSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport, _lblSearchCount });
+            row2.Controls.AddRange(new Control[] { _cboSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport, _lblSearchCount });
 
             _topPanel.Controls.Add(row1, 0, 0);
             _topPanel.Controls.Add(separator, 0, 1);
@@ -188,6 +193,9 @@ namespace wxd.files.winforms
             _cancel = false; _indexReady = false; _idxProg = 0; _idxCount = 0;
             _lstContent.HScrollPos = 0;
             _lstContent.MaxContentWidth = _lstContent.ClientRectangle.Width;
+
+            // ★ 检测文件是否变化，变化则清理磁盘缓存（后台执行，不阻塞）
+            try { FileCacheStore.CheckFileValid(path, _fileLength, File.GetLastWriteTime(path)); } catch { }
 
             int loaded = 0;
             try
@@ -1425,41 +1433,125 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return 0;
         }
 
-        private void OnSearch()
+        /// <summary>根据搜索框和选项计算当前搜索 key</summary>
+        private string CurrentSearchKey()
         {
-            string keyword = _txtSearch.Text.Trim();
+            return $"{_cboSearch.Text.Trim()}|{_chkCaseSensitive.Checked}|{_chkRegex.Checked}";
+        }
+
+        private async void OnSearch()
+        {
+            await EnsureSearchReadyAsync();
+        }
+
+        /// <summary>
+        /// 确保当前 _searchResults 与搜索框一致：
+        /// 1. 若搜索框 key == _lastSearch → 直接使用（命中或正在搜索中）
+        /// 2. 否则查 FileCacheStore 缓存：命中则更新 _searchResults + _lastSearch
+        /// 3. 缓存未命中 → 启动后台搜索
+        /// 返回 true 表示结果已就绪可导航；false 表示正在后台搜索中。
+        /// </summary>
+        private async Task<bool> EnsureSearchReadyAsync()
+        {
+            string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
                 _lblSearchCount.Text = "";
-                return;
+                return false;
             }
             if (_lineOffsets == null)
             {
                 _lblSearchCount.Text = "请等待索引完成";
-                return;
+                return false;
             }
+
+            bool caseSensitive = _chkCaseSensitive.Checked;
+            bool useRegex = _chkRegex.Checked;
+            string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
+
+            // 1. 当前搜索结果仍然有效
+            if (currentKey == _lastSearch)
+            {
+                // 正在后台搜索中
+                if (_searchCts != null && !_searchCts.IsCancellationRequested)
+                    return false;
+                return true; // 0 匹配也算就绪
+            }
+
+            // ★ 记录到全局搜索历史（后台写盘）
+            SearchHistoryStore.Add(keyword);
+            RefreshSearchHistory();
+
+            // 2. 查缓存（后台读盘，不阻塞 UI）
+            var cached = await FileCacheStore.TryGetSearchResultAsync(_filePath!, currentKey);
+
+            // ★ await 回来后，用户可能已切换关键词；若已切换，丢弃本次结果
+            if (CurrentSearchKey() != currentKey)
+                return false;
+
+            if (cached != null)
+            {
+                _searchResults = cached;
+                _searchCts = null; // 缓存命中，无后台任务
+                _lastSearch = currentKey;
+                _searchCurrentIndex = -1;
+                _lastNavigatedMatchLine = -1;
+                _hasuserNavigated = false;
+
+                if (_searchResults.Count > 0)
+                {
+                    int idx2 = FindNearestIndex(_searchResults, GetCurrentLine());
+                    NavigateTo(idx2);
+                }
+                else
+                {
+                    _lblSearchCount.Text = "搜索完成，0 个匹配（缓存）";
+                }
+                return true;
+            }
+
+            // 3. 缓存未命中 → 后台搜索
             _searchCts?.Cancel();
             _searchCts = new CancellationTokenSource();
             var token = _searchCts.Token;
-            bool caseSensitive = _chkCaseSensitive.Checked;
-            bool useRegex = _chkRegex.Checked;
-            _lastSearchKeyword = keyword;
-            _lastSearchCaseSensitive = caseSensitive;
-            _lastSearchRegex = useRegex;
+            _lastSearch = currentKey;
             _lblSearchCount.Text = "搜索中...";
             _searchResults.Clear();
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
-            _hasuserNavigated = false; // ★ 新搜索开始，重置跳转标记
+            _hasuserNavigated = false;
             int curLine = GetCurrentLine();
             _ = Task.Run(() => DoSearch(keyword, caseSensitive, useRegex, token, curLine));
+            return false;
         }
 
-        private bool SearchParamsMatch()
+        /// <summary>刷新搜索下拉框的历史记录（不影响 _lastSearch，不影响搜索框输入）</summary>
+        private void RefreshSearchHistory()
         {
-            return _txtSearch.Text.Trim() == _lastSearchKeyword
-                && _chkCaseSensitive.Checked == _lastSearchCaseSensitive
-                && _chkRegex.Checked == _lastSearchRegex;
+            var history = SearchHistoryStore.GetHistory();
+            string current = _cboSearch.Text;
+            _cboSearch.Items.Clear();
+            foreach (var h in history) _cboSearch.Items.Add(h);
+            _cboSearch.Text = current;
+            _cboSearch.SelectionStart = current.Length;
+            _cboSearch.SelectionLength = 0;
+        }
+
+        /// <summary>清理当前文件的搜索缓存</summary>
+        private void OnClearCache(object? s, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_filePath))
+            {
+                AlertForm.Show(ParentForm, "当前未打开文件", "提示", AlertType.Information);
+                return;
+            }
+            FileCacheStore.ClearFile(_filePath);
+            _searchResults.Clear();
+            _searchCurrentIndex = -1;
+            _lastNavigatedMatchLine = -1;
+            _lastSearch = "";
+            _lblSearchCount.Text = "";
+            AlertForm.Show(ParentForm, "已清理当前文件的搜索缓存", "提示", AlertType.Information);
         }
 
         private void DoSearch(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, int curLine)
@@ -1505,7 +1597,14 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 int nearestLine = curLine;
                 BeginInvoke(() =>
                 {
+                    // ★ 如果用户在搜索期间切换了关键词，丢弃本次结果
+                    string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
+                    if (_lastSearch != currentKey) return;
+
                     _searchResults = results;
+                    // ★ 写入搜索结果缓存（后台写盘，不阻塞 UI）
+                    _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
+
                     if (results.Count > 0)
                     {
                         // ★ 如果用户已经手动跳转过，不再强制跳转到第一个匹配项
@@ -1514,16 +1613,30 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                             int idx2 = FindNearestIndex(results, nearestLine);
                             NavigateTo(idx2);
                         }
+                        else
+                        {
+                            _lblSearchCount.Text = $"搜索完成，共 {results.Count} 个匹配";
+                        }
                     }
                     else
                     {
                         _searchCurrentIndex = -1;
                         _lastNavigatedMatchLine = -1;
-                        _lblSearchCount.Text = "未找到匹配";
+                        _lblSearchCount.Text = "搜索完成，0 个匹配";
                     }
                 });
             }
             catch { }
+            finally
+            {
+                // ★★★ Bug 修复：搜索结束后清理 _searchCts，避免导航按钮误判"搜索中" ★★★
+                if (_searchCts != null && _searchCts.Token == token)
+                {
+                    var cts = _searchCts;
+                    _searchCts = null;
+                    try { cts.Dispose(); } catch { }
+                }
+            }
         }
 
         private void NavigateTo(int index)
@@ -1549,152 +1662,106 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             return false;
         }
 
-        private void OnSearchPrev(object? s, EventArgs e)
+        private async void OnSearchPrev(object? s, EventArgs e)
         {
-            if (!SearchParamsMatch())
+            bool ready = await EnsureSearchReadyAsync();
+            if (!ready)
             {
-                _searchResults.Clear();
-                _searchCts?.Cancel();
-                OnSearch();
+                if (_searchCts != null && !_searchCts.IsCancellationRequested)
+                    _lblSearchCount.Text = "搜索中，请稍候...";
                 return;
             }
+            if (_searchResults.Count == 0) return;
 
-            if (_searchResults.Count > 0)
+            _hasuserNavigated = true; // ★ 标记用户已手动跳转
+            if (userHasMovedAway())
             {
-                _hasuserNavigated = true; // ★ 标记用户已手动跳转
-                if (userHasMovedAway())
+                int curLine = GetCurrentLine();
+                int idx2 = FindNearestIndex(_searchResults, curLine);
+                if (_searchResults[idx2] >= curLine)
+                    idx2--;
+                if (idx2 < 0)
                 {
-                    int curLine = GetCurrentLine();
-                    int idx2 = FindNearestIndex(_searchResults, curLine);
-                    if (_searchResults[idx2] >= curLine)
-                        idx2--;
-                    if (idx2 < 0)
-                    {
-                        AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
-                        return;
-                    }
-                    NavigateTo(idx2);
+                    AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
+                    return;
                 }
-                else
-                {
-                    if (_searchCurrentIndex <= 0)
-                    {
-                        AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
-                        return;
-                    }
-                    NavigateTo(_searchCurrentIndex - 1);
-                }
-                return;
+                NavigateTo(idx2);
             }
-
-            // ★ 关键字没变，但结果为 0 且搜索正在进行中 → 不重复触发
-            if (_searchCts != null && !_searchCts.IsCancellationRequested)
+            else
             {
-                _lblSearchCount.Text = "搜索中，请稍候...";
-                return;
+                if (_searchCurrentIndex <= 0)
+                {
+                    AlertForm.Show(ParentForm, "已到顶部，没有更多匹配项", "提示", AlertType.Information);
+                    return;
+                }
+                NavigateTo(_searchCurrentIndex - 1);
             }
-
-            OnSearch();
         }
 
-        private void OnSearchNext(object? s, EventArgs e)
+        private async void OnSearchNext(object? s, EventArgs e)
         {
-            if (!SearchParamsMatch())
+            bool ready = await EnsureSearchReadyAsync();
+            if (!ready)
             {
-                _searchResults.Clear();
-                _searchCts?.Cancel();
-                OnSearch();
+                if (_searchCts != null && !_searchCts.IsCancellationRequested)
+                    _lblSearchCount.Text = "搜索中，请稍候...";
                 return;
             }
+            if (_searchResults.Count == 0) return;
 
-            if (_searchResults.Count > 0)
+            _hasuserNavigated = true; // ★ 标记用户已手动跳转
+            if (userHasMovedAway())
             {
-                _hasuserNavigated = true; // ★ 标记用户已手动跳转
-                if (userHasMovedAway())
+                int curLine = GetCurrentLine();
+                int idx2 = FindNearestIndex(_searchResults, curLine);
+                if (_searchResults[idx2] <= curLine)
+                    idx2++;
+                if (idx2 >= _searchResults.Count)
                 {
-                    int curLine = GetCurrentLine();
-                    int idx2 = FindNearestIndex(_searchResults, curLine);
-                    if (_searchResults[idx2] <= curLine)
-                        idx2++;
-                    if (idx2 >= _searchResults.Count)
-                    {
-                        AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
-                        return;
-                    }
-                    NavigateTo(idx2);
+                    AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
+                    return;
                 }
-                else
-                {
-                    if (_searchCurrentIndex >= _searchResults.Count - 1)
-                    {
-                        AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
-                        return;
-                    }
-                    NavigateTo(_searchCurrentIndex + 1);
-                }
-                return;
+                NavigateTo(idx2);
             }
-
-            // ★ 关键字没变，但结果为 0 且搜索正在进行中 → 不重复触发
-            if (_searchCts != null && !_searchCts.IsCancellationRequested)
+            else
             {
-                _lblSearchCount.Text = "搜索中，请稍候...";
-                return;
+                if (_searchCurrentIndex >= _searchResults.Count - 1)
+                {
+                    AlertForm.Show(ParentForm, "已到底部，没有更多匹配项", "提示", AlertType.Information);
+                    return;
+                }
+                NavigateTo(_searchCurrentIndex + 1);
             }
-
-            OnSearch();
         }
 
-        private void OnSearchFirst(object? s, EventArgs e)
+        private async void OnSearchFirst(object? s, EventArgs e)
         {
-            if (!SearchParamsMatch())
+            bool ready = await EnsureSearchReadyAsync();
+            if (!ready)
             {
-                _searchResults.Clear();
-                _searchCts?.Cancel();
-                OnSearch();
+                if (_searchCts != null && !_searchCts.IsCancellationRequested)
+                    _lblSearchCount.Text = "搜索中，请稍候...";
                 return;
             }
-            if (_searchResults.Count > 0)
-            {
-                _hasuserNavigated = true; // ★ 标记用户已手动跳转
-                NavigateTo(0);
-                return;
-            }
+            if (_searchResults.Count == 0) return;
 
-            // ★ 关键字没变，但结果为 0 且搜索正在进行中 → 不重复触发
-            if (_searchCts != null && !_searchCts.IsCancellationRequested)
-            {
-                _lblSearchCount.Text = "搜索中，请稍候...";
-                return;
-            }
-
-            OnSearch();
+            _hasuserNavigated = true; // ★ 标记用户已手动跳转
+            NavigateTo(0);
         }
 
-        private void OnSearchLast(object? s, EventArgs e)
+        private async void OnSearchLast(object? s, EventArgs e)
         {
-            if (!SearchParamsMatch())
+            bool ready = await EnsureSearchReadyAsync();
+            if (!ready)
             {
-                _searchResults.Clear();
-                _searchCts?.Cancel();
-                OnSearch();
+                if (_searchCts != null && !_searchCts.IsCancellationRequested)
+                    _lblSearchCount.Text = "搜索中，请稍候...";
                 return;
             }
-            if (_searchResults.Count > 0)
-            {
-                _hasuserNavigated = true; // ★ 标记用户已手动跳转
-                NavigateTo(_searchResults.Count - 1);
-                return;
-            }
+            if (_searchResults.Count == 0) return;
 
-            // ★ 关键字没变，但结果为 0 且搜索正在进行中 → 不重复触发
-            if (_searchCts != null && !_searchCts.IsCancellationRequested)
-            {
-                _lblSearchCount.Text = "搜索中，请稍候...";
-                return;
-            }
-
-            OnSearch();
+            _hasuserNavigated = true; // ★ 标记用户已手动跳转
+            NavigateTo(_searchResults.Count - 1);
         }
 
         private void OnExport(object? s, EventArgs e)
@@ -1706,7 +1773,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 return;
             }
 
-            string keyword = _txtSearch.Text.Trim();
+            string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
                 AlertForm.Show(ParentForm, "请先输入搜索关键词", "提示", AlertType.Information);
@@ -1719,7 +1786,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             }
 
             // 搜索条件已变更 → 重新搜索并导出
-            if (!SearchParamsMatch())
+            if (CurrentSearchKey() != _lastSearch)
                 _searchResults.Clear();
 
             // 没有搜索结果 → 先搜索再导出
@@ -1730,9 +1797,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 var token = _searchCts.Token;
                 bool caseSensitive = _chkCaseSensitive.Checked;
                 bool useRegex = _chkRegex.Checked;
-                _lastSearchKeyword = keyword;
-                _lastSearchCaseSensitive = caseSensitive;
-                _lastSearchRegex = useRegex;
+                _lastSearch = $"{keyword}|{caseSensitive}|{useRegex}";
                 _lblSearchCount.Text = "搜索中...";
                 _searchCurrentIndex = -1;
                 _lastNavigatedMatchLine = -1;
@@ -1756,7 +1821,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 return;
             }
 
-            string keyword = _txtSearch.Text.Trim();
+            string keyword = _cboSearch.Text.Trim();
             if (string.IsNullOrEmpty(keyword))
             {
                 AlertForm.Show(ParentForm, "请先输入搜索关键词", "提示", AlertType.Information);
@@ -1769,7 +1834,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             }
 
             // 搜索条件已变更 → 清空旧结果
-            if (!SearchParamsMatch())
+            if (CurrentSearchKey() != _lastSearch)
                 _searchResults.Clear();
 
             // 没有搜索结果 → 先搜索再反向导出
@@ -1780,9 +1845,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 var token = _searchCts.Token;
                 bool caseSensitive = _chkCaseSensitive.Checked;
                 bool useRegex = _chkRegex.Checked;
-                _lastSearchKeyword = keyword;
-                _lastSearchCaseSensitive = caseSensitive;
-                _lastSearchRegex = useRegex;
+                _lastSearch = $"{keyword}|{caseSensitive}|{useRegex}";
                 _lblSearchCount.Text = "搜索中...";
                 _searchCurrentIndex = -1;
                 _lastNavigatedMatchLine = -1;
@@ -1833,6 +1896,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
                 BeginInvoke(() =>
                 {
+                    // ★ 如果用户在搜索期间切换了关键词，丢弃本次结果
+                    string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
+                    if (_lastSearch != currentKey) return;
+
                     _searchResults = results;
                     if (results.Count > 0)
                     {
@@ -1864,7 +1931,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
-            string filterPart = SanitizeFileName(_lastSearchKeyword, 50);
+            // ★ 从 _lastSearch 中取关键词部分（格式 "keyword|caseSensitive|useRegex"）
+            string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
             Status("正在准备反向导出...");
@@ -1971,6 +2039,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
 
                 BeginInvoke(() =>
                 {
+                    // ★ 如果用户在搜索期间切换了关键词，丢弃本次结果
+                    string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
+                    if (_lastSearch != currentKey) return;
+
                     _searchResults = results;
                     if (results.Count > 0)
                     {
@@ -2003,7 +2075,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
-            string filterPart = SanitizeFileName(_lastSearchKeyword, 50);
+            // ★ 从 _lastSearch 中取关键词部分（格式 "keyword|caseSensitive|useRegex"）
+            string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
             Status("正在准备导出...");
@@ -2133,6 +2206,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _cancel = true;
             try { _timer.Stop(); } catch { }
             try { _timerScroll?.Stop(); } catch { }
+            // ★ 提前保存文件路径，用于卸载内存缓存（_filePath 接下来会被置 null）
+            string? oldPath = _filePath;
             // ★ 提前置 null，防止 OnCache/OnRetrieve 在清理过程中访问已释放的资源
             _indexReady = false;
             _filePath = null;
@@ -2141,7 +2216,12 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             _searchResults.Clear();
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
-            _lastSearchKeyword = "";
+            _lastSearch = "";
+            // ★ 关闭页签时卸载内存缓存，磁盘保留供下次打开
+            if (!string.IsNullOrEmpty(oldPath))
+            {
+                try { FileCacheStore.UnloadFile(oldPath); } catch { }
+            }
             // ★ 先清空 VirtualListSize，大幅减少 ListView 在 Dispose 时的清理开销
             try { _lstContent.VirtualListSize = 0; } catch { }
             // ★ 清空缓存
