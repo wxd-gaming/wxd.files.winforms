@@ -6,6 +6,16 @@ using System.Threading.Tasks;
 
 namespace wxd.files.winforms
 {
+    /// <summary>搜索历史条目：包含关键字和配置状态</summary>
+    public class SearchHistoryItem
+    {
+        public string Keyword { get; set; } = "";
+        public bool CaseSensitive { get; set; }
+        public bool UseRegex { get; set; }
+
+        public override string ToString() => Keyword; // 下拉框显示文本
+    }
+
     /// <summary>
     /// 全局搜索关键词历史管理（单例，跨文件通用）
     /// 持久化到 %Temp%\wxd_files_winforms\search_history.json
@@ -15,7 +25,7 @@ namespace wxd.files.winforms
     {
         private const int MaxHistory = 50;
         private static readonly object _lock = new();
-        private static List<string> _history = new();
+        private static List<SearchHistoryItem> _history = new();
         private static string? _savePath;
         private static bool _loaded;
 
@@ -35,21 +45,22 @@ namespace wxd.files.winforms
         }
 
         /// <summary>获取历史列表（最新在前，返回副本）</summary>
-        public static List<string> GetHistory()
+        public static List<SearchHistoryItem> GetHistory()
         {
             EnsureLoaded();
-            lock (_lock) return new List<string>(_history);
+            lock (_lock) return new List<SearchHistoryItem>(_history);
         }
 
         /// <summary>添加一条搜索记录（去重，移到最前），写入磁盘在后台执行</summary>
-        public static void Add(string keyword)
+        public static void Add(string keyword, bool caseSensitive, bool useRegex)
         {
             if (string.IsNullOrWhiteSpace(keyword)) return;
             EnsureLoaded();
             lock (_lock)
             {
-                _history.Remove(keyword);
-                _history.Insert(0, keyword);
+                // 去重：移除同关键字+同配置的旧条目
+                _history.RemoveAll(h => h.Keyword == keyword && h.CaseSensitive == caseSensitive && h.UseRegex == useRegex);
+                _history.Insert(0, new SearchHistoryItem { Keyword = keyword, CaseSensitive = caseSensitive, UseRegex = useRegex });
                 if (_history.Count > MaxHistory)
                     _history.RemoveRange(MaxHistory, _history.Count - MaxHistory);
             }
@@ -79,10 +90,10 @@ namespace wxd.files.winforms
                     if (File.Exists(SavePath))
                     {
                         var json = File.ReadAllText(SavePath);
-                        _history = JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+                        _history = JsonSerializer.Deserialize<List<SearchHistoryItem>>(json) ?? new List<SearchHistoryItem>();
                     }
                 }
-                catch { _history = new List<string>(); }
+                catch { _history = new List<SearchHistoryItem>(); }
                 _loaded = true;
             }
         }
@@ -92,8 +103,8 @@ namespace wxd.files.winforms
         {
             try
             {
-                List<string> snap;
-                lock (_lock) snap = new List<string>(_history);
+                List<SearchHistoryItem> snap;
+                lock (_lock) snap = new List<SearchHistoryItem>(_history);
                 var json = JsonSerializer.Serialize(snap);
                 File.WriteAllText(SavePath, json);
             }

@@ -28,11 +28,11 @@ namespace wxd.files.winforms
 
         // ========== char 类型常量 ==========
 
-        /// <summary>回车符 \n</summary>
-        public const char CrChar = '\n';
+        /// <summary>换行符 LF \n（Unix/Linux 换行）</summary>
+        public const char LfChar = '\n';
 
-        /// <summary>换行符 \r</summary>
-        public const char LfChar = '\r';
+        /// <summary>回车符 CR \r（旧版 Mac 使用）</summary>
+        public const char CrChar = '\r';
 
         /// <summary>制表符 \t</summary>
         public const char TabChar = '\t';

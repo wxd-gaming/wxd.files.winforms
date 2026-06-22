@@ -29,16 +29,17 @@ namespace wxd.files.winforms
 
         // 二进制文件头
         private static readonly byte[] MagicSearch = { (byte)'W', (byte)'S', (byte)'C', (byte)'C' }; // Wxd Search Cache Chunk
-        private const int CacheVersion = 1;
+        // ★ CacheVersion=2：行号从 int(4字节) 升级为 long(8字节)，支持超过 21 亿行的超大文件
+        private const int CacheVersion = 2;
 
         // ===== 内存 LRU =====
         /// <summary>每个文件的内存缓存条目链表（头部=最近访问，尾部=待淘汰）</summary>
         private class MemEntry
         {
             public string Key;
-            public List<int> Results;
+            public List<long> Results;
             public long Bytes;
-            public MemEntry(string k, List<int> r) { Key = k; Results = r; Bytes = 56L + r.Count * 4L + 64; }
+            public MemEntry(string k, List<long> r) { Key = k; Results = r; Bytes = 56L + r.Count * 8L + 64; }
         }
         private static readonly object _memLock = new();
         // filePath → (链表, 总字节数)
@@ -121,7 +122,7 @@ namespace wxd.files.winforms
 
         // ===== 读取 =====
         /// <summary>尝试获取搜索结果（先内存后磁盘）。命中返回结果，未命中返回 null。</summary>
-        public static Task<List<int>?> TryGetSearchResultAsync(string filePath, string cacheKey)
+        public static Task<List<long>?> TryGetSearchResultAsync(string filePath, string cacheKey)
         {
             return Task.Run(() =>
             {
@@ -138,7 +139,7 @@ namespace wxd.files.winforms
                                 // 移到头部（LRU）
                                 list.Remove(node);
                                 list.AddFirst(node);
-                                return new List<int>(node.Value.Results); // 返回副本
+                                return new List<long>(node.Value.Results); // 返回副本
                             }
                             node = node.Next;
                         }
@@ -155,10 +156,12 @@ namespace wxd.files.winforms
                     if (header[0] != MagicSearch[0] || header[1] != MagicSearch[1] || header[2] != MagicSearch[2] || header[3] != MagicSearch[3])
                         return null;
                     int version = BitConverter.ToInt32(header, 4);
+                    // ★ 版本不匹配（旧版 int 布局）直接丢弃，不解析，下次搜索重建
                     if (version != CacheVersion) return null;
                     int count = BitConverter.ToInt32(header, 8);
                     if (count < 0 || count > MaxSearchResultRowsToCache) return null;
-                    var bytes = new byte[count * 4];
+                    // ★ long 每元素 8 字节
+                    var bytes = new byte[count * 8L];
                     int got = 0;
                     while (got < bytes.Length)
                     {
@@ -167,9 +170,9 @@ namespace wxd.files.winforms
                         got += r;
                     }
                     if (got != bytes.Length) return null;
-                    var arr = new int[count];
+                    var arr = new long[count];
                     Buffer.BlockCopy(bytes, 0, arr, 0, bytes.Length);
-                    var result = new List<int>(arr);
+                    var result = new List<long>(arr);
                     // 加载到内存 LRU
                     PutMemory(filePath, cacheKey, result);
                     return result;
@@ -180,7 +183,7 @@ namespace wxd.files.winforms
 
         // ===== 写入 =====
         /// <summary>写入搜索结果（内存 + 磁盘，后台执行）</summary>
-        public static Task PutSearchResultAsync(string filePath, string cacheKey, List<int> results)
+        public static Task PutSearchResultAsync(string filePath, string cacheKey, List<long> results)
         {
             // 单条结果过大不缓存
             if (results.Count > MaxSearchResultRowsToCache) return Task.CompletedTask;
@@ -201,8 +204,8 @@ namespace wxd.files.winforms
                     fs.Write(MagicSearch, 0, 4);
                     fs.Write(BitConverter.GetBytes(CacheVersion), 0, 4);
                     fs.Write(BitConverter.GetBytes(results.Count), 0, 4);
-                    // 数据
-                    var bytes = new byte[results.Count * 4];
+                    // 数据：long 每元素 8 字节
+                    var bytes = new byte[results.Count * 8L];
                     Buffer.BlockCopy(results.ToArray(), 0, bytes, 0, bytes.Length);
                     fs.Write(bytes, 0, bytes.Length);
 
@@ -233,7 +236,7 @@ namespace wxd.files.winforms
         }
 
         // ===== 内存层操作 =====
-        private static void PutMemory(string filePath, string cacheKey, List<int> results)
+        private static void PutMemory(string filePath, string cacheKey, List<long> results)
         {
             lock (_memLock)
             {
