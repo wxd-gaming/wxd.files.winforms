@@ -200,6 +200,7 @@ namespace wxd.files.winforms
             _lstContent.DrawSubItem += (s, e) => { };
             _lstContent.DrawColumnHeader += (s, e) => { };
             _lstContent.MouseDoubleClick += OnDoubleClick;
+            _lstContent.KeyDown += OnListViewKeyDown;
             _lstContent.DrawSubItem += (s, e) => { };
             _lstContent.DrawColumnHeader += (s, e) => { };
 
@@ -710,6 +711,40 @@ namespace wxd.files.winforms
                 _lblCacheSize.Text = $"缓存：{FormatSize(bytes)}";
             }
             catch { }
+        }
+
+        private void OnListViewKeyDown(object? s, KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.C)
+            {
+                CopySelectedLines();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        }
+
+        private void CopySelectedLines()
+        {
+            var indices = _lstContent.SelectedIndices;
+            if (indices.Count == 0) return;
+
+            var sb = new StringBuilder();
+            foreach (int idx in indices)
+            {
+                string text = ReadLine(idx);
+                sb.AppendLine(text);
+            }
+
+            if (sb.Length > 0)
+            {
+                string text = sb.ToString().TrimEnd('\r', '\n');
+                try { Clipboard.SetText(text); }
+                catch
+                {
+                    try { Thread.Sleep(100); Clipboard.SetDataObject(text, true); }
+                    catch { }
+                }
+            }
         }
 
         private async void OnDoubleClick(object? s, MouseEventArgs e)
