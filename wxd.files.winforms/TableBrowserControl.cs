@@ -280,41 +280,6 @@ namespace wxd.files.winforms
             if (linkConfig != null && linkConfig.ValueExtractionEnabled && !string.IsNullOrEmpty(value))
             {
                 _highlightValues = linkConfig.ExtractValues(value);
-                // 如果 ExtractValues 只返回了一个值，但原始值包含多层切割，尝试用 ExtractSteps 手动展开
-                if (_highlightValues.Count == 1 && linkConfig.ExtractSteps.Count > 0)
-                {
-                    var fallback = new List<string>();
-                    // 只对第一层做切割展开（后续层交给 ExtractValues）
-                    var firstStep = linkConfig.ExtractSteps[0];
-                    if (!string.IsNullOrEmpty(firstStep.Delimiter))
-                    {
-                        var groups = value.Split(new[] { firstStep.Delimiter }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var g in groups)
-                        {
-                            var trimmed = g.Trim();
-                            if (!string.IsNullOrEmpty(trimmed))
-                            {
-                                if (linkConfig.ExtractSteps.Count > 1)
-                                {
-                                    // 有后续步骤：对每组应用剩余步骤
-                                    var subSteps = linkConfig.ExtractSteps.Skip(1).ToList();
-                                    var tempConfig = new ColumnLinkConfig
-                                    {
-                                        ValueExtractionEnabled = true,
-                                        ExtractSteps = subSteps
-                                    };
-                                    var subValues = tempConfig.ExtractValues(trimmed);
-                                    fallback.AddRange(subValues);
-                                }
-                                else
-                                {
-                                    fallback.Add(trimmed);
-                                }
-                            }
-                        }
-                    }
-                    if (fallback.Count > 1) _highlightValues = fallback.Distinct().ToList();
-                }
             }
             else if (!string.IsNullOrEmpty(value))
                 _highlightValues = new List<string> { value };
@@ -1415,49 +1380,22 @@ namespace wxd.files.winforms
             var lines = new List<DataGridLinkToolTip.TipLine>();
             var lookups = FileDataCache.GetLookups();
 
-            // ★ 从原始 cellVal 构建表格行（与格式模式相同的方式）
-            string multiDelimiter = "|";
-            foreach (var step in linkConfig.ExtractSteps)
+            // ★ 使用 ExtractRows 按行列语义展开（前 N-1 步行，最后一步列）
+            var rows = linkConfig.ExtractRows(cellVal);
+
+            // ★ 确定总列数
+            int totalCols = rows.Count > 0 ? rows.Max(r => r.Count) : 1;
+            if (headers != null && headers.Count > totalCols)
+                totalCols = headers.Count;
+
+            foreach (var rowCells in rows)
             {
-                if (step.PartIndex == -1 && !string.IsNullOrEmpty(step.Delimiter))
-                {
-                    multiDelimiter = step.Delimiter;
-                    break;
-                }
-            }
-
-            string cellDelimiter = linkConfig.EffectiveDisplayDelimiter;
-            var rawLines = cellVal.Split(new[] { multiDelimiter }, StringSplitOptions.None);
-
-            foreach (var rawLine in rawLines)
-            {
-                // 用 EffectiveDisplayDelimiter 切割为多字段
-                var fieldValues = new List<string>();
-                var trimmedLine = rawLine.Trim();
-                if (string.IsNullOrEmpty(trimmedLine)) continue;
-                if (!string.IsNullOrEmpty(cellDelimiter) && trimmedLine.Contains(cellDelimiter))
-                {
-                    var parts = trimmedLine.Split(new[] { cellDelimiter }, StringSplitOptions.None);
-                    foreach (var p in parts)
-                        fieldValues.Add(p.Trim());
-                }
-                else
-                {
-                    fieldValues.Add(trimmedLine);
-                }
-
                 var cells = new List<string>();
                 bool hasWarning = false;
 
-                // ★ 遍历所有字段列（而不是只遍历已配置的 FieldLinks）
-                //   关联配置只是给某些字段做关联查询显示，不应改变显示的列数/切割规则
-                int totalCols = fieldValues.Count;
-                if (headers != null && headers.Count > totalCols)
-                    totalCols = headers.Count;
-
                 for (int colIdx = 0; colIdx < totalCols; colIdx++)
                 {
-                    string fieldVal = colIdx < fieldValues.Count ? fieldValues[colIdx] : "";
+                    string fieldVal = colIdx < rowCells.Count ? rowCells[colIdx] : "";
 
                     // 查找此列是否有关联配置
                     var fl = linkConfig.FieldLinks.FirstOrDefault(f => f.FieldIndex == colIdx);
@@ -1560,42 +1498,20 @@ namespace wxd.files.winforms
 
             string title = $"{colHeaderName}  --  第{realRowIndex + 1}行";
 
-            // ★ 从原始 cellVal 构建表格行
-            //   步骤1: 获取多值分隔符（ExtractSteps 中第一个 PartIndex==-1 的步骤的分隔符）
-            //   步骤2: 按多值分隔符拆成多行
-            //   步骤3: 每行按 EffectiveDisplayDelimiter 拆成多列
+            // ★ 使用 ExtractRows 按行列语义展开（前 N-1 步行，最后一步列）
+            var rows = linkConfig.ExtractRows(cellVal);
+
+            // ★ 确定总列数：取所有行的最大列数
+            int colCount = rows.Count > 0 ? rows.Max(r => r.Count) : 1;
+            if (headers != null && headers.Count > colCount)
+                colCount = headers.Count;
+
             var lines = new List<DataGridLinkToolTip.TipLine>();
-
-            string multiDelimiter = "|";
-            foreach (var step in linkConfig.ExtractSteps)
-            {
-                if (step.PartIndex == -1 && !string.IsNullOrEmpty(step.Delimiter))
-                {
-                    multiDelimiter = step.Delimiter;
-                    break;
-                }
-            }
-
-            string cellDelimiter = linkConfig.EffectiveDisplayDelimiter;
-
-            var rawLines = cellVal.Split(new[] { multiDelimiter }, StringSplitOptions.None);
-
-            foreach (var rawLine in rawLines)
+            foreach (var rowCells in rows)
             {
                 var cells = new List<string>();
-                var trimmed = rawLine.Trim();
-                if (string.IsNullOrEmpty(trimmed)) continue;
-
-                if (!string.IsNullOrEmpty(cellDelimiter) && trimmed.Contains(cellDelimiter))
-                {
-                    var cellParts = trimmed.Split(new[] { cellDelimiter }, StringSplitOptions.None);
-                    foreach (var part in cellParts)
-                        cells.Add(part.Trim());
-                }
-                else
-                {
-                    cells.Add(trimmed);
-                }
+                for (int j = 0; j < colCount; j++)
+                    cells.Add(j < rowCells.Count ? rowCells[j] : "-"); // 不足的列用 "-" 填充
 
                 lines.Add(new DataGridLinkToolTip.TipLine
                 {

@@ -88,82 +88,105 @@ namespace wxd.files.winforms
 
         /// <summary>
         /// 从原始值中提取用于关联匹配的所有实际值（支持多层切割）
-        /// 遍历 ExtractSteps，每步按分隔符切割当前值列表：
-        ///   PartIndex >= 0 → 切割后取指定段
-        ///   PartIndex == -1 → 切割后保留全部片段
-        /// 注意：不再去重，保留原始顺序和重复值
+        /// 前 ExtractSteps.Count - 1 步按行拆分，最后一步按列拆分，所有列值展平返回
         /// </summary>
         public List<string> ExtractValues(string originalValue)
         {
-            var result = new List<string>();
+            var rows = ExtractRows(originalValue);
+            return rows.SelectMany(r => r).ToList();
+        }
+
+        /// <summary>
+        /// 按行列语义展开值：
+        /// 前 ExtractSteps.Count - 1 步按行拆分（每次切割将每行拆成多行），
+        /// 最后一步按列拆分（每行拆成多列）。
+        /// 返回 List&lt;List&lt;string&gt;&gt;，每行是一个 List&lt;string&gt;（各列值）。
+        /// </summary>
+        public List<List<string>> ExtractRows(string originalValue)
+        {
+            var result = new List<List<string>>();
             if (!ValueExtractionEnabled || string.IsNullOrEmpty(originalValue))
             {
-                result.Add(originalValue);
+                result.Add(new List<string> { originalValue ?? "" });
                 return result;
             }
 
-            if (ExtractSteps.Count == 0)
+            var steps = ExtractSteps;
+            if (steps.Count == 0)
             {
-                result.Add(originalValue);
+                result.Add(new List<string> { originalValue });
                 return result;
             }
 
             try
             {
-                var current = new List<string> { originalValue };
-
-                for (int stepIdx = 0; stepIdx < ExtractSteps.Count; stepIdx++)
+                // 前 N-1 步：按行展开
+                var rows = new List<string> { originalValue };
+                for (int i = 0; i < steps.Count - 1; i++)
                 {
-                    var step = ExtractSteps[stepIdx];
-                    var next = new List<string>();
-
-                    foreach (var part in current)
+                    var step = steps[i];
+                    var nextRows = new List<string>();
+                    foreach (var row in rows)
                     {
                         if (string.IsNullOrEmpty(step.Delimiter))
                         {
-                            if (step.PartIndex >= 0 && step.PartIndex < part.Length)
-                                next.Add(part.Substring(0, step.PartIndex + 1));
-                            else
-                                next.Add(part);
+                            nextRows.Add(row);
+                            continue;
+                        }
+                        var parts = row.Split(new[] { step.Delimiter }, StringSplitOptions.None);
+                        if (step.PartIndex >= 0)
+                        {
+                            if (step.PartIndex < parts.Length)
+                                nextRows.Add(parts[step.PartIndex].Trim());
                         }
                         else
                         {
-                            var parts = part.Split(new[] { step.Delimiter }, StringSplitOptions.None);
-                            if (step.PartIndex >= 0)
+                            // PartIndex == -1：保留全部片段
+                            foreach (var p in parts)
                             {
-                                if (step.PartIndex < parts.Length)
-                                    next.Add(parts[step.PartIndex].Trim());
-                            }
-                            else
-                            {
-                                // PartIndex == -1：保留全部片段（不去重）
-                                foreach (var p in parts)
-                                {
-                                    var trimmed = p.Trim();
-                                    if (!string.IsNullOrEmpty(trimmed))
-                                        next.Add(trimmed);
-                                }
+                                var trimmed = p.Trim();
+                                if (!string.IsNullOrEmpty(trimmed))
+                                    nextRows.Add(trimmed);
                             }
                         }
                     }
-                    current = next;
-                    if (current.Count == 0) break;
+                    rows = nextRows;
+                    if (rows.Count == 0) break;
                 }
 
-                // 保留原始顺序和重复值（不再去重）
-                foreach (var v in current)
+                // 最后一步：按列展开
+                var lastStep = steps[steps.Count - 1];
+                foreach (var row in rows)
                 {
-                    if (!string.IsNullOrEmpty(v))
-                        result.Add(v);
+                    var cols = new List<string>();
+                    if (string.IsNullOrEmpty(lastStep.Delimiter))
+                    {
+                        cols.Add(row);
+                    }
+                    else
+                    {
+                        var parts = row.Split(new[] { lastStep.Delimiter }, StringSplitOptions.None);
+                        if (lastStep.PartIndex >= 0)
+                        {
+                            if (lastStep.PartIndex < parts.Length)
+                                cols.Add(parts[lastStep.PartIndex].Trim());
+                        }
+                        else
+                        {
+                            foreach (var p in parts)
+                                cols.Add(p.Trim());
+                        }
+                    }
+                    result.Add(cols);
                 }
 
                 if (result.Count == 0)
-                    result.Add(originalValue);
+                    result.Add(new List<string> { originalValue });
             }
             catch
             {
                 result.Clear();
-                result.Add(originalValue);
+                result.Add(new List<string> { originalValue });
             }
 
             return result;
