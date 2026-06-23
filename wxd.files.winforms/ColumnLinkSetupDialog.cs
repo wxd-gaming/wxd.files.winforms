@@ -247,10 +247,14 @@ namespace wxd.files.winforms
             if (steps.Count == 0) return 1;
             var lastStep = steps[steps.Count - 1];
             if (lastStep.PartIndex >= 0)
-                return 1; // 取特定段，只有一段
+            {
+                // 取特定段：根据已配置的 _fieldLinks 动态决定段数
+                int maxConfigured = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+                return Math.Max(1, maxConfigured);
+            }
             // 保留全部：取已配置的段数 + 默认额外段数
-            int maxConfigured = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
-            return Math.Max(5, maxConfigured);
+            int maxConfigured2 = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+            return Math.Max(5, maxConfigured2);
         }
 
         /// <summary>获取当前段数，供外部（如列关联跳转时）使用。</summary>
@@ -363,32 +367,21 @@ namespace wxd.files.winforms
 
         private void OnAddFieldLinkClick(object? sender, EventArgs e)
         {
-            // 添加新段：找到第一个未配置的段，如果全部已配置则扩展段数
-            int fieldCount = GetFieldCount();
-            int unconfiguredIdx = -1;
-            for (int i = 0; i < fieldCount; i++)
+            // 计算新段的索引：取当前最大索引 + 1
+            int newIndex = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+
+            // 直接往 _fieldLinks 中添加一个新的空项（未配置的）
+            _fieldLinks.Add(new FieldLinkConfig
             {
-                var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == i);
-                if (existing == null || string.IsNullOrEmpty(existing.TargetFile))
-                {
-                    unconfiguredIdx = i;
-                    break;
-                }
-            }
-            if (unconfiguredIdx < 0)
-            {
-                // 所有段都已配置，添加一个新段
-                unconfiguredIdx = fieldCount;
-            }
+                FieldIndex = newIndex,
+                TargetFile = "",
+                TargetColumnIndex = -1,
+                TargetColumnName = "",
+                TargetDisplayColumnIndex = -1,
+                TargetDisplayColumnName = "",
+            });
+
             RefreshFieldLinkList();
-            _lstFieldLinks.SelectedIndex = unconfiguredIdx;
-            _editingFieldIndex = unconfiguredIdx;
-            // 重置编辑暂存
-            _fieldEditTargetPath = "";
-            _fieldEditTargetColIndex = -1;
-            _fieldEditTargetColName = "";
-            _fieldEditDisplayColIndex = -1;
-            _fieldEditDisplayColName = "";
             UpdateFieldLinkInfo();
         }
 
@@ -657,7 +650,8 @@ namespace wxd.files.winforms
             Controls.Add(new Label
             {
                 Text = $"设置列 {_sourceColumnIndex} 的 Tips 显示",
-                Location = new Point(10, y), Size = new Size(520, 22),
+                Location = new Point(10, y),
+                Size = new Size(520, 22),
                 Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
                 ForeColor = Color.FromArgb(31, 41, 55)
             });
@@ -667,16 +661,20 @@ namespace wxd.files.winforms
             var grpExtract = new GroupBox
             {
                 Text = "第一步：切割方案 — 从单元格值中提取多个显示值",
-                Location = new Point(10, y), Size = new Size(520, 175),
-                Font = new Font("Microsoft YaHei UI", 8f), ForeColor = Color.FromArgb(55, 65, 81)
+                Location = new Point(10, y),
+                Size = new Size(520, 175),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                ForeColor = Color.FromArgb(55, 65, 81)
             };
             y += 180;
 
             _chkExtractEnabled = new CheckBox
             {
                 Text = "启用切割（如 \"4002#1|3001#2\" → 按规则提取）",
-                Location = new Point(10, 20), Size = new Size(320, 22),
-                Font = new Font("Microsoft YaHei UI", 8f), Checked = false,
+                Location = new Point(10, 20),
+                Size = new Size(320, 22),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Checked = false,
                 ForeColor = Color.FromArgb(31, 41, 55)
             };
             _chkExtractEnabled.CheckedChanged += (s, e) =>
@@ -695,9 +693,12 @@ namespace wxd.files.winforms
 
             _lstSteps = new ListBox
             {
-                Location = new Point(10, 42), Size = new Size(350, 70),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                BorderStyle = BorderStyle.FixedSingle, IntegralHeight = false,
+                Location = new Point(10, 42),
+                Size = new Size(350, 70),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                IntegralHeight = false,
                 BackColor = Color.FromArgb(250, 252, 255)
             };
             _lstSteps.SelectedIndexChanged += OnStepSelected;
@@ -705,10 +706,15 @@ namespace wxd.files.winforms
 
             _btnAddStep = new Button
             {
-                Text = "＋添加", Location = new Point(368, 42), Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                Text = "＋添加",
+                Location = new Point(368, 42),
+                Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             _btnAddStep.Click += (s, e) => { AddStep(); };
@@ -716,10 +722,15 @@ namespace wxd.files.winforms
 
             _btnDeleteStep = new Button
             {
-                Text = "✕删除", Location = new Point(422, 42), Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(255, 240, 240), ForeColor = Color.FromArgb(180, 40, 40),
+                Text = "✕删除",
+                Location = new Point(422, 42),
+                Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(255, 240, 240),
+                ForeColor = Color.FromArgb(180, 40, 40),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(240, 200, 200) }
             };
             _btnDeleteStep.Click += (s, e) => { DeleteStep(); };
@@ -727,34 +738,47 @@ namespace wxd.files.winforms
 
             _lblStepDelimiter = new Label
             {
-                Text = "分隔符:", Location = new Point(10, 118), Size = new Size(50, 18),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                Text = "分隔符:",
+                Location = new Point(10, 118),
+                Size = new Size(50, 18),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
                 ForeColor = Color.FromArgb(55, 65, 81)
             };
             grpExtract.Controls.Add(_lblStepDelimiter);
 
             _txtStepDelimiter = new TextBox
             {
-                Text = "", Location = new Point(60, 116), Size = new Size(40, 21),
-                Font = new Font("Microsoft YaHei UI", 8f), BorderStyle = BorderStyle.FixedSingle,
-                Enabled = false, PlaceholderText = "# | :"
+                Text = "",
+                Location = new Point(60, 116),
+                Size = new Size(40, 21),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Enabled = false,
+                PlaceholderText = "# | :"
             };
             _txtStepDelimiter.TextChanged += (s, e) => MarkUnsaved();
             grpExtract.Controls.Add(_txtStepDelimiter);
 
             _lblStepPartIndex = new Label
             {
-                Text = "取段:", Location = new Point(108, 118), Size = new Size(35, 18),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
+                Text = "取段:",
+                Location = new Point(108, 118),
+                Size = new Size(35, 18),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
                 ForeColor = Color.FromArgb(55, 65, 81)
             };
             grpExtract.Controls.Add(_lblStepPartIndex);
 
             _cboStepPartIndex = new ComboBox
             {
-                Location = new Point(143, 116), Size = new Size(100, 21),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat
+                Location = new Point(143, 116),
+                Size = new Size(100, 21),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat
             };
             _cboStepPartIndex.Items.AddRange(new object[]
             {
@@ -768,10 +792,15 @@ namespace wxd.files.winforms
 
             _btnUpdateStep = new Button
             {
-                Text = "更新", Location = new Point(250, 114), Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
+                Text = "更新",
+                Location = new Point(250, 114),
+                Size = new Size(50, 24),
+                Font = new Font("Microsoft YaHei UI", 7.5f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnUpdateStep.Click += (s, e) => { UpdateStep(); };
@@ -780,9 +809,11 @@ namespace wxd.files.winforms
             _lblExtractPreview = new Label
             {
                 Text = "预览: 输入示例 \"2#1|3#1\"  →  结果: [\"2\",\"3\"]",
-                Location = new Point(10, 142), Size = new Size(500, 18),
+                Location = new Point(10, 142),
+                Size = new Size(500, 18),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(140, 145, 150), Visible = false
+                ForeColor = Color.FromArgb(140, 145, 150),
+                Visible = false
             };
             grpExtract.Controls.Add(_lblExtractPreview);
 
@@ -792,7 +823,8 @@ namespace wxd.files.winforms
             Controls.Add(new Label
             {
                 Text = "第二步：表头（可选，用分隔符分隔，如 \"道具#数量#权重\"，留空不显示表头）:",
-                Location = new Point(10, y), Size = new Size(520, labelH),
+                Location = new Point(10, y),
+                Size = new Size(520, labelH),
                 Font = new Font("Microsoft YaHei UI", 8f),
                 ForeColor = Color.FromArgb(55, 65, 81)
             });
@@ -800,7 +832,9 @@ namespace wxd.files.winforms
 
             _txtDisplayHeaders = new TextBox
             {
-                Text = "", Location = new Point(10, y), Size = new Size(520, 23),
+                Text = "",
+                Location = new Point(10, y),
+                Size = new Size(520, 23),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 PlaceholderText = "道具#数量#权重"
@@ -812,16 +846,20 @@ namespace wxd.files.winforms
             var grpFieldLinks = new GroupBox
             {
                 Text = "第三步：各段关联配置 — 每段可以关联不同的表",
-                Location = new Point(10, y), Size = new Size(520, 215),
-                Font = new Font("Microsoft YaHei UI", 8f), ForeColor = Color.FromArgb(55, 65, 81)
+                Location = new Point(10, y),
+                Size = new Size(520, 215),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                ForeColor = Color.FromArgb(55, 65, 81)
             };
             y += 220;
 
             _lstFieldLinks = new ListBox
             {
-                Location = new Point(10, 20), Size = new Size(340, 80),
+                Location = new Point(10, 20),
+                Size = new Size(340, 80),
                 Font = new Font("Microsoft YaHei UI", 8f),
-                BorderStyle = BorderStyle.FixedSingle, IntegralHeight = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                IntegralHeight = false,
                 BackColor = Color.FromArgb(250, 252, 255)
             };
             _lstFieldLinks.SelectedIndexChanged += (s, e) => UpdateFieldLinkInfo();
@@ -830,10 +868,14 @@ namespace wxd.files.winforms
             // 添加按钮
             _btnAddFieldLink = new Button
             {
-                Text = "添加", Location = new Point(358, 20), Size = new Size(50, 24),
+                Text = "添加",
+                Location = new Point(358, 20),
+                Size = new Size(50, 24),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             _btnAddFieldLink.Click += OnAddFieldLinkClick;
@@ -842,10 +884,14 @@ namespace wxd.files.winforms
             // 删除按钮
             _btnDeleteFieldLink = new Button
             {
-                Text = "删除", Location = new Point(358, 48), Size = new Size(50, 24),
+                Text = "删除",
+                Location = new Point(358, 48),
+                Size = new Size(50, 24),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(255, 240, 240), ForeColor = Color.FromArgb(180, 40, 40),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(255, 240, 240),
+                ForeColor = Color.FromArgb(180, 40, 40),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(240, 200, 200) }
             };
             _btnDeleteFieldLink.Click += OnDeleteFieldLinkClick;
@@ -854,10 +900,14 @@ namespace wxd.files.winforms
             // 更新按钮
             _btnUpdateFieldLink = new Button
             {
-                Text = "更新", Location = new Point(358, 76), Size = new Size(50, 24),
+                Text = "更新",
+                Location = new Point(358, 76),
+                Size = new Size(50, 24),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
             };
             _btnUpdateFieldLink.Click += OnUpdateFieldLinkClick;
@@ -867,7 +917,8 @@ namespace wxd.files.winforms
             _lblFieldLinkInfo = new Label
             {
                 Text = "请选择一段进行关联配置",
-                Location = new Point(10, 106), Size = new Size(500, 18),
+                Location = new Point(10, 106),
+                Size = new Size(500, 18),
                 Font = new Font("Microsoft YaHei UI", 8f),
                 ForeColor = Color.FromArgb(31, 41, 55)
             };
@@ -877,7 +928,8 @@ namespace wxd.files.winforms
             grpFieldLinks.Controls.Add(new Label
             {
                 Text = "编辑当前选中段：",
-                Location = new Point(10, 128), Size = new Size(500, 16),
+                Location = new Point(10, 128),
+                Size = new Size(500, 16),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
                 ForeColor = Color.FromArgb(100, 120, 140)
             });
@@ -885,10 +937,15 @@ namespace wxd.files.winforms
             // 编辑按钮（全部放在 GroupBox 内部）
             _btnSelectFieldFile = new Button
             {
-                Text = "选择目标文件", Location = new Point(10, 148), Size = new Size(130, 26),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                Text = "选择目标文件",
+                Location = new Point(10, 148),
+                Size = new Size(130, 26),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             _btnSelectFieldFile.Click += OnSelectFieldFileClick;
@@ -896,10 +953,15 @@ namespace wxd.files.winforms
 
             _btnSelectFieldCol = new Button
             {
-                Text = "选择关联列", Location = new Point(150, 148), Size = new Size(100, 26),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                Text = "选择关联列",
+                Location = new Point(150, 148),
+                Size = new Size(100, 26),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             _btnSelectFieldCol.Click += OnSelectFieldColClick;
@@ -907,10 +969,15 @@ namespace wxd.files.winforms
 
             _btnSelectFieldDisplayCol = new Button
             {
-                Text = "显示列（可选）", Location = new Point(260, 148), Size = new Size(120, 26),
-                Font = new Font("Microsoft YaHei UI", 8f), Enabled = false,
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                Text = "显示列（可选）",
+                Location = new Point(260, 148),
+                Size = new Size(120, 26),
+                Font = new Font("Microsoft YaHei UI", 8f),
+                Enabled = false,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             _btnSelectFieldDisplayCol.Click += OnSelectFieldDisplayColClick;
@@ -920,7 +987,8 @@ namespace wxd.files.winforms
             grpFieldLinks.Controls.Add(new Label
             {
                 Text = "操作：选中一段 → 编辑（文件/关联列/显示列）→ 点击 [更新] 保存",
-                Location = new Point(10, 180), Size = new Size(500, 16),
+                Location = new Point(10, 180),
+                Size = new Size(500, 16),
                 Font = new Font("Microsoft YaHei UI", 7.5f),
                 ForeColor = Color.FromArgb(140, 145, 150)
             });
@@ -930,9 +998,14 @@ namespace wxd.files.winforms
             // ===== 按钮区域 =====
             _btnDelete = new Button
             {
-                Text = "清除设置", Location = new Point(10, y), Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(239, 68, 68), ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) }, Cursor = Cursors.Hand,
+                Text = "清除设置",
+                Location = new Point(10, y),
+                Size = new Size(80, 28),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) },
+                Cursor = Cursors.Hand,
                 Visible = _existingLink != null || _fieldLinks.Count > 0
             };
             _btnDelete.Click += OnDeleteClick;
@@ -940,9 +1013,12 @@ namespace wxd.files.winforms
 
             _btnOK = new Button
             {
-                Text = "确定", Location = new Point(370, y), Size = new Size(80, 28),
+                Text = "确定",
+                Location = new Point(370, y),
+                Size = new Size(80, 28),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 Cursor = Cursors.Hand
             };
@@ -951,10 +1027,13 @@ namespace wxd.files.winforms
 
             _btnCancel = new Button
             {
-                Text = "取消", Location = new Point(460, y), Size = new Size(70, 28),
+                Text = "取消",
+                Location = new Point(460, y),
+                Size = new Size(70, 28),
                 FlatStyle = FlatStyle.Flat,
                 DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                BackColor = Color.FromArgb(235, 248, 255),
+                ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             Controls.Add(_btnCancel);
