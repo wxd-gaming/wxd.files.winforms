@@ -741,7 +741,7 @@ namespace wxd.files.winforms
 
                     for (int i = 0; i < colCount; i++)
                     {
-                        var cellVal = (line.Cells != null && i < line.Cells.Count) ? line.Cells[i] : "";
+                        var cellVal = (line.Cells != null && i < line.Cells.Count) ? line.Cells[i] : "-";
                         var cell = new DataGridViewTextBoxCell
                         {
                             Value = cellVal,
