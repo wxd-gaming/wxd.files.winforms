@@ -325,50 +325,14 @@ namespace wxd.files.winforms
 
         /// <summary>
         /// 将单元格内容按 ExtractSteps 切割为"行×字段"的二维结构。
-        /// 切割逻辑与 BuildFieldLinkedToolTipContent 完全一致：
-        ///   1. 找多值分隔符（第一个 PartIndex==-1 的步骤的 Delimiter）作为行分隔符
-        ///   2. 用 EffectiveDisplayDelimiter（最后一步的 Delimiter）作为字段分隔符
-        /// 注意：关联配置只用于查询显示，不应改变切割/列数规则。
+        /// 切割逻辑与 ToolTip 显示完全一致：
+        ///   前 N-1 步按行拆分，最后一步按列拆分。
+        /// 使用 ColumnLinkConfig.ExtractRows 方法。
         /// </summary>
         private static List<List<string>> SplitCellToFieldRows(ColumnLinkConfig linkConfig, string cellValue)
         {
-            var result = new List<List<string>>();
-            if (string.IsNullOrEmpty(cellValue)) return result;
-
-            // 步骤1：找多值分隔符（第一个 PartIndex==-1 的步骤）
-            string multiDelimiter = "|";
-            foreach (var step in linkConfig.ExtractSteps)
-            {
-                if (step.PartIndex == -1 && !string.IsNullOrEmpty(step.Delimiter))
-                {
-                    multiDelimiter = step.Delimiter;
-                    break;
-                }
-            }
-
-            // 步骤2：用 multiDelimiter 切行
-            string cellDelimiter = linkConfig.EffectiveDisplayDelimiter;
-            var rawLines = cellValue.Split(new[] { multiDelimiter }, StringSplitOptions.None);
-
-            // 步骤3：每行用 cellDelimiter 切字段
-            foreach (var rawLine in rawLines)
-            {
-                var trimmed = rawLine.Trim();
-                if (string.IsNullOrEmpty(trimmed)) continue;
-
-                var fieldValues = new List<string>();
-                if (!string.IsNullOrEmpty(cellDelimiter) && trimmed.Contains(cellDelimiter))
-                {
-                    foreach (var p in trimmed.Split(new[] { cellDelimiter }, StringSplitOptions.None))
-                        fieldValues.Add(p.Trim());
-                }
-                else
-                {
-                    fieldValues.Add(trimmed);
-                }
-                result.Add(fieldValues);
-            }
-            return result;
+            if (string.IsNullOrEmpty(cellValue)) return new List<List<string>>();
+            return linkConfig.ExtractRows(cellValue);
         }
     }
 }
