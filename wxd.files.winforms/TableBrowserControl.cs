@@ -28,6 +28,7 @@ namespace wxd.files.winforms
         private Label _lblFileName = new();
         private Label _lblInfo = new();
         private Label _lblCellPos = new();
+        private CheckBox _chkFilterKeepAll = new();
         private Panel _pnlLoading = new();
         private ProgressBar? _loadingProgressBar;
         private Label? _loadingLabel;
@@ -91,6 +92,21 @@ namespace wxd.files.winforms
         private string? _duplicateWarningText = null;
         /// <summary>唯一列重复值完整列表（供详情窗体使用）</summary>
         private List<DuplicateGroup> _duplicateDetails = new();
+
+        /// <summary>内容搜索匹配的单元格集合（原始行索引 → 原始列索引集合），用于单元格红色加粗高亮，不过滤行</summary>
+        private Dictionary<int, HashSet<int>> _contentSearchMatchCells = new();
+
+        /// <summary>高级过滤匹配的单元格集合（原始行索引 → 原始列索引集合）</summary>
+        private Dictionary<int, HashSet<int>> _advFilterMatchCells = new();
+
+        /// <summary>过滤匹配的单元格集合（显示行索引 → 该行匹配的显示列索引集合），用于 _dataGrid 红色加粗高亮</summary>
+        private Dictionary<int, HashSet<int>> _filterMatchCells = new();
+
+        /// <summary>过滤匹配的单元格集合（显示行索引 → 该行匹配的显示列索引集合），用于 _dataGridHeader 红色加粗高亮</summary>
+        private Dictionary<int, HashSet<int>> _headerFilterMatchCells = new();
+
+        /// <summary>高级过滤时是否保留所有行（仅高亮匹配单元格，不过滤行），默认 true</summary>
+        private bool _filterKeepAllRows = true;
 
         /// <summary>重复值分组数据</summary>
         public class DuplicateGroup
@@ -567,7 +583,7 @@ namespace wxd.files.winforms
             // 内容过滤
             var lblContentFilter = new Label
             {
-                Text = "内容过滤:",
+                Text = "高亮匹配:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightText,
@@ -681,6 +697,7 @@ namespace wxd.files.winforms
             _dataGridHeader.AllowUserToResizeColumns = true;
             _dataGridHeader.AllowUserToResizeRows = false;
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
+            _dataGridHeader.CellFormatting += OnHeaderCellFormatting;
             _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
             _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
             _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(245, 250, 255);
@@ -882,18 +899,36 @@ namespace wxd.files.winforms
             var statusTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 5,
                 RowCount = 1,
                 BackColor = Color.Transparent,
                 Padding = new Padding(4, 0, 4, 0),
                 Margin = new Padding(0)
             };
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 过滤保留所有行 CheckBox
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));    // 锁图标
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));  // 文件名
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 行列坐标（自动适应内容宽度，避免换行）
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 重复提示（自动适应内容宽度，避免换行）
 
-            // 列0: 锁图标 🔒/🔓
+            // 列0: 过滤保留所有行 CheckBox
+            _chkFilterKeepAll = new CheckBox
+            {
+                Text = "保留所有行",
+                Checked = true,
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                CheckAlign = ContentAlignment.MiddleLeft,
+                ForeColor = _colorLightTextSecondary,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Margin = new Padding(4, 2, 0, 2),
+                Padding = new Padding(0),
+            };
+            _chkFilterKeepAll.CheckedChanged += OnFilterKeepAllChanged;
+            statusTable.Controls.Add(_chkFilterKeepAll, 0, 0);
+
+            // 列1: 锁图标 🔒/🔓
             _lblLock = new Label
             {
                 Text = "",
@@ -906,9 +941,9 @@ namespace wxd.files.winforms
                 Padding = new Padding(0, 0, 4, 0),
             };
             _lblLock.Click += OnLockLabelClick;
-            statusTable.Controls.Add(_lblLock, 0, 0);
+            statusTable.Controls.Add(_lblLock, 1, 0);
 
-            // 列1: 文件名
+            // 列2: 文件名
             _lblFileName = new Label
             {
                 Text = "",
@@ -918,21 +953,21 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 Dock = DockStyle.Fill,
             };
-            statusTable.Controls.Add(_lblFileName, 1, 0);
+            statusTable.Controls.Add(_lblFileName, 2, 0);
 
-            // 列2: _lblCellPos 行列坐标（AutoSize 让列宽跟随内容，避免固定 180px 导致换行）
+            // 列3: _lblCellPos 行列坐标（AutoSize 让列宽跟随内容，避免固定 180px 导致换行）
             _lblCellPos.TextAlign = ContentAlignment.MiddleLeft;
             _lblCellPos.AutoSize = true;
             _lblCellPos.Dock = DockStyle.None;
             _lblCellPos.Margin = new Padding(2, 3, 10, 3);
-            statusTable.Controls.Add(_lblCellPos, 2, 0);
+            statusTable.Controls.Add(_lblCellPos, 3, 0);
 
-            // 列3: _lblInfo 重复提示（AutoSize 让列宽跟随内容，避免换行）
+            // 列4: _lblInfo 重复提示（AutoSize 让列宽跟随内容，避免换行）
             _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
             _lblInfo.AutoSize = true;
             _lblInfo.Dock = DockStyle.None;
             _lblInfo.Margin = new Padding(2, 3, 4, 3);
-            statusTable.Controls.Add(_lblInfo, 3, 0);
+            statusTable.Controls.Add(_lblInfo, 4, 0);
 
             _pnlStatus.Controls.Add(statusTable);
             Controls.Add(_pnlStatus);
@@ -1868,6 +1903,12 @@ namespace wxd.files.winforms
         {
             if (_dataTable.Columns.Count == 0) return;
 
+            // 每次重新过滤前清空匹配高亮
+            _filterMatchCells.Clear();
+            _headerFilterMatchCells.Clear();
+            _contentSearchMatchCells.Clear();
+            _advFilterMatchCells.Clear();
+
             if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
             {
                 _visibleColumnIndices = GetVisibleColumnIndices();
@@ -1917,7 +1958,55 @@ namespace wxd.files.winforms
                 }
 
                 var contentFilter = _txtContentFilter.Text.Trim();
-                var visibleRowIndices = GetVisibleRowIndices(contentFilter);
+
+                // ★ 内容搜索：不过滤行，仅获取匹配单元格（所有行包括冻结行）
+                _contentSearchMatchCells = GetContentMatchCells(contentFilter);
+
+                // ★ 高级过滤：按表达式过滤行 + 匹配单元格
+                var (visibleRowIndices, advMatchCells) = GetAdvVisibleRowIndices();
+                // 如果保留所有行，则高级过滤不过滤行
+                if (_filterKeepAllRows && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
+                {
+                    visibleRowIndices = Enumerable.Range(_frozenRows, _fileData.Rows.Count - _frozenRows).ToList();
+                }
+
+                // ★ 合并内容搜索 + 高级过滤的匹配单元格（原始行列索引）
+                _advFilterMatchCells = advMatchCells;
+                // ★ 转换匹配单元格：原始行列索引 → 显示行列索引（_dataGrid 内容区）
+                _filterMatchCells.Clear();
+                _headerFilterMatchCells.Clear();
+                var mergedOrigMatch = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
+                foreach (var (origRow, origCols) in mergedOrigMatch)
+                {
+                    // 冻结行区域（origRow < _frozenRows）：直接存入 _headerFilterMatchCells
+                    if (origRow < _frozenRows)
+                    {
+                        var displayCols = new HashSet<int>();
+                        foreach (var origCol in origCols)
+                        {
+                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                            if (displayCol >= 0)
+                                displayCols.Add(displayCol);
+                        }
+                        if (displayCols.Count > 0)
+                            _headerFilterMatchCells[origRow] = displayCols;
+                    }
+                    else
+                    {
+                        // 内容行区域：转换为显示行索引存入 _filterMatchCells
+                        int displayRow = visibleRowIndices.IndexOf(origRow);
+                        if (displayRow < 0) continue;
+                        var displayCols = new HashSet<int>();
+                        foreach (var origCol in origCols)
+                        {
+                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                            if (displayCol >= 0)
+                                displayCols.Add(displayCol);
+                        }
+                        if (displayCols.Count > 0)
+                            _filterMatchCells[displayRow] = displayCols;
+                    }
+                }
                 RefreshFilteredDisplay(visibleRowIndices);
             }
             else
@@ -1942,6 +2031,25 @@ namespace wxd.files.winforms
                 }
                 // ★ 同步设置 Tag（DataSource 赋值后行已创建）
                 SetRowTags();
+
+                // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
+                _filterMatchCells.Clear();
+                _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
+                var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
+                _advFilterMatchCells = advMatchCellsNoFreeze;
+                var mergedNoFreeze = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
+                foreach (var (origRow, origCols) in mergedNoFreeze)
+                {
+                    if (origRow < 0 || origRow >= _dataGrid.Rows.Count) continue;
+                    var displayCols = new HashSet<int>();
+                    foreach (var origCol in origCols)
+                    {
+                        if (origCol >= 0 && origCol < _visibleColumnIndices.Count)
+                            displayCols.Add(origCol);
+                    }
+                    if (displayCols.Count > 0)
+                        _filterMatchCells[origRow] = displayCols;
+                }
             }
         }
 
@@ -2204,49 +2312,74 @@ namespace wxd.files.winforms
             catch (TaskCanceledException) { /* 被新输入取消 */ }
         }
 
+        private void OnFilterKeepAllChanged(object? sender, EventArgs e)
+        {
+            _filterKeepAllRows = _chkFilterKeepAll.Checked;
+            ApplyFilters();
+        }
+
         private void ApplyFilters() => RefreshGridLayout();
 
-        /// <summary>过滤结果：返回行号列表（直接走 FileTableData.Cells，零装箱）</summary>
-        private List<int> GetVisibleRowIndices(string contentFilter)
+        /// <summary>内容搜索：搜索所有行（包括冻结行）的所有可见列，仅返回匹配的原始单元格位置，不过滤行</summary>
+        private Dictionary<int, HashSet<int>> GetContentMatchCells(string contentFilter)
+        {
+            if (string.IsNullOrEmpty(contentFilter))
+                return new Dictionary<int, HashSet<int>>();
+
+            string processedContentFilter = contentFilter
+                .Replace("||", " | ").Replace("&&", " & ");
+            var matchCells = new Dictionary<int, HashSet<int>>();
+
+            // 搜索所有行：从 0 到 _fileData.Rows.Count（包括冻结行）
+            for (int i = 0; i < _fileData.Rows.Count; i++)
+            {
+                var cells = _fileData.Rows[i].Cells;
+                HashSet<int>? rowMatchCols = null;
+                foreach (var colIdx in _visibleColumnIndices)
+                {
+                    if (colIdx < cells.Count &&
+                        MatchesFilter(cells[colIdx], processedContentFilter))
+                    {
+                        (rowMatchCols ??= new HashSet<int>()).Add(colIdx);
+                    }
+                }
+                if (rowMatchCols != null && rowMatchCols.Count > 0)
+                    matchCells[i] = rowMatchCols;
+            }
+            return matchCells;
+        }
+
+        /// <summary>高级过滤：仅根据高级过滤表达式返回可见行索引 + 匹配的原始单元格（不过滤内容搜索）</summary>
+        private (List<int> rowIndices, Dictionary<int, HashSet<int>> matchCells) GetAdvVisibleRowIndices()
         {
             var result = new List<int>(_fileData.Rows.Count - _frozenRows);
+            var matchCells = new Dictionary<int, HashSet<int>>();
             var advFilter = _txtAdvancedFilter.Text.Trim();
 
-            // ★ 预编译高级过滤表达式（只解析一次）
             FilterNode? compiledExpr = null;
             if (!string.IsNullOrEmpty(advFilter))
                 compiledExpr = CompileExpression(advFilter);
 
-            // 内容过滤预处理
-            bool hasContentFilter = !string.IsNullOrEmpty(contentFilter);
-            string processedContentFilter = hasContentFilter
-                ? contentFilter.Replace("||", " | ").Replace("&&", " & ")
-                : "";
+            // 无高级过滤 → 返回所有内容行（从 _frozenRows 开始）
+            if (compiledExpr == null)
+            {
+                for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
+                    result.Add(i);
+                return (result, matchCells);
+            }
 
             for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
             {
                 var cells = _fileData.Rows[i].Cells;
-
-                // 内容过滤
-                if (hasContentFilter)
-                {
-                    bool contentMatch = false;
-                    foreach (var colIdx in _visibleColumnIndices)
-                    {
-                        if (colIdx < cells.Count &&
-                            MatchesFilter(cells[colIdx], processedContentFilter))
-                        { contentMatch = true; break; }
-                    }
-                    if (!contentMatch) continue;
-                }
-
-                // 高级过滤
-                if (compiledExpr != null && !EvaluateCompiled(cells, compiledExpr))
-                    continue;
+                bool advMatch = EvaluateCompiled(cells, compiledExpr);
+                if (!advMatch) continue;
 
                 result.Add(i);
+                var advMatchCols = GetAdvFilterMatchCols(cells, compiledExpr);
+                if (advMatchCols.Count > 0)
+                    matchCells[i] = advMatchCols;
             }
-            return result;
+            return (result, matchCells);
         }
 
         // ==================== 预编译过滤表达式 AST ====================
@@ -2447,6 +2580,102 @@ namespace wxd.files.winforms
             return CompareValue(cellValue, cond.Value, cond.CompareOp);
         }
 
+        /// <summary>从高级过滤 AST 中提取匹配的原始列索引集合</summary>
+        private HashSet<int> GetAdvFilterMatchCols(List<string> cells, FilterNode node)
+        {
+            var result = new HashSet<int>();
+            CollectAdvMatchCols(cells, node, result);
+            return result;
+        }
+
+        private void CollectAdvMatchCols(List<string> cells, FilterNode node, HashSet<int> result)
+        {
+            switch (node)
+            {
+                case BinOpNode bin:
+                    CollectAdvMatchCols(cells, bin.Left!, result);
+                    CollectAdvMatchCols(cells, bin.Right!, result);
+                    break;
+
+                case CondNode cond:
+                    CollectCondMatchCols(cells, cond, result);
+                    break;
+            }
+        }
+
+        private void CollectCondMatchCols(List<string> cells, CondNode cond, HashSet<int> result)
+        {
+            if (string.IsNullOrEmpty(cond.CompareOp))
+            {
+                // 无操作符：全列模糊匹配
+                foreach (var colIdx in _visibleColumnIndices)
+                {
+                    if (colIdx < cells.Count &&
+                        cells[colIdx].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                        result.Add(colIdx);
+                }
+                return;
+            }
+
+            // 有操作符 + 指定列名 → 解析列索引
+            int colIndex = -1;
+            if (cond.ColumnIndex >= 0)
+            {
+                colIndex = cond.ColumnIndex;
+            }
+            else if (!string.IsNullOrEmpty(cond.ColumnName))
+            {
+                colIndex = ResolveColumnIndex(cond.ColumnName);
+                if (colIndex < 0)
+                {
+                    // 列名没找到 → 尝试全列模糊匹配
+                    foreach (var ci in _visibleColumnIndices)
+                    {
+                        if (ci < cells.Count &&
+                            cells[ci].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                            result.Add(ci);
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                // 无列名但有操作符 → 全列模糊匹配
+                foreach (var ci in _visibleColumnIndices)
+                {
+                    if (ci < cells.Count &&
+                        cells[ci].IndexOf(cond.Value, StringComparison.OrdinalIgnoreCase) >= 0)
+                        result.Add(ci);
+                }
+                return;
+            }
+
+            if (colIndex >= 0 && colIndex < cells.Count)
+                result.Add(colIndex);
+        }
+
+        /// <summary>合并两个匹配单元格字典（key 为原始行索引，value 为原始列索引集合），内容搜索 + 高级过滤合并</summary>
+        private static Dictionary<int, HashSet<int>> MergeMatchCells(
+            Dictionary<int, HashSet<int>> dict1,
+            Dictionary<int, HashSet<int>> dict2)
+        {
+            if (dict1.Count == 0) return dict2;
+            if (dict2.Count == 0) return dict1;
+            var merged = new Dictionary<int, HashSet<int>>(dict1);
+            foreach (var (row, cols) in dict2)
+            {
+                if (merged.TryGetValue(row, out var existing))
+                {
+                    existing.UnionWith(cols);
+                }
+                else
+                {
+                    merged[row] = new HashSet<int>(cols);
+                }
+            }
+            return merged;
+        }
+
         /// <summary>
         /// 冻结行场景的异步加载版本（带进度条）。
         /// 把 filteredTable 构建移到后台线程，用 Progress&lt;T&gt; 报告进度（自动切 UI 线程更新进度条）。
@@ -2508,7 +2737,51 @@ namespace wxd.files.winforms
 
             // ==================== 阶段2：后台线程构建 filteredTable（Progress<T> 自动切 UI 线程更新进度条） ====================
             var contentFilter = _txtContentFilter.Text.Trim();
-            var visibleRowIndices = GetVisibleRowIndices(contentFilter);
+
+            // ★ 内容搜索：不过滤行，仅获取匹配单元格（所有行包括冻结行）
+            _contentSearchMatchCells = GetContentMatchCells(contentFilter);
+
+            // ★ 高级过滤：按表达式过滤行 + 匹配单元格
+            var (visibleRowIndices, advMatchCells) = GetAdvVisibleRowIndices();
+            if (_filterKeepAllRows && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
+            {
+                visibleRowIndices = Enumerable.Range(_frozenRows, _fileData.Rows.Count - _frozenRows).ToList();
+            }
+
+            // ★ 合并内容搜索 + 高级过滤的匹配单元格
+            _advFilterMatchCells = advMatchCells;
+            _filterMatchCells.Clear();
+            _headerFilterMatchCells.Clear();
+            var mergedOrig = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
+            foreach (var (origRow, origCols) in mergedOrig)
+            {
+                if (origRow < _frozenRows)
+                {
+                    var displayCols = new HashSet<int>();
+                    foreach (var origCol in origCols)
+                    {
+                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                        if (displayCol >= 0)
+                            displayCols.Add(displayCol);
+                    }
+                    if (displayCols.Count > 0)
+                        _headerFilterMatchCells[origRow] = displayCols;
+                }
+                else
+                {
+                    int displayRow = visibleRowIndices.IndexOf(origRow);
+                    if (displayRow < 0) continue;
+                    var displayCols = new HashSet<int>();
+                    foreach (var origCol in origCols)
+                    {
+                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                        if (displayCol >= 0)
+                            displayCols.Add(displayCol);
+                    }
+                    if (displayCols.Count > 0)
+                        _filterMatchCells[displayRow] = displayCols;
+                }
+            }
             var progress = new Progress<(int percent, string text)>(p => UpdateLoadingProgress(p.percent, p.text));
 
             // ★ 捕获后台线程需要的只读引用（避免后台线程访问 UI 控件）
@@ -3148,6 +3421,21 @@ namespace wxd.files.winforms
             return true;
         }
 
+        /// <summary>冻结行区域（_dataGridHeader）的 CellFormatting：过滤匹配单元格红色加粗高亮</summary>
+        private void OnHeaderCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            if (_headerFilterMatchCells.Count > 0)
+            {
+                if (_headerFilterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
+                {
+                    e.CellStyle.Font = new Font(e.CellStyle.Font ?? _dataGridHeader.Font, FontStyle.Bold);
+                    e.CellStyle.ForeColor = Color.Red;
+                    e.CellStyle.SelectionForeColor = Color.Red;
+                }
+            }
+        }
+
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
             if (sender == _dataGridHeader) return;
@@ -3206,6 +3494,16 @@ namespace wxd.files.winforms
                             e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
                         }
                     }
+                }
+            }
+            // ==================== 过滤匹配单元格高亮（红色加粗字体） ====================
+            if (_filterMatchCells.Count > 0 && e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                if (_filterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
+                {
+                    e.CellStyle.Font = new Font(e.CellStyle.Font ?? _dataGrid.Font, FontStyle.Bold);
+                    e.CellStyle.ForeColor = Color.Red;
+                    e.CellStyle.SelectionForeColor = Color.Red;
                 }
             }
             // 转发给外部事件处理器（如版本对比的差异高亮）
@@ -3910,6 +4208,25 @@ namespace wxd.files.winforms
                 }
                 // ★ 同步设置 Tag（DataSource 赋值后行已创建）
                 SetRowTags();
+
+                // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
+                _filterMatchCells.Clear();
+                _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
+                var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
+                _advFilterMatchCells = advMatchCellsNoFreeze;
+                var mergedNoFreeze = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
+                foreach (var (origRow, origCols) in mergedNoFreeze)
+                {
+                    if (origRow < 0 || origRow >= _dataGrid.Rows.Count) continue;
+                    var displayCols = new HashSet<int>();
+                    foreach (var origCol in origCols)
+                    {
+                        if (origCol >= 0 && origCol < _visibleColumnIndices.Count)
+                            displayCols.Add(origCol);
+                    }
+                    if (displayCols.Count > 0)
+                        _filterMatchCells[origRow] = displayCols;
+                }
             }
 
             // ★ 数据表变更后刷新唯一列下拉选项
