@@ -43,6 +43,9 @@ namespace wxd.files.winforms
         /// <summary>源文件中关联的列索引（index-based）</summary>
         public int SourceColumnIndex { get; set; }
 
+        /// <summary>引用的关联配置模板 Uid，null 表示独立配置</summary>
+        public string? TemplateUid { get; set; }
+
         #region 值提取规则（多层切割）
 
         /// <summary>是否启用值提取（默认 false 表示完全匹配）</summary>
@@ -74,8 +77,145 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>获取有效的切割步骤：自身已配置 > 模板配置 > 默认</summary>
+        public List<ExtractStep> GetEffectiveExtractSteps()
+        {
+            // 自身已配置（非空且非默认值）优先
+            if (ExtractSteps != null && ExtractSteps.Count > 0 &&
+                !IsDefaultExtractSteps(ExtractSteps))
+            {
+                return ExtractSteps;
+            }
+            // 其次从模板读取
+            if (!string.IsNullOrEmpty(TemplateUid))
+            {
+                var template = LinkTemplateManager.GetTemplate(TemplateUid);
+                if (template != null && template.ExtractSteps != null && template.ExtractSteps.Count > 0)
+                    return template.ExtractSteps;
+            }
+            // 默认返回自身存储的
+            return ExtractSteps ?? new();
+        }
+
+        /// <summary>判断是否为默认切割步骤</summary>
+        private static bool IsDefaultExtractSteps(List<ExtractStep> steps)
+        {
+            return steps.Count == 2
+                && steps[0].Delimiter == "|" && steps[0].PartIndex == -1
+                && steps[1].Delimiter == "#" && steps[1].PartIndex == 0;
+        }
+
+        /// <summary>获取有效的字段关联列表：自身已配置 > 模板配置 > 默认</summary>
+        public List<FieldLinkConfig> GetEffectiveFieldLinks()
+        {
+            // 自身已配置（有目标文件的非空配置）优先
+            if (FieldLinks != null && FieldLinks.Count > 0 &&
+                FieldLinks.Any(f => !string.IsNullOrEmpty(f.TargetFile)))
+            {
+                return FieldLinks;
+            }
+            // 其次从模板读取
+            if (!string.IsNullOrEmpty(TemplateUid))
+            {
+                var template = LinkTemplateManager.GetTemplate(TemplateUid);
+                if (template != null && template.FieldLinks != null && template.FieldLinks.Count > 0)
+                    return template.FieldLinks;
+            }
+            // 默认返回自身存储的
+            return FieldLinks ?? new();
+        }
+
+        /// <summary>获取有效的显示列头：自身已配置 > 模板配置 > 默认</summary>
+        public string GetEffectiveDisplayColumnHeaders()
+        {
+            // 自身已配置（非空）优先
+            if (!string.IsNullOrEmpty(DisplayColumnHeaders))
+                return DisplayColumnHeaders;
+            // 其次从模板读取
+            if (!string.IsNullOrEmpty(TemplateUid))
+            {
+                var template = LinkTemplateManager.GetTemplate(TemplateUid);
+                if (template != null && !string.IsNullOrEmpty(template.DisplayColumnHeaders))
+                    return template.DisplayColumnHeaders;
+            }
+            // 默认返回自身存储的
+            return DisplayColumnHeaders ?? "";
+        }
+
+        /// <summary>获取有效的启用切割标记：自身已配置 > 模板配置 > 默认</summary>
+        public bool GetEffectiveValueExtractionEnabled()
+        {
+            // 自身已配置（true）优先
+            if (ValueExtractionEnabled) return true;
+            // 其次从模板读取
+            if (!string.IsNullOrEmpty(TemplateUid))
+            {
+                var template = LinkTemplateManager.GetTemplate(TemplateUid);
+                if (template != null && template.ValueExtractionEnabled)
+                    return true;
+            }
+            return ValueExtractionEnabled;
+        }
+
+        /// <summary>
+        /// 将引用的模板的当前配置填充到本实例中（就地修改），
+        /// 用于运行时需要读取 FieldLinks/ExtractSteps 的场景。
+        /// 调用后 TemplateUid 保持不变（引用关系仍然存在），但数据已更新为模板最新配置。
+        /// 如果未引用模板或模板不存在，不做任何修改。
+        /// </summary>
+        public void RefreshFromTemplate()
+        {
+            if (string.IsNullOrEmpty(TemplateUid)) return;
+            var template = LinkTemplateManager.GetTemplate(TemplateUid);
+            if (template == null) return;
+            // 内联实现 ApplyTemplate
+            ValueExtractionEnabled = template.ValueExtractionEnabled;
+            ExtractSteps = template.ExtractSteps?.ConvertAll(s => new ExtractStep
+            {
+                Delimiter = s.Delimiter,
+                PartIndex = s.PartIndex
+            }) ?? new();
+            DisplayColumnHeaders = template.DisplayColumnHeaders;
+            FieldLinks = template.FieldLinks?.ConvertAll(f => new FieldLinkConfig
+            {
+                FieldIndex = f.FieldIndex,
+                TargetFile = f.TargetFile,
+                TargetColumnIndex = f.TargetColumnIndex,
+                TargetColumnName = f.TargetColumnName,
+                TargetDisplayColumnIndex = f.TargetDisplayColumnIndex,
+                TargetDisplayColumnName = f.TargetDisplayColumnName,
+            }) ?? new();
+        }
+
         /// <summary>多字段关联配置：每个切割段可以分别关联不同的表</summary>
         public List<FieldLinkConfig> FieldLinks { get; set; } = new();
+
+        /// <summary>深拷贝当前配置，所有集合成员均独立复制</summary>
+        public ColumnLinkConfig DeepClone()
+        {
+            return new ColumnLinkConfig
+            {
+                SourceFile = SourceFile,
+                SourceColumnIndex = SourceColumnIndex,
+                TemplateUid = TemplateUid,
+                ValueExtractionEnabled = ValueExtractionEnabled,
+                DisplayColumnHeaders = DisplayColumnHeaders,
+                ExtractSteps = ExtractSteps?.ConvertAll(s => new ExtractStep
+                {
+                    Delimiter = s.Delimiter,
+                    PartIndex = s.PartIndex
+                }) ?? new(),
+                FieldLinks = FieldLinks?.ConvertAll(f => new FieldLinkConfig
+                {
+                    FieldIndex = f.FieldIndex,
+                    TargetFile = f.TargetFile,
+                    TargetColumnIndex = f.TargetColumnIndex,
+                    TargetColumnName = f.TargetColumnName,
+                    TargetDisplayColumnIndex = f.TargetDisplayColumnIndex,
+                    TargetDisplayColumnName = f.TargetDisplayColumnName,
+                }) ?? new(),
+            };
+        }
 
         /// <summary>
         /// 从原始值中提取用于关联匹配的实际值（单个值）

@@ -44,19 +44,23 @@ namespace wxd.files.winforms
         private int _frozenRows = 0;
         private int _targetHeaderRowIndex = -1;
         private ColumnLinkConfig? _existingLink;
-        private List<FieldLinkConfig> _fieldLinks = new();
         // 字段关联编辑暂存（用于选择文件/列后更新）
         private string _fieldEditTargetPath = "";
         private int _fieldEditTargetColIndex = -1;
         private string _fieldEditTargetColName = "";
         private int _fieldEditDisplayColIndex = -1;
         private string _fieldEditDisplayColName = "";
+        private bool _isClosingConfirmed = false;
 
+        /// <summary>
+        /// 构造关联设置对话框。
+        /// </summary>
+        /// <param name="existingLink">传入的对象必须是**深拷贝副本**，对话框会直接修改此对象。确认时返回此对象，取消时返回 null。</param>
         public ColumnLinkSetupDialog(
             List<(string display, string fullPath)> fileEntries,
             string sourceFile, int sourceColumnIndex,
             string rootDir, int frozenRows,
-            List<ColumnLinkConfig> existingLinks,
+            ColumnLinkConfig? existingLink,
             int targetHeaderRowIndex = -1)
         {
             _fileEntries = fileEntries;
@@ -65,42 +69,53 @@ namespace wxd.files.winforms
             _rootDir = rootDir;
             _frozenRows = frozenRows;
             _targetHeaderRowIndex = targetHeaderRowIndex;
-            _existingLink = existingLinks.FirstOrDefault();
-
-            if (_existingLink != null)
-            {
-                // 恢复 FieldLinks
-                _fieldLinks = _existingLink.FieldLinks?.ToList() ?? new();
-            }
+            // 传入的 existingLink 必须是深拷贝副本，直接操作它
+            _existingLink = existingLink;
 
             InitializeComponent();
 
             // 加载已有配置
             if (_existingLink != null)
             {
-                _chkExtractEnabled.Checked = _existingLink.ValueExtractionEnabled;
-                _txtDisplayHeaders.Text = _existingLink.DisplayColumnHeaders;
+                _chkExtractEnabled.Checked = _existingLink.GetEffectiveValueExtractionEnabled();
+                _txtDisplayHeaders.Text = _existingLink.GetEffectiveDisplayColumnHeaders();
                 RefreshStepList();
                 if (_lstSteps.Items.Count > 0)
                     _lstSteps.SelectedIndex = 0;
                 RefreshFieldLinkList();
             }
+
+            // 在标题显示模板信息
+            if (_existingLink != null && !string.IsNullOrEmpty(_existingLink.TemplateUid))
+            {
+                var template = LinkTemplateManager.GetTemplate(_existingLink.TemplateUid);
+                if (template != null)
+                    Text = $"Tips 显示设置 - 列{_sourceColumnIndex} [模板: {template.Name}]";
+                else
+                    Text = $"Tips 显示设置 - 列{_sourceColumnIndex} [模板已删除]";
+            }
+
+            // 拦截所有关闭操作（取消按钮、ESC、点 X）
+            _btnCancel.Click += OnCancelClick;
+            FormClosing += OnFormClosing;
         }
 
         public ColumnLinkConfig? GetResult()
         {
-            bool hasExtractConfig = _chkExtractEnabled.Checked || _txtDisplayHeaders.Text.Trim().Length > 0 || _fieldLinks.Count > 0;
-            if (!hasExtractConfig)
-                return null;
-            return new ColumnLinkConfig
-            {
-                SourceFile = _sourceFile,
-                SourceColumnIndex = _sourceColumnIndex,
-                DisplayColumnHeaders = _txtDisplayHeaders.Text.Trim(),
-                ValueExtractionEnabled = _chkExtractEnabled.Checked,
-                ExtractSteps = GetExtractStepsFromUI(),
-                FieldLinks = _fieldLinks.ToList(),
-            };
+            // 确认时，将 UI 值同步到 _existingLink，然后返回
+            if (_existingLink == null) return null;
+
+            // 同步 UI 到 _existingLink
+            _existingLink.ValueExtractionEnabled = _chkExtractEnabled.Checked;
+            _existingLink.DisplayColumnHeaders = _txtDisplayHeaders.Text.Trim();
+            // ExtractSteps 已在 AddStep/DeleteStep/UpdateStep 中直接修改 _existingLink.ExtractSteps
+            // FieldLinks 已在字段操作中直接修改 _existingLink.FieldLinks
+            // TemplateUid 保持传入时的值（如果是模板引用且用户编辑了，它仍然保留，运行时通过 GetEffective* 决定实际配置）
+
+            bool hasConfig = _chkExtractEnabled.Checked ||
+                             _txtDisplayHeaders.Text.Trim().Length > 0 ||
+                             _existingLink.FieldLinks.Count > 0;
+            return hasConfig ? _existingLink : null;
         }
 
         // ==================== 切割步骤管理 ====================
@@ -121,7 +136,9 @@ namespace wxd.files.winforms
         {
             _lstSteps.BeginUpdate();
             _lstSteps.Items.Clear();
-            var steps = _existingLink?.ExtractSteps ?? new List<ExtractStep>();
+            var steps = _existingLink != null
+                ? _existingLink.GetEffectiveExtractSteps()
+                : new List<ExtractStep>();
             for (int i = 0; i < steps.Count; i++)
             {
                 var step = steps[i];
@@ -143,7 +160,7 @@ namespace wxd.files.winforms
         {
             _isLoadingStep = true;
             if (_lstSteps.SelectedIndex < 0) { _isLoadingStep = false; return; }
-            var steps = _existingLink?.ExtractSteps;
+            var steps = _existingLink?.GetEffectiveExtractSteps();
             if (steps == null || _lstSteps.SelectedIndex >= steps.Count) { _isLoadingStep = false; return; }
             var step = steps[_lstSteps.SelectedIndex];
             _txtStepDelimiter.Text = step.Delimiter;
@@ -197,7 +214,9 @@ namespace wxd.files.winforms
         private List<ExtractStep> GetExtractStepsFromUI()
         {
             if (_existingLink != null)
+            {
                 return _existingLink.ExtractSteps;
+            }
             return new List<ExtractStep>
             {
                 new ExtractStep { Delimiter = "|", PartIndex = -1 },
@@ -248,12 +267,12 @@ namespace wxd.files.winforms
             var lastStep = steps[steps.Count - 1];
             if (lastStep.PartIndex >= 0)
             {
-                // 取特定段：根据已配置的 _fieldLinks 动态决定段数
-                int maxConfigured = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+                // 取特定段：根据已配置的 FieldLinks 动态决定段数
+                int maxConfigured = _existingLink?.FieldLinks?.Count > 0 ? _existingLink.FieldLinks.Max(f => f.FieldIndex) + 1 : 0;
                 return Math.Max(1, maxConfigured);
             }
             // 保留全部：取已配置的段数 + 默认额外段数
-            int maxConfigured2 = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+            int maxConfigured2 = _existingLink?.FieldLinks?.Count > 0 ? _existingLink.FieldLinks.Max(f => f.FieldIndex) + 1 : 0;
             return Math.Max(5, maxConfigured2);
         }
 
@@ -270,7 +289,7 @@ namespace wxd.files.winforms
             int fieldCount = GetFieldCount();
             for (int i = 0; i < fieldCount; i++)
             {
-                var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == i);
+                var existing = _existingLink?.FieldLinks?.FirstOrDefault(f => f.FieldIndex == i);
                 if (existing != null && !string.IsNullOrEmpty(existing.TargetFile))
                 {
                     string colInfo = !string.IsNullOrEmpty(existing.TargetColumnName)
@@ -302,7 +321,7 @@ namespace wxd.files.winforms
         {
             if (_editingFieldIndex < 0) return false;
             if (string.IsNullOrEmpty(_fieldEditTargetPath)) return false;
-            var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
+            var existing = _existingLink?.FieldLinks?.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
             if (existing == null) return true; // 新段，有暂存文件 = 有未保存
             return existing.TargetFile != _fieldEditTargetPath ||
                    existing.TargetColumnIndex != _fieldEditTargetColIndex ||
@@ -322,9 +341,14 @@ namespace wxd.files.winforms
             }
             _editingFieldIndex = _lstFieldLinks.SelectedIndex;
 
-            // 切换段时，仅当暂存值为空时才从已保存值加载
-            var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
-            if (string.IsNullOrEmpty(_fieldEditTargetPath) && existing != null && !string.IsNullOrEmpty(existing.TargetFile))
+            // ★ 每次切换段时先清空暂存值，然后从已保存值加载（如果已配置）
+            _fieldEditTargetPath = "";
+            _fieldEditTargetColIndex = -1;
+            _fieldEditTargetColName = "";
+            _fieldEditDisplayColIndex = -1;
+            _fieldEditDisplayColName = "";
+            var existing = _existingLink?.FieldLinks?.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
+            if (existing != null && !string.IsNullOrEmpty(existing.TargetFile))
             {
                 _fieldEditTargetPath = existing.TargetFile;
                 _fieldEditTargetColIndex = existing.TargetColumnIndex;
@@ -368,10 +392,12 @@ namespace wxd.files.winforms
         private void OnAddFieldLinkClick(object? sender, EventArgs e)
         {
             // 计算新段的索引：取当前最大索引 + 1
-            int newIndex = _fieldLinks.Count > 0 ? _fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
+            EnsureExistingLink();
+            var fieldLinks = _existingLink!.FieldLinks;
+            int newIndex = fieldLinks.Count > 0 ? fieldLinks.Max(f => f.FieldIndex) + 1 : 0;
 
-            // 直接往 _fieldLinks 中添加一个新的空项（未配置的）
-            _fieldLinks.Add(new FieldLinkConfig
+            // 直接往 FieldLinks 中添加一个新的空项（未配置的）
+            fieldLinks.Add(new FieldLinkConfig
             {
                 FieldIndex = newIndex,
                 TargetFile = "",
@@ -385,11 +411,32 @@ namespace wxd.files.winforms
             UpdateFieldLinkInfo();
         }
 
+        private void SaveCurrentFieldEdit()
+        {
+            if (_editingFieldIndex < 0) return;
+            if (string.IsNullOrEmpty(_fieldEditTargetPath)) return;
+
+            if (_existingLink == null) return;
+            _existingLink.FieldLinks.RemoveAll(f => f.FieldIndex == _editingFieldIndex);
+            _existingLink.FieldLinks.Add(new FieldLinkConfig
+            {
+                FieldIndex = _editingFieldIndex,
+                TargetFile = _fieldEditTargetPath,
+                TargetColumnIndex = _fieldEditTargetColIndex,
+                TargetColumnName = _fieldEditTargetColName,
+                TargetDisplayColumnIndex = _fieldEditDisplayColIndex,
+                TargetDisplayColumnName = _fieldEditDisplayColName,
+            });
+            RefreshFieldLinkList();
+            _lstFieldLinks.SelectedIndex = _editingFieldIndex;
+        }
+
         private void OnDeleteFieldLinkClick(object? sender, EventArgs e)
         {
             if (_lstFieldLinks.SelectedIndex < 0) return;
             int fieldIdx = _lstFieldLinks.SelectedIndex;
-            _fieldLinks.RemoveAll(f => f.FieldIndex == fieldIdx);
+            if (_existingLink == null) return;
+            _existingLink.FieldLinks.RemoveAll(f => f.FieldIndex == fieldIdx);
             RefreshFieldLinkList();
             if (_lstFieldLinks.Items.Count > 0)
                 _lstFieldLinks.SelectedIndex = Math.Min(fieldIdx, _lstFieldLinks.Items.Count - 1);
@@ -407,19 +454,7 @@ namespace wxd.files.winforms
                 AlertForm.Show(this, "请先选择目标文件", "提示", AlertType.Information);
                 return;
             }
-            // 将暂存的编辑值应用到选中段
-            _fieldLinks.RemoveAll(f => f.FieldIndex == _editingFieldIndex);
-            _fieldLinks.Add(new FieldLinkConfig
-            {
-                FieldIndex = _editingFieldIndex,
-                TargetFile = _fieldEditTargetPath,
-                TargetColumnIndex = _fieldEditTargetColIndex,
-                TargetColumnName = _fieldEditTargetColName,
-                TargetDisplayColumnIndex = _fieldEditDisplayColIndex,
-                TargetDisplayColumnName = _fieldEditDisplayColName,
-            });
-            RefreshFieldLinkList();
-            _lstFieldLinks.SelectedIndex = _editingFieldIndex;
+            SaveCurrentFieldEdit();
         }
 
         private void OnSelectFieldFileClick(object? sender, EventArgs e)
@@ -450,7 +485,7 @@ namespace wxd.files.winforms
             string targetPath = _fieldEditTargetPath;
             if (string.IsNullOrEmpty(targetPath))
             {
-                var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
+                var existing = _existingLink?.FieldLinks?.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
                 if (existing != null && !string.IsNullOrEmpty(existing.TargetFile))
                     targetPath = existing.TargetFile;
             }
@@ -478,7 +513,16 @@ namespace wxd.files.winforms
                 // 同时确保路径同步
                 if (string.IsNullOrEmpty(_fieldEditTargetPath))
                     _fieldEditTargetPath = targetPath;
-                UpdateFieldLinkInfo();
+                // 直接更新信息显示，不调用 UpdateFieldLinkInfo（后者会清空暂存值）
+                string colInfo = !string.IsNullOrEmpty(_fieldEditTargetColName)
+                    ? $"[{_fieldEditTargetColName}]"
+                    : $"[列{_fieldEditTargetColIndex}]";
+                string displayInfo = _fieldEditDisplayColIndex >= 0
+                    ? (!string.IsNullOrEmpty(_fieldEditDisplayColName)
+                        ? $", 显示:{_fieldEditDisplayColName}"
+                        : $", 显示:列{_fieldEditDisplayColIndex}")
+                    : "";
+                _lblFieldLinkInfo.Text = $"第{_editingFieldIndex}段: {Path.GetFileName(_fieldEditTargetPath)} {colInfo}{displayInfo} (未保存，请点击 [更新])";
             }
         }
 
@@ -488,7 +532,7 @@ namespace wxd.files.winforms
             string targetPath = _fieldEditTargetPath;
             if (string.IsNullOrEmpty(targetPath))
             {
-                var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
+                var existing = _existingLink?.FieldLinks?.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
                 if (existing != null && !string.IsNullOrEmpty(existing.TargetFile))
                     targetPath = existing.TargetFile;
             }
@@ -516,7 +560,14 @@ namespace wxd.files.winforms
                 _fieldEditDisplayColName = colDlg.SelectedColumnName;
                 if (string.IsNullOrEmpty(_fieldEditTargetPath))
                     _fieldEditTargetPath = targetPath;
-                UpdateFieldLinkInfo();
+                // 直接更新信息显示，不调用 UpdateFieldLinkInfo（后者会清空暂存值）
+                string colInfo = !string.IsNullOrEmpty(_fieldEditTargetColName)
+                    ? $"[{_fieldEditTargetColName}]"
+                    : $"[列{_fieldEditTargetColIndex}]";
+                string displayInfo = !string.IsNullOrEmpty(_fieldEditDisplayColName)
+                    ? $" 显示:{_fieldEditDisplayColName}"
+                    : $" 显示:列{_fieldEditDisplayColIndex}";
+                _lblFieldLinkInfo.Text = $"第{_editingFieldIndex}段: {Path.GetFileName(_fieldEditTargetPath)} {colInfo},{displayInfo} (未保存，请点击 [更新])";
             }
         }
 
@@ -587,44 +638,138 @@ namespace wxd.files.winforms
         private void OnOKClick(object? sender, EventArgs e)
         {
             // 检查是否有未保存的字段编辑暂存
-            bool hasPendingFieldEdit = false;
-            string pendingMsg = "";
-            if (!string.IsNullOrEmpty(_fieldEditTargetPath) && _editingFieldIndex >= 0)
-            {
-                var existing = _fieldLinks.FirstOrDefault(f => f.FieldIndex == _editingFieldIndex);
-                if (existing == null || existing.TargetFile != _fieldEditTargetPath ||
-                    existing.TargetColumnIndex != _fieldEditTargetColIndex ||
-                    existing.TargetDisplayColumnIndex != _fieldEditDisplayColIndex)
-                {
-                    hasPendingFieldEdit = true;
-                    pendingMsg = $"第{_editingFieldIndex}段关联配置有未保存的修改（未点击\"更新\"按钮）。";
-                }
-            }
+            bool hasPendingFieldEdit = HasPendingFieldEditForCurrent() && _editingFieldIndex >= 0;
+            bool hasPendingStepEdit = _hasUnsavedChanges;
 
-            if (hasPendingFieldEdit || _hasUnsavedChanges)
+            if (hasPendingFieldEdit || hasPendingStepEdit)
             {
-                string msg = "";
+                var sb = new StringBuilder();
                 if (hasPendingFieldEdit)
-                    msg += pendingMsg;
-                if (_hasUnsavedChanges)
+                    sb.AppendLine($"第{_editingFieldIndex}段关联配置有未保存的修改。");
+                if (hasPendingStepEdit)
+                    sb.AppendLine("切割步骤有未保存的修改。");
+                sb.AppendLine();
+                sb.Append("「保存并关闭」— 保存修改并关闭对话框" + GlobalConst.NewLine);
+                sb.Append("「放弃并关闭」— 放弃修改并关闭对话框" + GlobalConst.NewLine);
+                sb.Append("「继续编辑」— 返回对话框继续编辑");
+
+                var result = AlertForm.ShowConfirmThreeButton(this, sb.ToString(), "未保存的修改",
+                    yesText: "保存并关闭", noText: "放弃并关闭", cancelText: "继续编辑");
+                if (result == DialogResult.Yes)
                 {
-                    if (msg.Length > 0) msg += GlobalConst.NewLine;
-                    msg += "切割步骤有未保存的修改（未点击\"更新\"按钮）。";
+                    if (hasPendingFieldEdit) SaveCurrentFieldEdit();
+                    if (hasPendingStepEdit) UpdateStep();
+                    _isClosingConfirmed = true;
+                    DialogResult = DialogResult.Yes;
+                    Close();
                 }
-                msg += GlobalConst.NewLine + GlobalConst.NewLine + "点击\"确定\"将放弃修改并关闭对话框。" + GlobalConst.NewLine + "点击\"取消\"返回继续编辑。";
-                var result = AlertForm.ShowConfirm(this, msg, "未保存的修改", AlertType.Warning);
-                if (result == DialogResult.No)
-                    return;
+                else if (result == DialogResult.No)
+                {
+                    _isClosingConfirmed = true;
+                    DialogResult = DialogResult.Yes;
+                    Close();
+                }
+                // DialogResult.Cancel: 返回继续编辑
+                return;
             }
+            _isClosingConfirmed = true;
             DialogResult = DialogResult.Yes;
             Close();
+        }
+
+        private void OnFieldLinkSelectionChanged(object? sender, EventArgs e)
+        {
+            int newSelectedIndex = _lstFieldLinks.SelectedIndex;
+            if (newSelectedIndex < 0) { UpdateFieldLinkInfo(); return; }
+
+            // 如果当前段有未保存的修改，且确实在切换段
+            if (HasPendingFieldEditForCurrent() && _editingFieldIndex >= 0 && newSelectedIndex != _editingFieldIndex)
+            {
+                string msg = $"第{_editingFieldIndex}段有未保存的修改。{GlobalConst.NewLine}{GlobalConst.NewLine}" +
+                             $"「保存并切换」— 保存当前段的编辑并切换到第{newSelectedIndex}段{GlobalConst.NewLine}" +
+                             $"「放弃并切换」— 放弃当前段的修改并切换到第{newSelectedIndex}段";
+                var result = AlertForm.ShowConfirmThreeButton(this, msg, "未保存的修改",
+                    yesText: "保存并切换", noText: "放弃并切换", cancelText: "继续编辑");
+                if (result == DialogResult.Yes)
+                {
+                    SaveCurrentFieldEdit();
+                }
+                else if (result == DialogResult.Cancel)
+                {
+                    // 取消切换：恢复选中到原段
+                    _lstFieldLinks.SelectedIndexChanged -= OnFieldLinkSelectionChanged;
+                    _lstFieldLinks.SelectedIndex = _editingFieldIndex;
+                    _lstFieldLinks.SelectedIndexChanged += OnFieldLinkSelectionChanged;
+                    return;
+                }
+                // DialogResult.No: 放弃修改，继续切换
+            }
+            UpdateFieldLinkInfo();
+        }
+
+        private void OnCancelClick(object? sender, EventArgs e)
+        {
+            if (TryCloseWithPendingCheck())
+            {
+                _isClosingConfirmed = true;
+                Close();
+            }
+        }
+
+        private void OnFormClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (_isClosingConfirmed) return;
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                if (TryCloseWithPendingCheck())
+                {
+                    _isClosingConfirmed = true;
+                    Close();
+                }
+            }
+        }
+
+        private bool TryCloseWithPendingCheck()
+        {
+            bool hasPendingFieldEdit = HasPendingFieldEditForCurrent() && _editingFieldIndex >= 0;
+            bool hasPendingStepEdit = _hasUnsavedChanges;
+
+            if (hasPendingFieldEdit || hasPendingStepEdit)
+            {
+                var sb = new StringBuilder();
+                if (hasPendingFieldEdit)
+                    sb.AppendLine($"第{_editingFieldIndex}段关联配置有未保存的修改。");
+                if (hasPendingStepEdit)
+                    sb.AppendLine("切割步骤有未保存的修改。");
+                sb.AppendLine();
+                sb.Append("「保存并关闭」— 保存修改并关闭对话框" + GlobalConst.NewLine);
+                sb.Append("「放弃并关闭」— 放弃修改并关闭对话框" + GlobalConst.NewLine);
+                sb.Append("「继续编辑」— 返回对话框继续编辑");
+
+                var result = AlertForm.ShowConfirmThreeButton(this, sb.ToString(), "未保存的修改",
+                    yesText: "保存并关闭", noText: "放弃并关闭", cancelText: "继续编辑");
+                if (result == DialogResult.Yes)
+                {
+                    if (hasPendingFieldEdit) SaveCurrentFieldEdit();
+                    if (hasPendingStepEdit) UpdateStep();
+                    return true;
+                }
+                else if (result == DialogResult.No)
+                {
+                    return true;
+                }
+                else // DialogResult.Cancel — 继续编辑
+                {
+                    return false;
+                }
+            }
+            return true; // 无未保存修改，允许关闭
         }
 
         private void OnDeleteClick(object? sender, EventArgs e)
         {
             _existingLink = null;
-            _fieldLinks.Clear();
-            _btnDelete.Visible = false;
             RefreshFieldLinkList();
             RefreshStepList();
             _txtDisplayHeaders.Text = "";
@@ -862,7 +1007,7 @@ namespace wxd.files.winforms
                 IntegralHeight = false,
                 BackColor = Color.FromArgb(250, 252, 255)
             };
-            _lstFieldLinks.SelectedIndexChanged += (s, e) => UpdateFieldLinkInfo();
+            _lstFieldLinks.SelectedIndexChanged += OnFieldLinkSelectionChanged;
             grpFieldLinks.Controls.Add(_lstFieldLinks);
 
             // 添加按钮
@@ -1006,7 +1151,7 @@ namespace wxd.files.winforms
                 ForeColor = Color.White,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) },
                 Cursor = Cursors.Hand,
-                Visible = _existingLink != null || _fieldLinks.Count > 0
+                Visible = _existingLink != null
             };
             _btnDelete.Click += OnDeleteClick;
             Controls.Add(_btnDelete);
@@ -1031,14 +1176,13 @@ namespace wxd.files.winforms
                 Location = new Point(460, y),
                 Size = new Size(70, 28),
                 FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel,
                 BackColor = Color.FromArgb(235, 248, 255),
                 ForeColor = Color.FromArgb(20, 60, 100),
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
             Controls.Add(_btnCancel);
 
-            AcceptButton = _btnOK; CancelButton = _btnCancel;
+            AcceptButton = _btnOK;
             ResumeLayout(false);
         }
 

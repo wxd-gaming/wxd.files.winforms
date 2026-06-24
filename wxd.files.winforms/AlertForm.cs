@@ -289,6 +289,75 @@ namespace wxd.files.winforms
             return form.ShowDialog(owner);
         }
 
+        /// <summary>显示带三个按钮的确认弹窗，三个按钮分别返回 <see cref="DialogResult.Yes"/>、<see cref="DialogResult.No"/>、<see cref="DialogResult.Cancel"/></summary>
+        public static DialogResult ShowConfirmThreeButton(IWin32Window owner, string message, string title,
+            string yesText = "确定", string noText = "取消", string cancelText = "继续编辑",
+            AlertType type = AlertType.Warning)
+        {
+            using var form = new AlertForm(title, message, type, showCopy: false, exception: null);
+
+            var btnYes = new Button
+            {
+                Text = yesText,
+                Size = new Size(110, 30),
+                Anchor = AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(66, 165, 245),
+                ForeColor = Color.White,
+                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.Yes
+            };
+            btnYes.FlatAppearance.BorderSize = 1;
+            btnYes.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+
+            var btnNo = new Button
+            {
+                Text = noText,
+                Size = new Size(110, 30),
+                Anchor = AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(180, 190, 200),
+                ForeColor = Color.White,
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.No
+            };
+            btnNo.FlatAppearance.BorderSize = 1;
+            btnNo.FlatAppearance.BorderColor = Color.FromArgb(160, 170, 180);
+
+            var btnCancel = new Button
+            {
+                Text = cancelText,
+                Size = new Size(100, 30),
+                Anchor = AnchorStyles.Right,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(210, 215, 225),
+                ForeColor = Color.FromArgb(60, 70, 90),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.Cancel
+            };
+            btnCancel.FlatAppearance.BorderSize = 1;
+            btnCancel.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 205);
+
+            var bottomPanel = form.Controls[^1] as Panel;
+            if (bottomPanel != null)
+            {
+                form._btnOk.Visible = false;
+                btnYes.Location = new Point(bottomPanel.Width - btnYes.Width - 10, 6);
+                btnNo.Location = new Point(btnYes.Left - btnNo.Width - 8, 6);
+                btnCancel.Location = new Point(btnNo.Left - btnCancel.Width - 8, 6);
+                bottomPanel.Controls.Add(btnYes);
+                bottomPanel.Controls.Add(btnNo);
+                bottomPanel.Controls.Add(btnCancel);
+            }
+
+            form.AcceptButton = btnYes;
+            form.CancelButton = btnCancel;
+            return form.ShowDialog(owner);
+        }
+
         /// <summary>显示错误弹窗（自动显示复制按钮）</summary>
         public static DialogResult ShowError(IWin32Window owner, string message, string title = "错误", Exception? exception = null)
         {

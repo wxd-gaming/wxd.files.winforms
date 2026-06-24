@@ -43,6 +43,9 @@ public class DirectoryFrozenConfig
     /// <summary>文件级配置（key: 文件相对路径, value: 文件配置）</summary>
     public Dictionary<string, FileConfig> FileSettings { get; set; } = new();
 
+    /// <summary>关联配置模板列表</summary>
+    public List<LinkTemplate>? LinkTemplates { get; set; }
+
     // ========== 已废弃（仅用于兼容旧数据，迁移后自动清空）==========
     [Obsolete("已迁移到 FileSettings.ColumnLinks")]
     public List<ColumnLinkConfig>? ColumnLinks { get; set; }

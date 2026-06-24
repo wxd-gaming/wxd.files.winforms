@@ -1182,6 +1182,11 @@ namespace wxd.files.winforms
             }
 
             _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
+            // ★ 对引用模板的列，从模板加载最新配置填充运行时数据
+            foreach (var link in _columnLinks)
+            {
+                link.RefreshFromTemplate();
+            }
             // ★ 后台异步构建关联 lookup，不阻塞表格显示
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
@@ -2245,7 +2250,23 @@ namespace wxd.files.winforms
             {
                 _columnCheckStates = dialog.GetCheckedStates();
                 _columnLinks = dialog.GetColumnLinks();
+                // ★ 保存前对模板引用的列清理冗余数据（仅保留 TemplateUid，由运行时实时加载）
+                foreach (var link in _columnLinks)
+                {
+                    if (!string.IsNullOrEmpty(link.TemplateUid))
+                    {
+                        link.ValueExtractionEnabled = false;
+                        link.ExtractSteps = new();
+                        link.DisplayColumnHeaders = "";
+                        link.FieldLinks = new();
+                    }
+                }
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
+                // ★ 保存后重新从模板填充运行时数据
+                foreach (var link in _columnLinks)
+                {
+                    link.RefreshFromTemplate();
+                }
                 // ★ 后台异步构建关联 lookup
                 if (_columnLinks.Count > 0)
                     FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
@@ -4245,6 +4266,11 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(_rootDir))
             {
                 _columnLinks = CsvSettings.GetColumnLinksByDirectory(_rootDir);
+                // ★ 对引用模板的列，从模板加载最新配置填充运行时数据
+                foreach (var link in _columnLinks)
+                {
+                    link.RefreshFromTemplate();
+                }
                 if (_columnLinks.Count > 0)
                     FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
             }

@@ -11,6 +11,7 @@ namespace wxd.files.winforms
         private Button _btnOK = new();
         private Button _btnCancel = new();
         private Button _btnLinkManage = new();
+        private Button _btnTemplateRef = new();
         private TextBox _txtSearch = new();
         private int _lockedColumnIndex = -1;
         private bool[] _checkedStates;
@@ -123,11 +124,22 @@ namespace wxd.files.winforms
                 string displayText = "";
                 if (link != null)
                 {
-                    int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
-                    if (linkedFields > 0)
-                        displayText = $"⚡{linkedFields}字段";
+                    if (!string.IsNullOrEmpty(link.TemplateUid))
+                    {
+                        var template = LinkTemplateManager.GetTemplate(link.TemplateUid);
+                        if (template != null)
+                            displayText = $"📋{template.Name}";
+                        else
+                            displayText = "📋(模板已删除)";
+                    }
                     else
-                        displayText = "📋格式";
+                    {
+                        int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
+                        if (linkedFields > 0)
+                            displayText = $"⚡{linkedFields}字段";
+                        else
+                            displayText = "📋格式";
+                    }
                 }
                 item.SubItems.Add(displayText);
 
@@ -222,6 +234,40 @@ namespace wxd.files.winforms
             };
             _btnLinkManage.Click += OnLinkManageClick;
 
+            _btnTemplateRef = new Button
+            {
+                Text = "引用模板", Location = new Point(510, 468), Size = new Size(80, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                Cursor = Cursors.Hand
+            };
+            _btnTemplateRef.Click += OnTemplateRefClick;
+
+            var btnTemplateManage = new Button
+            {
+                Text = "管理模板", Location = new Point(430, 468), Size = new Size(72, 28),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100),
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
+                Cursor = Cursors.Hand
+            };
+            btnTemplateManage.Click += (s, e) =>
+            {
+                if (string.IsNullOrEmpty(_rootDir))
+                {
+                    AlertForm.Show(this, "未设置目录路径，无法管理模板", "提示", AlertType.Information);
+                    return;
+                }
+                using var dialog = new LinkTemplateDialog(mode: false, _fileEntries, _frozenRows, _headerRowIndex, _rootDir);
+                dialog.ShowDialog(this);
+                // 如果模板有变更，刷新关联列的显示
+                if (dialog.TemplatesChanged)
+                {
+                    UpdateLinkColumnInListView();
+                }
+            };
+
             _btnOK = new Button
             {
                 Text = "确定", Location = new Point(690, 468), Size = new Size(80, 28),
@@ -238,7 +284,7 @@ namespace wxd.files.winforms
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
             };
 
-            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _txtSearch, _lvColumns, _btnLinkManage, _btnOK, _btnCancel });
+            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _txtSearch, _lvColumns, btnTemplateManage, _btnLinkManage, _btnTemplateRef, _btnOK, _btnCancel });
             AcceptButton = _btnOK;
             CancelButton = _btnCancel;
             ResumeLayout(false);
@@ -255,20 +301,74 @@ namespace wxd.files.winforms
             int colIndex = (int)selectedItem.Tag;
             string currentRelPath = GetRelativePath(_currentFilePath);
 
+            // 查找已有配置，传入深拷贝副本
+            var existingLink = _columnLinks.Find(l =>
+                l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                l.SourceColumnIndex == colIndex);
+            var linkCopy = existingLink?.DeepClone();
+
             using var setupDialog = new ColumnLinkSetupDialog(
                 _fileEntries, currentRelPath, colIndex, _rootDir, _frozenRows,
-                _columnLinks.FindAll(l =>
-                    l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
-                    l.SourceColumnIndex == colIndex),
-                _headerRowIndex);
+                linkCopy, _headerRowIndex);
             if (setupDialog.ShowDialog(this) == DialogResult.Yes)
             {
+                var newLink = setupDialog.GetResult();
+                if (newLink != null)
+                {
+                    // 删除旧配置，用返回的对象替换
+                    _columnLinks.RemoveAll(l =>
+                        l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                        l.SourceColumnIndex == colIndex);
+                    _columnLinks.Add(newLink);
+                }
+                else
+                {
+                    // 返回 null 表示删除了配置
+                    _columnLinks.RemoveAll(l =>
+                        l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
+                        l.SourceColumnIndex == colIndex);
+                }
+                UpdateLinkColumnInListView();
+            }
+        }
+
+        private void OnTemplateRefClick(object? sender, EventArgs e)
+        {
+            if (_lvColumns.SelectedItems.Count == 0)
+            {
+                AlertForm.Show(this, "请先在列表中选择要引用模板的列（点击行选中）", "提示", AlertType.Information);
+                return;
+            }
+            if (string.IsNullOrEmpty(_rootDir))
+            {
+                AlertForm.Show(this, "未设置目录路径，无法管理模板", "提示", AlertType.Information);
+                return;
+            }
+
+            using var dialog = new LinkTemplateDialog(mode: true, _fileEntries, _frozenRows, _headerRowIndex, _rootDir);
+            if (dialog.ShowDialog(this) == DialogResult.OK && dialog.IsTemplateSelected)
+            {
+                var selectedItem = _lvColumns.SelectedItems[0];
+                int colIndex = (int)selectedItem.Tag;
+                string currentRelPath = GetRelativePath(_currentFilePath);
+
+                var template = LinkTemplateManager.GetTemplate(dialog.SelectedTemplateUid!);
+                if (template == null) return;
+
+                // 删除当前列已有配置
                 _columnLinks.RemoveAll(l =>
                     l.SourceFile.Equals(currentRelPath, StringComparison.OrdinalIgnoreCase) &&
                     l.SourceColumnIndex == colIndex);
-                var newLink = setupDialog.GetResult();
-                if (newLink != null)
-                    _columnLinks.Add(newLink);
+
+                // 创建引用模板的配置 — 只记 TemplateUid，不复制配置，运行时从模板实时读取
+                var newLink = new ColumnLinkConfig
+                {
+                    SourceFile = currentRelPath,
+                    SourceColumnIndex = colIndex,
+                    TemplateUid = template.Uid,
+                    // 不再调用 ApplyTemplate，配置从模板实时读取
+                };
+                _columnLinks.Add(newLink);
                 UpdateLinkColumnInListView();
             }
         }
@@ -287,11 +387,22 @@ namespace wxd.files.winforms
                     string displayText = "";
                     if (link != null)
                     {
-                        int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
-                        if (linkedFields > 0)
-                            displayText = $"⚡{linkedFields}字段";
+                        if (!string.IsNullOrEmpty(link.TemplateUid))
+                        {
+                            var template = LinkTemplateManager.GetTemplate(link.TemplateUid);
+                            if (template != null)
+                                displayText = $"📋{template.Name}";
+                            else
+                                displayText = "📋(模板已删除)";
+                        }
                         else
-                            displayText = "📋格式";
+                        {
+                            int linkedFields = link.FieldLinks?.Count(f => !string.IsNullOrEmpty(f.TargetFile)) ?? 0;
+                            if (linkedFields > 0)
+                                displayText = $"⚡{linkedFields}字段";
+                            else
+                                displayText = "📋格式";
+                        }
                     }
                     linkText.Text = displayText;
                 }

@@ -52,6 +52,9 @@
     <Compile Update="LinkTableSelectorDialog.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="LinkTemplateDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Update="TableBrowserControl.cs">
       <SubType>UserControl</SubType>
     </Compile>

@@ -203,6 +203,7 @@ namespace wxd.files.winforms
                     CsvMappingRowIndex = cfg.CsvMappingRowIndex,
                     ExcelMappingRowIndex = cfg.ExcelMappingRowIndex,
                     FileSettings = cfg.FileSettings,
+                    LinkTemplates = cfg.LinkTemplates,
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, json);
@@ -258,6 +259,11 @@ namespace wxd.files.winforms
         /// 不存在则从 ConfigurationManager 读取（旧数据兼容），
         /// 仍不存在则返回默认值。
         /// </summary>
+        internal static DirectoryFrozenConfig? TryGetDirConfigInternal(string directoryPath)
+        {
+            return TryGetDirConfig(directoryPath);
+        }
+
         private static DirectoryFrozenConfig? TryGetDirConfig(string directoryPath)
         {
             if (string.IsNullOrEmpty(directoryPath)) return null;
@@ -318,6 +324,11 @@ namespace wxd.files.winforms
         /// <summary>
         /// 保存目录配置：写入 .wxd-work/config.json 并同步到 ConfigurationManager 缓存。
         /// </summary>
+        internal static void SaveDirConfigInternal(string directoryPath, Action<DirectoryFrozenConfig> updateAction)
+        {
+            SaveDirConfig(directoryPath, updateAction);
+        }
+
         private static void SaveDirConfig(string directoryPath, Action<DirectoryFrozenConfig> updateAction)
         {
             if (string.IsNullOrEmpty(directoryPath)) return;
@@ -568,6 +579,34 @@ namespace wxd.files.winforms
                 fc.UniqueColumnIndex = columnIndex;
                 CleanupFileConfig(cfg, relativePath);
             });
+        }
+
+        #endregion
+
+        #region 全局关联模板存储
+
+        private const string LinkTemplatesKey = "LinkTemplates";
+
+        /// <summary>获取所有关联配置模板（全局存储）</summary>
+        public static List<LinkTemplate> GetLinkTemplates()
+        {
+            var json = GetStringValue(LinkTemplatesKey, "[]");
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<List<LinkTemplate>>(json)
+                       ?? new List<LinkTemplate>();
+            }
+            catch
+            {
+                return new List<LinkTemplate>();
+            }
+        }
+
+        /// <summary>保存所有关联配置模板（全局存储）</summary>
+        public static void SetLinkTemplates(List<LinkTemplate> templates)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(templates);
+            SetStringValue(LinkTemplatesKey, json);
         }
 
         #endregion
