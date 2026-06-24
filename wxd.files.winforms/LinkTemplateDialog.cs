@@ -452,10 +452,11 @@ namespace wxd.files.winforms
                     LinkTemplateManager.UpdateTemplate(_editingTemplate);
                     TemplatesChanged = true;
                     ReloadTemplates();
-                    // 重新定位到编辑的模板并强制刷新预览
+                    // 重新定位到编辑的模板并强制刷新预览和列表
                     int idx = _templates.FindIndex(t => t.Uid == _editingTemplate.Uid);
                     if (idx >= 0)
                     {
+                        RefreshTemplateList();
                         _lstTemplates.SelectedIndex = idx;
                         OnTemplateSelected(null, EventArgs.Empty);
                     }
