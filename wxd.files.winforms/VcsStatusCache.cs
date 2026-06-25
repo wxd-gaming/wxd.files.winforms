@@ -57,6 +57,11 @@ namespace wxd.files.winforms
     /// </summary>
     public static class VcsStatusCache
     {
+        static VcsStatusCache()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
+
         // ==================== 常量 ====================
         private const int MaxCacheEntries = 100;
 
@@ -183,20 +188,57 @@ namespace wxd.files.winforms
         }
 
         /// <summary>
+        /// 检查指定目录及其子目录的缓存中是否有冲突文件。
+        /// 只搜索 rootDirectory 范围内的缓存，不会遍历整个仓库。
+        /// </summary>
+        public static bool HasAnyConflictedFiles(string rootDirectory)
+        {
+            var root = rootDirectory.TrimEnd('\\').ToLowerInvariant();
+            foreach (var kvp in _cache)
+            {
+                // 只检查属于 rootDirectory 范围内的缓存
+                if (!kvp.Key.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                foreach (var fs in kvp.Value.FileStatuses.Values)
+                {
+                    if (fs == FileVcsStatus.Conflicted)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// 查询单个文件的 VCS 状态。
-        /// 精确匹配文件所在目录的缓存，不向上遍历父目录。
-        /// 如果文件所在目录没有独立缓存，返回 Normal。
+        /// 优先精确匹配文件所在目录的缓存；
+        /// 如果未找到，向上遍历父目录查找（处理子目录中冲突文件等场景）。
         /// </summary>
         public static FileVcsStatus GetFileStatus(string filePath)
         {
             var dir = Path.GetDirectoryName(filePath) ?? "";
             var fileName = Path.GetFileName(filePath);
-            if (_cache.TryGetValue(dir.ToLowerInvariant(), out var cached))
+
+            // 从文件所在目录开始，逐级向上查找缓存
+            var searchDir = dir;
+            while (!string.IsNullOrEmpty(searchDir))
             {
-                if (cached.FileStatuses.TryGetValue(fileName, out var fs))
-                    return fs;
-                return FileVcsStatus.Normal;
+                if (_cache.TryGetValue(searchDir.ToLowerInvariant(), out var cached))
+                {
+                    if (cached.FileStatuses.TryGetValue(fileName, out var fs))
+                        return fs;
+                    // 找到了缓存但没找到文件 → 停止向上遍历
+                    return FileVcsStatus.Normal;
+                }
+
+                // 向上找父目录
+                var parent = Path.GetDirectoryName(searchDir);
+                if (string.IsNullOrEmpty(parent) ||
+                    string.Equals(parent, searchDir, StringComparison.OrdinalIgnoreCase))
+                    break;
+                searchDir = parent;
             }
+
             return FileVcsStatus.Normal;
         }
 
@@ -357,7 +399,7 @@ namespace wxd.files.winforms
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8
+                StandardOutputEncoding = Encoding.GetEncoding(936)
             };
 
             using var process = Process.Start(psi);
@@ -374,13 +416,26 @@ namespace wxd.files.winforms
                 var statusChar = line[0];
                 var path = line[8..].Trim();
 
-                // ★ 不管绝对路径还是相对路径，统一只取文件名
+                // ★ 跳过子目录条目（SVN 中目录状态行以 / 或 \ 结尾）
+                if (path.EndsWith("\\") || path.EndsWith("/")) continue;
+
                 var fileName = Path.GetFileName(path);
                 if (string.IsNullOrEmpty(fileName)) continue;
 
-                // ★ 确认文件在当前目录下存在（同时过滤子目录文件）
-                var fullPath = Path.Combine(directoryPath, fileName);
-                if (!File.Exists(fullPath)) continue;
+                // ★ 构建完整路径：支持子目录中的文件（如 In\cfg_global.xlsx）
+                string fullPath;
+                if (Path.IsPathRooted(path))
+                {
+                    fullPath = path; // 已经是绝对路径
+                }
+                else
+                {
+                    fullPath = Path.Combine(directoryPath, path); // 相对路径
+                }
+
+                // ★ 不检查 File.Exists — 信任 SVN 的输出（冲突文件可能已被删除但仍需标记）
+                var fileDir = Path.GetDirectoryName(fullPath) ?? "";
+                if (string.IsNullOrEmpty(fileDir)) continue;
 
                 var status = statusChar switch
                 {
@@ -393,7 +448,23 @@ namespace wxd.files.winforms
                     _ => FileVcsStatus.Unknown
                 };
 
-                result[fileName] = status;
+                // ★ 如果文件在子目录中，为该子目录创建/更新缓存条目
+                if (!string.Equals(fileDir, directoryPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var subDir = fileDir.ToLowerInvariant();
+                    var subCache = _cache.GetOrAdd(subDir, _ => new VcsDirectoryStatus
+                    {
+                        DirectoryPath = fileDir,
+                        VcsType = VcsType.Svn,
+                        LastRefreshTime = DateTime.UtcNow
+                    });
+                    subCache.FileStatuses[fileName] = status;
+                }
+                else
+                {
+                    // 文件在当前目录下
+                    result[fileName] = status;
+                }
             }
 
             return result;

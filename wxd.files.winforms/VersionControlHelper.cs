@@ -14,6 +14,11 @@ namespace wxd.files.winforms
 
     public static class VersionControlHelper
     {
+        static VersionControlHelper()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
+
         /// <summary>
         /// 从文件/目录路径向上查找，判断版本控制类型。
         /// 如果传入的是目录路径，会先从该目录本身开始检查（不会跳过它）。
@@ -196,7 +201,7 @@ namespace wxd.files.winforms
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8
+                    StandardOutputEncoding = Encoding.GetEncoding(936)
                 };
 
                 using var process = Process.Start(psi);
@@ -585,8 +590,8 @@ namespace wxd.files.winforms
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8
+                        StandardOutputEncoding = Encoding.GetEncoding(936),
+                        StandardErrorEncoding = Encoding.GetEncoding(936)
                     };
 
                     using var process = Process.Start(psi);

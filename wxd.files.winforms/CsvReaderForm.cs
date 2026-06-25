@@ -930,7 +930,7 @@ namespace wxd.files.winforms
             }
 
             // 检测是否有冲突文件
-            bool hasConflictedFiles = status.FileStatuses.Values.Any(fs => fs == FileVcsStatus.Conflicted);
+            bool hasConflictedFiles = VcsStatusCache.HasAnyConflictedFiles(_currentDir);
             _chkShowConflictOnly.Visible = hasConflictedFiles || _showConflictOnly;
 
             // 如果在冲突过滤模式，刷新冲突列表
