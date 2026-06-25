@@ -866,8 +866,9 @@ namespace wxd.files.winforms
 
             _currentVcsType = VersionControlHelper.DetectVcs(_currentDir);
 
-            // 取消之前的订阅
-            VcsStatusCache.StatusRefreshed -= OnVcsStatusRefreshed;
+            // 使用事件派发器 AddListener/RemoveListener 替代 static event +=/-=，
+            // 避免多个 CsvReaderForm 实例间误删其他实例的订阅
+            VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
 
             if (_currentVcsType != VcsType.None)
             {
@@ -875,7 +876,7 @@ namespace wxd.files.winforms
                 ShowVcsPanel(true);
 
                 // 先订阅事件再触发刷新，避免竞态条件（刷新完成但事件还没订阅）
-                VcsStatusCache.StatusRefreshed += OnVcsStatusRefreshed;
+                VcsStatusCache.AddListener(OnVcsStatusRefreshed);
                 _ = VcsStatusCache.RefreshAsync(_currentDir);
             }
             else
@@ -2387,6 +2388,9 @@ namespace wxd.files.winforms
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // 取消静态事件订阅，避免已关闭的实例仍被后台线程回调
+            VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
+
             _loadingCts?.Cancel();
             _contentSearchCancelled = true;
 

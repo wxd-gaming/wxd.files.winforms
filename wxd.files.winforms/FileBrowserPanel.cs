@@ -1343,9 +1343,10 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(_currentDir)) return;
             if (IsDisposed) return;
 
-            // 先取消旧订阅，再重新订阅（确保不会重复订阅）
-            VcsStatusCache.StatusRefreshed -= OnVcsStatusRefreshed;
-            VcsStatusCache.StatusRefreshed += OnVcsStatusRefreshed;
+            // 使用事件派发器 AddListener/RemoveListener 替代 static event +=/-=，
+            // 避免多个实例间误删其他实例的订阅
+            VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
+            VcsStatusCache.AddListener(OnVcsStatusRefreshed);
 
             // 获取当前目录状态（立即返回，不阻塞），
             // 缓存缺失或过期时会自动触发后台刷新，刷新完成后通过事件通知
@@ -2344,6 +2345,9 @@ namespace wxd.files.winforms
 
         protected override void Dispose(bool disposing)
         {
+            // 取消 VCS 状态事件订阅
+            VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
+
             // 停止定时器并立即保存
             _saveDebounceTimer?.Stop();
             _filterDebounceTimer?.Stop();

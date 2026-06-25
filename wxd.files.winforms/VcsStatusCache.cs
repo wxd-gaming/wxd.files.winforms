@@ -75,8 +75,46 @@ namespace wxd.files.winforms
         // 刷新任务锁：确保同一目录只有一个刷新任务在运行
         private static readonly ConcurrentDictionary<string, Task> _refreshTasks = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>状态刷新完成事件（参数为刷新后的目录状态）</summary>
-        public static event EventHandler<VcsDirectoryStatus>? StatusRefreshed;
+        // ==================== 事件派发器 ====================
+        // 使用线程安全的 List + AddListener/RemoveListener 替代 static event，
+        // 避免多个实例间 -= 误删其他实例订阅的问题。
+        private static readonly object _listenersLock = new();
+        private static readonly List<EventHandler<VcsDirectoryStatus>> _listeners = new();
+
+        /// <summary>添加状态刷新完成监听器</summary>
+        public static void AddListener(EventHandler<VcsDirectoryStatus> listener)
+        {
+            lock (_listenersLock)
+            {
+                if (!_listeners.Contains(listener))
+                    _listeners.Add(listener);
+            }
+        }
+
+        /// <summary>移除状态刷新完成监听器</summary>
+        public static void RemoveListener(EventHandler<VcsDirectoryStatus> listener)
+        {
+            lock (_listenersLock)
+            {
+                _listeners.Remove(listener);
+            }
+        }
+
+        /// <summary>通知所有监听器状态刷新完成</summary>
+        private static void NotifyStatusRefreshed(VcsDirectoryStatus status)
+        {
+            EventHandler<VcsDirectoryStatus>[]? snapshot;
+            lock (_listenersLock)
+            {
+                if (_listeners.Count == 0) return;
+                snapshot = _listeners.ToArray();
+            }
+            foreach (var listener in snapshot)
+            {
+                try { listener(null, status); }
+                catch { /* 防止单个监听器异常影响其他监听器 */ }
+            }
+        }
 
         /// <summary>获取目录状态，缓存缺失或过期时自动在后台刷新（不会重复发起）</summary>
         public static VcsDirectoryStatus GetOrRefresh(string directoryPath)
@@ -159,7 +197,7 @@ namespace wxd.files.winforms
                     status.FileStatuses = new Dictionary<string, FileVcsStatus>(StringComparer.OrdinalIgnoreCase);
                     status.LastRefreshTime = DateTime.UtcNow;
                     status.IsRefreshing = false;
-                    StatusRefreshed?.Invoke(null, status);
+                    NotifyStatusRefreshed(status);
                     return;
                 }
 
@@ -184,7 +222,7 @@ namespace wxd.files.winforms
                 status.LastRefreshTime = DateTime.UtcNow;
             }
 
-            StatusRefreshed?.Invoke(null, status);
+            NotifyStatusRefreshed(status);
         }
 
         /// <summary>
