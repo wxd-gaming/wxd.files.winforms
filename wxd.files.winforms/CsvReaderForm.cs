@@ -1963,30 +1963,29 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                var dir = Path.GetDirectoryName(fullPath) ?? "";
                 var ext = Path.GetExtension(fullPath).ToLowerInvariant();
                 int frozenRows, headerRowIndex, uniqueColumnIndex, mappingRowIndex;
                 if (ext == ".csv")
                 {
-                    frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(dir);
-                    headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(dir);
-                    uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(dir);
-                    mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(dir);
+                    frozenRows = CsvSettings.GetCsvFrozenRowsByDirectory(_currentDir);
+                    headerRowIndex = CsvSettings.GetCsvHeaderRowIndexByDirectory(_currentDir);
+                    uniqueColumnIndex = CsvSettings.GetCsvUniqueColumnIndexByDirectory(_currentDir);
+                    mappingRowIndex = CsvSettings.GetCsvMappingRowIndexByDirectory(_currentDir);
                 }
                 else
                 {
-                    frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(dir);
-                    headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
-                    uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
-                    mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
+                    frozenRows = CsvSettings.GetExcelFrozenRowsByDirectory(_currentDir);
+                    headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(_currentDir);
+                    uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(_currentDir);
+                    mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(_currentDir);
                 }
                 // 获取列可见性配置
                 string relPath;
-                if (!string.IsNullOrEmpty(dir) && fullPath.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
-                    relPath = fullPath.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar);
+                if (!string.IsNullOrEmpty(_currentDir) && fullPath.StartsWith(_currentDir, StringComparison.OrdinalIgnoreCase))
+                    relPath = fullPath.Substring(_currentDir.Length).TrimStart(Path.DirectorySeparatorChar);
                 else
                     relPath = Path.GetFileName(fullPath);
-                var columnVisibility = CsvSettings.GetColumnVisibility(dir, relPath);
+                var columnVisibility = CsvSettings.GetColumnVisibility(_currentDir, relPath);
                 var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
                     rootDir: _currentDir, columnVisibility: columnVisibility,
                     uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex);

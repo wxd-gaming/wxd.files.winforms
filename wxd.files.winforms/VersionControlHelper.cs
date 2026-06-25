@@ -201,7 +201,7 @@ namespace wxd.files.winforms
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.GetEncoding(936)
+                    StandardOutputEncoding = Encoding.UTF8
                 };
 
                 using var process = Process.Start(psi);
