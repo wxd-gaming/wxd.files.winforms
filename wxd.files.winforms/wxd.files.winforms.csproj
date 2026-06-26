@@ -27,9 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="wenhao.jpg">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <EmbeddedResource Include="wenhao.jpg" />
   </ItemGroup>
 
   <ItemGroup>

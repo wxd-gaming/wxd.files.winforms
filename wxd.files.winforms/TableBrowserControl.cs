@@ -648,7 +648,13 @@ namespace wxd.files.winforms
                 Cursor = Cursors.Help,
                 BackColor = Color.Transparent
             };
-            try { btnAdvHelp.Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wenhao.jpg")); }
+            try
+            {
+                using var stream = typeof(TableBrowserControl).Assembly
+                    .GetManifestResourceStream("wxd.files.winforms.wenhao.jpg");
+                if (stream != null)
+                    btnAdvHelp.Image = Image.FromStream(stream);
+            }
             catch { /* 图片加载失败，用 ? 文本兜底 */ }
             if (btnAdvHelp.Image == null)
             {
