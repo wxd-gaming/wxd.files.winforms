@@ -584,13 +584,13 @@ namespace wxd.files.winforms
             var btnContentFilter = new Button
             {
                 Text = "高亮匹配",
-                Size = new Size(75, 27),
+                Size = new Size(75, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 ForeColor = Color.White,
                 BackColor = Color.FromArgb(66, 165, 245),
-                Margin = new Padding(3, 2, 3, 0),
+                Margin = new Padding(3, 1, 3, 1),
                 Padding = new Padding(0),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Cursor = Cursors.Hand
@@ -598,10 +598,10 @@ namespace wxd.files.winforms
             btnContentFilter.Click += (s, e) => TriggerFilter();
             var txtContentFilter = new TextBox
             {
-                Size = new Size(200, 27),
+                Size = new Size(200, 30),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 2, 10, 0),
+                Margin = new Padding(0, 1, 10, 1),
                 PlaceholderText = "按回车搜索..."
             };
             txtContentFilter.KeyDown += (s, e) =>
@@ -614,13 +614,13 @@ namespace wxd.files.winforms
             var btnAdvFilter = new Button
             {
                 Text = "高级过滤",
-                Size = new Size(75, 27),
+                Size = new Size(75, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
                 ForeColor = Color.White,
                 BackColor = Color.FromArgb(66, 165, 245),
-                Margin = new Padding(3, 2, 3, 0),
+                Margin = new Padding(3, 1, 3, 1),
                 Padding = new Padding(0),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Cursor = Cursors.Hand
@@ -628,10 +628,10 @@ namespace wxd.files.winforms
             btnAdvFilter.Click += (s, e) => TriggerFilter();
             var txtAdvancedFilter = new TextBox
             {
-                Size = new Size(200, 27),
+                Size = new Size(200, 30),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 2, 10, 0),
+                Margin = new Padding(0, 1, 10, 1),
                 BackColor = Color.FromArgb(242, 249, 255),
                 PlaceholderText = "按回车过滤..."
             };
@@ -639,6 +639,66 @@ namespace wxd.files.winforms
             {
                 if (e.KeyCode == Keys.Enter) { TriggerFilter(); e.Handled = true; e.SuppressKeyPress = true; }
                 else if (e.KeyCode == Keys.Escape) { txtAdvancedFilter.Text = ""; TriggerFilter(); e.Handled = true; }
+            };
+            var btnAdvHelp = new PictureBox
+            {
+                Size = new Size(25, 24),
+                SizeMode = PictureBoxSizeMode.StretchImage,
+                Margin = new Padding(0, 1, 2, 1),
+                Cursor = Cursors.Help,
+                BackColor = Color.Transparent
+            };
+            try { btnAdvHelp.Image = Image.FromFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wenhao.jpg")); }
+            catch { /* 图片加载失败，用 ? 文本兜底 */ }
+            if (btnAdvHelp.Image == null)
+            {
+                btnAdvHelp.Paint += (s, e) =>
+                {
+                    using var brush = new SolidBrush(_colorPrimary);
+                    e.Graphics.DrawString("?", new Font("Microsoft YaHei UI", 12f, FontStyle.Bold), brush, 5, 3);
+                };
+            }
+            var advToolTip = new ToolTip
+            {
+                AutoPopDelay = 30000,
+                InitialDelay = 0,
+                ReshowDelay = 0,
+                IsBalloon = true,
+                ToolTipIcon = ToolTipIcon.Info,
+                ToolTipTitle = "高级过滤语法"
+            };
+            btnAdvHelp.Click += (s, e) =>
+            {
+                advToolTip.Show(@"基础操作符:
+  id=10001             等于
+  id!=10001            不等于
+  id>10001             大于
+  id>=10001            大于等于
+  id<10001             小于
+  id<=10001            小于等于
+  name like test       包含test(忽略大小写)
+
+通配符(仅like):
+  id like *00001       以00001结尾
+  id like 00001*       以00001开头
+  id like *000*        包含000
+  id like 00*01        00开头01结尾
+
+全列模糊(无列名/操作符):
+  10001                所有列包含10001
+  test                 所有列包含test
+
+无列名搜索(操作符+值):
+  =10001               任意列等于10001
+  >100                 任意列大于100
+  like test            任意列包含test
+
+多条件组合:
+  id=10001 and name like test   同时满足(AND)
+  id=10001 or id=10002          满足其一(OR)
+  id>100 and id<200             范围查询
+
+列名通过表头行文字识别,不区分大小写", btnAdvHelp, 0, btnAdvHelp.Height + 5);
             };
             var lblAdvHint = new Label
             {
@@ -656,7 +716,7 @@ namespace wxd.files.winforms
                 BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(8, 1, 8, 0),
+                Padding = new Padding(8, 0, 8, 0),
                 AutoSize = true
             };
             flowContent.Controls.AddRange(new Control[] { btnContentFilter, txtContentFilter });
@@ -668,10 +728,10 @@ namespace wxd.files.winforms
                 BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(8, 1, 8, 5),
+                Padding = new Padding(8, 0, 8, 5),
                 AutoSize = true
             };
-            flowAdv.Controls.AddRange(new Control[] { btnAdvFilter, txtAdvancedFilter, lblAdvHint });
+            flowAdv.Controls.AddRange(new Control[] { btnAdvFilter, txtAdvancedFilter, btnAdvHelp, lblAdvHint });
 
             topTable.Controls.Add(_flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
