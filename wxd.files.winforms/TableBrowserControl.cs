@@ -949,7 +949,13 @@ namespace wxd.files.winforms
                 }
             };
 
-            splitContainer.Panel1.Controls.Add(_dataGridHeader);
+            var headerPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0)
+            };
+            headerPanel.Controls.Add(_dataGridHeader);
+            splitContainer.Panel1.Controls.Add(headerPanel);
             splitContainer.Panel2.Controls.Add(_dataGrid);
             splitContainer.Panel1Collapsed = true;
             _pnlGridContainer = splitContainer;
@@ -4558,8 +4564,16 @@ namespace wxd.files.winforms
             // _dataGridHeader 的父容器是 _pnlGridContainer.Panel1
             if (!_pnlGridContainer.Panel2.Controls.Contains(_dataGrid))
                 _pnlGridContainer.Panel2.Controls.Add(_dataGrid);
-            if (!_pnlGridContainer.Panel1Collapsed && !_pnlGridContainer.Panel1.Controls.Contains(_dataGridHeader))
-                _pnlGridContainer.Panel1.Controls.Add(_dataGridHeader);
+            if (!_pnlGridContainer.Panel1Collapsed && _dataGridHeader.Parent == null)
+            {
+                var headerPanel = new Panel
+                {
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0)
+                };
+                headerPanel.Controls.Add(_dataGridHeader);
+                _pnlGridContainer.Panel1.Controls.Add(headerPanel);
+            }
         }
 
         /// <summary>从 DataTable 构建 FileTableData（用于行号追踪）</summary>
