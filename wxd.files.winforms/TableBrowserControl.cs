@@ -84,9 +84,9 @@ namespace wxd.files.winforms
         private bool _syncingColumnWidth = false;     // 列宽同步防重入
         private bool _syncingScroll = false;           // 滚动同步防重入
 
-        // ==================== 过滤防抖 ====================
-        private CancellationTokenSource? _filterDebounceCts;
-        private const int FilterDebounceMs = 300;
+        // ==================== 过滤版本控制 ====================
+        private int _filterVersion = 0;        // 递增版本号，用于丢弃过期过滤结果
+        private int _pendingFilterVersion = 0; // 正在后台执行的过滤版本号，防重复启动
 
         /// <summary>唯一列重复警告文本（null = 无警告），用于状态栏持久提示</summary>
         private string? _duplicateWarningText = null;
@@ -105,8 +105,8 @@ namespace wxd.files.winforms
         /// <summary>过滤匹配的单元格集合（显示行索引 → 该行匹配的显示列索引集合），用于 _dataGridHeader 红色加粗高亮</summary>
         private Dictionary<int, HashSet<int>> _headerFilterMatchCells = new();
 
-        /// <summary>高级过滤时是否保留所有行（仅高亮匹配单元格，不过滤行），默认 true</summary>
-        private bool _filterKeepAllRows = true;
+        /// <summary>高级过滤时是否保留所有行（仅高亮匹配单元格，不过滤行），默认 false</summary>
+        private bool _filterKeepAllRows = false;
 
         /// <summary>重复值分组数据</summary>
         public class DuplicateGroup
@@ -581,48 +581,64 @@ namespace wxd.files.winforms
             };
 
             // 内容过滤
-            var lblContentFilter = new Label
+            var btnContentFilter = new Button
             {
-                Text = "高亮匹配:",
-                AutoSize = true,
+                Text = "高亮匹配",
+                Size = new Size(75, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightText,
-                Margin = new Padding(3, 5, 3, 0)
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(66, 165, 245),
+                Margin = new Padding(3, 2, 3, 0),
+                Padding = new Padding(0),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
             };
+            btnContentFilter.Click += (s, e) => TriggerFilter();
             var txtContentFilter = new TextBox
             {
-                Size = new Size(200, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 2, 10, 0)
-            };
-            txtContentFilter.TextChanged += (s, e) => DebounceFilter();
-            txtContentFilter.KeyDown += (s, e) =>
-            {
-                if (e.KeyCode == Keys.Escape) { txtContentFilter.Text = ""; e.Handled = true; }
-            };
-
-            // 高级过滤
-            var lblAdvFilter = new Label
-            {
-                Text = "高级过滤:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightText,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            var txtAdvancedFilter = new TextBox
-            {
-                Size = new Size(200, 23),
+                Size = new Size(200, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0),
-                BackColor = Color.FromArgb(242, 249, 255)
+                PlaceholderText = "按回车搜索..."
             };
-            txtAdvancedFilter.TextChanged += (s, e) => DebounceFilter();
+            txtContentFilter.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { TriggerFilter(); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.Escape) { txtContentFilter.Text = ""; TriggerFilter(); e.Handled = true; }
+            };
+
+            // 高级过滤
+            var btnAdvFilter = new Button
+            {
+                Text = "高级过滤",
+                Size = new Size(75, 27),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(66, 165, 245),
+                Margin = new Padding(3, 2, 3, 0),
+                Padding = new Padding(0),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand
+            };
+            btnAdvFilter.Click += (s, e) => TriggerFilter();
+            var txtAdvancedFilter = new TextBox
+            {
+                Size = new Size(200, 27),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0),
+                BackColor = Color.FromArgb(242, 249, 255),
+                PlaceholderText = "按回车过滤..."
+            };
             txtAdvancedFilter.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Escape) { txtAdvancedFilter.Text = ""; e.Handled = true; }
+                if (e.KeyCode == Keys.Enter) { TriggerFilter(); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.Escape) { txtAdvancedFilter.Text = ""; TriggerFilter(); e.Handled = true; }
             };
             var lblAdvHint = new Label
             {
@@ -643,7 +659,7 @@ namespace wxd.files.winforms
                 Padding = new Padding(8, 1, 8, 0),
                 AutoSize = true
             };
-            flowContent.Controls.AddRange(new Control[] { lblContentFilter, txtContentFilter });
+            flowContent.Controls.AddRange(new Control[] { btnContentFilter, txtContentFilter });
 
             var flowAdv = new FlowLayoutPanel
             {
@@ -655,7 +671,7 @@ namespace wxd.files.winforms
                 Padding = new Padding(8, 1, 8, 5),
                 AutoSize = true
             };
-            flowAdv.Controls.AddRange(new Control[] { lblAdvFilter, txtAdvancedFilter, lblAdvHint });
+            flowAdv.Controls.AddRange(new Control[] { btnAdvFilter, txtAdvancedFilter, lblAdvHint });
 
             topTable.Controls.Add(_flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
@@ -915,7 +931,7 @@ namespace wxd.files.winforms
             _chkFilterKeepAll = new CheckBox
             {
                 Text = "保留所有行",
-                Checked = true,
+                Checked = false,
                 AutoSize = false,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -2319,27 +2335,396 @@ namespace wxd.files.winforms
         }
 
         // ==================== 行过滤 ====================
-        private async void DebounceFilter()
+        /// <summary>触发过滤（回车/按钮统一入口），后台执行不卡 UI，支持版本号丢弃过期结果</summary>
+        private void TriggerFilter()
         {
-            _filterDebounceCts?.Cancel();
-            _filterDebounceCts = new CancellationTokenSource();
-            var token = _filterDebounceCts.Token;
+            var myVersion = Interlocked.Increment(ref _filterVersion);
+            _ = RunFilterAsync(myVersion);
+        }
+
+        private async Task RunFilterAsync(int version)
+        {
+            if (version <= _pendingFilterVersion) return;
+            _pendingFilterVersion = version;
+
             try
             {
-                await Task.Delay(FilterDebounceMs, token);
-                if (!token.IsCancellationRequested)
-                    ApplyFilters();
+                // ===== 阶段1：UI 线程捕获状态快照 =====
+                var contentFilter = _txtContentFilter.Text.Trim();
+                var advFilterText = _txtAdvancedFilter.Text.Trim();
+                var filterKeepAll = _filterKeepAllRows;
+                var frozenRows = _frozenRows;
+                var visibleColIndices = _visibleColumnIndices.ToList();
+                var dataTableRef = _dataTable;
+                var fileDataRef = _fileData;
+                var headerRowIndex = _headerRowIndex;
+
+                // ===== 阶段2：后台线程执行耗时计算 =====
+                var result = await Task.Run(() =>
+                    BuildFilterResultInBackground(
+                        contentFilter, advFilterText, filterKeepAll,
+                        frozenRows, visibleColIndices, dataTableRef, fileDataRef,
+                        headerRowIndex, version));
+
+                // ===== 阶段3：UI 线程检查版本 + 绑定 =====
+                if (version != _filterVersion) return; // 已过期，丢弃
+
+                ApplyFilterResultToUI(result);
             }
-            catch (TaskCanceledException) { /* 被新输入取消 */ }
+            finally
+            {
+                if (_pendingFilterVersion == version)
+                    _pendingFilterVersion = 0;
+            }
         }
 
         private void OnFilterKeepAllChanged(object? sender, EventArgs e)
         {
             _filterKeepAllRows = _chkFilterKeepAll.Checked;
-            ApplyFilters();
+            TriggerFilter();
         }
 
         private void ApplyFilters() => RefreshGridLayout();
+
+        /// <summary>后台构建过滤结果（在后台线程执行）</summary>
+        private FilterResult BuildFilterResultInBackground(
+            string contentFilter, string advFilterText, bool filterKeepAll,
+            int frozenRows, List<int> visibleColIndices,
+            DataTable dataTable, FileTableData fileData,
+            int headerRowIndex, int version)
+        {
+            void CheckVersion()
+            {
+                if (version != _filterVersion)
+                    throw new OperationCanceledException("过滤结果已过期");
+            }
+
+            CheckVersion();
+
+            // 内容搜索匹配
+            var contentMatches = GetContentMatchCellsBackground(
+                fileData, visibleColIndices, contentFilter, version);
+            CheckVersion();
+
+            // 高级过滤
+            var (visibleRowIndices, advMatches) = GetAdvVisibleRowIndicesBackground(
+                fileData, advFilterText, filterKeepAll, frozenRows, version);
+            CheckVersion();
+
+            // 构建 filteredTable
+            var filteredTable = BuildFilteredTableBackground(
+                dataTable, visibleRowIndices, visibleColIndices, version);
+            CheckVersion();
+
+            // 合并匹配单元格 → 转换显示行列索引
+            var merged = MergeMatchCells(contentMatches, advMatches);
+            var headerMatchCells = new Dictionary<int, HashSet<int>>();
+            var dataMatchCells = new Dictionary<int, HashSet<int>>();
+
+            foreach (var (origRow, origCols) in merged)
+            {
+                var displayCols = new HashSet<int>();
+                foreach (var origCol in origCols)
+                {
+                    int displayCol = visibleColIndices.IndexOf(origCol);
+                    if (displayCol >= 0) displayCols.Add(displayCol);
+                }
+                if (displayCols.Count == 0) continue;
+
+                if (origRow < frozenRows)
+                    headerMatchCells[origRow] = displayCols;
+                else
+                {
+                    int displayRow = visibleRowIndices.IndexOf(origRow);
+                    if (displayRow >= 0)
+                        dataMatchCells[displayRow] = displayCols;
+                }
+            }
+
+            return new FilterResult
+            {
+                FilteredTable = filteredTable,
+                VisibleRowIndices = visibleRowIndices,
+                ContentSearchMatchCells = contentMatches,
+                AdvFilterMatchCells = advMatches,
+                HeaderFilterMatchCells = headerMatchCells,
+                DataFilterMatchCells = dataMatchCells
+            };
+        }
+
+        /// <summary>后台内容搜索匹配（带版本检查）</summary>
+        private Dictionary<int, HashSet<int>> GetContentMatchCellsBackground(
+            FileTableData fileData, List<int> visibleColIndices,
+            string contentFilter, int version)
+        {
+            if (string.IsNullOrEmpty(contentFilter))
+                return new Dictionary<int, HashSet<int>>();
+
+            string processedFilter = contentFilter
+                .Replace("||", " | ").Replace("&&", " & ");
+            var matchCells = new Dictionary<int, HashSet<int>>();
+
+            for (int i = 0; i < fileData.Rows.Count; i++)
+            {
+                if (i % 500 == 0 && version != _filterVersion)
+                    return matchCells;
+
+                var cells = fileData.Rows[i].Cells;
+                HashSet<int>? rowMatchCols = null;
+                foreach (var colIdx in visibleColIndices)
+                {
+                    if (colIdx < cells.Count &&
+                        MatchesFilter(cells[colIdx], processedFilter))
+                    {
+                        (rowMatchCols ??= new HashSet<int>()).Add(colIdx);
+                    }
+                }
+                if (rowMatchCols != null && rowMatchCols.Count > 0)
+                    matchCells[i] = rowMatchCols;
+            }
+            return matchCells;
+        }
+
+        /// <summary>后台高级过滤（带版本检查），从 _frozenRows 开始过滤内容行</summary>
+        private (List<int> rowIndices, Dictionary<int, HashSet<int>> matchCells) GetAdvVisibleRowIndicesBackground(
+            FileTableData fileData, string advFilterText, bool filterKeepAll, int frozenRows, int version)
+        {
+            var result = new List<int>(fileData.Rows.Count - frozenRows);
+            var matchCells = new Dictionary<int, HashSet<int>>();
+
+            FilterNode? compiledExpr = null;
+            if (!string.IsNullOrEmpty(advFilterText))
+                compiledExpr = CompileExpression(advFilterText);
+
+            // 无高级过滤 → 返回所有内容行（从 frozenRows 开始）
+            if (compiledExpr == null)
+            {
+                for (int i = frozenRows; i < fileData.Rows.Count; i++)
+                    result.Add(i);
+                return (result, matchCells);
+            }
+
+            for (int i = frozenRows; i < fileData.Rows.Count; i++)
+            {
+                if (i % 500 == 0 && version != _filterVersion)
+                    return (result, matchCells); // 过期退出
+
+                var cells = fileData.Rows[i].Cells;
+                bool advMatch = EvaluateCompiled(cells, compiledExpr);
+                if (!advMatch && filterKeepAll)
+                {
+                    // 保留所有行模式：不过滤行，只记录匹配的单元格
+                    result.Add(i);
+                    var advMatchCols = GetAdvFilterMatchCols(cells, compiledExpr);
+                    if (advMatchCols.Count > 0)
+                        matchCells[i] = advMatchCols;
+                }
+                else if (advMatch)
+                {
+                    result.Add(i);
+                    var advMatchCols = GetAdvFilterMatchCols(cells, compiledExpr);
+                    if (advMatchCols.Count > 0)
+                        matchCells[i] = advMatchCols;
+                }
+            }
+            return (result, matchCells);
+        }
+
+        /// <summary>后台构建 filteredTable（带版本检查）</summary>
+        private DataTable BuildFilteredTableBackground(
+            DataTable sourceTable, List<int> visibleRowIndices,
+            List<int> visibleColIndices, int version)
+        {
+            var filteredTable = new DataTable();
+            foreach (var colIndex in visibleColIndices)
+            {
+                var sourceCol = sourceTable.Columns[colIndex];
+                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string));
+            }
+
+            for (int idx = 0; idx < visibleRowIndices.Count; idx++)
+            {
+                if (idx % 2000 == 0 && version != _filterVersion)
+                    return filteredTable;
+
+                var newRow = filteredTable.NewRow();
+                int origRowIdx = visibleRowIndices[idx];
+                for (int i = 0; i < visibleColIndices.Count; i++)
+                {
+                    int colIdx = visibleColIndices[i];
+                    newRow[i] = colIdx < sourceTable.Columns.Count
+                        ? (sourceTable.Rows[origRowIdx][colIdx] ?? "")
+                        : "";
+                }
+                filteredTable.Rows.Add(newRow);
+            }
+            return filteredTable;
+        }
+
+        /// <summary>将后台过滤结果绑定到 UI（必须在 UI 线程调用）</summary>
+        private void ApplyFilterResultToUI(FilterResult result)
+        {
+            // 行编辑模式：刷新前退出编辑
+            if (_editingRowIndex >= 0)
+            {
+                _enteringEditMode = true;
+                try
+                {
+                    if (_dataGrid.IsCurrentCellInEditMode)
+                        _dataGrid.EndEdit();
+                    ExitRowEditMode(commit: true);
+                }
+                finally { _enteringEditMode = false; }
+            }
+
+            // 清空旧匹配
+            _filterMatchCells.Clear();
+            _headerFilterMatchCells.Clear();
+            _contentSearchMatchCells.Clear();
+            _advFilterMatchCells.Clear();
+
+            if (_frozenRows > 0 && result.FilteredTable.Rows.Count > 0)
+            {
+                // 冻结行场景：重建 _headerTable + 绑定两个 DataGridView
+                _visibleColumnIndices = GetVisibleColumnIndices();
+                _headerTable = new DataTable();
+                foreach (var colIndex in _visibleColumnIndices)
+                {
+                    var sourceCol = _dataTable.Columns[colIndex];
+                    _headerTable.Columns.Add(sourceCol.ColumnName, sourceCol.DataType);
+                }
+
+                for (int i = 0; i < Math.Min(_frozenRows, _dataTable.Rows.Count); i++)
+                {
+                    var sourceRow = _dataTable.Rows[i];
+                    var targetRow = _headerTable.NewRow();
+                    for (int j = 0; j < _visibleColumnIndices.Count; j++)
+                        targetRow[j] = sourceRow[_visibleColumnIndices[j]];
+                    _headerTable.Rows.Add(targetRow);
+                }
+
+                _pnlGridContainer.Panel1Collapsed = false;
+                _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
+                _dataGridHeader.DataSource = _headerTable;
+
+                for (int i = 0; i < _dataGridHeader.Columns.Count; i++)
+                {
+                    var colName = _headerTable.Columns[i].ColumnName;
+                    var dgvCol = _dataGridHeader.Columns[colName];
+                    if (dgvCol != null)
+                    {
+                        dgvCol.DisplayIndex = i;
+                        dgvCol.Width = 120;
+                        if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                        {
+                            var srcColIdx = _visibleColumnIndices[i];
+                            var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                            dgvCol.HeaderText = headerVal;
+                            SetColumnHeaderToolTip(dgvCol, i, headerVal);
+                        }
+                        else
+                        {
+                            dgvCol.HeaderText = GetExcelColumnName(i);
+                        }
+                        dgvCol.SortMode = DataGridViewColumnSortMode.NotSortable;
+                    }
+                }
+
+                _dataGrid.DataSource = result.FilteredTable;
+
+                // 设置 Tag（使用原始行索引）
+                for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
+                {
+                    int origIdx = result.VisibleRowIndices[i];
+                    if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
+                        _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
+                }
+
+                // 配置列宽/表头
+                _dataGrid.SuspendLayout();
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    var colName = result.FilteredTable.Columns[i].ColumnName;
+                    var dgvCol = _dataGrid.Columns[colName];
+                    if (dgvCol != null)
+                    {
+                        dgvCol.DisplayIndex = i;
+                        dgvCol.Width = 120;
+                        dgvCol.SortMode = DataGridViewColumnSortMode.Programmatic;
+                        if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
+                        {
+                            var srcColIdx = _visibleColumnIndices[i];
+                            var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
+                            dgvCol.HeaderText = headerVal;
+                            SetColumnHeaderToolTip(dgvCol, i, headerVal);
+                        }
+                        else
+                        {
+                            dgvCol.HeaderText = GetExcelColumnName(i);
+                        }
+                    }
+                }
+                _dataGrid.ResumeLayout(false);
+            }
+            else
+            {
+                // 无冻结行场景
+                _pnlGridContainer.Panel1Collapsed = true;
+                _dataGrid.DataSource = result.FilteredTable;
+
+                // 设置 Tag
+                for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
+                {
+                    int origIdx = result.VisibleRowIndices[i];
+                    if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
+                        _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
+                }
+
+                // 配置列宽/表头
+                _dataGrid.SuspendLayout();
+                for (int i = 0; i < _dataGrid.Columns.Count; i++)
+                {
+                    _dataGrid.Columns[i].Width = 120;
+                    _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
+                    if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
+                    {
+                        var headerVal = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
+                        _dataGrid.Columns[i].HeaderText = headerVal;
+                        SetColumnHeaderToolTip(_dataGrid.Columns[i], i, headerVal);
+                    }
+                    else
+                    {
+                        _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
+                    }
+                }
+                _dataGrid.ResumeLayout(false);
+            }
+
+            // 设置匹配单元格
+            _contentSearchMatchCells = result.ContentSearchMatchCells;
+            _advFilterMatchCells = result.AdvFilterMatchCells;
+            _filterMatchCells = result.DataFilterMatchCells;
+            _headerFilterMatchCells = result.HeaderFilterMatchCells;
+
+            _lblCellPos.Text = $"显示 {_visibleColumnIndices.Count} 列, {result.VisibleRowIndices.Count} 行";
+            _lblInfo.Text = "";
+            if (_duplicateWarningText != null)
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text = _duplicateWarningText;
+            }
+        }
+
+        /// <summary>后台过滤结果数据容器</summary>
+        private class FilterResult
+        {
+            public DataTable FilteredTable { get; set; } = new();
+            public List<int> VisibleRowIndices { get; set; } = new();
+            public Dictionary<int, HashSet<int>> ContentSearchMatchCells { get; set; } = new();
+            public Dictionary<int, HashSet<int>> AdvFilterMatchCells { get; set; } = new();
+            public Dictionary<int, HashSet<int>> HeaderFilterMatchCells { get; set; } = new();
+            public Dictionary<int, HashSet<int>> DataFilterMatchCells { get; set; } = new();
+        }
 
         /// <summary>内容搜索：搜索所有行（包括冻结行）的所有可见列，仅返回匹配的原始单元格位置，不过滤行</summary>
         private Dictionary<int, HashSet<int>> GetContentMatchCells(string contentFilter)
@@ -2671,8 +3056,13 @@ namespace wxd.files.winforms
                 return;
             }
 
+            // ★ 有操作符时，必须检查该单元格的值是否真的匹配条件，否则会导致整列高亮
             if (colIndex >= 0 && colIndex < cells.Count)
-                result.Add(colIndex);
+            {
+                string cellValue = cells[colIndex];
+                if (CompareValue(cellValue, cond.Value, cond.CompareOp))
+                    result.Add(colIndex);
+            }
         }
 
         /// <summary>合并两个匹配单元格字典（key 为原始行索引，value 为原始列索引集合），内容搜索 + 高级过滤合并</summary>
