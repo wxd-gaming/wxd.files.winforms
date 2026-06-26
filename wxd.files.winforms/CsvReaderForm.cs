@@ -30,7 +30,6 @@ namespace wxd.files.winforms
         private Panel _pnlLeftBottom = new();   // 底部状态栏
         private Label _lblFilter = new();
         private Button _btnRefresh = new();
-        private Button _btnSelectFolder = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
@@ -232,28 +231,13 @@ namespace wxd.files.winforms
             _pnlLeftTop.BackColor = _colorSurface;
             _pnlLeftTop.Padding = new Padding(8, 6, 8, 4);
 
-            // 选择目录按钮
-            _btnSelectFolder = new Button
-            {
-                Text = "选择目录",
-                Location = new Point(8, 6),
-                Size = new Size(70, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorPrimary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = _colorPrimaryDark, MouseOverBackColor = _colorPrimaryDark }
-            };
-            _btnSelectFolder.Click += OnSelectFolderClick;
-
             // 刷新按钮
             _btnRefresh = new Button
             {
-                Text = "↻",
-                Location = new Point(84, 6),
-                Size = new Size(32, 28),
-                Font = new Font("Segoe UI", 12f),
+                Text = "刷新目录",
+                Location = new Point(8, 6),
+                Size = new Size(85, 28),
+                Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = _colorHoverBg,
                 ForeColor = _colorLightTextSecondary,
                 FlatStyle = FlatStyle.Flat,
@@ -307,7 +291,7 @@ namespace wxd.files.winforms
             var btnHelp = new Button
             {
                 Text = "使用说明",
-                Location = new Point(122, 6),
+                Location = new Point(96, 6),
                 Size = new Size(75, 28),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BackColor = Color.FromArgb(120, 144, 156),
@@ -414,7 +398,7 @@ namespace wxd.files.winforms
                 Location = new Point(8, 148),
                 Size = new Size(260, 36),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                Visible = false,
+                Visible = true,
                 BackColor = Color.FromArgb(245, 250, 240)
             };
 
@@ -449,7 +433,7 @@ namespace wxd.files.winforms
             _pnlVcsActions.Controls.Add(_btnVcsUpdate);
             _pnlVcsActions.Controls.Add(_chkShowConflictOnly);
 
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer, _pnlVcsActions });
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer, _pnlVcsActions });
 
             // 文件树
             // 初始化图标列表
@@ -504,9 +488,20 @@ namespace wxd.files.winforms
             };
             _pnlLeftBottom.Controls.Add(_lblFileCount);
 
-            // 添加TreeView到左侧面板（注意顺序：Top > Fill > Bottom）
+            // 用一个 Panel 包裹 TreeView，Panel 的 Dock=Fill 与状态栏同级，
+            // 通过 Panel 的 Padding.Bottom 在 TreeView 底部留出间距，避免内容被状态栏遮挡
+            var treeContainer = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(0, 0, 0, 28),
+                BackColor = _colorSurface
+            };
+            _treeFiles.Dock = DockStyle.Fill;
+            _treeFiles.Parent = treeContainer;
+
+            // 添加控件到左侧面板（注意顺序：Top > Fill > Bottom）
             _pnlLeft.Controls.Add(_pnlLeftBottom);
-            _pnlLeft.Controls.Add(_treeFiles);
+            _pnlLeft.Controls.Add(treeContainer);
             _pnlLeft.Controls.Add(_pnlLeftTop);
 
             // ==================== 右侧标签页 ====================
@@ -822,33 +817,6 @@ namespace wxd.files.winforms
             catch { return false; }
         }
 
-        private void OnSelectFolderClick(object? sender, EventArgs e)
-        {
-            // 退出冲突模式
-            if (_showConflictOnly)
-            {
-                _showConflictOnly = false;
-                _chkShowConflictOnly.Checked = false;
-            }
-
-            using var dialog = new FolderBrowserDialog
-            {
-                Description = "选择包含CSV/Excel文件的目录",
-                ShowNewFolderButton = false
-            };
-
-            if (!string.IsNullOrEmpty(_currentDir))
-                dialog.SelectedPath = _currentDir;
-
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                VcsStatusCache.Invalidate(_currentDir); // 清除旧目录缓存
-                _currentDir = dialog.SelectedPath;
-                UpdateTitle();
-                LoadFilesAsync();
-            }
-        }
-
         private void UpdateTitle()
         {
             if (!string.IsNullOrEmpty(_currentDir))
@@ -894,7 +862,8 @@ namespace wxd.files.winforms
                 try { Invoke(() => ShowVcsPanel(show)); } catch { }
                 return;
             }
-            _pnlVcsActions.Visible = show;
+            _btnVcsUpdate.Enabled = show;
+            _chkShowConflictOnly.Enabled = show;
             if (show)
             {
                 // 更新按钮文本
@@ -932,7 +901,7 @@ namespace wxd.files.winforms
 
             // 检测是否有冲突文件
             bool hasConflictedFiles = VcsStatusCache.HasAnyConflictedFiles(_currentDir);
-            _chkShowConflictOnly.Visible = hasConflictedFiles || _showConflictOnly;
+            _chkShowConflictOnly.Visible = true; // 始终可见
 
             // 如果在冲突过滤模式，刷新冲突列表
             if (_showConflictOnly && string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
@@ -1240,10 +1209,7 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                if (result.HasConflicts)
-                {
-                    _chkShowConflictOnly.Visible = true;
-                }
+                // 不控制可见性，始终显示
 
                 AlertForm.Show(this, msg, "更新完成", alertType);
 
@@ -1284,26 +1250,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // 进入冲突模式：检查是否有冲突文件
-            bool hasConflicted = false;
-
-            foreach (var file in _allFiles)
-            {
-                var status = VcsStatusCache.GetFileStatus(file.FullPath);
-                if (status == FileVcsStatus.Conflicted)
-                {
-                    hasConflicted = true;
-                    break;
-                }
-            }
-
-            if (!hasConflicted)
-            {
-                AlertForm.Show(this, "当前目录下没有检测到冲突文件。",
-                    "提示", AlertType.Information);
-                return;
-            }
-
+            // 进入冲突模式：不检查是否有冲突文件，直接过滤，没有冲突则列表为空
             _showConflictOnly = true;
             _chkShowConflictOnly.Checked = true;
             _txtFileFilter.Text = "";
