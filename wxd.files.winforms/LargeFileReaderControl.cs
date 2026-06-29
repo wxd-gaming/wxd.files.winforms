@@ -58,7 +58,8 @@ namespace wxd.files.winforms
         private volatile bool _indexReady;
         private volatile bool _cancel;
         private const int CHUNK = 4 * 1024 * 1024;
-        private const int MAX_LINE = 64 * 1024;
+        private const int DISPLAY_LINE_LIMIT = 8 * 1024;          // 列表面板显示截断：8KB
+        private const int FULL_LINE_LIMIT = 64 * 1024 * 1024;     // 弹窗原始内容上限：64MB
         // ★ _idxCount 改为 long，行数也可能超 int.MaxValue（极端超短行场景）
         private long _idxCount;
         private volatile int _idxProg;
@@ -444,7 +445,7 @@ namespace wxd.files.winforms
         private long FindPrevNewlineEnd(long position, FileStream fs)
         {
             // 回退最多 MAX_LINE 字节查找上一个换行符
-            long back = Math.Min(position, MAX_LINE);
+            long back = Math.Min(position, FULL_LINE_LIMIT);
             long searchStart = position - back;
             fs.Position = searchStart;
             var buf = new byte[back];
@@ -628,16 +629,21 @@ namespace wxd.files.winforms
             var off = _lineOffsets;
             if (off == null || _readStream == null || idx >= off.Length) return "";
             long s = off[idx], e = (idx + 1 < off.Length) ? off[idx + 1] : _fileLength;
-            int len = Math.Min(Math.Max((int)(e - s), 0), MAX_LINE);
-            if (len <= 0) return "";
+            int lineLen = (int)Math.Min(e - s, FULL_LINE_LIMIT);
+            if (lineLen <= 0) return "";
             lock (_readLock)
             {
                 try
                 {
                     _readStream.Seek(s, SeekOrigin.Begin);
-                    var buf = new byte[len]; int got = 0;
-                    while (got < len) { int r = _readStream.Read(buf, got, len - got); if (r <= 0) break; got += r; }
-                    return got > 0 ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar) : "";
+                    var buf = new byte[lineLen]; int got = 0;
+                    while (got < lineLen) { int r = _readStream.Read(buf, got, lineLen - got); if (r <= 0) break; got += r; }
+                    string fullText = got > 0
+                        ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
+                        : "";
+                    if (fullText.Length > DISPLAY_LINE_LIMIT)
+                        return fullText.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
+                    return fullText;
                 }
                 catch { return "[err]"; }
             }
@@ -649,16 +655,54 @@ namespace wxd.files.winforms
             var off = _lineOffsets;
             if (off == null || idx >= off.Length) return "";
             long s = off[idx], e = (idx + 1 < off.Length) ? off[idx + 1] : _fileLength;
-            int len = Math.Min(Math.Max((int)(e - s), 0), MAX_LINE);
-            if (len <= 0) return "";
+            int lineLen = (int)Math.Min(e - s, FULL_LINE_LIMIT);
+            if (lineLen <= 0) return "";
             try
             {
                 fs.Seek(s, SeekOrigin.Begin);
-                var buf = new byte[len]; int got = 0;
-                while (got < len) { int r = fs.Read(buf, got, len - got); if (r <= 0) break; got += r; }
-                return got > 0 ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar) : "";
+                var buf = new byte[lineLen]; int got = 0;
+                while (got < lineLen) { int r = fs.Read(buf, got, lineLen - got); if (r <= 0) break; got += r; }
+                string fullText = got > 0
+                    ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
+                    : "";
+                if (fullText.Length > DISPLAY_LINE_LIMIT)
+                    return fullText.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
+                return fullText;
             }
             catch { return ""; }
+        }
+
+        /// <summary>读取行的完整内容（无截断），上限 64MB</summary>
+        /// <param name="idx">行号</param>
+        /// <param name="truncated">是否因超过 64MB 被截断</param>
+        /// <returns>完整行文本，超过 64MB 返回截断版本；读取失败返回 null</returns>
+        private string? ReadLineFull(long idx, out bool truncated)
+        {
+            truncated = false;
+            var off = _lineOffsets;
+            if (off == null || _readStream == null || idx >= off.Length) { truncated = false; return null; }
+            long s = off[idx], e = (idx + 1 < off.Length) ? off[idx + 1] : _fileLength;
+            long lineLen = e - s;
+            if (lineLen <= 0) { truncated = false; return null; }
+            if (lineLen > FULL_LINE_LIMIT)
+            {
+                truncated = true;
+                lineLen = FULL_LINE_LIMIT;
+            }
+            int len = (int)lineLen;
+            lock (_readLock)
+            {
+                try
+                {
+                    _readStream.Seek(s, SeekOrigin.Begin);
+                    var buf = new byte[len]; int got = 0;
+                    while (got < len) { int r = _readStream.Read(buf, got, len - got); if (r <= 0) break; got += r; }
+                    return got > 0
+                        ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
+                        : null;
+                }
+                catch { return null; }
+            }
         }
 
         private void OnRetrieve(object? s, RetrieveVirtualItemEventArgs e)
@@ -759,11 +803,23 @@ namespace wxd.files.winforms
             string originalText = _cache.TryGetValue(idx, out var v) ? v : "";
             if (string.IsNullOrEmpty(originalText)) return;
 
+            // 读取完整行内容用于弹窗（不截断），并计算内容大小
+            bool isFullTruncated = false;
+            string? fullLine = ReadLineFull(idx, out isFullTruncated);
+            if (string.IsNullOrEmpty(fullLine)) fullLine = originalText;
+            string sizeLabel = FormatSize(Encoding.UTF8.GetByteCount(fullLine));
+
             var f = new Form
             {
-                Text = $"行 {idx + 1}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
+                Text = $"行 {idx + 1} — {sizeLabel}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
                 MinimizeBox = true, MaximizeBox = true, ShowIcon = false, ShowInTaskbar = false
             };
+
+            // 如果超过 64MB，弹出警告
+            if (isFullTruncated)
+            {
+                MessageBox.Show("该行内容超过 64MB，已截断显示前 64MB。" + GlobalConst.NewLine + $"行号：{idx + 1}", "内容过大", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
 
             // 顶部工具栏
             var topPanel = new Panel { Height = 44, Dock = DockStyle.Top, BackColor = Color.FromArgb(235, 245, 255) };
@@ -803,14 +859,14 @@ namespace wxd.files.winforms
                 try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, clickDeadline)).ConfigureAwait(true); }
                 catch { /* 解析失败，显示原始文本 */ }
                 if (f.IsDisposed) return;
-                try { rtb.Rtf = rtf ?? originalText; }
-                catch { try { rtb.Text = originalText; } catch { } }
+                try { rtb.Rtf = rtf ?? fullLine; }
+                catch { try { rtb.Text = fullLine; } catch { } }
             };
             btnRaw.Click += (_, _) => {
                 SetActive(btnRaw, btnFormat);
                 rtb.WordWrap = true;
                 rtb.ScrollBars = RichTextBoxScrollBars.Vertical;
-                rtb.Text = originalText;
+                rtb.Text = fullLine;
             };
 
             topPanel.Controls.Add(btnFormat);
@@ -821,8 +877,8 @@ namespace wxd.files.winforms
             f.Show();
 
             // 格式化在后台线程完成，完成后自动显示 RTF
-            try { formattedText = await Task.Run(() => BuildFormattedText(originalText)).ConfigureAwait(true); }
-            catch { formattedText = originalText; }
+            try { formattedText = await Task.Run(() => BuildFormattedText(fullLine)).ConfigureAwait(true); }
+            catch { formattedText = fullLine; }
             if (f.IsDisposed) return;
 
             var autoDeadline = Deadline.FromSeconds(5.0);
@@ -830,8 +886,8 @@ namespace wxd.files.winforms
             try { rtf = await Task.Run(() => BuildRtfForLine(formattedText, autoDeadline)).ConfigureAwait(true); }
             catch { /* 解析失败，显示原始文本 */ }
             if (f.IsDisposed) return;
-            try { rtb.Rtf = rtf ?? originalText; }
-            catch { try { rtb.Text = originalText; } catch { } }
+            try { rtb.Rtf = rtf ?? fullLine; }
+            catch { try { rtb.Text = fullLine; } catch { } }
         }
 
         private static void ShowFormattedRtf(RichTextBox rtb, string formattedText) => ShowFormattedRtf(rtb, formattedText, Deadline.Default);
