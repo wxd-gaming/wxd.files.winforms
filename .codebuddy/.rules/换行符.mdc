@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-06-29T06:59:39.898Z
+provider: 
+---
+
+如果输出代码字符有换行符，\r,\n,\r\n string或者char 都用GlobalConst的变量进行替换

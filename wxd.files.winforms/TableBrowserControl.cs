@@ -2599,6 +2599,16 @@ namespace wxd.files.winforms
                         matchCells[i] = advMatchCols;
                 }
             }
+
+            // ★ 高级过滤无匹配时：
+            //   - filterKeepAll == true（保留所有行模式）：回退显示所有内容行
+            //   - filterKeepAll == false：result 保持空，冻结行正常显示，内容区为空
+            if (result.Count == 0 && filterKeepAll)
+            {
+                for (int i = frozenRows; i < fileData.Rows.Count; i++)
+                    result.Add(i);
+            }
+
             return (result, matchCells);
         }
 
@@ -2655,7 +2665,7 @@ namespace wxd.files.winforms
             _contentSearchMatchCells.Clear();
             _advFilterMatchCells.Clear();
 
-            if (_frozenRows > 0 && result.FilteredTable.Rows.Count > 0)
+            if (_frozenRows > 0)
             {
                 // 冻结行场景：重建 _headerTable + 绑定两个 DataGridView
                 _visibleColumnIndices = GetVisibleColumnIndices();
@@ -2780,7 +2790,14 @@ namespace wxd.files.winforms
 
             _lblCellPos.Text = $"显示 {_visibleColumnIndices.Count} 列, {result.VisibleRowIndices.Count} 行";
             _lblInfo.Text = "";
-            if (_duplicateWarningText != null)
+
+            // ★ 高级过滤无匹配提示
+            if (result.VisibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text = $"高级过滤 \"{_txtAdvancedFilter.Text.Trim()}\" 未匹配到任何行";
+            }
+            else if (_duplicateWarningText != null)
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
                 _lblInfo.Text = _duplicateWarningText;
@@ -2857,6 +2874,16 @@ namespace wxd.files.winforms
                 if (advMatchCols.Count > 0)
                     matchCells[i] = advMatchCols;
             }
+
+            // ★ 高级过滤无匹配时：
+            //   - _filterKeepAllRows == true（保留所有行模式）：回退显示所有内容行
+            //   - _filterKeepAllRows == false：result 保持空，冻结行正常显示，内容区为空
+            if (result.Count == 0 && _filterKeepAllRows)
+            {
+                for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
+                    result.Add(i);
+            }
+
             return (result, matchCells);
         }
 
@@ -3458,6 +3485,13 @@ namespace wxd.files.winforms
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
                 _lblInfo.Text = _duplicateWarningText;
+            }
+
+            // ★ 高级过滤无匹配提示（覆盖重复警告）
+            if (visibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
+            {
+                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.Text = $"高级过滤 \"{_txtAdvancedFilter.Text.Trim()}\" 未匹配到任何行";
             }
         }
 
