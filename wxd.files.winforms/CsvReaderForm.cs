@@ -55,6 +55,10 @@ namespace wxd.files.winforms
         private long _searchVersion;                    // 单调递增版本号，用于防抖
         private string _lastContentSearchKeyword = "";
 
+        // ==================== 状态栏匹配计数 ====================
+        private int _fileNameMatchCount = -1;   // 文件名过滤匹配数（-1=无文件名过滤）
+        private int _contentMatchCount = -1;    // 内容搜索匹配数（-1=无内容搜索）
+
         // ==================== VCS 状态字段 ====================
         private VcsType _currentVcsType = VcsType.None;
         private bool _showConflictOnly = false;            // 是否只显示冲突文件
@@ -1507,6 +1511,33 @@ namespace wxd.files.winforms
             return fullPath;
         }
 
+        // ==================== 统一状态栏更新 ====================
+        /// <summary>统一更新文件数量状态栏，显示三层匹配信息</summary>
+        /// <param name="totalFiles">总文件数</param>
+        /// <param name="fileNameMatch">文件名匹配数（-1=无过滤）</param>
+        /// <param name="contentMatch">内容匹配数（-1=无内容搜索）</param>
+        private void UpdateFileCountLabel(int totalFiles, int fileNameMatch, int contentMatch)
+        {
+            // 无任何过滤
+            if (fileNameMatch < 0 && contentMatch < 0)
+            {
+                _lblFileCount.Text = $"共 {totalFiles} 个文件";
+                return;
+            }
+
+            var parts = new List<string> { $"共 {totalFiles} 个文件" };
+
+            // 文件名匹配
+            if (fileNameMatch >= 0)
+                parts.Add($"文件匹配{fileNameMatch}个");
+
+            // 内容匹配
+            if (contentMatch >= 0)
+                parts.Add($"内容匹配{contentMatch}个");
+
+            _lblFileCount.Text = string.Join("  ", parts);
+        }
+
         // ==================== 构建树形结构 ====================
         private void BuildTreeFromRoot()
         {
@@ -1516,7 +1547,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
             {
                 _treeFiles.EndUpdate();
-                _lblFileCount.Text = "共 0 个文件";
+                UpdateFileCountLabel(0, -1, -1);
                 return;
             }
 
@@ -1538,7 +1569,7 @@ namespace wxd.files.winforms
 
             _treeFiles.EndUpdate();
 
-            _lblFileCount.Text = $"共 {_allFiles.Count} 个文件";
+            UpdateFileCountLabel(_allFiles.Count, _fileNameMatchCount, _contentMatchCount);
         }
 
         // ==================== 文件过滤 ====================
@@ -1589,9 +1620,12 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // 正常过滤逻辑
+            // 正常过滤逻辑（任何文件名过滤操作都清除内容搜索计数，因为可见文件列表已改变）
+            _contentMatchCount = -1;
+
             if (string.IsNullOrEmpty(filter))
             {
+                _fileNameMatchCount = -1;
                 BuildTreeFromRoot();
             }
             else
@@ -1607,6 +1641,7 @@ namespace wxd.files.winforms
                     .OrderBy(f => f.RelativePath)
                     .ToList();
 
+                _fileNameMatchCount = matchedFiles.Count;
                 BuildFilteredTreeFromFiles(matchedFiles);
             }
         }
@@ -1620,7 +1655,7 @@ namespace wxd.files.winforms
             if (matchedFiles.Count == 0)
             {
                 _treeFiles.EndUpdate();
-                _lblFileCount.Text = $"共 0 个文件（总{_allFiles.Count}）";
+                UpdateFileCountLabel(_allFiles.Count, _fileNameMatchCount, _contentMatchCount);
                 return;
             }
 
@@ -1661,7 +1696,8 @@ namespace wxd.files.winforms
             _treeFiles.ExpandAll();
 
             _treeFiles.EndUpdate();
-            _lblFileCount.Text = $"共 {matchedFiles.Count} 个文件（总{_allFiles.Count}）";
+            // 不在这里设置 _fileNameMatchCount / _contentMatchCount，由调用者（ApplyFileFilter 或 OnContentSearchClick）负责设置
+            UpdateFileCountLabel(_allFiles.Count, _fileNameMatchCount, _contentMatchCount);
         }
 
         /// <summary>获取或创建文件所在的父目录节点（递归创建缺失的中间目录）</summary>
@@ -2495,19 +2531,16 @@ namespace wxd.files.winforms
 
             if (matchedFiles.Count > 0)
             {
+                _contentMatchCount = matchedFiles.Count;
                 BuildFilteredTreeFromFiles(matchedFiles);
-                _lblFileCount.Text = hasFilter
-                    ? $"内容搜索: 匹配 {matchedFiles.Count} 个（过滤后{totalFiles}个）"
-                    : $"内容搜索: 匹配 {matchedFiles.Count} 个（总{_allFiles.Count}）";
             }
             else
             {
                 _treeFiles.BeginUpdate();
                 _treeFiles.Nodes.Clear();
                 _treeFiles.EndUpdate();
-                _lblFileCount.Text = hasFilter
-                    ? $"内容搜索: 未找到包含\"{keyword}\"的文件（过滤后{totalFiles}个）"
-                    : $"内容搜索: 未找到包含\"{keyword}\"的文件（总{_allFiles.Count}）";
+                _contentMatchCount = 0;
+                UpdateFileCountLabel(_allFiles.Count, _fileNameMatchCount >= 0 ? _fileNameMatchCount : -1, _contentMatchCount);
                 AlertForm.Show(this, $"未找到包含\"{keyword}\"的文件", "搜索结果", AlertType.Information);
             }
         }
@@ -2525,8 +2558,8 @@ namespace wxd.files.winforms
             _progressBar.Value = 0;
             // 恢复搜索按钮可用
             _btnContentSearch.Enabled = true;
-            // 恢复文件数量标签
-            _lblFileCount.Text = $"共 {_allFiles.Count} 个文件";
+            // 清除内容搜索计数
+            _contentMatchCount = -1;
             // 文件列表恢复文件名过滤状态（而不是直接 BuildTreeFromRoot）
             ApplyFileFilter();
         }

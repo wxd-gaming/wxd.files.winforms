@@ -1301,7 +1301,10 @@ namespace wxd.files.winforms
             }
 
             if (!string.IsNullOrEmpty(_initialContentFilter))
+            {
                 _txtContentFilter.Text = _initialContentFilter;
+                TriggerFilter();
+            }
 
             // 初始化自定义 tooltip（只初始化一次；轻量模式跳过）
             if (!_lightweight && _linkToolTip == null)
