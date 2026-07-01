@@ -51,8 +51,8 @@ namespace wxd.files.winforms
         private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
 
         // ==================== 高级内容搜索状态 ====================
-        private volatile bool _contentSearchCancelled;
-        private volatile bool _isContentSearching = false;
+        private CancellationTokenSource? _searchCts;
+        private long _searchVersion;                    // 单调递增版本号，用于防抖
         private string _lastContentSearchKeyword = "";
 
         // ==================== VCS 状态字段 ====================
@@ -339,12 +339,18 @@ namespace wxd.files.winforms
             };
             _btnContentSearch.Click += OnContentSearchClick;
 
-            // 搜索框回车键触发搜索
+            // 搜索框回车键触发搜索，ESC取消搜索
             _txtContentSearch.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter)
                 {
                     OnContentSearchClick(_btnContentSearch, EventArgs.Empty);
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.KeyCode == Keys.Escape)
+                {
+                    OnCancelSearchClick(s, e);
                     e.Handled = true;
                     e.SuppressKeyPress = true;
                 }
@@ -2339,7 +2345,7 @@ namespace wxd.files.winforms
             VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
 
             _loadingCts?.Cancel();
-            _contentSearchCancelled = true;
+            _searchCts?.Cancel();
 
             // 检查所有打开的标签页是否有未保存的修改
             for (int i = _tabContent.TabPages.Count - 1; i >= 0; i--)
@@ -2378,20 +2384,56 @@ namespace wxd.files.winforms
                 AlertForm.Show(this, "请先选择目录加载文件", "提示", AlertType.Information);
                 return;
             }
-            if (_isContentSearching) return;
 
-            _isContentSearching = true;
-            _contentSearchCancelled = false;
+            // ★ 防抖：取消之前的搜索，递增版本号
+            _searchCts?.Cancel();
+            _searchCts = new CancellationTokenSource();
+            var cts = _searchCts;
+            var myVersion = Interlocked.Increment(ref _searchVersion);
+            var token = cts.Token;
+
+            // ★ 在后台线程开始前快照 _allFiles，避免并发修改
+            List<FileInfo> filesSnapshot;
+            lock (_lockObj)
+            {
+                filesSnapshot = new List<FileInfo>(_allFiles);
+            }
+
+            // ★ 根据文件名过滤条件筛选当前可见文件
+            var filter = _txtFileFilter.Text.Trim();
+            var hasFilter = !string.IsNullOrEmpty(filter);
+            List<FileInfo> visibleList;
+            if (hasFilter)
+            {
+                var processedFilter = filter.Replace("||", " | ").Replace("&&", " & ");
+                visibleList = filesSnapshot
+                    .Where(f =>
+                    {
+                        var remark = _fileRemarks.TryGetValue(f.RelativePath, out var r) ? r : "";
+                        return MatchesFilter(f.RelativePath, processedFilter) ||
+                               (!string.IsNullOrEmpty(remark) && MatchesFilter(remark, processedFilter));
+                    })
+                    .ToList();
+            }
+            else
+            {
+                visibleList = filesSnapshot;
+            }
+
+            if (visibleList.Count == 0)
+            {
+                AlertForm.Show(this, hasFilter ? "文件名过滤后没有可见的文件" : "没有可搜索的文件", "提示", AlertType.Information);
+                return;
+            }
 
             // 进入搜索模式：禁用搜索按钮，显示进度条和取消按钮
             _btnContentSearch.Enabled = false;
             _pnlSearchProgress.Visible = true;
             _btnCancelSearch.Visible = true;
             _progressBar.Value = 0;
-
             _lastContentSearchKeyword = keyword;
 
-            var totalFiles = _allFiles.Count;
+            var totalFiles = visibleList.Count;
             var matchedFiles = new List<FileInfo>();
             var processed = 0;
 
@@ -2399,74 +2441,94 @@ namespace wxd.files.winforms
             {
                 await Task.Run(() =>
                 {
-                    foreach (var file in _allFiles)
+                    var batchSize = 50;
+                    foreach (var file in visibleList)
                     {
-                        if (_contentSearchCancelled) break;
+
+                        token.ThrowIfCancellationRequested();
+
+                        // ★ 防抖：版本号已变，说明有更新的搜索，退出
+                        if (myVersion != _searchVersion)
+                            return;
 
                         var current = Interlocked.Increment(ref processed);
-                        this.Invoke(() =>
+
+                        // ★ 批量 Invoke 更新进度（每50个文件一次）
+                        if (current % batchSize == 0 || current == totalFiles)
                         {
-                            if (!_contentSearchCancelled)
-                                UpdateSearchProgress(current, totalFiles);
-                        });
+                            this.Invoke(() =>
+                            {
+                                // ★ 双重检查：UI 线程上也检查版本号
+                                if (myVersion == _searchVersion)
+                                    UpdateSearchProgress(current, totalFiles);
+                            });
+                        }
 
                         if (FileContainsTextSimple(file.FullPath, file.Type, keyword))
                         {
                             lock (matchedFiles) matchedFiles.Add(file);
                         }
                     }
-                });
+                }, token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 取消是预期的，不做任何 UI 操作
+                return;
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"搜索出错: {ex.Message}", "错误", AlertType.Error, exception: ex);
-            }
-
-            // 检查是否被取消
-            if (_contentSearchCancelled)
-            {
-                // OnCancelSearchClick 已处理 UI
-                _isContentSearching = false;
+                this.Invoke(() =>
+                {
+                    AlertForm.Show(this, $"搜索出错: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                });
                 return;
             }
 
-            // 搜索正常完成：进度条到100%，恢复搜索按钮，进度条和取消按钮保持显示
+            // ★ 最终防抖检查：如果版本号已变，不更新 UI
+            if (myVersion != _searchVersion)
+                return;
+
+            // 搜索正常完成
             _progressBar.Value = 100;
             _btnContentSearch.Enabled = true;
 
             if (matchedFiles.Count > 0)
             {
                 BuildFilteredTreeFromFiles(matchedFiles);
-                _lblFileCount.Text = $"内容搜索: 匹配 {matchedFiles.Count} 个（总{_allFiles.Count}）";
+                _lblFileCount.Text = hasFilter
+                    ? $"内容搜索: 匹配 {matchedFiles.Count} 个（过滤后{totalFiles}个）"
+                    : $"内容搜索: 匹配 {matchedFiles.Count} 个（总{_allFiles.Count}）";
             }
             else
             {
                 _treeFiles.BeginUpdate();
                 _treeFiles.Nodes.Clear();
                 _treeFiles.EndUpdate();
-                _lblFileCount.Text = $"内容搜索: 未找到包含\"{keyword}\"的文件（总{_allFiles.Count}）";
+                _lblFileCount.Text = hasFilter
+                    ? $"内容搜索: 未找到包含\"{keyword}\"的文件（过滤后{totalFiles}个）"
+                    : $"内容搜索: 未找到包含\"{keyword}\"的文件（总{_allFiles.Count}）";
                 AlertForm.Show(this, $"未找到包含\"{keyword}\"的文件", "搜索结果", AlertType.Information);
             }
-
-            _isContentSearching = false;
         }
 
         /// <summary>点击取消按钮 — 取消正在进行的搜索，清空搜索框，恢复文件列表初始状态</summary>
         private void OnCancelSearchClick(object? sender, EventArgs e)
         {
-            _contentSearchCancelled = true;
+            _searchCts?.Cancel();
+            Interlocked.Increment(ref _searchVersion);
+
             // 清空搜索框
             _txtContentSearch.Text = "";
             _lastContentSearchKeyword = "";
-            // 进度条归0，进度条和取消按钮保持显示
+            // 进度条归0
             _progressBar.Value = 0;
             // 恢复搜索按钮可用
             _btnContentSearch.Enabled = true;
             // 恢复文件数量标签
             _lblFileCount.Text = $"共 {_allFiles.Count} 个文件";
-            _isContentSearching = false;
-            // 文件列表还原初始状态
-            BuildTreeFromRoot();
+            // 文件列表恢复文件名过滤状态（而不是直接 BuildTreeFromRoot）
+            ApplyFileFilter();
         }
 
         /// <summary>更新搜索进度（仅更新进度条）</summary>
