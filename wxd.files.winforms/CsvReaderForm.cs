@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
@@ -1409,7 +1410,7 @@ namespace wxd.files.winforms
                     {
                         _allFiles = files;
                     }
-                });  // ★ 不传 token 给 Task.Run，避免 Task 本身因取消而抛 TaskCanceledException
+                });
                 if (!token.IsCancellationRequested)
                 {
                     this.Invoke(() =>
@@ -1476,8 +1477,6 @@ namespace wxd.files.winforms
                 {
                     foreach (var file in Directory.GetFiles(currentDir, ext))
                     {
-                        // ★ 用 IsCancellationRequested 检查替代 ThrowIfCancellationRequested()
-                        //    避免异常从线程池线程逃逸到 Application.ThreadException
                         if (token.IsCancellationRequested)
                             return;
                         if (!showHidden)
@@ -2472,7 +2471,7 @@ namespace wxd.files.winforms
             _pnlSearchProgress.Visible = true;
             _btnCancelSearch.Visible = true;
             _lblSearchProgress.Visible = true;
-            _lblSearchProgress.Text = $"0/{visibleList.Count} (0.00%)";
+            _lblSearchProgress.Text = $"{visibleList.Count} / 0 / 0 / 0.0%";
             _lastContentSearchKeyword = keyword;
 
             // ★ 强制立即重绘，让用户感知搜索已开始（避免同步准备阶段阻塞 UI 重绘）
@@ -2481,45 +2480,68 @@ namespace wxd.files.winforms
             _btnContentSearch.Refresh();
 
             var totalFiles = visibleList.Count;
-            var matchedFiles = new List<FileInfo>();
-            var processed = 0;
+            var matchedFiles = new ConcurrentBag<FileInfo>();   // ★ 线程安全集合
+            var processing = 0;   // 正在处理的文件数（Interlocked 操作）
+            var completed = 0;    // 已完成的文件数（Interlocked 操作）
+            var lastProgressTime = 0L;  // 上次UI更新的毫秒时间戳（防并发Invoke）
 
             try
             {
                 await Task.Run(() =>
                 {
-                    var batchSize = 20;
-                    foreach (var file in visibleList)
+                    var options = new ParallelOptions
                     {
+                        CancellationToken = token,
+                        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+                    };
 
-                        // ★ 用 IsCancellationRequested 检查替代 ThrowIfCancellationRequested()
-                        //    避免异常从线程池线程逃逸到 Application.ThreadException
+                    try
+                    {
+                        Parallel.ForEach(visibleList, options, file =>
+                        {
+
                         if (token.IsCancellationRequested)
                             return;
 
-                        // ★ 防抖：版本号已变，说明有更新的搜索，退出
-                        if (myVersion != _searchVersion)
-                            return;
+                            // ★ 正在处理标记 +1
+                            Interlocked.Increment(ref processing);
 
-                        var current = Interlocked.Increment(ref processed);
-
-                        // ★ 首个文件立即反馈一次进度，之后每 batchSize 个批量更新
-                        if (current == 1 || current % batchSize == 0 || current == totalFiles)
-                        {
-                            this.Invoke(() =>
+                            try
                             {
-                                // ★ 双重检查：UI 线程上也检查版本号
-                                if (myVersion == _searchVersion)
-                                    UpdateSearchProgress(current, totalFiles);
-                            });
-                        }
+                                if (FileContainsTextSimple(file.FullPath, file.Type, keyword))
+                                    matchedFiles.Add(file);  // ConcurrentBag 无需 lock
+                            }
+                            finally
+                            {
+                                // ★ 正在处理标记 -1
+                                Interlocked.Decrement(ref processing);
+                                // ★ 已处理标记 +1
+                                var done = Interlocked.Increment(ref completed);
 
-                        if (FileContainsTextSimple(file.FullPath, file.Type, keyword))
-                        {
-                            lock (matchedFiles) matchedFiles.Add(file);
-                        }
+                                // ★ 进度更新节流：首个文件立即反馈，之后每 300ms 更新一次，最后一个文件必定更新
+                                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                                var last = Interlocked.Read(ref lastProgressTime);
+                                if (done == 1 || now - last >= 300 || done == totalFiles)
+                                {
+                                    // ★ CAS 更新时间戳，只有一个线程能成功 Invoke，减少UI竞争
+                                    if (Interlocked.CompareExchange(ref lastProgressTime, now, last) == last)
+                                    {
+                                        try
+                                        {
+                                            this.Invoke(() =>
+                                            {
+                                                if (myVersion == Volatile.Read(ref _searchVersion))
+                                                    UpdateSearchProgress(done, processing, totalFiles);
+                                            });
+                                        }
+                                        catch { }  // ObjectDisposedException 等
+                                    }
+                                }
+                            }
+                        });
                     }
-                });  // ★ 不传 token 给 Task.Run，避免 Task 本身因取消而抛 TaskCanceledException
+                    catch (OperationCanceledException) { /* Parallel.ForEach 取消时抛出，吞掉 */ }
+                });
             }
             catch (OperationCanceledException)
             {
@@ -2545,13 +2567,13 @@ namespace wxd.files.winforms
                 return;
 
             // 搜索正常完成
-            _lblSearchProgress.Text = $"{totalFiles}/{totalFiles} (100.00%)";
+            _lblSearchProgress.Text = $"{totalFiles} / 0 / {totalFiles} / 100.0%";
             _btnContentSearch.Enabled = true;
 
             if (matchedFiles.Count > 0)
             {
                 _contentMatchCount = matchedFiles.Count;
-                BuildFilteredTreeFromFiles(matchedFiles);
+                BuildFilteredTreeFromFiles(matchedFiles.ToList());
             }
             else
             {
@@ -2584,12 +2606,12 @@ namespace wxd.files.winforms
             ApplyFileFilter();
         }
 
-        /// <summary>更新搜索进度（更新 Label 文字，精确到小数）</summary>
-        private void UpdateSearchProgress(int current, int total)
+        /// <summary>更新搜索进度：总/正在处理/已处理/百分比</summary>
+        private void UpdateSearchProgress(int completed, int processing, int total)
         {
             if (total <= 0) return;
-            var pct = (double)current / total * 100;
-            _lblSearchProgress.Text = $"{current}/{total} ({pct:F2}%)";
+            var pct = (double)completed / total * 100;
+            _lblSearchProgress.Text = $"{total} / {processing} / {completed} / {pct:F1}%";
         }
 
         /// <summary>判断文件内容是否包含关键词（简化版，不依赖 CancellationToken）</summary>
