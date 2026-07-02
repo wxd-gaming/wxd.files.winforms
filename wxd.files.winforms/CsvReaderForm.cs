@@ -37,7 +37,7 @@ namespace wxd.files.winforms
         private TextBox _txtContentSearch = new();
         private Button _btnContentSearch = new();
         private Button _btnCancelSearch = new();
-        private ProgressBar _progressBar = new();
+        private Label _lblSearchProgress = new();
         private Panel _pnlSearchProgress = new();
         private RoundedPanel _pnlSearchContainer = new();
 
@@ -370,14 +370,17 @@ namespace wxd.files.winforms
                 BackColor = Color.Transparent
             };
 
-            _progressBar = new ProgressBar
+            _lblSearchProgress = new Label
             {
-                Location = new Point(0, 5),
-                Size = new Size(200, 18),
-                Style = ProgressBarStyle.Continuous,
-                ForeColor = _colorPrimary,
-                BackColor = Color.FromArgb(235, 248, 255),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+                Location = new Point(0, 6),
+                Size = new Size(160, 20),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                ForeColor = _colorLightText,
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoSize = false,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Visible = false
             };
 
             // 取消搜索按钮（默认隐藏，放在进度面板内部右侧）
@@ -395,7 +398,7 @@ namespace wxd.files.winforms
             };
             _btnCancelSearch.Click += OnCancelSearchClick;
 
-            _pnlSearchProgress.Controls.Add(_progressBar);
+            _pnlSearchProgress.Controls.Add(_lblSearchProgress);
             _pnlSearchProgress.Controls.Add(_btnCancelSearch);
 
             _pnlSearchContainer.Controls.Add(_txtContentSearch);
@@ -587,7 +590,7 @@ namespace wxd.files.winforms
 
                 // 进度条面板在容器内部自适应
                 _pnlSearchProgress.Width = Math.Max(160, _pnlSearchContainer.Width - 16);
-                _progressBar.Width = Math.Max(60, _txtContentSearch.Width);
+                _lblSearchProgress.Width = Math.Max(100, _pnlSearchProgress.Width - 72);
                 _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 64, 1);
 
                 // VCS 操作面板自适应宽度
@@ -2462,12 +2465,18 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // 进入搜索模式：禁用搜索按钮，显示进度条和取消按钮
+            // 进入搜索模式：禁用搜索按钮，显示进度标签和取消按钮
             _btnContentSearch.Enabled = false;
             _pnlSearchProgress.Visible = true;
             _btnCancelSearch.Visible = true;
-            _progressBar.Value = 0;
+            _lblSearchProgress.Visible = true;
+            _lblSearchProgress.Text = $"0/{visibleList.Count} (0.00%)";
             _lastContentSearchKeyword = keyword;
+
+            // ★ 强制立即重绘，让用户感知搜索已开始（避免同步准备阶段阻塞 UI 重绘）
+            _pnlSearchProgress.Refresh();
+            _lblSearchProgress.Refresh();
+            _btnContentSearch.Refresh();
 
             var totalFiles = visibleList.Count;
             var matchedFiles = new List<FileInfo>();
@@ -2477,7 +2486,7 @@ namespace wxd.files.winforms
             {
                 await Task.Run(() =>
                 {
-                    var batchSize = 50;
+                    var batchSize = 20;
                     foreach (var file in visibleList)
                     {
 
@@ -2489,8 +2498,8 @@ namespace wxd.files.winforms
 
                         var current = Interlocked.Increment(ref processed);
 
-                        // ★ 批量 Invoke 更新进度（每50个文件一次）
-                        if (current % batchSize == 0 || current == totalFiles)
+                        // ★ 首个文件立即反馈一次进度，之后每 batchSize 个批量更新
+                        if (current == 1 || current % batchSize == 0 || current == totalFiles)
                         {
                             this.Invoke(() =>
                             {
@@ -2526,7 +2535,7 @@ namespace wxd.files.winforms
                 return;
 
             // 搜索正常完成
-            _progressBar.Value = 100;
+            _lblSearchProgress.Text = $"{totalFiles}/{totalFiles} (100.00%)";
             _btnContentSearch.Enabled = true;
 
             if (matchedFiles.Count > 0)
@@ -2554,8 +2563,9 @@ namespace wxd.files.winforms
             // 清空搜索框
             _txtContentSearch.Text = "";
             _lastContentSearchKeyword = "";
-            // 进度条归0
-            _progressBar.Value = 0;
+            // 进度标签归零并隐藏
+            _lblSearchProgress.Text = "";
+            _lblSearchProgress.Visible = false;
             // 恢复搜索按钮可用
             _btnContentSearch.Enabled = true;
             // 清除内容搜索计数
@@ -2564,12 +2574,12 @@ namespace wxd.files.winforms
             ApplyFileFilter();
         }
 
-        /// <summary>更新搜索进度（仅更新进度条）</summary>
+        /// <summary>更新搜索进度（更新 Label 文字，精确到小数）</summary>
         private void UpdateSearchProgress(int current, int total)
         {
             if (total <= 0) return;
-            var pct = Math.Min(100, (int)((double)current / total * 100));
-            _progressBar.Value = pct;
+            var pct = (double)current / total * 100;
+            _lblSearchProgress.Text = $"{current}/{total} ({pct:F2}%)";
         }
 
         /// <summary>判断文件内容是否包含关键词（简化版，不依赖 CancellationToken）</summary>
