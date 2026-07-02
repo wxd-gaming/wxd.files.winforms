@@ -1409,8 +1409,7 @@ namespace wxd.files.winforms
                     {
                         _allFiles = files;
                     }
-                }, token);
-
+                });  // ★ 不传 token 给 Task.Run，避免 Task 本身因取消而抛 TaskCanceledException
                 if (!token.IsCancellationRequested)
                 {
                     this.Invoke(() =>
@@ -1477,7 +1476,10 @@ namespace wxd.files.winforms
                 {
                     foreach (var file in Directory.GetFiles(currentDir, ext))
                     {
-                        token.ThrowIfCancellationRequested();
+                        // ★ 用 IsCancellationRequested 检查替代 ThrowIfCancellationRequested()
+                        //    避免异常从线程池线程逃逸到 Application.ThreadException
+                        if (token.IsCancellationRequested)
+                            return;
                         if (!showHidden)
                         {
                             try { if ((File.GetAttributes(file) & FileAttributes.Hidden) == FileAttributes.Hidden) continue; } catch { }
@@ -2490,7 +2492,10 @@ namespace wxd.files.winforms
                     foreach (var file in visibleList)
                     {
 
-                        token.ThrowIfCancellationRequested();
+                        // ★ 用 IsCancellationRequested 检查替代 ThrowIfCancellationRequested()
+                        //    避免异常从线程池线程逃逸到 Application.ThreadException
+                        if (token.IsCancellationRequested)
+                            return;
 
                         // ★ 防抖：版本号已变，说明有更新的搜索，退出
                         if (myVersion != _searchVersion)
@@ -2514,11 +2519,16 @@ namespace wxd.files.winforms
                             lock (matchedFiles) matchedFiles.Add(file);
                         }
                     }
-                }, token);
+                });  // ★ 不传 token 给 Task.Run，避免 Task 本身因取消而抛 TaskCanceledException
             }
             catch (OperationCanceledException)
             {
-                // 取消是预期的，不做任何 UI 操作
+                // 取消是预期的，恢复 UI 状态后退出
+                _lblSearchProgress.Text = "";
+                _lblSearchProgress.Visible = false;
+                _btnCancelSearch.Visible = false;
+                _pnlSearchProgress.Visible = false;
+                _btnContentSearch.Enabled = true;
                 return;
             }
             catch (Exception ex)
