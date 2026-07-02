@@ -1302,7 +1302,9 @@ namespace wxd.files.winforms
 
             if (!string.IsNullOrEmpty(_initialContentFilter))
             {
-                _txtContentFilter.Text = _initialContentFilter;
+                // 从左侧文件列表"搜索内容"匹配后打开文件时，将搜索关键词填充到高级过滤（过滤掉不匹配行），
+                // 而非内容搜索（仅高亮不过滤行）。无运算符的关键词会被当作全列模糊匹配处理。
+                _txtAdvancedFilter.Text = _initialContentFilter;
                 TriggerFilter();
             }
 
