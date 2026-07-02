@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -15,18 +16,29 @@ namespace wxd.files.winforms
     /// key = 全小写绝对路径（如 "c:\work\a.csv"）。
     /// 30分钟无访问自动过期，过期返回旧数据 + 后台异步刷新。
     /// 关联查找（LinkLookup）key 保持相对路径格式，与 ColumnLinkConfig 一致。
+    /// 
+    /// 并发设计：
+    /// - 不同文件使用独立锁（_fileLocks），可并行加载/访问
+    /// - 同一文件的并发请求通过 per-file lock + double-check 保证只加载一次
+    /// - _entries 使用 ConcurrentDictionary，字典操作本身线程安全
+    /// - LinkLookup 相关操作使用独立的 _linkLock，与文件缓存互不干扰
     /// </summary>
     public static class FileDataCache
     {
         /// <summary>缓存条目（key = NormalizePath(fullPath)）</summary>
-        private static readonly Dictionary<string, CacheEntry> _entries =
+        private static readonly ConcurrentDictionary<string, CacheEntry> _entries =
             new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>关联查找缓存（key 沿用现有格式："sourceRel|srcCol->targetRel:targetCol"）</summary>
         private static readonly Dictionary<string, LinkLookupEntry> _linkLookups =
             new(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly object _lock = new();
+        /// <summary>LinkLookup 专用锁（跨文件关联，需全局视角）</summary>
+        private static readonly object _linkLock = new();
+
+        /// <summary>每个文件的独立锁对象（保证同一文件的 load 不重入）</summary>
+        private static readonly ConcurrentDictionary<string, object> _fileLocks =
+            new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly TimeSpan ExpireDuration = TimeSpan.FromMinutes(30);
 
@@ -51,70 +63,52 @@ namespace wxd.files.winforms
         public static (DataTable, FileTableData) LoadFile(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                var entry = GetOrLoadEntry(key, filePath);
-                entry.Touch();
-                return (entry.MasterDataTable.Copy(), CloneFileData(entry.MasterFileData));
-            }
+            var entry = GetOrLoadEntry(key, filePath);
+            entry.Touch();
+            return (entry.MasterDataTable.Copy(), CloneFileData(entry.MasterFileData));
         }
 
         /// <summary>获取 DataTable 副本（走缓存）</summary>
         public static DataTable GetDataTableCopy(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                var entry = GetOrLoadEntry(key, filePath);
-                entry.Touch();
-                return entry.MasterDataTable.Copy();
-            }
+            var entry = GetOrLoadEntry(key, filePath);
+            entry.Touch();
+            return entry.MasterDataTable.Copy();
         }
 
         /// <summary>获取 FileTableData 副本（走缓存）</summary>
         public static FileTableData GetFileDataCopy(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                var entry = GetOrLoadEntry(key, filePath);
-                entry.Touch();
-                return CloneFileData(entry.MasterFileData);
-            }
+            var entry = GetOrLoadEntry(key, filePath);
+            entry.Touch();
+            return CloneFileData(entry.MasterFileData);
         }
 
         /// <summary>获取只读 DataTable（走缓存，返回引用，调用方不应修改）</summary>
         public static DataTable GetDataTableReadOnly(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                var entry = GetOrLoadEntry(key, filePath);
-                entry.Touch();
-                return entry.MasterDataTable;
-            }
+            var entry = GetOrLoadEntry(key, filePath);
+            entry.Touch();
+            return entry.MasterDataTable;
         }
 
         /// <summary>获取只读 FileTableData（走缓存，返回引用）</summary>
         public static FileTableData GetFileDataReadOnly(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                var entry = GetOrLoadEntry(key, filePath);
-                entry.Touch();
-                return entry.MasterFileData;
-            }
+            var entry = GetOrLoadEntry(key, filePath);
+            entry.Touch();
+            return entry.MasterFileData;
         }
 
         /// <summary>确保文件已加载到缓存（预加载用）</summary>
         public static void EnsureLoaded(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                GetOrLoadEntry(key, filePath);
-            }
+            GetOrLoadEntry(key, filePath);
         }
 
         // ============ 公共 API：读取（不走缓存） ============
@@ -152,7 +146,8 @@ namespace wxd.files.winforms
             if (success && updateCache)
             {
                 var key = NormalizePath(fullPath);
-                lock (_lock)
+                var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
+                lock (fileLock)
                 {
                     var fi = new FileInfo(fullPath);
                     var fileData = BuildFileDataFromDataTable(dataTable, fullPath);
@@ -251,19 +246,18 @@ namespace wxd.files.winforms
         public static void InvalidateFile(string filePath)
         {
             var key = NormalizePath(filePath);
-            lock (_lock)
-            {
-                _entries.Remove(key);
-                ClearLinkLookupsForFile(key, Path.GetDirectoryName(filePath)!);
-            }
+            _entries.TryRemove(key, out _);
+            _fileLocks.TryRemove(key, out _);
+            ClearLinkLookupsForFile(key, Path.GetDirectoryName(filePath)!);
         }
 
         /// <summary>清除所有缓存</summary>
         public static void ClearAll()
         {
-            lock (_lock)
+            _entries.Clear();
+            _fileLocks.Clear();
+            lock (_linkLock)
             {
-                _entries.Clear();
                 _linkLookups.Clear();
                 _buildingLinkLookups.Clear();
             }
@@ -280,7 +274,7 @@ namespace wxd.files.winforms
             string key = BuildLinkKey(sourceRel, sourceColIndex, targetRel, targetColIndex, null, fieldIndex);
 
             LinkLookupEntry? lookup;
-            lock (_lock)
+            lock (_linkLock)
             {
                 if (_linkLookups.TryGetValue(key, out lookup))
                     return lookup;
@@ -288,11 +282,11 @@ namespace wxd.files.winforms
 
             var targetFullPath = Path.Combine(rootDir, targetRel);
             var targetKey = NormalizePath(targetFullPath);
-            lock (_lock)
+            var entry = GetOrLoadEntry(targetKey, targetFullPath);
+            lookup = BuildLinkLookupFromMaster(entry.MasterFileData,
+                targetColIndex, fieldLink);
+            lock (_linkLock)
             {
-                var entry = GetOrLoadEntry(targetKey, targetFullPath);
-                lookup = BuildLinkLookupFromMaster(entry.MasterFileData,
-                    targetColIndex, fieldLink);
                 _linkLookups[key] = lookup;
             }
             return lookup;
@@ -301,7 +295,7 @@ namespace wxd.files.winforms
         /// <summary>获取所有已缓存的关联查找条目</summary>
         public static Dictionary<string, LinkLookupEntry> GetLookups()
         {
-            lock (_lock)
+            lock (_linkLock)
             {
                 return new Dictionary<string, LinkLookupEntry>(_linkLookups, StringComparer.OrdinalIgnoreCase);
             }
@@ -310,7 +304,7 @@ namespace wxd.files.winforms
         /// <summary>检查指定源文件的关联 lookup 是否正在后台构建中</summary>
         public static bool IsLinkLookupBuilding(string sourceRel)
         {
-            lock (_lock) { return _buildingLinkLookups.Contains(sourceRel); }
+            lock (_linkLock) { return _buildingLinkLookups.Contains(sourceRel); }
         }
 
         /// <summary>异步构建所有关联配置的 lookup</summary>
@@ -321,7 +315,7 @@ namespace wxd.files.winforms
             string sourceRel = GetRelativePath(sourceFilePath, rootDir);
 
             // ★ 防重入检查
-            lock (_lock)
+            lock (_linkLock)
             {
                 if (_buildingLinkLookups.Contains(sourceRel))
                     return;
@@ -363,7 +357,7 @@ namespace wxd.files.winforms
                         var targetKey = NormalizePath(targetFullPath);
                         CacheEntry entry = await Task.Run(() =>
                         {
-                            lock (_lock) { return GetOrLoadEntry(targetKey, targetFullPath); }
+                            return GetOrLoadEntry(targetKey, targetFullPath);
                         }, cancellationToken);
 
                         string key = BuildLinkKey(sourceRel, link.SourceColumnIndex,
@@ -373,7 +367,7 @@ namespace wxd.files.winforms
                             BuildLinkLookupFromMaster(entry.MasterFileData,
                                 fl.TargetColumnIndex, fl), cancellationToken);
 
-                        lock (_lock)
+                        lock (_linkLock)
                         {
                             if (!_linkLookups.ContainsKey(key))
                                 _linkLookups[key] = lookup;
@@ -383,24 +377,27 @@ namespace wxd.files.winforms
             }
             finally
             {
-                lock (_lock) { _buildingLinkLookups.Remove(sourceRel); }
+                lock (_linkLock) { _buildingLinkLookups.Remove(sourceRel); }
             }
         }
 
         // ============ 内部实现 ============
 
-        /// <summary>获取或加载条目（调用方必须持有 _lock）</summary>
+        /// <summary>
+        /// 获取或加载条目（并发安全）。
+        /// 快速路径：缓存命中且文件未变 → 直接返回（无锁）。
+        /// 慢路径：获取该文件独立锁 → double-check → 加载解析。
+        /// </summary>
         private static CacheEntry GetOrLoadEntry(string key, string fullPath)
         {
+            // 1. 快速路径：缓存已存在，直接返回（ConcurrentDictionary.TryGetValue 无锁）
             if (_entries.TryGetValue(key, out var entry))
             {
                 var fi = new FileInfo(fullPath);
                 if (fi.Exists &&
                     (fi.LastWriteTimeUtc != entry.LastWriteTime || fi.Length != entry.FileSize))
                 {
-                    // 文件被外部修改，失效重建
-                    _entries.Remove(key);
-                    ClearLinkLookupsForFile(key, Path.GetDirectoryName(fullPath)!);
+                    // 文件被外部修改，需失效重建 → 进入慢路径
                 }
                 else
                 {
@@ -408,9 +405,32 @@ namespace wxd.files.winforms
                 }
             }
 
-            entry = LoadAndParseFile(key, fullPath);
-            _entries[key] = entry;
-            return entry;
+            // 2. 慢路径：获取该文件的独立锁，保证同一文件的 load 不重入
+            var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
+            lock (fileLock)
+            {
+                // double-check：在等待锁期间，其他线程可能已加载该文件
+                if (_entries.TryGetValue(key, out entry))
+                {
+                    var fi2 = new FileInfo(fullPath);
+                    if (fi2.Exists &&
+                        (fi2.LastWriteTimeUtc != entry.LastWriteTime || fi2.Length != entry.FileSize))
+                    {
+                        // 文件仍已变更，需重建
+                        _entries.TryRemove(key, out _);
+                        ClearLinkLookupsForFile(key, Path.GetDirectoryName(fullPath)!);
+                    }
+                    else
+                    {
+                        return entry;
+                    }
+                }
+
+                // 确实需要加载
+                entry = LoadAndParseFile(key, fullPath);
+                _entries[key] = entry;
+                return entry;
+            }
         }
 
         /// <summary>解析文件并构建 CacheEntry</summary>
@@ -576,37 +596,34 @@ namespace wxd.files.winforms
         {
             try
             {
-                Dictionary<string, CacheEntry> expiredKeys;
-                lock (_lock)
-                {
-                    var now = DateTime.UtcNow;
-                    expiredKeys = _entries
-                        .Where(kvp => (now - kvp.Value.LastAccessTime) > ExpireDuration)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
-                }
+                var now = DateTime.UtcNow;
+                var expiredKeys = _entries
+                    .Where(kvp => (now - kvp.Value.LastAccessTime) > ExpireDuration)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
 
-                var newEntries = new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kvp in expiredKeys)
+                foreach (var key in expiredKeys)
                 {
                     try
                     {
-                        var (dt, fd) = ParseFile(kvp.Key);
-                        newEntries[kvp.Key] = new CacheEntry
+                        var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
+                        lock (fileLock)
                         {
-                            MasterDataTable = dt,
-                            MasterFileData = fd,
-                            LastWriteTime = kvp.Value.LastWriteTime,
-                            FileSize = kvp.Value.FileSize,
-                            LastAccessTime = kvp.Value.LastAccessTime
-                        };
+                            if (!_entries.TryGetValue(key, out var oldEntry))
+                                continue;
+
+                            var (dt, fd) = ParseFile(key);
+                            _entries[key] = new CacheEntry
+                            {
+                                MasterDataTable = dt,
+                                MasterFileData = fd,
+                                LastWriteTime = oldEntry.LastWriteTime,
+                                FileSize = oldEntry.FileSize,
+                                LastAccessTime = oldEntry.LastAccessTime
+                            };
+                        }
                     }
                     catch { }
-                }
-
-                lock (_lock)
-                {
-                    foreach (var kvp in newEntries)
-                        _entries[kvp.Key] = kvp.Value;
                 }
             }
             catch { }
@@ -622,7 +639,7 @@ namespace wxd.files.winforms
             var counts = new Dictionary<char, int>
             {
                 { ',', firstLine.Count(c => c == ',') },
-                { '\t', firstLine.Count(c => c == '\t') },
+                { GlobalConst.TabChar, firstLine.Count(c => c == GlobalConst.TabChar) },
                 { ';', firstLine.Count(c => c == ';') },
                 { '|', firstLine.Count(c => c == '|') }
             };
@@ -648,9 +665,9 @@ namespace wxd.files.winforms
                     inQuotes = !inQuotes;
                     sb.Append(c);
                 }
-                else if (!inQuotes && (c == '\n' || c == '\r'))
+                else if (!inQuotes && (c == GlobalConst.LfChar || c == GlobalConst.CrChar))
                 {
-                    if (c == '\r' && i + 1 < content.Length && content[i + 1] == '\n') i++;
+                    if (c == GlobalConst.CrChar && i + 1 < content.Length && content[i + 1] == GlobalConst.LfChar) i++;
                     lines.Add(sb.ToString());
                     sb.Clear();
                 }
@@ -705,7 +722,7 @@ namespace wxd.files.winforms
                 foreach (var item in row.ItemArray)
                 {
                     var value = item?.ToString() ?? "";
-                    if (value.Contains(delimiter) || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+                    if (value.Contains(delimiter) || value.Contains('"') || value.Contains(GlobalConst.LfChar) || value.Contains(GlobalConst.CrChar))
                         value = "\"" + value.Replace("\"", "\"\"") + "\"";
                     values.Add(value);
                 }
