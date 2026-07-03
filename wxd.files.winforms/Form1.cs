@@ -1083,7 +1083,7 @@ namespace wxd.files.winforms
             var cmd = item.Command;
             if (string.IsNullOrWhiteSpace(cmd)) return;
 
-            var lines = cmd.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var lines = cmd.Split(new[] { GlobalConst.CrLf, GlobalConst.Cr, GlobalConst.Lf }, StringSplitOptions.None);
             var fullCmd = string.Join(" & ", lines);
 
             try

@@ -684,7 +684,8 @@ namespace wxd.files.winforms
                 if (!_imgList.Images.ContainsKey(key))
                 {
                     var shfi = default(SHFILEINFO);
-                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON);
+                    // 使用扩展名 + USEFILEATTRIBUTES，避免 Shell 缓存锁定文件/目录
+                    SHGetFileInfo(key, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
                     if (shfi.hIcon != IntPtr.Zero)
                     {
                         _imgList.Images.Add(key, Icon.FromHandle(shfi.hIcon));

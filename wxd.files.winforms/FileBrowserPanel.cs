@@ -1596,11 +1596,12 @@ namespace wxd.files.winforms
                 }
                 else
                 {
-                    // 非图片文件：为大图标列表准备系统图标
+                    // 非图片文件：为大图标列表准备系统图标（使用扩展名 + USEFILEATTRIBUTES，避免锁定文件）
                     if (!_imgListLarge.Images.ContainsKey(iconKey))
                     {
                         var shfi = default(SHFILEINFO);
-                        SHGetFileInfo(fullName, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON);
+                        var ext = Path.GetExtension(fullName).ToLowerInvariant();
+                        SHGetFileInfo(ext, 0, out shfi, (uint)Marshal.SizeOf(shfi), SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
                         if (shfi.hIcon != IntPtr.Zero)
                             _imgListLarge.Images.Add(iconKey, Icon.FromHandle(shfi.hIcon));
                     }
@@ -1634,10 +1635,11 @@ namespace wxd.files.winforms
                 var list = small ? _imgList : _imgListLarge;
                 if (!list.Images.ContainsKey(key))
                 {
-                    uint flags = SHGFI_ICON;
+                    uint flags = SHGFI_ICON | SHGFI_USEFILEATTRIBUTES;
                     if (small) flags |= SHGFI_SMALLICON;
                     var shfi = default(SHFILEINFO);
-                    SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags);
+                    // 使用扩展名而非完整路径，避免 Shell 缓存锁定文件/目录
+                    SHGetFileInfo(key, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags);
                     if (shfi.hIcon != IntPtr.Zero)
                     {
                         list.Images.Add(key, Icon.FromHandle(shfi.hIcon));
@@ -1654,13 +1656,16 @@ namespace wxd.files.winforms
         {
             try
             {
+                var ext = Path.GetExtension(filePath).ToLowerInvariant();
+                var searchPath = string.IsNullOrEmpty(ext) ? "file" : ext;
                 var shfi = default(SHFILEINFO);
-                SHGetFileInfo(filePath, 0, out shfi, (uint)Marshal.SizeOf(shfi), 0x400);
+                // 使用扩展名 + USEFILEATTRIBUTES，避免 Shell 访问实际文件产生锁定
+                SHGetFileInfo(searchPath, 0, out shfi, (uint)Marshal.SizeOf(shfi), 0x400 | SHGFI_USEFILEATTRIBUTES);
                 if (!string.IsNullOrEmpty(shfi.szTypeName)) return shfi.szTypeName;
             }
             catch { }
-            var ext = Path.GetExtension(filePath).ToLowerInvariant();
-            return string.IsNullOrEmpty(ext) ? "文件" : ext.ToUpperInvariant().TrimStart('.') + " 文件";
+            var ext2 = Path.GetExtension(filePath).ToLowerInvariant();
+            return string.IsNullOrEmpty(ext2) ? "文件" : ext2.ToUpperInvariant().TrimStart('.') + " 文件";
         }
 
         private static string FormatFileSize(long bytes)
@@ -2117,17 +2122,14 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                // 如果是文件，使用 cmd /c start 打开，模拟资源管理器双击效果
+                // 如果是文件，使用 UseShellExecute 直接打开，避免 cmd.exe 中间进程锁定目录
                 if (File.Exists(filePath))
                 {
-                    var workingDir = Path.GetDirectoryName(filePath) ?? "";
                     var startInfo = new ProcessStartInfo
                     {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c start \"\" \"{filePath}\"",
-                        WorkingDirectory = workingDir,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
+                        FileName = filePath,
+                        UseShellExecute = true,
+                        Verb = verb
                     };
                     Process.Start(startInfo);
                     return;
