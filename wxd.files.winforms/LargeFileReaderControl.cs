@@ -65,11 +65,11 @@ namespace wxd.files.winforms
         private volatile int _idxProg;
 
         // ★ 并行索引构建相关常量与字段
-        // 文件按字节大小切成 64 块，最大 4 线程并行构建行索引
-        private const int BLOCK_COUNT = 64;
+        // 文件按字节大小动态切块，每块约 100MB，最大 4 线程并行构建行索引
+        private const long BLOCK_SIZE = 100L * 1024 * 1024;  // 每块目标大小：100MB
+        private const int MAX_BLOCK_COUNT = 128;             // 块数上限
         private const int MAX_PARALLEL = 4;
-        // 小文件快速路径阈值：文件小于此值时退化为单块单线程，避免并行调度开销
-        private const long PARALLEL_THRESHOLD = BLOCK_COUNT * 64L * 1024;
+        private int _blockCount;  // 动态块数，根据文件大小在 BuildIndex 中计算
         // 单块构建结果：块号 → BlockIndexResult
         private readonly ConcurrentDictionary<int, BlockIndexResult> _blockResults = new();
         private CancellationTokenSource? _indexCts;
@@ -268,15 +268,51 @@ namespace wxd.files.winforms
             }
             catch { }
 
+            // ★ 首屏快速加载：用 _readStream 手动扫描前若干行偏移，通过截断逻辑统一读取
+            // 避免 StreamReader.ReadLine() 无截断导致超长行在 TextRenderer.DrawText 中静默失败
             int loaded = 0;
+            _readStream?.Dispose();
+            _readStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
+
             try
             {
-                using var sr = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.SequentialScan), Encoding.UTF8, true, 65536);
-                for (int i = 0; i < 500; i++)
+                // ★ 循环扫描文件直到找到足够多的换行符，避免只读前64KB导致大行/多行无法扫描
+                var firstOffsets = new List<long>() { 0 };
+                var scanBuf = new byte[65536];
+                long scanPos = 0;
+                while (firstOffsets.Count <= 50 && scanPos < _fileLength)
                 {
-                    string? line = sr.ReadLine();
-                    if (line == null) break;
-                    _cache[i] = line; loaded++;
+                    _readStream.Seek(scanPos, SeekOrigin.Begin);
+                    int n = _readStream.Read(scanBuf, 0, scanBuf.Length);
+                    if (n <= 0) break;
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (scanBuf[i] == GlobalConst.LfChar)
+                        {
+                            // ★ scanPos + i + 1：scanPos是全局偏移，i是buf内偏移，+1跳过LF本身
+                            firstOffsets.Add(scanPos + i + 1);
+                            if (firstOffsets.Count > 50) break;
+                        }
+                    }
+                    scanPos += n;
+                }
+                if (firstOffsets.Count == 1 && _fileLength > 0)
+                    firstOffsets.Add(_fileLength);
+
+                for (int idx = 0; idx < firstOffsets.Count - 1 && idx < 50; idx++)
+                {
+                    long s = firstOffsets[idx], e = firstOffsets[idx + 1];
+                    int lineLen = (int)Math.Min(e - s, FULL_LINE_LIMIT);
+                    if (lineLen <= 0) continue;
+                    _readStream.Seek(s, SeekOrigin.Begin);
+                    var lineBuf = new byte[lineLen];
+                    int got = 0;
+                    while (got < lineLen) { int r = _readStream.Read(lineBuf, got, lineLen - got); if (r <= 0) break; got += r; }
+                    string fullText = got > 0
+                        ? Encoding.UTF8.GetString(lineBuf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
+                        : "";
+                    _cache[idx] = TruncateLineText(fullText);
+                    loaded++;
                 }
             }
             catch { }
@@ -284,24 +320,9 @@ namespace wxd.files.winforms
             _lstContent.VirtualListSize = Math.Max(loaded, 1);
             _cS = 0; _cE = loaded - 1;
 
-            _readStream?.Dispose();
-            _readStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
-
-            using (var g = _lstContent.CreateGraphics())
-            {
-                int maxW = _lstContent.ClientRectangle.Width;
-                foreach (var kv in _cache)
-                    if (!string.IsNullOrEmpty(kv.Value))
-                    {
-                        var sz = g.MeasureString(kv.Value, _lstContent.Font);
-                        if (sz.Width + 10 > maxW) maxW = (int)sz.Width + 10;
-                    }
-                _lstContent.MaxContentWidth = maxW;
-            }
-            _lstContent.InitHScroll();
+            UpdateMaxContentWidth();
 
             Status($"前 {loaded} 行已加载，正在构建索引...");
-            // ★ 底部状态栏显示索引进度
             _lblFileLines.Text = "行数：索引中...";
             try { _lstContent.RedrawItems(0, Math.Max(loaded - 1, 0), true); } catch { }
 
@@ -323,6 +344,11 @@ namespace wxd.files.winforms
                 return;
             }
 
+            // ★ 绘制时截断保护：GDI DrawText 无法渲染超过约 32767 字符的字符串，
+            // 超长文本会导致静默不绘制（界面空白）。截断为 DISPLAY_LINE_LIMIT 字符。
+            if (text.Length > DISPLAY_LINE_LIMIT)
+                text = text.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
+
             bool selected = _lstContent.SelectedIndices.Contains(e.ItemIndex);
             using var backBrush = new SolidBrush(selected ? Color.FromArgb(66, 165, 245) : _lstContent.BackColor);
             using var textBrush = new SolidBrush(selected ? Color.White : _lstContent.ForeColor);
@@ -341,9 +367,9 @@ namespace wxd.files.winforms
         }
 
         // ==================== 索引构建 ====================
-        // ★ 并行索引构建：文件按字节大小切成 64 块，最大 4 线程并行构建行索引
+        // ★ 并行索引构建：文件按字节大小动态切块（每块约 100MB），最大 4 线程并行构建行索引
         // 每块独立 FileStream 扫描 ，完成后原子计数 + 增量 UI 反馈
-        // 全部完成后按 0→63 顺序合并，去重跨块边界行
+        // 全部完成后按 0→N-1 顺序合并，去重跨块边界行
         private void BuildIndex()
         {
             try
@@ -352,8 +378,11 @@ namespace wxd.files.winforms
                 _indexCts = new CancellationTokenSource();
                 var token = _indexCts.Token;
 
+                // ★ 动态计算块数：每块约 100MB，小文件单块，大文件最多 MAX_BLOCK_COUNT 块
+                _blockCount = _fileLength <= BLOCK_SIZE ? 1 : (int)Math.Min((_fileLength + BLOCK_SIZE - 1) / BLOCK_SIZE, MAX_BLOCK_COUNT);
+
                 // ★ 小文件快速路径：退化为单块单线程，避免并行调度开销
-                if (_fileLength < PARALLEL_THRESHOLD)
+                if (_blockCount <= 1)
                 {
                     BuildIndexSingleThread(token);
                     return;
@@ -372,7 +401,7 @@ namespace wxd.files.winforms
 
                 try
                 {
-                    Parallel.For(0, BLOCK_COUNT, options, blockId =>
+                    Parallel.For(0, _blockCount, options, blockId =>
                     {
                         if (_cancel) return;
                         var result = BuildBlockIndex(blockId, bounds[blockId].start, bounds[blockId].end, token);
@@ -425,14 +454,14 @@ namespace wxd.files.winforms
             catch (Exception ex) { Debug.WriteLine($"Index: {ex}"); _indexReady = false; }
         }
 
-        /// <summary>计算 64 块的字节边界，按字节大小均匀分配（余数均匀分到前 N 块）</summary>
+        /// <summary>计算 _blockCount 块的字节边界，按字节大小均匀分配（余数均匀分到前 N 块）</summary>
         private (long start, long end)[] ComputeBlockBoundaries()
         {
-            var bounds = new (long, long)[BLOCK_COUNT];
-            long baseSize = _fileLength / BLOCK_COUNT;
-            long remainder = _fileLength % BLOCK_COUNT;
+            var bounds = new (long, long)[_blockCount];
+            long baseSize = _fileLength / _blockCount;
+            long remainder = _fileLength % _blockCount;
             long acc = 0;
-            for (int i = 0; i < BLOCK_COUNT; i++)
+            for (int i = 0; i < _blockCount; i++)
             {
                 long size = baseSize + (i < remainder ? 1 : 0);
                 bounds[i] = (acc, acc + size);
@@ -525,7 +554,7 @@ namespace wxd.files.winforms
         {
             var merged = new List<long>(_lineOffsets?.Length ?? 65536) { 0 }; // 第一行起始为 0
 
-            for (int i = 0; i < BLOCK_COUNT; i++)
+            for (int i = 0; i < _blockCount; i++)
             {
                 if (!_blockResults.TryGetValue(i, out var br)) continue;
                 foreach (var off in br.LineStarts)
@@ -536,7 +565,7 @@ namespace wxd.files.winforms
                 }
             }
 
-            // 修正：如果最后一块尾部不是 ，移除最后一个虚拟行偏移
+            // 修正：如果最后一块尾部不是 LF，移除最后一个虚拟行偏移
             if (merged.Count > 1 && merged[merged.Count - 1] >= _fileLength)
                 merged.RemoveAt(merged.Count - 1);
 
@@ -548,7 +577,7 @@ namespace wxd.files.winforms
         {
             long total = 1; // 第 0 行起始为 0
             long lastOffset = 0;
-            for (int i = 0; i < BLOCK_COUNT; i++)
+            for (int i = 0; i < _blockCount; i++)
             {
                 if (!_blockResults.TryGetValue(i, out var br)) break;
                 foreach (var off in br.LineStarts)
@@ -570,7 +599,7 @@ namespace wxd.files.winforms
             if (continuous <= _partialMaxLine) return;
             _partialMaxLine = continuous;
             _idxCount = continuous;
-            _idxProg = doneBlocks * 100 / BLOCK_COUNT;
+            _idxProg = doneBlocks * 100 / _blockCount;
 
             // 回 UI 线程扩大 VirtualListSize
             try
@@ -582,7 +611,7 @@ namespace wxd.files.winforms
                     if (newSize > _lstContent.VirtualListSize)
                     {
                         _lstContent.VirtualListSize = newSize;
-                        _lblFileLines.Text = $"行数：已构建 {continuous:N0} 行 ({doneBlocks}/{BLOCK_COUNT}块 {_idxProg}%)";
+                        _lblFileLines.Text = $"行数：已构建 {continuous:N0} 行 ({doneBlocks}/{_blockCount}块 {_idxProg}%)";
                     }
                 });
             }
@@ -600,6 +629,8 @@ namespace wxd.files.winforms
                 RefreshCacheSizeStatus();
                 // ★ long → int 安全转换（WinForms ListView 限制为 int）
                 _lstContent.VirtualListSize = (int)Math.Min(_idxCount, int.MaxValue);
+                // ★ 索引完成后重新测量 MaxContentWidth，基于当前可见区域的截断后缓存数据
+                UpdateMaxContentWidth();
                 _timerScroll.Start();
                 try { _lstContent.RedrawItems(0, Math.Min(_lstContent.VirtualListSize - 1, _lstContent.ClientRectangle.Height / Math.Max(_lstContent.Font.Height + 6, 1)), true); } catch { }
                 return;
@@ -624,6 +655,36 @@ namespace wxd.files.winforms
             catch { }
         }
 
+        /// <summary>对行文本进行截断处理（与 ReadLine/预加载 共用），超长行截断为 DISPLAY_LINE_LIMIT 字符</summary>
+        private static string TruncateLineText(string fullText)
+        {
+            if (fullText.Length > DISPLAY_LINE_LIMIT)
+                return fullText.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
+            return fullText;
+        }
+
+        /// <summary>基于当前可见区域的缓存数据刷新 MaxContentWidth（截断后测量，避免超长行像素宽度过大）</summary>
+        private void UpdateMaxContentWidth()
+        {
+            try
+            {
+                using var g = _lstContent.CreateGraphics();
+                int maxW = _lstContent.ClientRectangle.Width;
+                foreach (var kv in _cache)
+                {
+                    if (!string.IsNullOrEmpty(kv.Value))
+                    {
+                        string measureText = TruncateLineText(kv.Value);
+                        var sz = g.MeasureString(measureText, _lstContent.Font);
+                        if (sz.Width + 10 > maxW) maxW = (int)sz.Width + 10;
+                    }
+                }
+                _lstContent.MaxContentWidth = maxW;
+                _lstContent.InitHScroll();
+            }
+            catch { }
+        }
+
         private string ReadLine(long idx)
         {
             var off = _lineOffsets;
@@ -641,9 +702,7 @@ namespace wxd.files.winforms
                     string fullText = got > 0
                         ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
                         : "";
-                    if (fullText.Length > DISPLAY_LINE_LIMIT)
-                        return fullText.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
-                    return fullText;
+                    return TruncateLineText(fullText);
                 }
                 catch { return "[err]"; }
             }
@@ -2135,7 +2194,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                     var semaphore = new SemaphoreSlim(MAX_PARALLEL);
                     var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
                     var cancelToken = cts.Token;
-                    int totalBlocks = BLOCK_COUNT;
+                    int totalBlocks = _blockCount;
                     int completedCount = 0;
                     bool firstBlockHandled = false;
 
@@ -2327,10 +2386,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         private (long startLine, long endLine)[] ComputeLineBoundsForBlocks()
         {
             var bounds = ComputeBlockBoundaries();
-            var lineBounds = new (long startLine, long endLine)[BLOCK_COUNT];
+            var lineBounds = new (long startLine, long endLine)[_blockCount];
             long[] off = _lineOffsets!;
             long totalLines = off.Length;
-            for (int i = 0; i < BLOCK_COUNT; i++)
+            for (int i = 0; i < _blockCount; i++)
             {
                 long blockStart = bounds[i].start;
                 long blockEnd = bounds[i].end;
@@ -2343,10 +2402,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 lineBounds[i] = (startLine, endLine);
             }
             // 第一块从第 0 行开始；最后一块到最后一行结束
-            if (BLOCK_COUNT > 0)
+            if (_blockCount > 0)
             {
                 lineBounds[0] = (0, lineBounds[0].endLine);
-                lineBounds[BLOCK_COUNT - 1] = (lineBounds[BLOCK_COUNT - 1].startLine, totalLines - 1);
+                lineBounds[_blockCount - 1] = (lineBounds[_blockCount - 1].startLine, totalLines - 1);
             }
             return lineBounds;
         }
