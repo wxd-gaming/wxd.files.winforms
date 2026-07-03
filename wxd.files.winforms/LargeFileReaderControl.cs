@@ -221,7 +221,7 @@ namespace wxd.files.winforms
                 AutoScroll = false,
                 WrapContents = false
             };
-            _statusBar.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblFileLines, _lblCacheSize, _lblSearchPos, _lblCurLine });
+            _statusBar.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblCacheSize, _lblCurLine, _lblFileLines, _lblSearchPos });
 
             Controls.Add(_lstContent);
             Controls.Add(_statusBar);
