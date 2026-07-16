@@ -1,4 +1,4 @@
-ï»¿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
@@ -14,14 +14,14 @@ using MiniExcelLibs;
 
 namespace wxd.files.winforms
 {
-    /// <summary>ç»Ÿä¸€çš„è¡¨æ ¼æµè§ˆæ§ä»¶ï¼ˆæ”¯æŒCSVå’ŒExcelï¼‰</summary>
+    /// <summary>Í³Ò»µÄ±í¸ñä¯ÀÀ¿Ø¼ş£¨Ö§³ÖCSVºÍExcel£©</summary>
     public class TableBrowserControl : UserControl
     {
-        // ==================== æ§ä»¶å£°æ˜ ====================
+        // ==================== ¿Ø¼şÉùÃ÷ ====================
         private DataGridView _dataGridHeader = new();
         private DataGridView _dataGrid = new();
         private SplitContainer _pnlGridContainer = new();
-        private Panel? _headerPanel;  // å›ºå®šè¡ŒåŒºåŸŸå®¹å™¨å¼•ç”¨ï¼Œé¿å…æ¯æ¬¡ AttachGridToParent åˆ›å»ºæ–° Panel å¯¼è‡´ç©º Panel å †ç§¯é®æŒ¡
+        private Panel? _headerPanel;  // ¹Ì¶¨ĞĞÇøÓòÈİÆ÷ÒıÓÃ£¬±ÜÃâÃ¿´Î AttachGridToParent ´´½¨ĞÂ Panel µ¼ÖÂ¿Õ Panel ¶Ñ»ıÕÚµ²
         private Button _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
@@ -33,13 +33,13 @@ namespace wxd.files.winforms
         private Panel _pnlLoading = new();
         private ProgressBar? _loadingProgressBar;
         private Label? _loadingLabel;
-        private bool _isLoading = false;  // é˜²é‡å…¥æ ‡å¿—ï¼ˆDoEvents æœŸé—´é¿å…äºŒæ¬¡åŠ è½½ï¼‰
+        private bool _isLoading = false;  // ·ÀÖØÈë±êÖ¾£¨DoEvents ÆÚ¼ä±ÜÃâ¶ş´Î¼ÓÔØ£©
         private Panel _pnlTop = new();
         private Panel _pnlStatus = new();
         private Panel _statusSeparator = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
-        private FileTableData _fileData = new();  // ç»Ÿä¸€æ•°æ®æ¨¡å‹ï¼Œç”¨äºè¡Œå·è¿½è¸ª
+        private FileTableData _fileData = new();  // Í³Ò»Êı¾İÄ£ĞÍ£¬ÓÃÓÚĞĞºÅ×·×Ù
         private string _filePath = "";
         private TableFileType _fileType;
         private char _delimiter = ',';
@@ -62,56 +62,57 @@ namespace wxd.files.winforms
         private Button? _btnHistory;
         private ComboBox? _cboUniqueColumn;
         private bool[]? _externalColumnStates = null;
-        private int? _externalTotalColumns = null;    // å¤–éƒ¨æ³¨å…¥çš„å®Œæ•´åˆ—æ•°ï¼ˆä¸å«åºå·åˆ—ï¼‰
-        private int? _externalVisibleColumns = null;   // å¤–éƒ¨æ³¨å…¥çš„å¯è§åˆ—æ•°ï¼ˆä¸å«åºå·åˆ—ï¼‰
-        private bool _isEmbeddedMode; // æ˜¯å¦ä¸ºå¤–éƒ¨åµŒå…¥æ¨¡å¼ï¼ˆç‰ˆæœ¬å¯¹æ¯”ç­‰ï¼‰ï¼Œç¦æ­¢ç¼–è¾‘
-        private bool _isEditLocked = false; // Excelé»˜è®¤é”å®šç¼–è¾‘ï¼ŒCSVé»˜è®¤è§£é”
-        private ContextMenuMode _contextMenuMode = ContextMenuMode.Normal; // å³é”®èœå•æ¨¡å¼
+        private int? _externalTotalColumns = null;    // Íâ²¿×¢ÈëµÄÍêÕûÁĞÊı£¨²»º¬ĞòºÅÁĞ£©
+        private int? _externalVisibleColumns = null;   // Íâ²¿×¢ÈëµÄ¿É¼ûÁĞÊı£¨²»º¬ĞòºÅÁĞ£©
+        private bool _columnManagementDisabled = false; // ÁĞ¹ÜÀí±»½ûÓÃ£¨°æ±¾¶Ô±ÈµÈ³¡¾°£¬±£³Ö°´Å¥ÏÔÊ¾µ«²»ÏìÓ¦µã»÷£©
+        private bool _isEmbeddedMode; // ÊÇ·ñÎªÍâ²¿Ç¶ÈëÄ£Ê½£¨°æ±¾¶Ô±ÈµÈ£©£¬½ûÖ¹±à¼­
+        private bool _isEditLocked = false; // ExcelÄ¬ÈÏËø¶¨±à¼­£¬CSVÄ¬ÈÏ½âËø
+        private ContextMenuMode _contextMenuMode = ContextMenuMode.Normal; // ÓÒ¼ü²Ëµ¥Ä£Ê½
 
-        // ==================== ç¼“å­˜ ====================
-        // ç¼“å­˜ç›´æ¥é€šè¿‡ FileDataCache é™æ€æ–¹æ³•ï¼Œä¸å†å­˜å‚¨ DirectoryCache å¼•ç”¨
+        // ==================== »º´æ ====================
+        // »º´æÖ±½ÓÍ¨¹ı FileDataCache ¾²Ì¬·½·¨£¬²»ÔÙ´æ´¢ DirectoryCache ÒıÓÃ
         private bool _hasUnsavedChanges = false;
         private System.Windows.Forms.Timer? _retrySaveTimer;
-        private const int SaveDebounceMs = 3000; // 3ç§’æ— æ“ä½œåè‡ªåŠ¨ä¿å­˜
-        /// <summary>å·²ä¿®æ”¹ä½†å°šæœªä¿å­˜åˆ°ç£ç›˜çš„åŸå§‹è¡Œç´¢å¼•é›†åˆï¼ˆç”¨äºå•å…ƒæ ¼æ©™è‰²èƒŒæ™¯æ ‡è®°ï¼‰</summary>
+        private const int SaveDebounceMs = 3000; // 3ÃëÎŞ²Ù×÷ºó×Ô¶¯±£´æ
+        /// <summary>ÒÑĞŞ¸Äµ«ÉĞÎ´±£´æµ½´ÅÅÌµÄÔ­Ê¼ĞĞË÷Òı¼¯ºÏ£¨ÓÃÓÚµ¥Ôª¸ñ³ÈÉ«±³¾°±ê¼Ç£©</summary>
         private HashSet<int> _unsavedRowIndices = new();
 
-        // ==================== è¡Œç¼–è¾‘æ¨¡å¼ ====================
-        private int _editingRowIndex = -1;           // å½“å‰æ­£åœ¨ç¼–è¾‘çš„æ˜¾ç¤ºè¡Œç´¢å¼•ï¼ˆ-1=æ— ï¼‰
-        private string[]? _editingRowOriginalValues;  // ç¼–è¾‘å‰åŸå§‹å€¼å¿«ç…§ï¼ˆç”¨äºEscå–æ¶ˆï¼‰
-        private bool _enteringEditMode = false;       // é˜²æ­¢äº‹ä»¶é‡å…¥æ ‡å¿—
-        private bool _isNewRowForEdit = false;        // æ˜¯å¦ä¸ºæ–°å¢è¡Œï¼ˆEscæ—¶åˆ é™¤è¯¥è¡Œï¼‰
-        private int _editingRowOrigIndex = -1;        // ç¼–è¾‘è¡Œçš„åŸå§‹è¡Œç´¢å¼•
-        /// <summary>è¡Œç¼–è¾‘æ¨¡å¼ä¸­å·²ä¿®æ”¹çš„å•å…ƒæ ¼é›†åˆï¼ˆæŒ‰åŸå§‹è¡Œç´¢å¼•åˆ†ç»„ï¼Œkey=åŸå§‹è¡Œç´¢å¼•ï¼Œvalue=è¯¥è¡Œå·²ä¿®æ”¹çš„åˆ—ç´¢å¼•é›†åˆï¼Œä¸åŒè¡Œäº’ä¸å½±å“ï¼‰</summary>
+        // ==================== ĞĞ±à¼­Ä£Ê½ ====================
+        private int _editingRowIndex = -1;           // µ±Ç°ÕıÔÚ±à¼­µÄÏÔÊ¾ĞĞË÷Òı£¨-1=ÎŞ£©
+        private string[]? _editingRowOriginalValues;  // ±à¼­Ç°Ô­Ê¼Öµ¿ìÕÕ£¨ÓÃÓÚEscÈ¡Ïû£©
+        private bool _enteringEditMode = false;       // ·ÀÖ¹ÊÂ¼şÖØÈë±êÖ¾
+        private bool _isNewRowForEdit = false;        // ÊÇ·ñÎªĞÂÔöĞĞ£¨EscÊ±É¾³ı¸ÃĞĞ£©
+        private int _editingRowOrigIndex = -1;        // ±à¼­ĞĞµÄÔ­Ê¼ĞĞË÷Òı
+        /// <summary>ĞĞ±à¼­Ä£Ê½ÖĞÒÑĞŞ¸ÄµÄµ¥Ôª¸ñ¼¯ºÏ£¨°´Ô­Ê¼ĞĞË÷Òı·Ö×é£¬key=Ô­Ê¼ĞĞË÷Òı£¬value=¸ÃĞĞÒÑĞŞ¸ÄµÄÁĞË÷Òı¼¯ºÏ£¬²»Í¬ĞĞ»¥²»Ó°Ïì£©</summary>
         private Dictionary<int, HashSet<int>> _modifiedCellsInEdit = new();
-        private bool _syncingColumnWidth = false;     // åˆ—å®½åŒæ­¥é˜²é‡å…¥
-        private bool _syncingScroll = false;           // æ»šåŠ¨åŒæ­¥é˜²é‡å…¥
+        private bool _syncingColumnWidth = false;     // ÁĞ¿íÍ¬²½·ÀÖØÈë
+        private bool _syncingScroll = false;           // ¹ö¶¯Í¬²½·ÀÖØÈë
 
-        // ==================== è¿‡æ»¤ç‰ˆæœ¬æ§åˆ¶ ====================
-        private int _filterVersion = 0;        // é€’å¢ç‰ˆæœ¬å·ï¼Œç”¨äºä¸¢å¼ƒè¿‡æœŸè¿‡æ»¤ç»“æœ
-        private int _pendingFilterVersion = 0; // æ­£åœ¨åå°æ‰§è¡Œçš„è¿‡æ»¤ç‰ˆæœ¬å·ï¼Œé˜²é‡å¤å¯åŠ¨
+        // ==================== ¹ıÂË°æ±¾¿ØÖÆ ====================
+        private int _filterVersion = 0;        // µİÔö°æ±¾ºÅ£¬ÓÃÓÚ¶ªÆú¹ıÆÚ¹ıÂË½á¹û
+        private int _pendingFilterVersion = 0; // ÕıÔÚºóÌ¨Ö´ĞĞµÄ¹ıÂË°æ±¾ºÅ£¬·ÀÖØ¸´Æô¶¯
 
-        /// <summary>å”¯ä¸€åˆ—é‡å¤è­¦å‘Šæ–‡æœ¬ï¼ˆnull = æ— è­¦å‘Šï¼‰ï¼Œç”¨äºçŠ¶æ€æ æŒä¹…æç¤º</summary>
+        /// <summary>Î¨Ò»ÁĞÖØ¸´¾¯¸æÎÄ±¾£¨null = ÎŞ¾¯¸æ£©£¬ÓÃÓÚ×´Ì¬À¸³Ö¾ÃÌáÊ¾</summary>
         private string? _duplicateWarningText = null;
-        /// <summary>å”¯ä¸€åˆ—é‡å¤å€¼å®Œæ•´åˆ—è¡¨ï¼ˆä¾›è¯¦æƒ…çª—ä½“ä½¿ç”¨ï¼‰</summary>
+        /// <summary>Î¨Ò»ÁĞÖØ¸´ÖµÍêÕûÁĞ±í£¨¹©ÏêÇé´°ÌåÊ¹ÓÃ£©</summary>
         private List<DuplicateGroup> _duplicateDetails = new();
 
-        /// <summary>å†…å®¹æœç´¢åŒ¹é…çš„å•å…ƒæ ¼é›†åˆï¼ˆåŸå§‹è¡Œç´¢å¼• â†’ åŸå§‹åˆ—ç´¢å¼•é›†åˆï¼‰ï¼Œç”¨äºå•å…ƒæ ¼çº¢è‰²åŠ ç²—é«˜äº®ï¼Œä¸è¿‡æ»¤è¡Œ</summary>
+        /// <summary>ÄÚÈİËÑË÷Æ¥ÅäµÄµ¥Ôª¸ñ¼¯ºÏ£¨Ô­Ê¼ĞĞË÷Òı ¡ú Ô­Ê¼ÁĞË÷Òı¼¯ºÏ£©£¬ÓÃÓÚµ¥Ôª¸ñºìÉ«¼Ó´Ö¸ßÁÁ£¬²»¹ıÂËĞĞ</summary>
         private Dictionary<int, HashSet<int>> _contentSearchMatchCells = new();
 
-        /// <summary>é«˜çº§è¿‡æ»¤åŒ¹é…çš„å•å…ƒæ ¼é›†åˆï¼ˆåŸå§‹è¡Œç´¢å¼• â†’ åŸå§‹åˆ—ç´¢å¼•é›†åˆï¼‰</summary>
+        /// <summary>¸ß¼¶¹ıÂËÆ¥ÅäµÄµ¥Ôª¸ñ¼¯ºÏ£¨Ô­Ê¼ĞĞË÷Òı ¡ú Ô­Ê¼ÁĞË÷Òı¼¯ºÏ£©</summary>
         private Dictionary<int, HashSet<int>> _advFilterMatchCells = new();
 
-        /// <summary>è¿‡æ»¤åŒ¹é…çš„å•å…ƒæ ¼é›†åˆï¼ˆæ˜¾ç¤ºè¡Œç´¢å¼• â†’ è¯¥è¡ŒåŒ¹é…çš„æ˜¾ç¤ºåˆ—ç´¢å¼•é›†åˆï¼‰ï¼Œç”¨äº _dataGrid çº¢è‰²åŠ ç²—é«˜äº®</summary>
+        /// <summary>¹ıÂËÆ¥ÅäµÄµ¥Ôª¸ñ¼¯ºÏ£¨ÏÔÊ¾ĞĞË÷Òı ¡ú ¸ÃĞĞÆ¥ÅäµÄÏÔÊ¾ÁĞË÷Òı¼¯ºÏ£©£¬ÓÃÓÚ _dataGrid ºìÉ«¼Ó´Ö¸ßÁÁ</summary>
         private Dictionary<int, HashSet<int>> _filterMatchCells = new();
 
-        /// <summary>è¿‡æ»¤åŒ¹é…çš„å•å…ƒæ ¼é›†åˆï¼ˆæ˜¾ç¤ºè¡Œç´¢å¼• â†’ è¯¥è¡ŒåŒ¹é…çš„æ˜¾ç¤ºåˆ—ç´¢å¼•é›†åˆï¼‰ï¼Œç”¨äº _dataGridHeader çº¢è‰²åŠ ç²—é«˜äº®</summary>
+        /// <summary>¹ıÂËÆ¥ÅäµÄµ¥Ôª¸ñ¼¯ºÏ£¨ÏÔÊ¾ĞĞË÷Òı ¡ú ¸ÃĞĞÆ¥ÅäµÄÏÔÊ¾ÁĞË÷Òı¼¯ºÏ£©£¬ÓÃÓÚ _dataGridHeader ºìÉ«¼Ó´Ö¸ßÁÁ</summary>
         private Dictionary<int, HashSet<int>> _headerFilterMatchCells = new();
 
-        /// <summary>é«˜çº§è¿‡æ»¤æ—¶æ˜¯å¦ä¿ç•™æ‰€æœ‰è¡Œï¼ˆä»…é«˜äº®åŒ¹é…å•å…ƒæ ¼ï¼Œä¸è¿‡æ»¤è¡Œï¼‰ï¼Œé»˜è®¤ false</summary>
+        /// <summary>¸ß¼¶¹ıÂËÊ±ÊÇ·ñ±£ÁôËùÓĞĞĞ£¨½ö¸ßÁÁÆ¥Åäµ¥Ôª¸ñ£¬²»¹ıÂËĞĞ£©£¬Ä¬ÈÏ false</summary>
         private bool _filterKeepAllRows = false;
 
-        /// <summary>é‡å¤å€¼åˆ†ç»„æ•°æ®</summary>
+        /// <summary>ÖØ¸´Öµ·Ö×éÊı¾İ</summary>
         public class DuplicateGroup
         {
             public string Value { get; set; } = "";
@@ -119,29 +120,29 @@ namespace wxd.files.winforms
             public List<int> RowIndices { get; set; } = new();
         }
 
-        /// <summary>ç¼–è¾‘å…³è”è¡¨è¯·æ±‚äº‹ä»¶å‚æ•°</summary>
+        /// <summary>±à¼­¹ØÁª±íÇëÇóÊÂ¼ş²ÎÊı</summary>
         public class EditLinkTableEventArgs : EventArgs
         {
             public string TargetFilePath { get; set; } = "";
             public string DisplayName { get; set; } = "";
         }
 
-        // ==================== å…¬å¼€å±æ€§ ====================
+        // ==================== ¹«¿ªÊôĞÔ ====================
         public string FilePath => _filePath;
         public TableFileType FileType => _fileType;
         public int UniqueColumnIndex => _uniqueColumnIndex;
         public int MappingRowIndex => _mappingRowIndex;
 
-        /// <summary>æ•°æ®åŠ è½½å®Œæˆäº‹ä»¶ï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”ç­‰å¤–éƒ¨åŠŸèƒ½ä½¿ç”¨ï¼‰</summary>
+        /// <summary>Êı¾İ¼ÓÔØÍê³ÉÊÂ¼ş£¨¹©°æ±¾¶Ô±ÈµÈÍâ²¿¹¦ÄÜÊ¹ÓÃ£©</summary>
         public event EventHandler? DataLoaded;
 
-        /// <summary>è¯·æ±‚å…³è”æ‰“å¼€å¦ä¸€å¼ è¡¨äº‹ä»¶</summary>
+        /// <summary>ÇëÇó¹ØÁª´ò¿ªÁíÒ»ÕÅ±íÊÂ¼ş</summary>
         public event EventHandler? LinkTableRequested;
 
-        /// <summary>åœ¨çˆ¶çª—ä½“æ ‡ç­¾é¡µä¸­ç¼–è¾‘æ‰“å¼€å…³è”è¡¨è¯·æ±‚äº‹ä»¶</summary>
+        /// <summary>ÔÚ¸¸´°Ìå±êÇ©Ò³ÖĞ±à¼­´ò¿ª¹ØÁª±íÇëÇóÊÂ¼ş</summary>
         public event EventHandler<EditLinkTableEventArgs>? EditLinkTableRequested;
 
-        // å…³è”è¡¨è·³è½¬é«˜äº®
+        // ¹ØÁª±íÌø×ª¸ßÁÁ
         private int _highlightColumnIndex = -1;
         private string _highlightValue = "";
         private string _highlightColumnName = "";
@@ -149,11 +150,11 @@ namespace wxd.files.winforms
         private bool _highlightsReady = false;
         private List<string> _highlightValues = new();
 
-        // æ’åº
+        // ÅÅĞò
         private int _sortColumnIndex = -1;
         private SortOrder _sortOrder = SortOrder.None;
 
-        // ==================== é…è‰² ====================
+        // ==================== ÅäÉ« ====================
         private static readonly Color _colorSurface = Color.White;
         private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
         private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
@@ -170,8 +171,8 @@ namespace wxd.files.winforms
         private string? _rootDir;
         private string FrozenDir => !string.IsNullOrEmpty(_rootDir) ? _rootDir : Path.GetDirectoryName(_filePath) ?? "";
 
-        // ==================== æ„é€ å‡½æ•° ====================
-        /// <summary>ä½¿ç”¨é…ç½®å¯¹è±¡æ„é€ ï¼ˆæ¨èï¼‰</summary>
+        // ==================== ¹¹Ôìº¯Êı ====================
+        /// <summary>Ê¹ÓÃÅäÖÃ¶ÔÏó¹¹Ôì£¨ÍÆ¼ö£©</summary>
         public TableBrowserControl(TableBrowserOptions options)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
@@ -181,15 +182,15 @@ namespace wxd.files.winforms
             _rootDir = options.RootDir;
             _lightweight = options.Lightweight;
             _contextMenuMode = options.ContextMenuMode;
-            // â˜… å…ˆç¡®å®šæ–‡ä»¶ç±»å‹ï¼Œåç»­é…ç½®è¯»å–éœ€è¦ç”¨åˆ°
+            // ¡ï ÏÈÈ·¶¨ÎÄ¼şÀàĞÍ£¬ºóĞøÅäÖÃ¶ÁÈ¡ĞèÒªÓÃµ½
             _fileType = DetectFileType(options.FilePath);
-            _isEditLocked = (_fileType == TableFileType.Excel); // Excelé»˜è®¤é”å®šç¼–è¾‘
+            _isEditLocked = (_fileType == TableFileType.Excel); // ExcelÄ¬ÈÏËø¶¨±à¼­
             if (options.FrozenRows >= 0) { _frozenRows = options.FrozenRows; _frozenRowsOverridden = true; }
             _initialContentFilter = options.InitialContentFilter;
 
             var dir = FrozenDir;
 
-            // â˜… è¡¨å¤´è¡Œï¼šä¼˜å…ˆä½¿ç”¨ä¼ å…¥å€¼ï¼Œå¦åˆ™ä»é…ç½®å›é€€è¯»å–ï¼ˆä¸å— dir ä¸ºç©ºé™åˆ¶ï¼‰
+            // ¡ï ±íÍ·ĞĞ£ºÓÅÏÈÊ¹ÓÃ´«ÈëÖµ£¬·ñÔò´ÓÅäÖÃ»ØÍË¶ÁÈ¡£¨²»ÊÜ dir Îª¿ÕÏŞÖÆ£©
             if (options.HeaderRowIndex >= 0)
                 _headerRowIndex = options.HeaderRowIndex;
             else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
@@ -197,7 +198,7 @@ namespace wxd.files.winforms
             else if (!string.IsNullOrEmpty(dir))
                 _headerRowIndex = CsvSettings.GetExcelHeaderRowIndexByDirectory(dir);
 
-            // â˜… å”¯ä¸€åˆ—ï¼šä¼ å…¥å€¼ > æ–‡ä»¶çº§é…ç½® > ç›®å½•çº§é…ç½® > é»˜è®¤ 0
+            // ¡ï Î¨Ò»ÁĞ£º´«ÈëÖµ > ÎÄ¼ş¼¶ÅäÖÃ > Ä¿Â¼¼¶ÅäÖÃ > Ä¬ÈÏ 0
             if (options.UniqueColumnIndex >= 0)
             {
                 _uniqueColumnIndex = options.UniqueColumnIndex;
@@ -214,10 +215,10 @@ namespace wxd.files.winforms
                     _uniqueColumnIndex = CsvSettings.GetExcelUniqueColumnIndexByDirectory(dir);
 
                 if (_uniqueColumnIndex < 0)
-                    _uniqueColumnIndex = 0; // é»˜è®¤ç¬¬ä¸€åˆ—
+                    _uniqueColumnIndex = 0; // Ä¬ÈÏµÚÒ»ÁĞ
             }
 
-            // â˜… æ˜ å°„è¡Œï¼šä¼˜å…ˆä½¿ç”¨ä¼ å…¥å€¼ï¼Œå¦åˆ™ä»é…ç½®å›é€€è¯»å–ï¼ˆä¸å— dir ä¸ºç©ºé™åˆ¶ï¼‰
+            // ¡ï Ó³ÉäĞĞ£ºÓÅÏÈÊ¹ÓÃ´«ÈëÖµ£¬·ñÔò´ÓÅäÖÃ»ØÍË¶ÁÈ¡£¨²»ÊÜ dir Îª¿ÕÏŞÖÆ£©
             if (options.MappingRowIndex >= 0)
                 _mappingRowIndex = options.MappingRowIndex;
             else if (!string.IsNullOrEmpty(dir) && _fileType == TableFileType.Csv)
@@ -225,7 +226,7 @@ namespace wxd.files.winforms
             else if (!string.IsNullOrEmpty(dir))
                 _mappingRowIndex = CsvSettings.GetExcelMappingRowIndexByDirectory(dir);
 
-            // æ–‡ä»¶å¤‡æ³¨åä»ç„¶éœ€è¦ä»é…ç½®è¯»å–ï¼ˆä¾èµ– dirï¼‰
+            // ÎÄ¼ş±¸×¢ÃûÈÔÈ»ĞèÒª´ÓÅäÖÃ¶ÁÈ¡£¨ÒÀÀµ dir£©
             if (!string.IsNullOrEmpty(dir))
             {
                 _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
@@ -233,11 +234,11 @@ namespace wxd.files.winforms
 
             InitializeComponent();
 
-            // æç®€ UI æ¨¡å¼ï¼šéšè—å·¥å…·æ å’Œåº•éƒ¨çŠ¶æ€æ ï¼Œä¿ç•™é«˜çº§è¿‡æ»¤è¡Œ
+            // ¼«¼ò UI Ä£Ê½£ºÒş²Ø¹¤¾ßÀ¸ºÍµ×²¿×´Ì¬À¸£¬±£Áô¸ß¼¶¹ıÂËĞĞ
             if (options.ShowMinimalUI)
             {
-                // _pnlTop (TableLayoutPanel): [0]=å·¥å…·æ , [1]=åˆ†éš”çº¿, [2]=å†…å®¹è¿‡æ»¤, [3]=é«˜çº§è¿‡æ»¤
-                // åªéšè—å‰3ä¸ªï¼Œä¿ç•™é«˜çº§è¿‡æ»¤è¡Œ
+                // _pnlTop (TableLayoutPanel): [0]=¹¤¾ßÀ¸, [1]=·Ö¸ôÏß, [2]=ÄÚÈİ¹ıÂË, [3]=¸ß¼¶¹ıÂË
+                // Ö»Òş²ØÇ°3¸ö£¬±£Áô¸ß¼¶¹ıÂËĞĞ
                 if (_pnlTop.Controls.Count > 0) _pnlTop.Controls[0].Visible = false;
                 if (_pnlTop.Controls.Count > 1) _pnlTop.Controls[1].Visible = false;
                 if (_pnlTop.Controls.Count > 2) _pnlTop.Controls[2].Visible = false;
@@ -245,7 +246,7 @@ namespace wxd.files.winforms
                 _pnlStatus.Visible = false;
             }
 
-            // å¦‚æœæ–‡ä»¶è·¯å¾„ä¸ºç©ºæˆ–æ–‡ä»¶ä¸å­˜åœ¨ï¼Œè·³è¿‡è‡ªåŠ¨åŠ è½½ï¼ˆç”±å¤–éƒ¨é€šè¿‡ SetDataTable æ³¨å…¥æ•°æ®ï¼‰
+            // Èç¹ûÎÄ¼şÂ·¾¶Îª¿Õ»òÎÄ¼ş²»´æÔÚ£¬Ìø¹ı×Ô¶¯¼ÓÔØ£¨ÓÉÍâ²¿Í¨¹ı SetDataTable ×¢ÈëÊı¾İ£©
             if (!options.SkipAutoLoad && !string.IsNullOrEmpty(_filePath) && File.Exists(_filePath))
             {
                 if (_fileType == TableFileType.Csv)
@@ -255,16 +256,16 @@ namespace wxd.files.winforms
             }
             else
             {
-                // ç©ºæ•°æ®æ¨¡å¼ï¼šåˆ›å»ºä¸€ä¸ªç©ºçš„ DataTableï¼Œç­‰å¾…å¤–éƒ¨ SetDataTable
+                // ¿ÕÊı¾İÄ£Ê½£º´´½¨Ò»¸ö¿ÕµÄ DataTable£¬µÈ´ıÍâ²¿ SetDataTable
                 _dataTable = new DataTable();
                 _fileData = new FileTableData();
                 _headerTable = _dataTable.Clone();
-                _fileType = TableFileType.Csv; // é»˜è®¤ç±»å‹
+                _fileType = TableFileType.Csv; // Ä¬ÈÏÀàĞÍ
             }
         }
 
-        /// <summary>æ—§æ„é€ å‡½æ•°ï¼ˆå·²åºŸå¼ƒï¼Œå§”æ‰˜ç»™æ–°æ„é€ å‡½æ•°ï¼‰</summary>
-        [Obsolete("è¯·ä½¿ç”¨ TableBrowserControl(TableBrowserOptions) ä»£æ›¿")]
+        /// <summary>¾É¹¹Ôìº¯Êı£¨ÒÑ·ÏÆú£¬Î¯ÍĞ¸øĞÂ¹¹Ôìº¯Êı£©</summary>
+        [Obsolete("ÇëÊ¹ÓÃ TableBrowserControl(TableBrowserOptions) ´úÌæ")]
         public TableBrowserControl(string filePath, int paneIndex = -1, string? rootDir = null,
             int frozenRows = -1, int headerRowIndex = -1, string initialContentFilter = "",
             bool lightweight = false, int uniqueColumnIndex = -1, int mappingRowIndex = -1)
@@ -289,7 +290,7 @@ namespace wxd.files.winforms
             return TableFileType.Csv;
         }
 
-        // ==================== é«˜äº®è®¾ç½® ====================
+        // ==================== ¸ßÁÁÉèÖÃ ====================
         public void SetHighlight(int colIndex, string value, string colName = "", ColumnLinkConfig? linkConfig = null)
         {
             _highlightColumnIndex = colIndex;
@@ -304,7 +305,7 @@ namespace wxd.files.winforms
                 _highlightValues = new List<string> { value };
         }
 
-        /// <summary>è·å–è¡¨å¤´è¡Œçš„åˆ—ååˆ—è¡¨</summary>
+        /// <summary>»ñÈ¡±íÍ·ĞĞµÄÁĞÃûÁĞ±í</summary>
         public List<string> GetHeaderColumnNames()
         {
             var names = new List<string>();
@@ -314,7 +315,7 @@ namespace wxd.files.winforms
             return names;
         }
 
-        /// <summary>æ ¹æ®å­—æ®µåæŸ¥æ‰¾å¯¹åº”çš„åŸå§‹åˆ—ç´¢å¼•</summary>
+        /// <summary>¸ù¾İ×Ö¶ÎÃû²éÕÒ¶ÔÓ¦µÄÔ­Ê¼ÁĞË÷Òı</summary>
         public int FindColumnIndexByHeaderName(string headerName)
         {
             if (_headerRowIndex < 0 || _headerRowIndex >= _dataTable.Rows.Count) return -1;
@@ -327,7 +328,7 @@ namespace wxd.files.winforms
             return -1;
         }
 
-        // ==================== UIåˆå§‹åŒ– ====================
+        // ==================== UI³õÊ¼»¯ ====================
         private void InitializeComponent()
         {
             SuspendLayout();
@@ -350,7 +351,7 @@ namespace wxd.files.winforms
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            // ç¬¬ä¸€è¡Œå·¥å…·æ 
+            // µÚÒ»ĞĞ¹¤¾ßÀ¸
             _flowTop = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -362,10 +363,10 @@ namespace wxd.files.winforms
                 AutoSize = true
             };
 
-            // å†»ç»“è¡Œæ•°é€‰æ‹©
+            // ¶³½áĞĞÊıÑ¡Ôñ
             var lblFrozenRows = new Label
             {
-                Text = "å†»ç»“è¡Œ:",
+                Text = "¶³½áĞĞ:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -403,10 +404,10 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             };
 
-            // è¡¨å¤´è¡Œé€‰æ‹©
+            // ±íÍ·ĞĞÑ¡Ôñ
             var lblHeaderRow = new Label
             {
-                Text = "è¡¨å¤´è¡Œ:",
+                Text = "±íÍ·ĞĞ:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -420,8 +421,8 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            cboHeaderRow.Items.Add("æœªè®¾ç½®");
-            for (int i = 0; i < 10; i++) cboHeaderRow.Items.Add($"ç¬¬{i + 1}è¡Œ");
+            cboHeaderRow.Items.Add("Î´ÉèÖÃ");
+            for (int i = 0; i < 10; i++) cboHeaderRow.Items.Add($"µÚ{i + 1}ĞĞ");
             cboHeaderRow.SelectedIndex = _headerRowIndex >= 0 && _headerRowIndex < 10 ? _headerRowIndex + 1 : 0;
             cboHeaderRow.SelectedIndexChanged += (s, e) =>
             {
@@ -437,10 +438,10 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             };
 
-            // æ˜ å°„è¡Œé€‰æ‹©
+            // Ó³ÉäĞĞÑ¡Ôñ
             var lblMappingRow = new Label
             {
-                Text = "æ˜ å°„è¡Œ:",
+                Text = "Ó³ÉäĞĞ:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -454,9 +455,9 @@ namespace wxd.files.winforms
                 FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            cboMappingRow.Items.Add("æœªè®¾ç½®");
+            cboMappingRow.Items.Add("Î´ÉèÖÃ");
             int maxMappingRow = Math.Min(_frozenRows, 10);
-            for (int i = 0; i < maxMappingRow; i++) cboMappingRow.Items.Add($"ç¬¬{i + 1}è¡Œ");
+            for (int i = 0; i < maxMappingRow; i++) cboMappingRow.Items.Add($"µÚ{i + 1}ĞĞ");
             cboMappingRow.SelectedIndex = _mappingRowIndex >= 0 && _mappingRowIndex < maxMappingRow ? _mappingRowIndex + 1 : 0;
             cboMappingRow.SelectedIndexChanged += (s, e) =>
             {
@@ -472,10 +473,10 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             };
 
-            // å”¯ä¸€åˆ—é€‰æ‹©
+            // Î¨Ò»ÁĞÑ¡Ôñ
             var lblUniqueColumn = new Label
             {
-                Text = "å”¯ä¸€åˆ—:",
+                Text = "Î¨Ò»ÁĞ:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -502,10 +503,10 @@ namespace wxd.files.winforms
                 CheckUniqueColumnDuplicates(showMessageBox: true);
             };
 
-            // åˆ—ç®¡ç†æŒ‰é’®
+            // ÁĞ¹ÜÀí°´Å¥
             var lblHeaderFilter = new Label
             {
-                Text = "åˆ—ç®¡ç†:",
+                Text = "ÁĞ¹ÜÀí:",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9f),
                 ForeColor = _colorLightTextSecondary,
@@ -516,7 +517,7 @@ namespace wxd.files.winforms
                 Size = new Size(120, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
-                Text = "åˆ—ç®¡ç†",
+                Text = "ÁĞ¹ÜÀí",
                 TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = _colorHoverBg,
                 ForeColor = _colorLightText,
@@ -537,10 +538,10 @@ namespace wxd.files.winforms
             _flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow,
                 lblMappingRow, cboMappingRow, lblUniqueColumn, _cboUniqueColumn, lblHeaderFilter, _btnSelectColumns });
 
-            // é‡æ–°åŠ è½½æŒ‰é’®
+            // ÖØĞÂ¼ÓÔØ°´Å¥
             _btnReload = new Button
             {
-                Text = "é‡æ–°åŠ è½½",
+                Text = "ÖØĞÂ¼ÓÔØ",
                 Size = new Size(75, 27),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
@@ -554,7 +555,7 @@ namespace wxd.files.winforms
             _btnReload.Click += (s, e) => ReloadContentAsync();
             _flowTop.Controls.Add(_btnReload);
 
-            // â˜… åˆå§‹åŒ–ä¿å­˜é˜²æŠ–å®šæ—¶å™¨
+            // ¡ï ³õÊ¼»¯±£´æ·À¶¶¶¨Ê±Æ÷
             _retrySaveTimer = new System.Windows.Forms.Timer { Interval = SaveDebounceMs };
             _retrySaveTimer.Tick += (_, _) =>
             {
@@ -571,9 +572,9 @@ namespace wxd.files.winforms
                 Margin = new Padding(0, 3, 10, 3)
             };
             _lblCellPos = lblCellPos;
-            // _lblCellPos å’Œ _lblInfo ä¸å†æ·»åŠ åˆ° _flowTopï¼Œæ”¹ä¸ºæ”¾å…¥åº•éƒ¨çŠ¶æ€æ  _pnlStatus
+            // _lblCellPos ºÍ _lblInfo ²»ÔÙÌí¼Óµ½ _flowTop£¬¸ÄÎª·ÅÈëµ×²¿×´Ì¬À¸ _pnlStatus
 
-            // åˆ†éš”çº¿
+            // ·Ö¸ôÏß
             var separatorLine = new Panel
             {
                 Height = 1,
@@ -583,10 +584,10 @@ namespace wxd.files.winforms
                 Padding = new Padding(0)
             };
 
-            // å†…å®¹è¿‡æ»¤
+            // ÄÚÈİ¹ıÂË
             var btnContentFilter = new Button
             {
-                Text = "é«˜äº®åŒ¹é…",
+                Text = "¸ßÁÁÆ¥Åä",
                 Size = new Size(75, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
@@ -605,7 +606,7 @@ namespace wxd.files.winforms
                 Font = new Font("Microsoft YaHei UI", 9f),
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 1, 10, 1),
-                PlaceholderText = "æŒ‰å›è½¦æœç´¢..."
+                PlaceholderText = "°´»Ø³µËÑË÷..."
             };
             txtContentFilter.KeyDown += (s, e) =>
             {
@@ -613,10 +614,10 @@ namespace wxd.files.winforms
                 else if (e.KeyCode == Keys.Escape) { txtContentFilter.Text = ""; TriggerFilter(); e.Handled = true; }
             };
 
-            // é«˜çº§è¿‡æ»¤
+            // ¸ß¼¶¹ıÂË
             var btnAdvFilter = new Button
             {
-                Text = "é«˜çº§è¿‡æ»¤",
+                Text = "¸ß¼¶¹ıÂË",
                 Size = new Size(75, 24),
                 Font = new Font("Microsoft YaHei UI", 9f),
                 FlatStyle = FlatStyle.Flat,
@@ -636,7 +637,7 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 1, 10, 1),
                 BackColor = Color.FromArgb(242, 249, 255),
-                PlaceholderText = "æŒ‰å›è½¦è¿‡æ»¤..."
+                PlaceholderText = "°´»Ø³µ¹ıÂË..."
             };
             txtAdvancedFilter.KeyDown += (s, e) =>
             {
@@ -658,7 +659,7 @@ namespace wxd.files.winforms
                 if (stream != null)
                     btnAdvHelp.Image = Image.FromStream(stream);
             }
-            catch { /* å›¾ç‰‡åŠ è½½å¤±è´¥ï¼Œç”¨ ? æ–‡æœ¬å…œåº• */ }
+            catch { /* Í¼Æ¬¼ÓÔØÊ§°Ü£¬ÓÃ ? ÎÄ±¾¶µµ× */ }
             if (btnAdvHelp.Image == null)
             {
                 btnAdvHelp.Paint += (s, e) =>
@@ -674,44 +675,44 @@ namespace wxd.files.winforms
                 ReshowDelay = 0,
                 IsBalloon = true,
                 ToolTipIcon = ToolTipIcon.Info,
-                ToolTipTitle = "é«˜çº§è¿‡æ»¤è¯­æ³•"
+                ToolTipTitle = "¸ß¼¶¹ıÂËÓï·¨"
             };
             btnAdvHelp.Click += (s, e) =>
             {
-                advToolTip.Show(@"åŸºç¡€æ“ä½œç¬¦:
-  id=10001             ç­‰äº
-  id!=10001            ä¸ç­‰äº
-  id>10001             å¤§äº
-  id>=10001            å¤§äºç­‰äº
-  id<10001             å°äº
-  id<=10001            å°äºç­‰äº
-  name like test       åŒ…å«test(å¿½ç•¥å¤§å°å†™)
+                advToolTip.Show(@"»ù´¡²Ù×÷·û:
+  id=10001             µÈÓÚ
+  id!=10001            ²»µÈÓÚ
+  id>10001             ´óÓÚ
+  id>=10001            ´óÓÚµÈÓÚ
+  id<10001             Ğ¡ÓÚ
+  id<=10001            Ğ¡ÓÚµÈÓÚ
+  name like test       °üº¬test(ºöÂÔ´óĞ¡Ğ´)
 
-é€šé…ç¬¦(ä»…like):
-  id like *00001       ä»¥00001ç»“å°¾
-  id like 00001*       ä»¥00001å¼€å¤´
-  id like *000*        åŒ…å«000
-  id like 00*01        00å¼€å¤´01ç»“å°¾
+Í¨Åä·û(½ölike):
+  id like *00001       ÒÔ00001½áÎ²
+  id like 00001*       ÒÔ00001¿ªÍ·
+  id like *000*        °üº¬000
+  id like 00*01        00¿ªÍ·01½áÎ²
 
-å…¨åˆ—æ¨¡ç³Š(æ— åˆ—å/æ“ä½œç¬¦):
-  10001                æ‰€æœ‰åˆ—åŒ…å«10001
-  test                 æ‰€æœ‰åˆ—åŒ…å«test
+È«ÁĞÄ£ºı(ÎŞÁĞÃû/²Ù×÷·û):
+  10001                ËùÓĞÁĞ°üº¬10001
+  test                 ËùÓĞÁĞ°üº¬test
 
-æ— åˆ—åæœç´¢(æ“ä½œç¬¦+å€¼):
-  =10001               ä»»æ„åˆ—ç­‰äº10001
-  >100                 ä»»æ„åˆ—å¤§äº100
-  like test            ä»»æ„åˆ—åŒ…å«test
+ÎŞÁĞÃûËÑË÷(²Ù×÷·û+Öµ):
+  =10001               ÈÎÒâÁĞµÈÓÚ10001
+  >100                 ÈÎÒâÁĞ´óÓÚ100
+  like test            ÈÎÒâÁĞ°üº¬test
 
-å¤šæ¡ä»¶ç»„åˆ:
-  id=10001 and name like test   åŒæ—¶æ»¡è¶³(AND)
-  id=10001 or id=10002          æ»¡è¶³å…¶ä¸€(OR)
-  id>100 and id<200             èŒƒå›´æŸ¥è¯¢
+¶àÌõ¼ş×éºÏ:
+  id=10001 and name like test   Í¬Ê±Âú×ã(AND)
+  id=10001 or id=10002          Âú×ãÆäÒ»(OR)
+  id>100 and id<200             ·¶Î§²éÑ¯
 
-åˆ—åé€šè¿‡è¡¨å¤´è¡Œæ–‡å­—è¯†åˆ«,ä¸åŒºåˆ†å¤§å°å†™", btnAdvHelp, 0, btnAdvHelp.Height + 5);
+ÁĞÃûÍ¨¹ı±íÍ·ĞĞÎÄ×ÖÊ¶±ğ,²»Çø·Ö´óĞ¡Ğ´", btnAdvHelp, 0, btnAdvHelp.Height + 5);
             };
             var lblAdvHint = new Label
             {
-                Text = "å¦‚: id=123 or name like test",
+                Text = "Èç: id=123 or name like test",
                 AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 7.5f),
                 ForeColor = _colorPrimary,
@@ -759,7 +760,7 @@ namespace wxd.files.winforms
                 txtAdvancedFilter.Width = w;
             };
 
-            // è¡¨æ ¼å®¹å™¨
+            // ±í¸ñÈİÆ÷
             var splitContainer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -797,10 +798,10 @@ namespace wxd.files.winforms
                     var cellValue = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
                     var ctx = new ContextMenuStrip();
                     ctx.Font = new Font("Microsoft YaHei UI", 9f);
-                    var copyItem = new ToolStripMenuItem("å¤åˆ¶");
+                    var copyItem = new ToolStripMenuItem("¸´ÖÆ");
                     copyItem.Click += (s2, args) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
                     ctx.Items.Add(copyItem);
-                    var editItem = new ToolStripMenuItem("ç¼–è¾‘");
+                    var editItem = new ToolStripMenuItem("±à¼­");
                     editItem.Click += (s2, args) =>
                     {
                         var cell = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex];
@@ -808,8 +809,8 @@ namespace wxd.files.winforms
                         EditCell(cell, _dataGridHeader);
                     };
                     ctx.Items.Add(editItem);
-                    // å›ºå®šTips
-                    var pinItem2 = new ToolStripMenuItem("å›ºå®šTips");
+                    // ¹Ì¶¨Tips
+                    var pinItem2 = new ToolStripMenuItem("¹Ì¶¨Tips");
                     int frozenCol = e.ColumnIndex;
                     pinItem2.Click += (s2, args) =>
                     {
@@ -825,7 +826,7 @@ namespace wxd.files.winforms
                         }
                     };
                     ctx.Items.Add(pinItem2);
-                    // â˜… æ˜¾ç¤ºå³é”®èœå•å‰ä¸»åŠ¨éšè— ToolTipï¼Œé˜²æ­¢ ToolTip é®æŒ¡å³é”®èœå•
+                    // ¡ï ÏÔÊ¾ÓÒ¼ü²Ëµ¥Ç°Ö÷¶¯Òş²Ø ToolTip£¬·ÀÖ¹ ToolTip ÕÚµ²ÓÒ¼ü²Ëµ¥
                     _linkToolTip?.Hide();
                     ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
                 }
@@ -834,7 +835,7 @@ namespace wxd.files.winforms
             {
                 if (_dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
-                // åŒæ­¥æ°´å¹³æ»šåŠ¨åç§»åˆ°å†…å®¹è¡Œï¼ˆé”®ç›˜æ–¹å‘é”®åœ¨å›ºå®šè¡Œå¯¼èˆªæ—¶è”åŠ¨æ»šåŠ¨ï¼‰
+                // Í¬²½Ë®Æ½¹ö¶¯Æ«ÒÆµ½ÄÚÈİĞĞ£¨¼üÅÌ·½Ïò¼üÔÚ¹Ì¶¨ĞĞµ¼º½Ê±Áª¶¯¹ö¶¯£©
                 if (_dataGrid.HorizontalScrollingOffset != _dataGridHeader.HorizontalScrollingOffset)
                     _dataGrid.HorizontalScrollingOffset = _dataGridHeader.HorizontalScrollingOffset;
             };
@@ -861,14 +862,14 @@ namespace wxd.files.winforms
                 _syncingColumnWidth = true;
                 try
                 {
-                    // å…¨é‡åŒæ­¥æ‰€æœ‰åˆ—å®½ï¼ˆé¿å…é”®ç›˜å¯¼èˆªåç´¢å¼•ä¸ä¸€è‡´å¯¼è‡´é”™ä½ï¼‰
+                    // È«Á¿Í¬²½ËùÓĞÁĞ¿í£¨±ÜÃâ¼üÅÌµ¼º½ºóË÷Òı²»Ò»ÖÂµ¼ÖÂ´íÎ»£©
                     for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
                         _dataGridHeader.Columns[i].Width = _dataGrid.Columns[i].Width;
                 }
                 finally { _syncingColumnWidth = false; }
             };
 
-            // â˜… å›ºå®šè¡Œæ»šåŠ¨åŒæ­¥åˆ°å†…å®¹è¡Œ
+            // ¡ï ¹Ì¶¨ĞĞ¹ö¶¯Í¬²½µ½ÄÚÈİĞĞ
             _dataGridHeader.Scroll += (s, e) =>
             {
                 if (_syncingScroll) return;
@@ -877,7 +878,7 @@ namespace wxd.files.winforms
                 finally { _syncingScroll = false; }
             };
 
-            // â˜… å›ºå®šè¡Œåˆ—å®½å˜åŒ–åŒæ­¥åˆ°å†…å®¹è¡Œ
+            // ¡ï ¹Ì¶¨ĞĞÁĞ¿í±ä»¯Í¬²½µ½ÄÚÈİĞĞ
             _dataGridHeader.ColumnWidthChanged += (s, e) =>
             {
                 if (_syncingColumnWidth) return;
@@ -890,7 +891,7 @@ namespace wxd.files.winforms
                 finally { _syncingColumnWidth = false; }
             };
 
-            // å¿«æ·é”®ï¼šCtrl+D å¤åˆ¶å½“å‰è¡Œï¼ŒDelete åˆ é™¤å½“å‰è¡Œ
+            // ¿ì½İ¼ü£ºCtrl+D ¸´ÖÆµ±Ç°ĞĞ£¬Delete É¾³ıµ±Ç°ĞĞ
             _dataGrid.KeyDown += (s, e) =>
             {
                 if (_isEmbeddedMode) return;
@@ -899,7 +900,7 @@ namespace wxd.files.winforms
                 int displayIdx = _dataGrid.CurrentRow.Index;
                 int origIdx = GetOriginalRowIndexFromDisplay(displayIdx);
 
-                // ==================== è¡Œç¼–è¾‘æ¨¡å¼å¿«æ·é”® ====================
+                // ==================== ĞĞ±à¼­Ä£Ê½¿ì½İ¼ü ====================
                 if (_editingRowIndex >= 0)
                 {
                     if (e.KeyCode == Keys.Escape)
@@ -913,13 +914,13 @@ namespace wxd.files.winforms
                     {
                         e.Handled = true;
                         e.SuppressKeyPress = true;
-                        // å…ˆç»“æŸå½“å‰å•å…ƒæ ¼ç¼–è¾‘
+                        // ÏÈ½áÊøµ±Ç°µ¥Ôª¸ñ±à¼­
                         if (_dataGrid.IsCurrentCellInEditMode)
                             _dataGrid.EndEdit();
                         ExitRowEditMode(commit: true);
                         return;
                     }
-                    // è¡Œç¼–è¾‘æ¨¡å¼ä¸‹ç¦ç”¨è¡Œæ“ä½œå¿«æ·é”®
+                    // ĞĞ±à¼­Ä£Ê½ÏÂ½ûÓÃĞĞ²Ù×÷¿ì½İ¼ü
                     if (e.Control && e.KeyCode == Keys.D) { e.Handled = true; return; }
                     if (e.KeyCode == Keys.Delete && !e.Control) { e.Handled = true; return; }
                     return;
@@ -939,14 +940,14 @@ namespace wxd.files.winforms
                 }
             };
 
-            // é˜»æ­¢ç¼–è¾‘æ¨¡å¼ä¸‹æ–¹å‘é”®è·³æ ¼ï¼ˆé€šè¿‡ PreviewKeyDown åœ¨ DataGridView.ProcessDialogKey ä¹‹å‰æ‹¦æˆªï¼‰
+            // ×èÖ¹±à¼­Ä£Ê½ÏÂ·½Ïò¼üÌø¸ñ£¨Í¨¹ı PreviewKeyDown ÔÚ DataGridView.ProcessDialogKey Ö®Ç°À¹½Ø£©
             _dataGrid.EditingControlShowing += (s, ev) =>
             {
                 if (ev.Control is TextBox tb)
                 {
                     tb.KeyDown -= OnEditTextBoxKeyDown;
                     tb.KeyDown += OnEditTextBoxKeyDown;
-                    // PreviewKeyDown åœ¨ ProcessDialogKey ä¹‹å‰è§¦å‘ï¼Œå¯é˜»æ­¢ DataGridView çš„å¯¼èˆª
+                    // PreviewKeyDown ÔÚ ProcessDialogKey Ö®Ç°´¥·¢£¬¿É×èÖ¹ DataGridView µÄµ¼º½
                     tb.PreviewKeyDown -= OnEditTextBoxPreviewKeyDown;
                     tb.PreviewKeyDown += OnEditTextBoxPreviewKeyDown;
                 }
@@ -967,8 +968,8 @@ namespace wxd.files.winforms
             Controls.Add(_pnlGridContainer);
             Controls.Add(_pnlTop);
 
-            // ============ åº•éƒ¨çŠ¶æ€æ  ============
-            // çŠ¶æ€æ é¡¶éƒ¨åˆ†éš”çº¿
+            // ============ µ×²¿×´Ì¬À¸ ============
+            // ×´Ì¬À¸¶¥²¿·Ö¸ôÏß
             _statusSeparator = new Panel
             {
                 Dock = DockStyle.Bottom,
@@ -987,7 +988,7 @@ namespace wxd.files.winforms
                 Padding = new Padding(0)
             };
 
-            // ä½¿ç”¨ TableLayoutPanel æ¥å®ç°å››åˆ—å¸ƒå±€
+            // Ê¹ÓÃ TableLayoutPanel À´ÊµÏÖËÄÁĞ²¼¾Ö
             var statusTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -997,16 +998,16 @@ namespace wxd.files.winforms
                 Padding = new Padding(4, 0, 4, 0),
                 Margin = new Padding(0)
             };
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // è¿‡æ»¤ä¿ç•™æ‰€æœ‰è¡Œ CheckBox
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));    // é”å›¾æ ‡
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));  // æ–‡ä»¶å
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // è¡Œåˆ—åæ ‡ï¼ˆè‡ªåŠ¨é€‚åº”å†…å®¹å®½åº¦ï¼Œé¿å…æ¢è¡Œï¼‰
-            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // é‡å¤æç¤ºï¼ˆè‡ªåŠ¨é€‚åº”å†…å®¹å®½åº¦ï¼Œé¿å…æ¢è¡Œï¼‰
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // ¹ıÂË±£ÁôËùÓĞĞĞ CheckBox
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));    // ËøÍ¼±ê
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));  // ÎÄ¼şÃû
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // ĞĞÁĞ×ø±ê£¨×Ô¶¯ÊÊÓ¦ÄÚÈİ¿í¶È£¬±ÜÃâ»»ĞĞ£©
+            statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // ÖØ¸´ÌáÊ¾£¨×Ô¶¯ÊÊÓ¦ÄÚÈİ¿í¶È£¬±ÜÃâ»»ĞĞ£©
 
-            // åˆ—0: è¿‡æ»¤ä¿ç•™æ‰€æœ‰è¡Œ CheckBox
+            // ÁĞ0: ¹ıÂË±£ÁôËùÓĞĞĞ CheckBox
             _chkFilterKeepAll = new CheckBox
             {
-                Text = "ä¿ç•™æ‰€æœ‰è¡Œ",
+                Text = "±£ÁôËùÓĞĞĞ",
                 Checked = false,
                 AutoSize = false,
                 Dock = DockStyle.Fill,
@@ -1020,7 +1021,7 @@ namespace wxd.files.winforms
             _chkFilterKeepAll.CheckedChanged += OnFilterKeepAllChanged;
             statusTable.Controls.Add(_chkFilterKeepAll, 0, 0);
 
-            // åˆ—1: é”å›¾æ ‡ ğŸ”’/ğŸ”“
+            // ÁĞ1: ËøÍ¼±ê ??/??
             _lblLock = new Label
             {
                 Text = "",
@@ -1035,7 +1036,7 @@ namespace wxd.files.winforms
             _lblLock.Click += OnLockLabelClick;
             statusTable.Controls.Add(_lblLock, 1, 0);
 
-            // åˆ—2: æ–‡ä»¶å
+            // ÁĞ2: ÎÄ¼şÃû
             _lblFileName = new Label
             {
                 Text = "",
@@ -1047,14 +1048,14 @@ namespace wxd.files.winforms
             };
             statusTable.Controls.Add(_lblFileName, 2, 0);
 
-            // åˆ—3: _lblCellPos è¡Œåˆ—åæ ‡ï¼ˆAutoSize è®©åˆ—å®½è·Ÿéšå†…å®¹ï¼Œé¿å…å›ºå®š 180px å¯¼è‡´æ¢è¡Œï¼‰
+            // ÁĞ3: _lblCellPos ĞĞÁĞ×ø±ê£¨AutoSize ÈÃÁĞ¿í¸úËæÄÚÈİ£¬±ÜÃâ¹Ì¶¨ 180px µ¼ÖÂ»»ĞĞ£©
             _lblCellPos.TextAlign = ContentAlignment.MiddleLeft;
             _lblCellPos.AutoSize = true;
             _lblCellPos.Dock = DockStyle.None;
             _lblCellPos.Margin = new Padding(2, 3, 10, 3);
             statusTable.Controls.Add(_lblCellPos, 3, 0);
 
-            // åˆ—4: _lblInfo é‡å¤æç¤ºï¼ˆAutoSize è®©åˆ—å®½è·Ÿéšå†…å®¹ï¼Œé¿å…æ¢è¡Œï¼‰
+            // ÁĞ4: _lblInfo ÖØ¸´ÌáÊ¾£¨AutoSize ÈÃÁĞ¿í¸úËæÄÚÈİ£¬±ÜÃâ»»ĞĞ£©
             _lblInfo.TextAlign = ContentAlignment.MiddleLeft;
             _lblInfo.AutoSize = true;
             _lblInfo.Dock = DockStyle.None;
@@ -1075,7 +1076,7 @@ namespace wxd.files.winforms
                 BorderStyle = BorderStyle.None,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                ReadOnly = true,  // é»˜è®¤åªè¯»ï¼ˆæµè§ˆæ¨¡å¼ï¼‰ï¼Œè¡Œç¼–è¾‘æ¨¡å¼ä¸‹ä¸´æ—¶è®¾ä¸ºfalse
+                ReadOnly = true,  // Ä¬ÈÏÖ»¶Á£¨ä¯ÀÀÄ£Ê½£©£¬ĞĞ±à¼­Ä£Ê½ÏÂÁÙÊ±ÉèÎªfalse
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
@@ -1126,10 +1127,10 @@ namespace wxd.files.winforms
             return dgv;
         }
 
-        // ==================== æ•°æ®åŠ è½½ ====================
+        // ==================== Êı¾İ¼ÓÔØ ====================
         private async void LoadCsvAsync()
         {
-            if (_isLoading) return;  // â˜… é˜²é‡å…¥ï¼ˆDoEvents æœŸé—´å¯èƒ½è§¦å‘äºŒæ¬¡åŠ è½½ï¼‰
+            if (_isLoading) return;  // ¡ï ·ÀÖØÈë£¨DoEvents ÆÚ¼ä¿ÉÄÜ´¥·¢¶ş´Î¼ÓÔØ£©
             _isLoading = true;
             try
             {
@@ -1144,20 +1145,20 @@ namespace wxd.files.winforms
                 var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
                 await Task.Delay(50);
-                // â˜… åå°çº¿ç¨‹ï¼šLoadFileï¼ˆè¯»ç¼“å­˜/è§£æï¼‰
+                // ¡ï ºóÌ¨Ïß³Ì£ºLoadFile£¨¶Á»º´æ/½âÎö£©
                 var result = await Task.Run(() => LoadCsvFile());
                 if (result != null)
                 {
                     var (dataTable, fileData, delimiter) = result.Value;
                     _delimiter = delimiter;
-                    // â˜… UI çº¿ç¨‹ï¼šOnDataLoadedAsyncï¼ˆå«åˆ†æ‰¹ç»‘å®š + è¿›åº¦æ¡ï¼Œå†»ç»“è¡Œåœºæ™¯åå°æ„å»º filteredTableï¼‰
+                    // ¡ï UI Ïß³Ì£ºOnDataLoadedAsync£¨º¬·ÖÅú°ó¶¨ + ½ø¶ÈÌõ£¬¶³½áĞĞ³¡¾°ºóÌ¨¹¹½¨ filteredTable£©
                     await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
-                        $"åˆ†éš”ç¬¦: '{_delimiter}' | è¡Œæ•°: {dataTable.Rows.Count} | åˆ—æ•°: {dataTable.Columns.Count}");
+                        $"·Ö¸ô·û: '{_delimiter}' | ĞĞÊı: {dataTable.Rows.Count} | ÁĞÊı: {dataTable.Columns.Count}");
                 }
                 var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
                 if (elapsed < 200) await Task.Delay((int)(200 - elapsed));
-                // â˜… å»¶è¿Ÿ 400ms å…³é—­é®ç½©ï¼Œè®©è¡¨æ ¼å®Œæˆæœ€ç»ˆæ¸²æŸ“ï¼ˆResumeLayout åçš„å¸ƒå±€é‡ç®—ã€é«˜äº®é‡ç»˜ï¼‰ï¼Œ
-                //    é¿å…é®ç½©æ¶ˆå¤±ç¬é—´è¡¨æ ¼è¿˜åœ¨åˆ·æ–°å¯¼è‡´çš„é—ªçƒ
+                // ¡ï ÑÓ³Ù 400ms ¹Ø±ÕÕÚÕÖ£¬ÈÃ±í¸ñÍê³É×îÖÕäÖÈ¾£¨ResumeLayout ºóµÄ²¼¾ÖÖØËã¡¢¸ßÁÁÖØ»æ£©£¬
+                //    ±ÜÃâÕÚÕÖÏûÊ§Ë²¼ä±í¸ñ»¹ÔÚË¢ĞÂµ¼ÖÂµÄÉÁË¸
                 await Task.Delay(400);
                 HideLoadingOverlay();
             }
@@ -1165,7 +1166,7 @@ namespace wxd.files.winforms
             {
                 HideLoadingOverlay();
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, $"åŠ è½½CSVæ–‡ä»¶å¤±è´¥:" + GlobalConst.NewLine + ex.Message, "é”™è¯¯", AlertType.Error, exception: ex));
+                    this.Invoke(() => AlertForm.Show(this, $"¼ÓÔØCSVÎÄ¼şÊ§°Ü:" + GlobalConst.NewLine + ex.Message, "´íÎó", AlertType.Error, exception: ex));
             }
             finally
             {
@@ -1175,7 +1176,7 @@ namespace wxd.files.winforms
 
         private async void LoadExcelAsync()
         {
-            if (_isLoading) return;  // â˜… é˜²é‡å…¥
+            if (_isLoading) return;  // ¡ï ·ÀÖØÈë
             _isLoading = true;
             try
             {
@@ -1190,18 +1191,18 @@ namespace wxd.files.winforms
                 var loadingStart = DateTime.UtcNow;
                 ShowLoadingOverlay();
                 await Task.Delay(50);
-                // â˜… åå°çº¿ç¨‹ï¼šLoadFileï¼ˆè¯»ç¼“å­˜/è§£æï¼‰
+                // ¡ï ºóÌ¨Ïß³Ì£ºLoadFile£¨¶Á»º´æ/½âÎö£©
                 var result = await Task.Run(() => LoadExcelFile());
                 if (result != null)
                 {
                     var (dataTable, fileData) = result.Value;
-                    // â˜… UI çº¿ç¨‹ï¼šOnDataLoadedAsyncï¼ˆå«åˆ†æ‰¹ç»‘å®š + è¿›åº¦æ¡ï¼‰
+                    // ¡ï UI Ïß³Ì£ºOnDataLoadedAsync£¨º¬·ÖÅú°ó¶¨ + ½ø¶ÈÌõ£©
                     await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
-                        $"è¡Œæ•°: {dataTable.Rows.Count} | åˆ—æ•°: {dataTable.Columns.Count}");
+                        $"ĞĞÊı: {dataTable.Rows.Count} | ÁĞÊı: {dataTable.Columns.Count}");
                 }
                 var elapsed = (DateTime.UtcNow - loadingStart).TotalMilliseconds;
                 if (elapsed < 200) await Task.Delay((int)(200 - elapsed));
-                // â˜… å»¶è¿Ÿ 400ms å…³é—­é®ç½©ï¼Œè®©è¡¨æ ¼å®Œæˆæœ€ç»ˆæ¸²æŸ“ï¼Œé¿å…é—ªçƒ
+                // ¡ï ÑÓ³Ù 400ms ¹Ø±ÕÕÚÕÖ£¬ÈÃ±í¸ñÍê³É×îÖÕäÖÈ¾£¬±ÜÃâÉÁË¸
                 await Task.Delay(400);
                 HideLoadingOverlay();
             }
@@ -1209,7 +1210,7 @@ namespace wxd.files.winforms
             {
                 HideLoadingOverlay();
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, $"åŠ è½½Excelæ–‡ä»¶å¤±è´¥:" + GlobalConst.NewLine + ex.Message, "é”™è¯¯", AlertType.Error, exception: ex));
+                    this.Invoke(() => AlertForm.Show(this, $"¼ÓÔØExcelÎÄ¼şÊ§°Ü:" + GlobalConst.NewLine + ex.Message, "´íÎó", AlertType.Error, exception: ex));
             }
             finally
             {
@@ -1217,14 +1218,14 @@ namespace wxd.files.winforms
             }
         }
 
-        // â˜… æ”¹ä¸ºè¿”å›æ•°æ®ï¼Œç”±è°ƒç”¨æ–¹ï¼ˆUI çº¿ç¨‹ï¼‰è°ƒç”¨ OnDataLoadedAsync
-        //    è¿™æ · OnDataLoadedAsync å†…çš„ await æ‰èƒ½åœ¨ UI çº¿ç¨‹æ­£å¸¸å·¥ä½œ
+        // ¡ï ¸ÄÎª·µ»ØÊı¾İ£¬ÓÉµ÷ÓÃ·½£¨UI Ïß³Ì£©µ÷ÓÃ OnDataLoadedAsync
+        //    ÕâÑù OnDataLoadedAsync ÄÚµÄ await ²ÅÄÜÔÚ UI Ïß³ÌÕı³£¹¤×÷
         private (DataTable dataTable, FileTableData fileData, char delimiter)? LoadCsvFile()
         {
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, "CSVæ–‡ä»¶ä¸å­˜åœ¨", "é”™è¯¯", AlertType.Error));
+                    this.Invoke(() => AlertForm.Show(this, "CSVÎÄ¼ş²»´æÔÚ", "´íÎó", AlertType.Error));
                 return null;
             }
 
@@ -1237,7 +1238,7 @@ namespace wxd.files.winforms
             if (!File.Exists(_filePath))
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, "Excelæ–‡ä»¶ä¸å­˜åœ¨", "é”™è¯¯", AlertType.Error));
+                    this.Invoke(() => AlertForm.Show(this, "ExcelÎÄ¼ş²»´æÔÚ", "´íÎó", AlertType.Error));
                 return null;
             }
 
@@ -1245,7 +1246,7 @@ namespace wxd.files.winforms
             if (dataTable.Rows.Count == 0 && dataTable.Columns.Count == 0)
             {
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, "Excelæ–‡ä»¶æ²¡æœ‰å·¥ä½œè¡¨", "è­¦å‘Š", AlertType.Warning));
+                    this.Invoke(() => AlertForm.Show(this, "ExcelÎÄ¼şÃ»ÓĞ¹¤×÷±í", "¾¯¸æ", AlertType.Warning));
                 return null;
             }
             return (dataTable, fileData);
@@ -1254,8 +1255,8 @@ namespace wxd.files.winforms
         private async Task OnDataLoadedAsync(DataTable dataTable, DataTable headerTable, FileTableData fileData, string infoText)
         {
             _dataTable = dataTable;
-            // â˜… ç›´æ¥ä½¿ç”¨ LoadFile è¿”å›çš„ FileTableDataï¼ˆé¦–æ¬¡åŠ è½½æ— éœ€ inheritFromï¼Œé¿å…ç¬¬ä¸‰æ¬¡å…¨é‡éå†ï¼‰
-            //    BuildFileData ä»ä¿ç•™ä¾›æ’åº/è¿‡æ»¤/ç‰ˆæœ¬å¯¹æ¯”åœºæ™¯è°ƒç”¨
+            // ¡ï Ö±½ÓÊ¹ÓÃ LoadFile ·µ»ØµÄ FileTableData£¨Ê×´Î¼ÓÔØÎŞĞè inheritFrom£¬±ÜÃâµÚÈı´ÎÈ«Á¿±éÀú£©
+            //    BuildFileData ÈÔ±£Áô¹©ÅÅĞò/¹ıÂË/°æ±¾¶Ô±È³¡¾°µ÷ÓÃ
             _fileData = fileData;
             _headerTable = headerTable.Clone();
 
@@ -1274,12 +1275,12 @@ namespace wxd.files.winforms
             }
 
             _columnLinks = CsvSettings.GetColumnLinksByDirectory(FrozenDir);
-            // â˜… å¯¹å¼•ç”¨æ¨¡æ¿çš„åˆ—ï¼Œä»æ¨¡æ¿åŠ è½½æœ€æ–°é…ç½®å¡«å……è¿è¡Œæ—¶æ•°æ®
+            // ¡ï ¶ÔÒıÓÃÄ£°åµÄÁĞ£¬´ÓÄ£°å¼ÓÔØ×îĞÂÅäÖÃÌî³äÔËĞĞÊ±Êı¾İ
             foreach (var link in _columnLinks)
             {
                 link.RefreshFromTemplate();
             }
-            // â˜… åå°å¼‚æ­¥æ„å»ºå…³è” lookupï¼Œä¸é˜»å¡è¡¨æ ¼æ˜¾ç¤º
+            // ¡ï ºóÌ¨Òì²½¹¹½¨¹ØÁª lookup£¬²»×èÈû±í¸ñÏÔÊ¾
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
@@ -1292,13 +1293,13 @@ namespace wxd.files.winforms
 
             if (_lightweight)
             {
-                // è½»é‡æ¨¡å¼ï¼šç›´æ¥ç»‘å®š DataSourceï¼Œä¸åšé¢å¤–åˆå§‹åŒ–
+                // ÇáÁ¿Ä£Ê½£ºÖ±½Ó°ó¶¨ DataSource£¬²»×ö¶îÍâ³õÊ¼»¯
                 BindDataTableInBatches(_dataTable, configureColumns: true);
-                // è½»é‡æ¨¡å¼ï¼šéšè—é¡¶éƒ¨å·¥å…·æ 
+                // ÇáÁ¿Ä£Ê½£ºÒş²Ø¶¥²¿¹¤¾ßÀ¸
                 _pnlTop.Visible = false;
             }
             else if (_frozenRows > 0)
-                await RefreshGridLayoutWithProgressAsync();  // â˜… å†»ç»“è¡Œåœºæ™¯ï¼šå¼‚æ­¥æ„å»º filteredTable + è¿›åº¦æ¡
+                await RefreshGridLayoutWithProgressAsync();  // ¡ï ¶³½áĞĞ³¡¾°£ºÒì²½¹¹½¨ filteredTable + ½ø¶ÈÌõ
             else
             {
                 BindDataTableInBatches(_dataTable, configureColumns: true);
@@ -1306,13 +1307,13 @@ namespace wxd.files.winforms
 
             if (!string.IsNullOrEmpty(_initialContentFilter))
             {
-                // ä»å·¦ä¾§æ–‡ä»¶åˆ—è¡¨"æœç´¢å†…å®¹"åŒ¹é…åæ‰“å¼€æ–‡ä»¶æ—¶ï¼Œå°†æœç´¢å…³é”®è¯å¡«å……åˆ°é«˜çº§è¿‡æ»¤ï¼ˆè¿‡æ»¤æ‰ä¸åŒ¹é…è¡Œï¼‰ï¼Œ
-                // è€Œéå†…å®¹æœç´¢ï¼ˆä»…é«˜äº®ä¸è¿‡æ»¤è¡Œï¼‰ã€‚æ— è¿ç®—ç¬¦çš„å…³é”®è¯ä¼šè¢«å½“ä½œå…¨åˆ—æ¨¡ç³ŠåŒ¹é…å¤„ç†ã€‚
+                // ´Ó×ó²àÎÄ¼şÁĞ±í"ËÑË÷ÄÚÈİ"Æ¥Åäºó´ò¿ªÎÄ¼şÊ±£¬½«ËÑË÷¹Ø¼ü´ÊÌî³äµ½¸ß¼¶¹ıÂË£¨¹ıÂËµô²»Æ¥ÅäĞĞ£©£¬
+                // ¶ø·ÇÄÚÈİËÑË÷£¨½ö¸ßÁÁ²»¹ıÂËĞĞ£©¡£ÎŞÔËËã·ûµÄ¹Ø¼ü´Ê»á±»µ±×÷È«ÁĞÄ£ºıÆ¥Åä´¦Àí¡£
                 _txtAdvancedFilter.Text = _initialContentFilter;
                 TriggerFilter();
             }
 
-            // åˆå§‹åŒ–è‡ªå®šä¹‰ tooltipï¼ˆåªåˆå§‹åŒ–ä¸€æ¬¡ï¼›è½»é‡æ¨¡å¼è·³è¿‡ï¼‰
+            // ³õÊ¼»¯×Ô¶¨Òå tooltip£¨Ö»³õÊ¼»¯Ò»´Î£»ÇáÁ¿Ä£Ê½Ìø¹ı£©
             if (!_lightweight && _linkToolTip == null)
             {
                 _linkToolTip = new DataGridLinkToolTip(_dataGrid);
@@ -1320,39 +1321,39 @@ namespace wxd.files.winforms
                 _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
             }
 
-            // â˜… æ•°æ®åŠ è½½å®Œæˆååˆ·æ–°å”¯ä¸€åˆ—ä¸‹æ‹‰ï¼ˆè§¦å‘ SelectedIndexChanged è‡ªåŠ¨æ£€æŸ¥é‡å¤ï¼‰
+            // ¡ï Êı¾İ¼ÓÔØÍê³ÉºóË¢ĞÂÎ¨Ò»ÁĞÏÂÀ­£¨´¥·¢ SelectedIndexChanged ×Ô¶¯¼ì²éÖØ¸´£©
             RefreshUniqueColumnCombo();
 
-            // è§¦å‘æ•°æ®åŠ è½½å®Œæˆäº‹ä»¶
+            // ´¥·¢Êı¾İ¼ÓÔØÍê³ÉÊÂ¼ş
             DataLoaded?.Invoke(this, EventArgs.Empty);
 
-            // æ£€æµ‹æ˜¯å¦ SVN/Git ç®¡ç†ï¼Œå¦‚æœæ˜¯åˆ™æ˜¾ç¤º"å†å²è®°å½•"æŒ‰é’®ï¼ˆè½»é‡æ¨¡å¼è·³è¿‡ï¼‰
+            // ¼ì²âÊÇ·ñ SVN/Git ¹ÜÀí£¬Èç¹ûÊÇÔòÏÔÊ¾"ÀúÊ·¼ÇÂ¼"°´Å¥£¨ÇáÁ¿Ä£Ê½Ìø¹ı£©
             if (!_lightweight)
                 ShowHistoryButtonIfVcs();
         }
 
-        /// <summary>ä¸ºè‡ªå®šä¹‰ tooltip æä¾›å†…å®¹ï¼ˆgrid: å½“å‰é¼ æ ‡æ‰€åœ¨çš„ DataGridViewï¼‰</summary>
+        /// <summary>Îª×Ô¶¨Òå tooltip Ìá¹©ÄÚÈİ£¨grid: µ±Ç°Êó±êËùÔÚµÄ DataGridView£©</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText, List<string>? tableHeaders) GetLinkToolTipContent(DataGridView grid, int rowIndex, int columnIndex)
         {
-            // åˆ—æ ‡é¢˜æ‚¬åœï¼ˆrowIndex == -1ï¼‰
+            // ÁĞ±êÌâĞüÍ££¨rowIndex == -1£©
             if (rowIndex < 0 && columnIndex >= 0)
             {
                 var dgvCol = grid.Columns[columnIndex];
                 var headerVal = dgvCol.HeaderText;
 
-                // è®¡ç®—åŸå§‹åˆ—ç´¢å¼•
+                // ¼ÆËãÔ­Ê¼ÁĞË÷Òı
                 int colIdx = columnIndex;
                 if (_visibleColumnIndices.Count > 0 && columnIndex < _visibleColumnIndices.Count)
                     colIdx = _visibleColumnIndices[columnIndex];
 
-                // æ„å»ºåˆ—æ ‡é¢˜ ToolTip
+                // ¹¹½¨ÁĞ±êÌâ ToolTip
                 string tipText = headerVal;
                 if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count
                     && colIdx < _dataTable.Columns.Count)
                 {
                     var mappingVal = _dataTable.Rows[_mappingRowIndex][colIdx]?.ToString()?.Trim() ?? "";
                     if (!string.IsNullOrEmpty(mappingVal))
-                        tipText = $"{mappingVal} ({headerVal}) - ç¬¬{_mappingRowIndex + 1}è¡Œ";
+                        tipText = $"{mappingVal} ({headerVal}) - µÚ{_mappingRowIndex + 1}ĞĞ";
                 }
 
                 return (null, new List<DataGridLinkToolTip.TipLine>(), tipText, null);
@@ -1363,30 +1364,30 @@ namespace wxd.files.winforms
 
             bool isHeader = grid == _dataGridHeader;
 
-            // è®¡ç®—åŸå§‹åˆ—ç´¢å¼•
+            // ¼ÆËãÔ­Ê¼ÁĞË÷Òı
             int originalColIndex = columnIndex;
             if (_visibleColumnIndices.Count > 0 && columnIndex < grid.Columns.Count)
             {
-                // â˜… ä¸å†éœ€è¦ __RowNum__ åç§»
+                // ¡ï ²»ÔÙĞèÒª __RowNum__ Æ«ÒÆ
                 int adjustedCol = columnIndex;
                 if (adjustedCol >= 0 && adjustedCol < _visibleColumnIndices.Count)
                     originalColIndex = _visibleColumnIndices[adjustedCol];
             }
 
-            // è·å–å•å…ƒæ ¼å€¼
+            // »ñÈ¡µ¥Ôª¸ñÖµ
             var cellVal = grid.Rows[rowIndex]?.Cells[columnIndex]?.Value?.ToString()?.Trim() ?? "";
             if (string.IsNullOrEmpty(cellVal)) return (null, new List<DataGridLinkToolTip.TipLine>(), null, null);
 
-            // è®¡ç®—çœŸå®è¡Œå·ï¼š_dataGrid çš„è¡Œç´¢å¼•ä» _frozenRows å¼€å§‹
+            // ¼ÆËãÕæÊµĞĞºÅ£º_dataGrid µÄĞĞË÷Òı´Ó _frozenRows ¿ªÊ¼
             int realRowIndex = isHeader ? rowIndex : rowIndex + _frozenRows;
 
-            // å›ºå®šè¡Œç›´æ¥æ˜¾ç¤ºå•å…ƒæ ¼å†…å®¹ï¼Œä¸èµ°å…³è”å…³ç³»é€»è¾‘
+            // ¹Ì¶¨ĞĞÖ±½ÓÏÔÊ¾µ¥Ôª¸ñÄÚÈİ£¬²»×ß¹ØÁª¹ØÏµÂß¼­
             if (isHeader)
             {
                 string headerName = "";
                 if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                     headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
-                // å¦‚æœè®¾ç½®äº†æ˜ å°„è¡Œï¼Œæ‹¼æ¥æ˜ å°„å â†’ "æ˜ å°„å(è¡¨å¤´å)"
+                // Èç¹ûÉèÖÃÁËÓ³ÉäĞĞ£¬Æ´½ÓÓ³ÉäÃû ¡ú "Ó³ÉäÃû(±íÍ·Ãû)"
                 if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                 {
                     var mappingVal = _dataTable.Rows[_mappingRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
@@ -1401,7 +1402,7 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
-                string cellTitle = $"{headerName}  --  ç¬¬{realRowIndex + 1}è¡Œ";
+                string cellTitle = $"{headerName}  --  µÚ{realRowIndex + 1}ĞĞ";
                 var cellLines = new List<DataGridLinkToolTip.TipLine>
                 {
                     new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
@@ -1409,21 +1410,21 @@ namespace wxd.files.winforms
                 return (cellTitle, cellLines, null, null);
             }
 
-            // è·å–å½“å‰æ–‡ä»¶ç›¸å¯¹è·¯å¾„
+            // »ñÈ¡µ±Ç°ÎÄ¼şÏà¶ÔÂ·¾¶
             string currentRel = GetCurrentRelativePath();
 
-            // æŸ¥æ‰¾å…³è”é…ç½®
+            // ²éÕÒ¹ØÁªÅäÖÃ
             var linkConfig = _columnLinks.FirstOrDefault(l =>
                 l.SourceFile.EndsWith(Path.GetFileName(_filePath), StringComparison.OrdinalIgnoreCase) &&
                 l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null)
             {
-                // æ— å…³è”é…ç½®æ—¶ï¼Œæ˜¾ç¤ºå•å…ƒæ ¼å†…å®¹å’Œè¡¨å¤´ä¿¡æ¯
+                // ÎŞ¹ØÁªÅäÖÃÊ±£¬ÏÔÊ¾µ¥Ôª¸ñÄÚÈİºÍ±íÍ·ĞÅÏ¢
                 string headerName = "";
                 if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                     headerName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
-                // å¦‚æœè®¾ç½®äº†æ˜ å°„è¡Œï¼Œæ‹¼æ¥æ˜ å°„å â†’ "æ˜ å°„å(è¡¨å¤´å)"
+                // Èç¹ûÉèÖÃÁËÓ³ÉäĞĞ£¬Æ´½ÓÓ³ÉäÃû ¡ú "Ó³ÉäÃû(±íÍ·Ãû)"
                 if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                 {
                     var mappingVal = _dataTable.Rows[_mappingRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
@@ -1438,7 +1439,7 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
-                string cellTitle = $"{headerName}  --  ç¬¬{realRowIndex + 1}è¡Œ";
+                string cellTitle = $"{headerName}  --  µÚ{realRowIndex + 1}ĞĞ";
                 var cellLines = new List<DataGridLinkToolTip.TipLine>
                 {
                     new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
@@ -1446,30 +1447,30 @@ namespace wxd.files.winforms
                 return (cellTitle, cellLines, null, null);
             }
 
-                        // æå–åŒ¹é…å€¼
+                        // ÌáÈ¡Æ¥ÅäÖµ
             var matchValues = (linkConfig.ValueExtractionEnabled)
                 ? linkConfig.ExtractValues(cellVal) : new List<string> { cellVal };
 
-            // â˜… æ ¼å¼æ¨¡å¼ï¼šæœ‰åˆ‡å‰²é…ç½®ä½†æ²¡æœ‰å…³è”ç›®æ ‡æ®µ
-            //   ç›´æ¥ç”¨åˆ—è‡ªèº«çš„å€¼åˆ‡å‰²åä»¥è¡¨æ ¼æ¨¡å¼æ˜¾ç¤º
-            //   æ³¨æ„ï¼šä¸ä½¿ç”¨ ExtractValues çš„ç»“æœï¼ˆå®ƒä¼šå®Œå…¨å±•å¼€æ‰€æœ‰å±‚çº§ï¼‰ï¼Œ
-            //   è€Œæ˜¯ä»åŸå§‹ cellVal ç”¨æå–è§„åˆ™æ„å»ºè¡¨æ ¼è¡Œ
+            // ¡ï ¸ñÊ½Ä£Ê½£ºÓĞÇĞ¸îÅäÖÃµ«Ã»ÓĞ¹ØÁªÄ¿±ê¶Î
+            //   Ö±½ÓÓÃÁĞ×ÔÉíµÄÖµÇĞ¸îºóÒÔ±í¸ñÄ£Ê½ÏÔÊ¾
+            //   ×¢Òâ£º²»Ê¹ÓÃ ExtractValues µÄ½á¹û£¨Ëü»áÍêÈ«Õ¹¿ªËùÓĞ²ã¼¶£©£¬
+            //   ¶øÊÇ´ÓÔ­Ê¼ cellVal ÓÃÌáÈ¡¹æÔò¹¹½¨±í¸ñĞĞ
             bool hasFieldLinks = linkConfig.FieldLinks != null && linkConfig.FieldLinks.Any(f => !string.IsNullOrEmpty(f.TargetFile));
             if (!hasFieldLinks)
             {
                 return BuildFormatOnlyToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex);
             }
 
-            // â˜… æœ‰å…³è”é…ç½®ï¼šå¯¹æ¯ä¸ªåŒ¹é…å€¼çš„æ¯ä¸ªå­—æ®µï¼Œåˆ†åˆ«æŸ¥è¯¢å…³è”æ•°æ®
+            // ¡ï ÓĞ¹ØÁªÅäÖÃ£º¶ÔÃ¿¸öÆ¥ÅäÖµµÄÃ¿¸ö×Ö¶Î£¬·Ö±ğ²éÑ¯¹ØÁªÊı¾İ
             return BuildFieldLinkedToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex, currentRel);
         }
 
-        /// <summary>æ„å»ºå¤šå­—æ®µå…³è”çš„ tooltip å†…å®¹ï¼ˆæ¯ä¸ªåŒ¹é…å€¼çš„æ¯ä¸ªå­—æ®µåˆ†åˆ«æŸ¥å…³è”ï¼‰</summary>
+        /// <summary>¹¹½¨¶à×Ö¶Î¹ØÁªµÄ tooltip ÄÚÈİ£¨Ã¿¸öÆ¥ÅäÖµµÄÃ¿¸ö×Ö¶Î·Ö±ğ²é¹ØÁª£©</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText, List<string>? tableHeaders)
             BuildFieldLinkedToolTipContent(ColumnLinkConfig linkConfig, string cellVal,
                 int realRowIndex, int originalColIndex, string currentRel)
         {
-            // â˜… è·å–è¡¨å¤´é…ç½®
+            // ¡ï »ñÈ¡±íÍ·ÅäÖÃ
             List<string>? headers = null;
             if (!string.IsNullOrEmpty(linkConfig.DisplayColumnHeaders))
             {
@@ -1479,7 +1480,7 @@ namespace wxd.files.winforms
                     .ToList();
             }
 
-            // â˜… è·å–åˆ—åç”¨äºæ ‡é¢˜
+            // ¡ï »ñÈ¡ÁĞÃûÓÃÓÚ±êÌâ
             string colHeaderName = "";
             if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                 colHeaderName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
@@ -1497,7 +1498,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(colHeaderName))
                 colHeaderName = GetExcelColumnName(originalColIndex);
 
-            // â˜… æ„å»ºå…³è”æ ‡é¢˜ï¼šåˆ—å‡ºæ‰€æœ‰æœ‰å…³è”çš„å­—æ®µ
+            // ¡ï ¹¹½¨¹ØÁª±êÌâ£ºÁĞ³öËùÓĞÓĞ¹ØÁªµÄ×Ö¶Î
             var linkDescs = new List<string>();
             foreach (var fl in linkConfig.FieldLinks)
             {
@@ -1506,21 +1507,21 @@ namespace wxd.files.winforms
                     string displayFn = Path.GetFileName(fl.TargetFile);
                     if (_fileRemarks.TryGetValue(fl.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
                         displayFn = $"{remark} ({displayFn})";
-                    string colInfo = !string.IsNullOrEmpty(fl.TargetColumnName) ? $"[{fl.TargetColumnName}]" : $"[åˆ—{fl.TargetColumnIndex}]";
+                    string colInfo = !string.IsNullOrEmpty(fl.TargetColumnName) ? $"[{fl.TargetColumnName}]" : $"[ÁĞ{fl.TargetColumnIndex}]";
                     linkDescs.Add($"{displayFn}{colInfo}");
                 }
             }
             string linkTitlePart = string.Join(", ", linkDescs);
-            string title = $"å…³è”: {linkTitlePart}\næ¥è‡ª: {colHeaderName} â€” ç¬¬{realRowIndex + 1}è¡Œ";
+            string title = $"¹ØÁª: {linkTitlePart}\nÀ´×Ô: {colHeaderName} ¡ª µÚ{realRowIndex + 1}ĞĞ";
 
-            // â˜… å¯¹æ¯ä¸ªåŒ¹é…å€¼ï¼ŒæŸ¥è¯¢æ‰€æœ‰å­—æ®µçš„å…³è”
+            // ¡ï ¶ÔÃ¿¸öÆ¥ÅäÖµ£¬²éÑ¯ËùÓĞ×Ö¶ÎµÄ¹ØÁª
             var lines = new List<DataGridLinkToolTip.TipLine>();
             var lookups = FileDataCache.GetLookups();
 
-            // â˜… ä½¿ç”¨ ExtractRows æŒ‰è¡Œåˆ—è¯­ä¹‰å±•å¼€ï¼ˆå‰ N-1 æ­¥è¡Œï¼Œæœ€åä¸€æ­¥åˆ—ï¼‰
+            // ¡ï Ê¹ÓÃ ExtractRows °´ĞĞÁĞÓïÒåÕ¹¿ª£¨Ç° N-1 ²½ĞĞ£¬×îºóÒ»²½ÁĞ£©
             var rows = linkConfig.ExtractRows(cellVal);
 
-            // â˜… ç¡®å®šæ€»åˆ—æ•°
+            // ¡ï È·¶¨×ÜÁĞÊı
             int totalCols = rows.Count > 0 ? rows.Max(r => r.Count) : 1;
             if (headers != null && headers.Count > totalCols)
                 totalCols = headers.Count;
@@ -1534,7 +1535,7 @@ namespace wxd.files.winforms
                 {
                     string fieldVal = colIdx < rowCells.Count ? rowCells[colIdx] : "";
 
-                    // æŸ¥æ‰¾æ­¤åˆ—æ˜¯å¦æœ‰å…³è”é…ç½®
+                    // ²éÕÒ´ËÁĞÊÇ·ñÓĞ¹ØÁªÅäÖÃ
                     var fl = linkConfig.FieldLinks.FirstOrDefault(f => f.FieldIndex == colIdx);
 
                     if (fl == null || string.IsNullOrEmpty(fl.TargetFile) || string.IsNullOrEmpty(fieldVal))
@@ -1567,7 +1568,7 @@ namespace wxd.files.winforms
                     }
                     else if (fieldLookup != null)
                     {
-                        cells.Add($"{fieldVal}(æœªæ‰¾åˆ°)");
+                        cells.Add($"{fieldVal}(Î´ÕÒµ½)");
                         hasWarning = true;
                     }
                     else
@@ -1584,28 +1585,28 @@ namespace wxd.files.winforms
                 });
             }
 
-            // â˜… æ’åºï¼šè­¦å‘Šè¡Œåœ¨æœ€å‰é¢
+            // ¡ï ÅÅĞò£º¾¯¸æĞĞÔÚ×îÇ°Ãæ
             var orderedLines = lines
                 .Where(l => l.IsWarning)
                 .Concat(lines.Where(l => !l.IsWarning))
                 .ToList();
 
-            // â˜… å¦‚æœç”¨æˆ·å¡«å†™äº†è¡¨å¤´ï¼Œè°ƒæ•´åˆ—æ•°ä»¥åŒ¹é…å®é™… cells åˆ—æ•°
+            // ¡ï Èç¹ûÓÃ»§ÌîĞ´ÁË±íÍ·£¬µ÷ÕûÁĞÊıÒÔÆ¥ÅäÊµ¼Ê cells ÁĞÊı
             if (headers != null && orderedLines.Count > 0)
             {
                 int actualColCount = orderedLines.Max(l => l.Cells?.Count ?? 1);
                 while (headers.Count < actualColCount)
-                    headers.Add($"åˆ—{headers.Count}");
+                    headers.Add($"ÁĞ{headers.Count}");
             }
 
             return (title, orderedLines, null, headers);
         }
 
-        /// <summary>æ„å»ºæ ¼å¼æ¨¡å¼ï¼ˆæ— å…³è”ç›®æ ‡ï¼‰çš„ tooltip å†…å®¹ï¼Œç›´æ¥ç”¨åˆ—è‡ªèº«æ•°æ®åˆ‡å‰²åä»¥è¡¨æ ¼æ˜¾ç¤º</summary>
+        /// <summary>¹¹½¨¸ñÊ½Ä£Ê½£¨ÎŞ¹ØÁªÄ¿±ê£©µÄ tooltip ÄÚÈİ£¬Ö±½ÓÓÃÁĞ×ÔÉíÊı¾İÇĞ¸îºóÒÔ±í¸ñÏÔÊ¾</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText, List<string>? tableHeaders)
             BuildFormatOnlyToolTipContent(ColumnLinkConfig linkConfig, string cellVal, int realRowIndex, int originalColIndex)
         {
-            // â˜… è·å–è¡¨å¤´é…ç½®
+            // ¡ï »ñÈ¡±íÍ·ÅäÖÃ
             List<string>? headers = null;
             if (!string.IsNullOrEmpty(linkConfig.DisplayColumnHeaders))
             {
@@ -1615,7 +1616,7 @@ namespace wxd.files.winforms
                     .ToList();
             }
 
-            // â˜… è·å–åˆ—åç”¨äºæ ‡é¢˜
+            // ¡ï »ñÈ¡ÁĞÃûÓÃÓÚ±êÌâ
             string colHeaderName = "";
             if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && originalColIndex < _dataTable.Columns.Count)
                 colHeaderName = _dataTable.Rows[_headerRowIndex][originalColIndex]?.ToString()?.Trim() ?? "";
@@ -1633,12 +1634,12 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(colHeaderName))
                 colHeaderName = GetExcelColumnName(originalColIndex);
 
-            string title = $"{colHeaderName}  --  ç¬¬{realRowIndex + 1}è¡Œ";
+            string title = $"{colHeaderName}  --  µÚ{realRowIndex + 1}ĞĞ";
 
-            // â˜… ä½¿ç”¨ ExtractRows æŒ‰è¡Œåˆ—è¯­ä¹‰å±•å¼€ï¼ˆå‰ N-1 æ­¥è¡Œï¼Œæœ€åä¸€æ­¥åˆ—ï¼‰
+            // ¡ï Ê¹ÓÃ ExtractRows °´ĞĞÁĞÓïÒåÕ¹¿ª£¨Ç° N-1 ²½ĞĞ£¬×îºóÒ»²½ÁĞ£©
             var rows = linkConfig.ExtractRows(cellVal);
 
-            // â˜… ç¡®å®šæ€»åˆ—æ•°ï¼šå–æ‰€æœ‰è¡Œçš„æœ€å¤§åˆ—æ•°
+            // ¡ï È·¶¨×ÜÁĞÊı£ºÈ¡ËùÓĞĞĞµÄ×î´óÁĞÊı
             int colCount = rows.Count > 0 ? rows.Max(r => r.Count) : 1;
             if (headers != null && headers.Count > colCount)
                 colCount = headers.Count;
@@ -1648,7 +1649,7 @@ namespace wxd.files.winforms
             {
                 var cells = new List<string>();
                 for (int j = 0; j < colCount; j++)
-                    cells.Add(j < rowCells.Count ? rowCells[j] : "-"); // ä¸è¶³çš„åˆ—ç”¨ "-" å¡«å……
+                    cells.Add(j < rowCells.Count ? rowCells[j] : "-"); // ²»×ãµÄÁĞÓÃ "-" Ìî³ä
 
                 lines.Add(new DataGridLinkToolTip.TipLine
                 {
@@ -1658,23 +1659,23 @@ namespace wxd.files.winforms
                 });
             }
 
-            // â˜… æ’åº
+            // ¡ï ÅÅĞò
             var orderedLines = lines
                 .Where(l => l.IsWarning)
                 .Concat(lines.Where(l => !l.IsWarning))
                 .ToList();
 
-            // â˜… å¦‚æœç”¨æˆ·å¡«å†™äº†è¡¨å¤´ï¼Œè°ƒæ•´åˆ—æ•°ä»¥åŒ¹é…å®é™… cells åˆ—æ•°
+            // ¡ï Èç¹ûÓÃ»§ÌîĞ´ÁË±íÍ·£¬µ÷ÕûÁĞÊıÒÔÆ¥ÅäÊµ¼Ê cells ÁĞÊı
             if (headers != null && orderedLines.Count > 0)
             {
                 int actualColCount = orderedLines.Max(l => l.Cells?.Count ?? 1);
                 while (headers.Count < actualColCount)
-                    headers.Add($"åˆ—{headers.Count}");
+                    headers.Add($"ÁĞ{headers.Count}");
             }
 
             return (title, orderedLines, null, headers);
         }
-// ==================== CSVè§£æ ====================
+// ==================== CSV½âÎö ====================
         private char DetectDelimiter(string content)
         {
             var lines = SplitCsvLines(content);
@@ -1743,7 +1744,7 @@ namespace wxd.files.winforms
             return result.ToArray();
         }
 
-        // ==================== åŠ è½½é®ç½© ====================
+        // ==================== ¼ÓÔØÕÚÕÖ ====================
         private void ShowLoadingOverlay()
         {
             if (!this.IsHandleCreated) return;
@@ -1758,7 +1759,7 @@ namespace wxd.files.winforms
                 };
                 _loadingLabel = new Label
                 {
-                    Text = "æ­£åœ¨åŠ è½½æ•°æ®ï¼Œè¯·ç¨å€™...",
+                    Text = "ÕıÔÚ¼ÓÔØÊı¾İ£¬ÇëÉÔºò...",
                     AutoSize = false,
                     TextAlign = ContentAlignment.MiddleCenter,
                     Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
@@ -1779,7 +1780,7 @@ namespace wxd.files.winforms
                 _pnlLoading.Controls.Add(_loadingLabel);
                 this.Controls.Add(_pnlLoading);
                 _pnlLoading.BringToFront();
-                // å±…ä¸­è¿›åº¦æ¡
+                // ¾ÓÖĞ½ø¶ÈÌõ
                 _pnlLoading.Layout += (s, e) =>
                 {
                     if (_loadingProgressBar != null)
@@ -1792,7 +1793,7 @@ namespace wxd.files.winforms
             });
         }
 
-        // æ–°å¢ï¼šæ›´æ–°åŠ è½½è¿›åº¦ï¼ˆåœ¨åˆ†æ‰¹ç»‘å®šè¿‡ç¨‹ä¸­è°ƒç”¨ï¼Œè®©è¿›åº¦æ¡åˆ·æ–°ï¼‰
+        // ĞÂÔö£º¸üĞÂ¼ÓÔØ½ø¶È£¨ÔÚ·ÖÅú°ó¶¨¹ı³ÌÖĞµ÷ÓÃ£¬ÈÃ½ø¶ÈÌõË¢ĞÂ£©
         private void UpdateLoadingProgress(int percent, string stageText)
         {
             if (_pnlLoading == null || !_pnlLoading.Visible || _pnlLoading.IsDisposed) return;
@@ -1805,18 +1806,18 @@ namespace wxd.files.winforms
         }
 
         /// <summary>
-        /// åˆ†æ‰¹æ„å»º DataTable å†ä¸€æ¬¡æ€§ç»‘å®šåˆ° DataGridViewï¼Œé¿å…ä¸€æ¬¡æ€§ç»‘å®šå¤§è¡¨å¯¼è‡´ UI é•¿æ—¶é—´å†»ç»“ã€‚
-        /// æ€è·¯ï¼šå…ˆåœ¨ã€æœªç»‘å®šã€‘çš„ displayTable ä¸Šåˆ†æ‰¹ ImportRowï¼ˆä¸è§¦å‘ DataGridView äº‹ä»¶ï¼Œæå¿«ï¼‰ï¼Œ
-        /// æ¯æ‰¹ä¹‹é—´åˆ·æ–°è¿›åº¦æ¡ï¼Œå…¨éƒ¨å¡«å……å®Œæˆåä¸€æ¬¡æ€§ç»‘å®šã€‚
-        /// æ³¨æ„ï¼šä¸è¦åœ¨ displayTable å·²ç»‘å®š DataGridView çš„æƒ…å†µä¸‹ ImportRowï¼Œ
-        /// å¦åˆ™æ¯æ¬¡ ImportRow éƒ½ä¼šè§¦å‘ ListChanged â†’ DataGridView åŒæ­¥åˆ›å»ºè¡Œå¯¹è±¡ + å¸ƒå±€ï¼Œ
-        /// å¯¼è‡´ UI çº¿ç¨‹è¢«å æ»¡ï¼Œè¿›åº¦æ¡æ— æ³•åˆ·æ–°ã€‚
-        /// ç»‘å®šå®Œæˆå _dataTable å¼•ç”¨æ›¿æ¢ä¸º displayTableï¼Œä¿è¯åç»­ç¼–è¾‘/æ’åºåŸºäºåŒä¸€ä»½æ•°æ®ã€‚
+        /// ·ÖÅú¹¹½¨ DataTable ÔÙÒ»´ÎĞÔ°ó¶¨µ½ DataGridView£¬±ÜÃâÒ»´ÎĞÔ°ó¶¨´ó±íµ¼ÖÂ UI ³¤Ê±¼ä¶³½á¡£
+        /// Ë¼Â·£ºÏÈÔÚ¡¾Î´°ó¶¨¡¿µÄ displayTable ÉÏ·ÖÅú ImportRow£¨²»´¥·¢ DataGridView ÊÂ¼ş£¬¼«¿ì£©£¬
+        /// Ã¿ÅúÖ®¼äË¢ĞÂ½ø¶ÈÌõ£¬È«²¿Ìî³äÍê³ÉºóÒ»´ÎĞÔ°ó¶¨¡£
+        /// ×¢Òâ£º²»ÒªÔÚ displayTable ÒÑ°ó¶¨ DataGridView µÄÇé¿öÏÂ ImportRow£¬
+        /// ·ñÔòÃ¿´Î ImportRow ¶¼»á´¥·¢ ListChanged ¡ú DataGridView Í¬²½´´½¨ĞĞ¶ÔÏó + ²¼¾Ö£¬
+        /// µ¼ÖÂ UI Ïß³Ì±»Õ¼Âú£¬½ø¶ÈÌõÎŞ·¨Ë¢ĞÂ¡£
+        /// °ó¶¨Íê³Éºó _dataTable ÒıÓÃÌæ»»Îª displayTable£¬±£Ö¤ºóĞø±à¼­/ÅÅĞò»ùÓÚÍ¬Ò»·İÊı¾İ¡£
         /// </summary>
         private void BindDataTableInBatches(DataTable sourceTable, bool configureColumns)
         {
             int totalRows = sourceTable.Rows.Count;
-            // å°è¡¨ç›´æ¥ç»‘å®šï¼Œä¸èµ°åˆ†æ‰¹ï¼ˆé¿å…æ— è°“å¼€é”€ï¼‰
+            // Ğ¡±íÖ±½Ó°ó¶¨£¬²»×ß·ÖÅú£¨±ÜÃâÎŞÎ½¿ªÏú£©
             if (totalRows <= 500)
             {
                 _dataGrid.DataSource = sourceTable;
@@ -1832,11 +1833,11 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // â˜… é˜¶æ®µ1ï¼šåˆ›å»ºã€æœªç»‘å®šã€‘çš„ displayTableï¼ˆåªæœ‰åˆ—ç»“æ„ï¼‰ï¼Œåˆ†æ‰¹ ImportRow å¡«å……æ•°æ®è¡Œ
-            //    å…³é”®ï¼šæ­¤æ—¶ displayTable æœªç»‘å®šåˆ° DataGridViewï¼ŒImportRow ä¸ä¼šè§¦å‘ä»»ä½• UI äº‹ä»¶ï¼Œ
-            //    Application.DoEvents() èƒ½çœŸæ­£åˆ·æ–°è¿›åº¦æ¡ï¼ˆä¸ä¼šè¢« DataGridView å¸ƒå±€å æ»¡ UI çº¿ç¨‹ï¼‰
-            UpdateLoadingProgress(5, "æ­£åœ¨å‡†å¤‡æ•°æ®...");
-            var displayTable = sourceTable.Clone();  // å…‹éš†ç»“æ„ï¼Œ0 è¡Œï¼Œæœªç»‘å®š
+            // ¡ï ½×¶Î1£º´´½¨¡¾Î´°ó¶¨¡¿µÄ displayTable£¨Ö»ÓĞÁĞ½á¹¹£©£¬·ÖÅú ImportRow Ìî³äÊı¾İĞĞ
+            //    ¹Ø¼ü£º´ËÊ± displayTable Î´°ó¶¨µ½ DataGridView£¬ImportRow ²»»á´¥·¢ÈÎºÎ UI ÊÂ¼ş£¬
+            //    Application.DoEvents() ÄÜÕæÕıË¢ĞÂ½ø¶ÈÌõ£¨²»»á±» DataGridView ²¼¾ÖÕ¼Âú UI Ïß³Ì£©
+            UpdateLoadingProgress(5, "ÕıÔÚ×¼±¸Êı¾İ...");
+            var displayTable = sourceTable.Clone();  // ¿ËÂ¡½á¹¹£¬0 ĞĞ£¬Î´°ó¶¨
 
             int batchSize = 2000;
             int added = 0;
@@ -1847,17 +1848,17 @@ namespace wxd.files.winforms
                     displayTable.ImportRow(sourceTable.Rows[i]);
                 added = end;
                 int percent = 5 + (int)((added / (double)totalRows) * 75);  // 5% ~ 80%
-                UpdateLoadingProgress(percent, $"æ­£åœ¨åŠ è½½è¡Œæ•°æ®... {added}/{totalRows}");
+                UpdateLoadingProgress(percent, $"ÕıÔÚ¼ÓÔØĞĞÊı¾İ... {added}/{totalRows}");
             }
 
-            // â˜… é˜¶æ®µ2ï¼šæ•°æ®å·²å…¨éƒ¨å¡«å……åˆ° displayTableï¼Œç°åœ¨ä¸€æ¬¡æ€§ç»‘å®šåˆ° DataGridView
-            //    è¿™ä¸€æ­¥ä¼šåŒæ­¥åˆ›å»ºæ‰€æœ‰ DataGridViewRowï¼ˆçº¦ 6-8sï¼‰ï¼ŒUI çº¿ç¨‹ä¼šé˜»å¡ï¼Œ
-            //    ä½†è¿›åº¦æ¡å·²èµ°åˆ° 80%ï¼Œç”¨æˆ·çŸ¥é“æ•°æ®å·²åŠ è½½å®Œæˆï¼Œæ­£åœ¨æ¸²æŸ“
-            UpdateLoadingProgress(85, "æ­£åœ¨æ¸²æŸ“è¡¨æ ¼ï¼ˆå¯èƒ½éœ€è¦æ•°ç§’ï¼Œè¯·ç¨å€™ï¼‰...");
+            // ¡ï ½×¶Î2£ºÊı¾İÒÑÈ«²¿Ìî³äµ½ displayTable£¬ÏÖÔÚÒ»´ÎĞÔ°ó¶¨µ½ DataGridView
+            //    ÕâÒ»²½»áÍ¬²½´´½¨ËùÓĞ DataGridViewRow£¨Ô¼ 6-8s£©£¬UI Ïß³Ì»á×èÈû£¬
+            //    µ«½ø¶ÈÌõÒÑ×ßµ½ 80%£¬ÓÃ»§ÖªµÀÊı¾İÒÑ¼ÓÔØÍê³É£¬ÕıÔÚäÖÈ¾
+            UpdateLoadingProgress(85, "ÕıÔÚäÖÈ¾±í¸ñ£¨¿ÉÄÜĞèÒªÊıÃë£¬ÇëÉÔºò£©...");
             _dataGrid.DataSource = displayTable;
 
-            // â˜… é˜¶æ®µ3ï¼šé…ç½®åˆ—å®½/è¡¨å¤´ï¼ˆæ­¤æ—¶ DataGridView å·²æœ‰è¡Œï¼Œä½†åˆ—æ•°å›ºå®šï¼Œæ“ä½œå¾ˆå¿«ï¼‰
-            //    ç”¨ SuspendLayout/ResumeLayout åŒ…è£¹ï¼Œé¿å…æ¯åˆ—è®¾ç½®éƒ½è§¦å‘å¸ƒå±€é‡ç®—
+            // ¡ï ½×¶Î3£ºÅäÖÃÁĞ¿í/±íÍ·£¨´ËÊ± DataGridView ÒÑÓĞĞĞ£¬µ«ÁĞÊı¹Ì¶¨£¬²Ù×÷ºÜ¿ì£©
+            //    ÓÃ SuspendLayout/ResumeLayout °ü¹ü£¬±ÜÃâÃ¿ÁĞÉèÖÃ¶¼´¥·¢²¼¾ÖÖØËã
             if (configureColumns)
             {
                 _dataGrid.SuspendLayout();
@@ -1870,9 +1871,9 @@ namespace wxd.files.winforms
                 _dataGrid.ResumeLayout(false);
             }
 
-            // â˜… é˜¶æ®µ4ï¼šç»Ÿä¸€å¼•ç”¨ï¼Œä¿è¯åç»­ç¼–è¾‘/æ’åºåŸºäºåŒä¸€ä»½æ•°æ®
+            // ¡ï ½×¶Î4£ºÍ³Ò»ÒıÓÃ£¬±£Ö¤ºóĞø±à¼­/ÅÅĞò»ùÓÚÍ¬Ò»·İÊı¾İ
             _dataTable = displayTable;
-            UpdateLoadingProgress(100, "å®Œæˆ");
+            UpdateLoadingProgress(100, "Íê³É");
         }
 
         private void HideLoadingOverlay()
@@ -1891,11 +1892,11 @@ namespace wxd.files.winforms
             });
         }
 
-        // ==================== é‡æ–°åŠ è½½ ====================
+        // ==================== ÖØĞÂ¼ÓÔØ ====================
         private async void ReloadContentAsync()
         {
             if (!File.Exists(_filePath)) return;
-            if (_isLoading) return;  // â˜… é˜²é‡å…¥
+            if (_isLoading) return;  // ¡ï ·ÀÖØÈë
             _isLoading = true;
             var savedFilter = _txtContentFilter.Text;
             var savedAdvFilter = _txtAdvancedFilter.Text;
@@ -1914,7 +1915,7 @@ namespace wxd.files.winforms
                 }
                 ShowLoadingOverlay();
                 await Task.Delay(50);
-                // â˜… é€‚é… LoadCsvFile/LoadExcelFile æ–°ç­¾åï¼ˆè¿”å›æ•°æ®ï¼‰
+                // ¡ï ÊÊÅä LoadCsvFile/LoadExcelFile ĞÂÇ©Ãû£¨·µ»ØÊı¾İ£©
                 if (_fileType == TableFileType.Csv)
                 {
                     var result = await Task.Run(() => LoadCsvFile());
@@ -1923,7 +1924,7 @@ namespace wxd.files.winforms
                         var (dataTable, fileData, delimiter) = result.Value;
                         _delimiter = delimiter;
                         await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
-                            $"åˆ†éš”ç¬¦: '{_delimiter}' | è¡Œæ•°: {dataTable.Rows.Count} | åˆ—æ•°: {dataTable.Columns.Count}");
+                            $"·Ö¸ô·û: '{_delimiter}' | ĞĞÊı: {dataTable.Rows.Count} | ÁĞÊı: {dataTable.Columns.Count}");
                     }
                 }
                 else
@@ -1933,10 +1934,10 @@ namespace wxd.files.winforms
                     {
                         var (dataTable, fileData) = result.Value;
                         await OnDataLoadedAsync(dataTable, dataTable.Clone(), fileData,
-                            $"è¡Œæ•°: {dataTable.Rows.Count} | åˆ—æ•°: {dataTable.Columns.Count}");
+                            $"ĞĞÊı: {dataTable.Rows.Count} | ÁĞÊı: {dataTable.Columns.Count}");
                     }
                 }
-                // â˜… å»¶è¿Ÿ 400ms å…³é—­é®ç½©ï¼Œè®©è¡¨æ ¼å®Œæˆæœ€ç»ˆæ¸²æŸ“ï¼Œé¿å…é—ªçƒ
+                // ¡ï ÑÓ³Ù 400ms ¹Ø±ÕÕÚÕÖ£¬ÈÃ±í¸ñÍê³É×îÖÕäÖÈ¾£¬±ÜÃâÉÁË¸
                 await Task.Delay(400);
                 HideLoadingOverlay();
             }
@@ -1944,7 +1945,7 @@ namespace wxd.files.winforms
             {
                 HideLoadingOverlay();
                 if (this.IsHandleCreated)
-                    this.Invoke(() => AlertForm.Show(this, $"é‡æ–°åŠ è½½å¤±è´¥:" + GlobalConst.NewLine + ex.Message, "é”™è¯¯", AlertType.Error, exception: ex));
+                    this.Invoke(() => AlertForm.Show(this, $"ÖØĞÂ¼ÓÔØÊ§°Ü:" + GlobalConst.NewLine + ex.Message, "´íÎó", AlertType.Error, exception: ex));
                 _columnCheckStates = savedColumnStates;
                 _frozenRows = savedFrozenRows;
                 _txtContentFilter.Text = savedFilter;
@@ -1968,23 +1969,23 @@ namespace wxd.files.winforms
             _txtContentFilter.Text = savedFilter;
             _txtAdvancedFilter.Text = savedAdvFilter;
             UpdateColumnSelectorButton();
-            // â˜… åå°å¼‚æ­¥æ„å»ºå…³è” lookupï¼Œä¸é˜»å¡è¡¨æ ¼æ˜¾ç¤º
+            // ¡ï ºóÌ¨Òì²½¹¹½¨¹ØÁª lookup£¬²»×èÈû±í¸ñÏÔÊ¾
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
             RebuildHighlightRows();
             RefreshGridLayout();
 
-            // â˜… é‡æ–°åŠ è½½åé‡æ–°æ£€æµ‹å”¯ä¸€åˆ—é‡å¤ï¼ˆé¦–æ¬¡åŠ è½½ï¼Œå¼¹ MessageBoxï¼‰
+            // ¡ï ÖØĞÂ¼ÓÔØºóÖØĞÂ¼ì²âÎ¨Ò»ÁĞÖØ¸´£¨Ê×´Î¼ÓÔØ£¬µ¯ MessageBox£©
             CheckUniqueColumnDuplicates(showMessageBox: true);
         }
 
-        // ==================== å”¯ä¸€åˆ—ä¸‹æ‹‰åˆ·æ–° ====================
+        // ==================== Î¨Ò»ÁĞÏÂÀ­Ë¢ĞÂ ====================
         private void RefreshUniqueColumnCombo()
         {
             if (_cboUniqueColumn == null) return;
 
             _cboUniqueColumn.Items.Clear();
-            _cboUniqueColumn.Items.Add("æœªè®¾ç½®");
+            _cboUniqueColumn.Items.Add("Î´ÉèÖÃ");
             for (int col = 0; col < _dataTable.Columns.Count; col++)
             {
                 string displayName;
@@ -1994,18 +1995,18 @@ namespace wxd.files.winforms
                     displayName = $"Col{col}";
                 _cboUniqueColumn.Items.Add($"{displayName} (Col{col})");
             }
-            // æ ¹æ® _uniqueColumnIndex æ¢å¤é€‰ä¸­çŠ¶æ€ï¼›æœªè®¾ç½®æ—¶é»˜è®¤é€‰ä¸­ç¬¬ä¸€åˆ—
+            // ¸ù¾İ _uniqueColumnIndex »Ö¸´Ñ¡ÖĞ×´Ì¬£»Î´ÉèÖÃÊ±Ä¬ÈÏÑ¡ÖĞµÚÒ»ÁĞ
             _cboUniqueColumn.SelectedIndex = _uniqueColumnIndex >= 0 && _uniqueColumnIndex < _dataTable.Columns.Count
                 ? _uniqueColumnIndex + 1
                 : (_dataTable.Columns.Count > 0 ? 1 : 0);
         }
 
-        // ==================== å¸ƒå±€åˆ·æ–° ====================
+        // ==================== ²¼¾ÖË¢ĞÂ ====================
         private void RefreshGridLayout()
         {
             if (_dataTable.Columns.Count == 0) return;
 
-            // æ¯æ¬¡é‡æ–°è¿‡æ»¤å‰æ¸…ç©ºåŒ¹é…é«˜äº®
+            // Ã¿´ÎÖØĞÂ¹ıÂËÇ°Çå¿ÕÆ¥Åä¸ßÁÁ
             _filterMatchCells.Clear();
             _headerFilterMatchCells.Clear();
             _contentSearchMatchCells.Clear();
@@ -2042,13 +2043,13 @@ namespace wxd.files.winforms
                     {
                         dgvCol.DisplayIndex = i;
                         dgvCol.Width = 120;
-                        // å¦‚æœè®¾ç½®äº†è¡¨å¤´è¡Œï¼Œç”¨è¡¨å¤´è¡Œçš„å€¼ä½œä¸ºåˆ—æ ‡é¢˜
+                        // Èç¹ûÉèÖÃÁË±íÍ·ĞĞ£¬ÓÃ±íÍ·ĞĞµÄÖµ×÷ÎªÁĞ±êÌâ
                         if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
                         {
                             var srcColIdx = _visibleColumnIndices[i];
                             var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
                             dgvCol.HeaderText = headerVal;
-                            // å¦‚æœè®¾ç½®äº†æ˜ å°„è¡Œï¼Œè®¾ç½® ToolTip ä¸º "æ˜ å°„å (è¡¨å¤´å)"
+                            // Èç¹ûÉèÖÃÁËÓ³ÉäĞĞ£¬ÉèÖÃ ToolTip Îª "Ó³ÉäÃû (±íÍ·Ãû)"
                             SetColumnHeaderToolTip(dgvCol, i, headerVal);
                         }
                         else
@@ -2061,26 +2062,26 @@ namespace wxd.files.winforms
 
                 var contentFilter = _txtContentFilter.Text.Trim();
 
-                // â˜… å†…å®¹æœç´¢ï¼šä¸è¿‡æ»¤è¡Œï¼Œä»…è·å–åŒ¹é…å•å…ƒæ ¼ï¼ˆæ‰€æœ‰è¡ŒåŒ…æ‹¬å†»ç»“è¡Œï¼‰
+                // ¡ï ÄÚÈİËÑË÷£º²»¹ıÂËĞĞ£¬½ö»ñÈ¡Æ¥Åäµ¥Ôª¸ñ£¨ËùÓĞĞĞ°üÀ¨¶³½áĞĞ£©
                 _contentSearchMatchCells = GetContentMatchCells(contentFilter);
 
-                // â˜… é«˜çº§è¿‡æ»¤ï¼šæŒ‰è¡¨è¾¾å¼è¿‡æ»¤è¡Œ + åŒ¹é…å•å…ƒæ ¼
+                // ¡ï ¸ß¼¶¹ıÂË£º°´±í´ïÊ½¹ıÂËĞĞ + Æ¥Åäµ¥Ôª¸ñ
                 var (visibleRowIndices, advMatchCells) = GetAdvVisibleRowIndices();
-                // å¦‚æœä¿ç•™æ‰€æœ‰è¡Œï¼Œåˆ™é«˜çº§è¿‡æ»¤ä¸è¿‡æ»¤è¡Œ
+                // Èç¹û±£ÁôËùÓĞĞĞ£¬Ôò¸ß¼¶¹ıÂË²»¹ıÂËĞĞ
                 if (_filterKeepAllRows && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
                 {
                     visibleRowIndices = Enumerable.Range(_frozenRows, _fileData.Rows.Count - _frozenRows).ToList();
                 }
 
-                // â˜… åˆå¹¶å†…å®¹æœç´¢ + é«˜çº§è¿‡æ»¤çš„åŒ¹é…å•å…ƒæ ¼ï¼ˆåŸå§‹è¡Œåˆ—ç´¢å¼•ï¼‰
+                // ¡ï ºÏ²¢ÄÚÈİËÑË÷ + ¸ß¼¶¹ıÂËµÄÆ¥Åäµ¥Ôª¸ñ£¨Ô­Ê¼ĞĞÁĞË÷Òı£©
                 _advFilterMatchCells = advMatchCells;
-                // â˜… è½¬æ¢åŒ¹é…å•å…ƒæ ¼ï¼šåŸå§‹è¡Œåˆ—ç´¢å¼• â†’ æ˜¾ç¤ºè¡Œåˆ—ç´¢å¼•ï¼ˆ_dataGrid å†…å®¹åŒºï¼‰
+                // ¡ï ×ª»»Æ¥Åäµ¥Ôª¸ñ£ºÔ­Ê¼ĞĞÁĞË÷Òı ¡ú ÏÔÊ¾ĞĞÁĞË÷Òı£¨_dataGrid ÄÚÈİÇø£©
                 _filterMatchCells.Clear();
                 _headerFilterMatchCells.Clear();
                 var mergedOrigMatch = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
                 foreach (var (origRow, origCols) in mergedOrigMatch)
                 {
-                    // å†»ç»“è¡ŒåŒºåŸŸï¼ˆorigRow < _frozenRowsï¼‰ï¼šç›´æ¥å­˜å…¥ _headerFilterMatchCells
+                    // ¶³½áĞĞÇøÓò£¨origRow < _frozenRows£©£ºÖ±½Ó´æÈë _headerFilterMatchCells
                     if (origRow < _frozenRows)
                     {
                         var displayCols = new HashSet<int>();
@@ -2095,7 +2096,7 @@ namespace wxd.files.winforms
                     }
                     else
                     {
-                        // å†…å®¹è¡ŒåŒºåŸŸï¼šè½¬æ¢ä¸ºæ˜¾ç¤ºè¡Œç´¢å¼•å­˜å…¥ _filterMatchCells
+                        // ÄÚÈİĞĞÇøÓò£º×ª»»ÎªÏÔÊ¾ĞĞË÷Òı´æÈë _filterMatchCells
                         int displayRow = visibleRowIndices.IndexOf(origRow);
                         if (displayRow < 0) continue;
                         var displayCols = new HashSet<int>();
@@ -2119,7 +2120,7 @@ namespace wxd.files.winforms
                 {
                     _dataGrid.Columns[i].Width = 120;
                     _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                    // å¦‚æœè®¾ç½®äº†è¡¨å¤´è¡Œï¼Œç”¨è¡¨å¤´è¡Œçš„å€¼ä½œä¸ºåˆ—æ ‡é¢˜
+                    // Èç¹ûÉèÖÃÁË±íÍ·ĞĞ£¬ÓÃ±íÍ·ĞĞµÄÖµ×÷ÎªÁĞ±êÌâ
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
                     {
                         var headerVal = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
@@ -2131,10 +2132,10 @@ namespace wxd.files.winforms
                         _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     }
                 }
-                // â˜… åŒæ­¥è®¾ç½® Tagï¼ˆDataSource èµ‹å€¼åè¡Œå·²åˆ›å»ºï¼‰
+                // ¡ï Í¬²½ÉèÖÃ Tag£¨DataSource ¸³ÖµºóĞĞÒÑ´´½¨£©
                 SetRowTags();
 
-                // â˜… æ— å†»ç»“è¡Œæ¨¡å¼ä¸‹è®¡ç®—è¿‡æ»¤åŒ¹é…å•å…ƒæ ¼ï¼ˆå…¨è¡¨ä½œä¸º DataSourceï¼Œæ˜¾ç¤ºè¡Œ i å¯¹åº”åŸå§‹è¡Œ iï¼‰
+                // ¡ï ÎŞ¶³½áĞĞÄ£Ê½ÏÂ¼ÆËã¹ıÂËÆ¥Åäµ¥Ôª¸ñ£¨È«±í×÷Îª DataSource£¬ÏÔÊ¾ĞĞ i ¶ÔÓ¦Ô­Ê¼ĞĞ i£©
                 _filterMatchCells.Clear();
                 _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
                 var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
@@ -2155,25 +2156,25 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>å°† _fileData.Rows æŒ‚åˆ° _dataGrid æ¯è¡Œçš„ Tag ä¸Š</summary>
+        /// <summary>½« _fileData.Rows ¹Òµ½ _dataGrid Ã¿ĞĞµÄ Tag ÉÏ</summary>
         private void SetRowTags()
         {
             for (int i = 0; i < _dataGrid.Rows.Count && i < _fileData.Rows.Count; i++)
                 _dataGrid.Rows[i].Tag = _fileData.Rows[i];
         }
 
-        /// <summary>åˆ—æ ‡é¢˜ ToolTip å·²ç»Ÿä¸€ç”± DataGridLinkToolTip è‡ªå®šä¹‰æ§ä»¶å¤„ç†ï¼Œæ­¤æ–¹æ³•ä¿ç•™ä¸ºç©º</summary>
+        /// <summary>ÁĞ±êÌâ ToolTip ÒÑÍ³Ò»ÓÉ DataGridLinkToolTip ×Ô¶¨Òå¿Ø¼ş´¦Àí£¬´Ë·½·¨±£ÁôÎª¿Õ</summary>
         private void SetColumnHeaderToolTip(DataGridViewColumn dgvCol, int displayColIndex, string headerVal)
         {
-            // ä¸å†è®¾ç½®åŸç”Ÿ ToolTipTextï¼Œåˆ—æ ‡é¢˜æ‚¬åœç”± DataGridLinkToolTip.OnGridCellMouseMove ç»Ÿä¸€å¤„ç†
+            // ²»ÔÙÉèÖÃÔ­Éú ToolTipText£¬ÁĞ±êÌâĞüÍ£ÓÉ DataGridLinkToolTip.OnGridCellMouseMove Í³Ò»´¦Àí
         }
 
-        /// <summary>æ£€æŸ¥å”¯ä¸€åˆ—æ˜¯å¦æœ‰é‡å¤å€¼ï¼Œå¦‚æœ‰åˆ™å¼¹çª—è­¦å‘Šå¹¶åœ¨çŠ¶æ€æ æ˜¾ç¤ºçº¢è‰²æç¤º</summary>
-        /// <returns>true = å­˜åœ¨é‡å¤å€¼</returns>
-        /// <param name="showMessageBox">æ˜¯å¦å¼¹å‡º MessageBoxï¼ˆä»…é¦–æ¬¡åŠ è½½/æ‰‹åŠ¨åˆ‡æ¢å”¯ä¸€åˆ—æ—¶ä¼  trueï¼‰</param>
+        /// <summary>¼ì²éÎ¨Ò»ÁĞÊÇ·ñÓĞÖØ¸´Öµ£¬ÈçÓĞÔòµ¯´°¾¯¸æ²¢ÔÚ×´Ì¬À¸ÏÔÊ¾ºìÉ«ÌáÊ¾</summary>
+        /// <returns>true = ´æÔÚÖØ¸´Öµ</returns>
+        /// <param name="showMessageBox">ÊÇ·ñµ¯³ö MessageBox£¨½öÊ×´Î¼ÓÔØ/ÊÖ¶¯ÇĞ»»Î¨Ò»ÁĞÊ±´« true£©</param>
         private bool CheckUniqueColumnDuplicates(bool showMessageBox = false)
         {
-            // â˜… å…ˆæ¸…é™¤ä¹‹å‰çš„è­¦å‘ŠçŠ¶æ€
+            // ¡ï ÏÈÇå³ıÖ®Ç°µÄ¾¯¸æ×´Ì¬
             _duplicateWarningText = null;
             _duplicateDetails.Clear();
 
@@ -2182,7 +2183,7 @@ namespace wxd.files.winforms
             if (_dataTable.Rows.Count <= _frozenRows)
             { RestoreInfoStyle(); return false; }
 
-            // â˜… è·å–åˆ—æ˜¾ç¤ºåï¼ˆæ˜ å°„å(åˆ—å) æ ¼å¼ï¼‰
+            // ¡ï »ñÈ¡ÁĞÏÔÊ¾Ãû£¨Ó³ÉäÃû(ÁĞÃû) ¸ñÊ½£©
             string colDisplayName = $"Col{_uniqueColumnIndex}";
             if (_mappingRowIndex >= 0 && _mappingRowIndex < _dataTable.Rows.Count)
             {
@@ -2217,7 +2218,7 @@ namespace wxd.files.winforms
                 return false;
             }
 
-            // â˜… ä¿å­˜å®Œæ•´æ•°æ®
+            // ¡ï ±£´æÍêÕûÊı¾İ
             _duplicateDetails = duplicates.Select(g => new DuplicateGroup
             {
                 Value = g.Key,
@@ -2228,48 +2229,48 @@ namespace wxd.files.winforms
             var totalDupCount = duplicates.Count;
             var totalRedundant = duplicates.Sum(g => g.Count() - 1);
 
-            // â˜… MessageBoxï¼šåªåœ¨é¦–æ¬¡åŠ è½½æˆ–æ‰‹åŠ¨åˆ‡æ¢å”¯ä¸€åˆ—æ—¶å¼¹å‡º
+            // ¡ï MessageBox£ºÖ»ÔÚÊ×´Î¼ÓÔØ»òÊÖ¶¯ÇĞ»»Î¨Ò»ÁĞÊ±µ¯³ö
             if (showMessageBox)
             {
                 var sb = new StringBuilder();
-                sb.AppendLine($"åˆ— \"{colDisplayName}\" å­˜åœ¨é‡å¤å€¼ï¼š");
-                sb.AppendLine($"å…± {totalDupCount} ä¸ªé‡å¤å€¼ï¼Œ{totalRedundant} å¤„å†—ä½™");
+                sb.AppendLine($"ÁĞ \"{colDisplayName}\" ´æÔÚÖØ¸´Öµ£º");
+                sb.AppendLine($"¹² {totalDupCount} ¸öÖØ¸´Öµ£¬{totalRedundant} ´¦ÈßÓà");
                 sb.AppendLine();
 
                 int showGroups = Math.Min(3, duplicates.Count);
                 for (int i = 0; i < showGroups; i++)
                 {
                     var g = duplicates[i];
-                    sb.AppendLine($"â–¸ å€¼ \"{g.Key}\" é‡å¤ {g.Count()} æ¬¡ï¼š");
+                    sb.AppendLine($"? Öµ \"{g.Key}\" ÖØ¸´ {g.Count()} ´Î£º");
                     int showRows = Math.Min(5, g.Count());
                     foreach (var x in g.Take(showRows))
                     {
                         int fileRowNum = x.DataTableIndex < _fileData.Rows.Count
                             ? _fileData.Rows[x.DataTableIndex].OriginalRowIndex + 1
                             : x.DataTableIndex + 1;
-                        sb.AppendLine($"    è¡Œ {fileRowNum}");
+                        sb.AppendLine($"    ĞĞ {fileRowNum}");
                     }
                     if (g.Count() > 5)
-                        sb.AppendLine($"    ... è¿˜æœ‰ {g.Count() - 5} è¡Œ");
+                        sb.AppendLine($"    ... »¹ÓĞ {g.Count() - 5} ĞĞ");
                 }
                 if (duplicates.Count > 3)
-                    sb.AppendLine($"... è¿˜æœ‰ {duplicates.Count - 3} ä¸ªé‡å¤å€¼ç»„æœªæ˜¾ç¤º");
+                    sb.AppendLine($"... »¹ÓĞ {duplicates.Count - 3} ¸öÖØ¸´Öµ×éÎ´ÏÔÊ¾");
                 sb.AppendLine();
-                sb.AppendLine("ç‚¹å‡»çŠ¶æ€æ å¯æŸ¥çœ‹å®Œæ•´è¯¦æƒ…");
+                sb.AppendLine("µã»÷×´Ì¬À¸¿É²é¿´ÍêÕûÏêÇé");
 
-                AlertForm.Show(this, sb.ToString(), "å”¯ä¸€åˆ—é‡å¤è­¦å‘Š", AlertType.Warning);
+                AlertForm.Show(this, sb.ToString(), "Î¨Ò»ÁĞÖØ¸´¾¯¸æ", AlertType.Warning);
             }
 
-            // â˜… çŠ¶æ€æ ï¼šç®€çŸ­æ‘˜è¦ + å¯ç‚¹å‡»ï¼ˆå§‹ç»ˆæ›´æ–°ï¼‰
+            // ¡ï ×´Ì¬À¸£º¼ò¶ÌÕªÒª + ¿Éµã»÷£¨Ê¼ÖÕ¸üĞÂ£©
             _duplicateWarningText = totalDupCount <= 3
-                ? $"âš  å”¯ä¸€åˆ—\"{colDisplayName}\"æœ‰{totalDupCount}ä¸ªé‡å¤å€¼({totalRedundant}å¤„å†—ä½™)"
-                : $"âš  å”¯ä¸€åˆ—\"{colDisplayName}\"æœ‰{totalDupCount}ä¸ªé‡å¤å€¼({totalRedundant}å¤„å†—ä½™)â€¦ç‚¹å‡»æŸ¥çœ‹è¯¦æƒ…";
+                ? $"? Î¨Ò»ÁĞ\"{colDisplayName}\"ÓĞ{totalDupCount}¸öÖØ¸´Öµ({totalRedundant}´¦ÈßÓà)"
+                : $"? Î¨Ò»ÁĞ\"{colDisplayName}\"ÓĞ{totalDupCount}¸öÖØ¸´Öµ({totalRedundant}´¦ÈßÓà)¡­µã»÷²é¿´ÏêÇé";
 
             ApplyDuplicateWarningStyle();
             return true;
         }
 
-        /// <summary>åº”ç”¨é‡å¤è­¦å‘Šæ ·å¼åˆ°çŠ¶æ€æ </summary>
+        /// <summary>Ó¦ÓÃÖØ¸´¾¯¸æÑùÊ½µ½×´Ì¬À¸</summary>
         private void ApplyDuplicateWarningStyle()
         {
             if (_duplicateWarningText == null) return;
@@ -2280,7 +2281,7 @@ namespace wxd.files.winforms
             _pnlStatus.BackColor = Color.FromArgb(255, 235, 235);
         }
 
-        /// <summary>æ¢å¤çŠ¶æ€æ æ­£å¸¸æ ·å¼</summary>
+        /// <summary>»Ö¸´×´Ì¬À¸Õı³£ÑùÊ½</summary>
         private void RestoreInfoStyle()
         {
             _duplicateWarningText = null;
@@ -2292,7 +2293,7 @@ namespace wxd.files.winforms
             _pnlStatus.BackColor = Color.FromArgb(245, 250, 255);
         }
 
-        /// <summary>ç‚¹å‡»çŠ¶æ€æ æ ‡ç­¾ â†’ å¼¹å‡ºé‡å¤å€¼è¯¦æƒ…çª—ä½“</summary>
+        /// <summary>µã»÷×´Ì¬À¸±êÇ© ¡ú µ¯³öÖØ¸´ÖµÏêÇé´°Ìå</summary>
         private void LblInfo_Click_ShowDuplicates(object? sender, EventArgs e)
         {
             if (_duplicateDetails.Count == 0) return;
@@ -2300,7 +2301,7 @@ namespace wxd.files.winforms
             form.ShowDialog(this);
         }
 
-        /// <summary>å¯¼èˆªåˆ°æŒ‡å®šè¡Œï¼ˆä¾›å¤–éƒ¨è°ƒç”¨ï¼Œå¦‚é‡å¤å€¼è¯¦æƒ…çª—ä½“ï¼‰</summary>
+        /// <summary>µ¼º½µ½Ö¸¶¨ĞĞ£¨¹©Íâ²¿µ÷ÓÃ£¬ÈçÖØ¸´ÖµÏêÇé´°Ìå£©</summary>
         public void NavigateToRow(int dataTableRowIndex)
         {
             if (_dataGrid.Rows.Count == 0) return;
@@ -2323,7 +2324,7 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== åˆ—é€‰æ‹© ====================
+        // ==================== ÁĞÑ¡Ôñ ====================
         public List<int> GetVisibleColumnIndices()
         {
             var visibleIndices = new List<int>();
@@ -2338,6 +2339,7 @@ namespace wxd.files.winforms
 
         private void OnSelectColumnsClick(object? sender, EventArgs e)
         {
+            if (_columnManagementDisabled) return;  // ¡ï °æ±¾¶Ô±ÈµÈ³¡¾°£¬ÁĞ¹ÜÀí±»½ûÓÃ
             if (_dataTable.Columns.Count == 0) return;
             EnsureFileEntriesLoaded();
             using var dialog = new ColumnManagerDialog(_dataTable, _columnCheckStates, _frozenRows, 0,
@@ -2347,7 +2349,7 @@ namespace wxd.files.winforms
             {
                 _columnCheckStates = dialog.GetCheckedStates();
                 _columnLinks = dialog.GetColumnLinks();
-                // â˜… ä¿å­˜å‰å¯¹æ¨¡æ¿å¼•ç”¨çš„åˆ—æ¸…ç†å†—ä½™æ•°æ®ï¼ˆä»…ä¿ç•™ TemplateUidï¼Œç”±è¿è¡Œæ—¶å®æ—¶åŠ è½½ï¼‰
+                // ¡ï ±£´æÇ°¶ÔÄ£°åÒıÓÃµÄÁĞÇåÀíÈßÓàÊı¾İ£¨½ö±£Áô TemplateUid£¬ÓÉÔËĞĞÊ±ÊµÊ±¼ÓÔØ£©
                 foreach (var link in _columnLinks)
                 {
                     if (!string.IsNullOrEmpty(link.TemplateUid))
@@ -2359,12 +2361,12 @@ namespace wxd.files.winforms
                     }
                 }
                 CsvSettings.SetColumnLinksByDirectory(FrozenDir, _columnLinks);
-                // â˜… ä¿å­˜åé‡æ–°ä»æ¨¡æ¿å¡«å……è¿è¡Œæ—¶æ•°æ®
+                // ¡ï ±£´æºóÖØĞÂ´ÓÄ£°åÌî³äÔËĞĞÊ±Êı¾İ
                 foreach (var link in _columnLinks)
                 {
                     link.RefreshFromTemplate();
                 }
-                // â˜… åå°å¼‚æ­¥æ„å»ºå…³è” lookup
+                // ¡ï ºóÌ¨Òì²½¹¹½¨¹ØÁª lookup
                 if (_columnLinks.Count > 0)
                     FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
                 CsvSettings.SetColumnVisibility(FrozenDir, GetCurrentRelativePath(), _columnCheckStates);
@@ -2409,25 +2411,25 @@ namespace wxd.files.winforms
             int dataColumns, checkedData;
             if (_externalTotalColumns.HasValue && _externalVisibleColumns.HasValue)
             {
-                // â˜… ç‰ˆæœ¬å¯¹æ¯”åœºæ™¯ï¼šä½¿ç”¨å¤–éƒ¨æ³¨å…¥çš„å®Œæ•´åˆ—æ•°ä¿¡æ¯ï¼ˆé¿å…æŠ•å½±å _columnCheckStates é•¿åº¦ä¸åŒ¹é…ï¼‰
+                // ¡ï °æ±¾¶Ô±È³¡¾°£ºÊ¹ÓÃÍâ²¿×¢ÈëµÄÍêÕûÁĞÊıĞÅÏ¢£¨±ÜÃâÍ¶Ó°ºó _columnCheckStates ³¤¶È²»Æ¥Åä£©
                 dataColumns = _externalTotalColumns.Value;
                 checkedData = _externalVisibleColumns.Value;
             }
             else
             {
-                // æ­£å¸¸åœºæ™¯ï¼šåŸºäº _columnCheckStates è®¡ç®—
+                // Õı³£³¡¾°£º»ùÓÚ _columnCheckStates ¼ÆËã
                 int checkedCount = 0;
                 for (int i = 0; i < _columnCheckStates.Length; i++)
                     if (_columnCheckStates[i]) checkedCount++;
                 dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
                 checkedData = Math.Max(0, checkedCount - 1);
             }
-            _btnSelectColumns.Text = $"åˆ—ç®¡ç†({checkedData}/{dataColumns})";
+            _btnSelectColumns.Text = $"ÁĞ¹ÜÀí({checkedData}/{dataColumns})";
             _btnSelectColumns.ForeColor = checkedData < dataColumns ? Color.Red : _colorLightText;
         }
 
-        // ==================== è¡Œè¿‡æ»¤ ====================
-        /// <summary>è§¦å‘è¿‡æ»¤ï¼ˆå›è½¦/æŒ‰é’®ç»Ÿä¸€å…¥å£ï¼‰ï¼Œåå°æ‰§è¡Œä¸å¡ UIï¼Œæ”¯æŒç‰ˆæœ¬å·ä¸¢å¼ƒè¿‡æœŸç»“æœ</summary>
+        // ==================== ĞĞ¹ıÂË ====================
+        /// <summary>´¥·¢¹ıÂË£¨»Ø³µ/°´Å¥Í³Ò»Èë¿Ú£©£¬ºóÌ¨Ö´ĞĞ²»¿¨ UI£¬Ö§³Ö°æ±¾ºÅ¶ªÆú¹ıÆÚ½á¹û</summary>
         private void TriggerFilter()
         {
             var myVersion = Interlocked.Increment(ref _filterVersion);
@@ -2441,7 +2443,7 @@ namespace wxd.files.winforms
 
             try
             {
-                // ===== é˜¶æ®µ1ï¼šUI çº¿ç¨‹æ•è·çŠ¶æ€å¿«ç…§ =====
+                // ===== ½×¶Î1£ºUI Ïß³Ì²¶»ñ×´Ì¬¿ìÕÕ =====
                 var contentFilter = _txtContentFilter.Text.Trim();
                 var advFilterText = _txtAdvancedFilter.Text.Trim();
                 var filterKeepAll = _filterKeepAllRows;
@@ -2451,15 +2453,15 @@ namespace wxd.files.winforms
                 var fileDataRef = _fileData;
                 var headerRowIndex = _headerRowIndex;
 
-                // ===== é˜¶æ®µ2ï¼šåå°çº¿ç¨‹æ‰§è¡Œè€—æ—¶è®¡ç®— =====
+                // ===== ½×¶Î2£ººóÌ¨Ïß³ÌÖ´ĞĞºÄÊ±¼ÆËã =====
                 var result = await Task.Run(() =>
                     BuildFilterResultInBackground(
                         contentFilter, advFilterText, filterKeepAll,
                         frozenRows, visibleColIndices, dataTableRef, fileDataRef,
                         headerRowIndex, version));
 
-                // ===== é˜¶æ®µ3ï¼šUI çº¿ç¨‹æ£€æŸ¥ç‰ˆæœ¬ + ç»‘å®š =====
-                if (version != _filterVersion) return; // å·²è¿‡æœŸï¼Œä¸¢å¼ƒ
+                // ===== ½×¶Î3£ºUI Ïß³Ì¼ì²é°æ±¾ + °ó¶¨ =====
+                if (version != _filterVersion) return; // ÒÑ¹ıÆÚ£¬¶ªÆú
 
                 ApplyFilterResultToUI(result);
             }
@@ -2478,7 +2480,7 @@ namespace wxd.files.winforms
 
         private void ApplyFilters() => RefreshGridLayout();
 
-        /// <summary>åå°æ„å»ºè¿‡æ»¤ç»“æœï¼ˆåœ¨åå°çº¿ç¨‹æ‰§è¡Œï¼‰</summary>
+        /// <summary>ºóÌ¨¹¹½¨¹ıÂË½á¹û£¨ÔÚºóÌ¨Ïß³ÌÖ´ĞĞ£©</summary>
         private FilterResult BuildFilterResultInBackground(
             string contentFilter, string advFilterText, bool filterKeepAll,
             int frozenRows, List<int> visibleColIndices,
@@ -2488,27 +2490,27 @@ namespace wxd.files.winforms
             void CheckVersion()
             {
                 if (version != _filterVersion)
-                    throw new OperationCanceledException("è¿‡æ»¤ç»“æœå·²è¿‡æœŸ");
+                    throw new OperationCanceledException("¹ıÂË½á¹ûÒÑ¹ıÆÚ");
             }
 
             CheckVersion();
 
-            // å†…å®¹æœç´¢åŒ¹é…
+            // ÄÚÈİËÑË÷Æ¥Åä
             var contentMatches = GetContentMatchCellsBackground(
                 fileData, visibleColIndices, contentFilter, version);
             CheckVersion();
 
-            // é«˜çº§è¿‡æ»¤
+            // ¸ß¼¶¹ıÂË
             var (visibleRowIndices, advMatches) = GetAdvVisibleRowIndicesBackground(
                 fileData, advFilterText, filterKeepAll, frozenRows, version);
             CheckVersion();
 
-            // æ„å»º filteredTable
+            // ¹¹½¨ filteredTable
             var filteredTable = BuildFilteredTableBackground(
                 dataTable, visibleRowIndices, visibleColIndices, version);
             CheckVersion();
 
-            // åˆå¹¶åŒ¹é…å•å…ƒæ ¼ â†’ è½¬æ¢æ˜¾ç¤ºè¡Œåˆ—ç´¢å¼•
+            // ºÏ²¢Æ¥Åäµ¥Ôª¸ñ ¡ú ×ª»»ÏÔÊ¾ĞĞÁĞË÷Òı
             var merged = MergeMatchCells(contentMatches, advMatches);
             var headerMatchCells = new Dictionary<int, HashSet<int>>();
             var dataMatchCells = new Dictionary<int, HashSet<int>>();
@@ -2544,7 +2546,7 @@ namespace wxd.files.winforms
             };
         }
 
-        /// <summary>åå°å†…å®¹æœç´¢åŒ¹é…ï¼ˆå¸¦ç‰ˆæœ¬æ£€æŸ¥ï¼‰</summary>
+        /// <summary>ºóÌ¨ÄÚÈİËÑË÷Æ¥Åä£¨´ø°æ±¾¼ì²é£©</summary>
         private Dictionary<int, HashSet<int>> GetContentMatchCellsBackground(
             FileTableData fileData, List<int> visibleColIndices,
             string contentFilter, int version)
@@ -2577,7 +2579,7 @@ namespace wxd.files.winforms
             return matchCells;
         }
 
-        /// <summary>åå°é«˜çº§è¿‡æ»¤ï¼ˆå¸¦ç‰ˆæœ¬æ£€æŸ¥ï¼‰ï¼Œä» _frozenRows å¼€å§‹è¿‡æ»¤å†…å®¹è¡Œ</summary>
+        /// <summary>ºóÌ¨¸ß¼¶¹ıÂË£¨´ø°æ±¾¼ì²é£©£¬´Ó _frozenRows ¿ªÊ¼¹ıÂËÄÚÈİĞĞ</summary>
         private (List<int> rowIndices, Dictionary<int, HashSet<int>> matchCells) GetAdvVisibleRowIndicesBackground(
             FileTableData fileData, string advFilterText, bool filterKeepAll, int frozenRows, int version)
         {
@@ -2588,7 +2590,7 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(advFilterText))
                 compiledExpr = CompileExpression(advFilterText);
 
-            // æ— é«˜çº§è¿‡æ»¤ â†’ è¿”å›æ‰€æœ‰å†…å®¹è¡Œï¼ˆä» frozenRows å¼€å§‹ï¼‰
+            // ÎŞ¸ß¼¶¹ıÂË ¡ú ·µ»ØËùÓĞÄÚÈİĞĞ£¨´Ó frozenRows ¿ªÊ¼£©
             if (compiledExpr == null)
             {
                 for (int i = frozenRows; i < fileData.Rows.Count; i++)
@@ -2599,13 +2601,13 @@ namespace wxd.files.winforms
             for (int i = frozenRows; i < fileData.Rows.Count; i++)
             {
                 if (i % 500 == 0 && version != _filterVersion)
-                    return (result, matchCells); // è¿‡æœŸé€€å‡º
+                    return (result, matchCells); // ¹ıÆÚÍË³ö
 
                 var cells = fileData.Rows[i].Cells;
                 bool advMatch = EvaluateCompiled(cells, compiledExpr);
                 if (!advMatch && filterKeepAll)
                 {
-                    // ä¿ç•™æ‰€æœ‰è¡Œæ¨¡å¼ï¼šä¸è¿‡æ»¤è¡Œï¼Œåªè®°å½•åŒ¹é…çš„å•å…ƒæ ¼
+                    // ±£ÁôËùÓĞĞĞÄ£Ê½£º²»¹ıÂËĞĞ£¬Ö»¼ÇÂ¼Æ¥ÅäµÄµ¥Ôª¸ñ
                     result.Add(i);
                     var advMatchCols = GetAdvFilterMatchCols(cells, compiledExpr);
                     if (advMatchCols.Count > 0)
@@ -2620,9 +2622,9 @@ namespace wxd.files.winforms
                 }
             }
 
-            // â˜… é«˜çº§è¿‡æ»¤æ— åŒ¹é…æ—¶ï¼š
-            //   - filterKeepAll == trueï¼ˆä¿ç•™æ‰€æœ‰è¡Œæ¨¡å¼ï¼‰ï¼šå›é€€æ˜¾ç¤ºæ‰€æœ‰å†…å®¹è¡Œ
-            //   - filterKeepAll == falseï¼šresult ä¿æŒç©ºï¼Œå†»ç»“è¡Œæ­£å¸¸æ˜¾ç¤ºï¼Œå†…å®¹åŒºä¸ºç©º
+            // ¡ï ¸ß¼¶¹ıÂËÎŞÆ¥ÅäÊ±£º
+            //   - filterKeepAll == true£¨±£ÁôËùÓĞĞĞÄ£Ê½£©£º»ØÍËÏÔÊ¾ËùÓĞÄÚÈİĞĞ
+            //   - filterKeepAll == false£ºresult ±£³Ö¿Õ£¬¶³½áĞĞÕı³£ÏÔÊ¾£¬ÄÚÈİÇøÎª¿Õ
             if (result.Count == 0 && filterKeepAll)
             {
                 for (int i = frozenRows; i < fileData.Rows.Count; i++)
@@ -2632,7 +2634,7 @@ namespace wxd.files.winforms
             return (result, matchCells);
         }
 
-        /// <summary>åå°æ„å»º filteredTableï¼ˆå¸¦ç‰ˆæœ¬æ£€æŸ¥ï¼‰</summary>
+        /// <summary>ºóÌ¨¹¹½¨ filteredTable£¨´ø°æ±¾¼ì²é£©</summary>
         private DataTable BuildFilteredTableBackground(
             DataTable sourceTable, List<int> visibleRowIndices,
             List<int> visibleColIndices, int version)
@@ -2663,10 +2665,10 @@ namespace wxd.files.winforms
             return filteredTable;
         }
 
-        /// <summary>å°†åå°è¿‡æ»¤ç»“æœç»‘å®šåˆ° UIï¼ˆå¿…é¡»åœ¨ UI çº¿ç¨‹è°ƒç”¨ï¼‰</summary>
+        /// <summary>½«ºóÌ¨¹ıÂË½á¹û°ó¶¨µ½ UI£¨±ØĞëÔÚ UI Ïß³Ìµ÷ÓÃ£©</summary>
         private void ApplyFilterResultToUI(FilterResult result)
         {
-            // è¡Œç¼–è¾‘æ¨¡å¼ï¼šåˆ·æ–°å‰é€€å‡ºç¼–è¾‘
+            // ĞĞ±à¼­Ä£Ê½£ºË¢ĞÂÇ°ÍË³ö±à¼­
             if (_editingRowIndex >= 0)
             {
                 _enteringEditMode = true;
@@ -2679,7 +2681,7 @@ namespace wxd.files.winforms
                 finally { _enteringEditMode = false; }
             }
 
-            // æ¸…ç©ºæ—§åŒ¹é…
+            // Çå¿Õ¾ÉÆ¥Åä
             _filterMatchCells.Clear();
             _headerFilterMatchCells.Clear();
             _contentSearchMatchCells.Clear();
@@ -2687,7 +2689,7 @@ namespace wxd.files.winforms
 
             if (_frozenRows > 0)
             {
-                // å†»ç»“è¡Œåœºæ™¯ï¼šé‡å»º _headerTable + ç»‘å®šä¸¤ä¸ª DataGridView
+                // ¶³½áĞĞ³¡¾°£ºÖØ½¨ _headerTable + °ó¶¨Á½¸ö DataGridView
                 _visibleColumnIndices = GetVisibleColumnIndices();
                 _headerTable = new DataTable();
                 foreach (var colIndex in _visibleColumnIndices)
@@ -2734,7 +2736,7 @@ namespace wxd.files.winforms
 
                 _dataGrid.DataSource = result.FilteredTable;
 
-                // è®¾ç½® Tagï¼ˆä½¿ç”¨åŸå§‹è¡Œç´¢å¼•ï¼‰
+                // ÉèÖÃ Tag£¨Ê¹ÓÃÔ­Ê¼ĞĞË÷Òı£©
                 for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
                 {
                     int origIdx = result.VisibleRowIndices[i];
@@ -2742,7 +2744,7 @@ namespace wxd.files.winforms
                         _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
                 }
 
-                // é…ç½®åˆ—å®½/è¡¨å¤´
+                // ÅäÖÃÁĞ¿í/±íÍ·
                 _dataGrid.SuspendLayout();
                 for (int i = 0; i < _dataGrid.Columns.Count; i++)
                 {
@@ -2770,11 +2772,11 @@ namespace wxd.files.winforms
             }
             else
             {
-                // æ— å†»ç»“è¡Œåœºæ™¯
+                // ÎŞ¶³½áĞĞ³¡¾°
                 _pnlGridContainer.Panel1Collapsed = true;
                 _dataGrid.DataSource = result.FilteredTable;
 
-                // è®¾ç½® Tag
+                // ÉèÖÃ Tag
                 for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
                 {
                     int origIdx = result.VisibleRowIndices[i];
@@ -2782,7 +2784,7 @@ namespace wxd.files.winforms
                         _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
                 }
 
-                // é…ç½®åˆ—å®½/è¡¨å¤´
+                // ÅäÖÃÁĞ¿í/±íÍ·
                 _dataGrid.SuspendLayout();
                 for (int i = 0; i < _dataGrid.Columns.Count; i++)
                 {
@@ -2802,20 +2804,20 @@ namespace wxd.files.winforms
                 _dataGrid.ResumeLayout(false);
             }
 
-            // è®¾ç½®åŒ¹é…å•å…ƒæ ¼
+            // ÉèÖÃÆ¥Åäµ¥Ôª¸ñ
             _contentSearchMatchCells = result.ContentSearchMatchCells;
             _advFilterMatchCells = result.AdvFilterMatchCells;
             _filterMatchCells = result.DataFilterMatchCells;
             _headerFilterMatchCells = result.HeaderFilterMatchCells;
 
-            _lblCellPos.Text = $"æ˜¾ç¤º {_visibleColumnIndices.Count} åˆ—, {result.VisibleRowIndices.Count} è¡Œ";
+            _lblCellPos.Text = $"ÏÔÊ¾ {_visibleColumnIndices.Count} ÁĞ, {result.VisibleRowIndices.Count} ĞĞ";
             _lblInfo.Text = "";
 
-            // â˜… é«˜çº§è¿‡æ»¤æ— åŒ¹é…æç¤º
+            // ¡ï ¸ß¼¶¹ıÂËÎŞÆ¥ÅäÌáÊ¾
             if (result.VisibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
-                _lblInfo.Text = $"é«˜çº§è¿‡æ»¤ \"{_txtAdvancedFilter.Text.Trim()}\" æœªåŒ¹é…åˆ°ä»»ä½•è¡Œ";
+                _lblInfo.Text = $"¸ß¼¶¹ıÂË \"{_txtAdvancedFilter.Text.Trim()}\" Î´Æ¥Åäµ½ÈÎºÎĞĞ";
             }
             else if (_duplicateWarningText != null)
             {
@@ -2824,7 +2826,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>åå°è¿‡æ»¤ç»“æœæ•°æ®å®¹å™¨</summary>
+        /// <summary>ºóÌ¨¹ıÂË½á¹ûÊı¾İÈİÆ÷</summary>
         private class FilterResult
         {
             public DataTable FilteredTable { get; set; } = new();
@@ -2835,7 +2837,7 @@ namespace wxd.files.winforms
             public Dictionary<int, HashSet<int>> DataFilterMatchCells { get; set; } = new();
         }
 
-        /// <summary>å†…å®¹æœç´¢ï¼šæœç´¢æ‰€æœ‰è¡Œï¼ˆåŒ…æ‹¬å†»ç»“è¡Œï¼‰çš„æ‰€æœ‰å¯è§åˆ—ï¼Œä»…è¿”å›åŒ¹é…çš„åŸå§‹å•å…ƒæ ¼ä½ç½®ï¼Œä¸è¿‡æ»¤è¡Œ</summary>
+        /// <summary>ÄÚÈİËÑË÷£ºËÑË÷ËùÓĞĞĞ£¨°üÀ¨¶³½áĞĞ£©µÄËùÓĞ¿É¼ûÁĞ£¬½ö·µ»ØÆ¥ÅäµÄÔ­Ê¼µ¥Ôª¸ñÎ»ÖÃ£¬²»¹ıÂËĞĞ</summary>
         private Dictionary<int, HashSet<int>> GetContentMatchCells(string contentFilter)
         {
             if (string.IsNullOrEmpty(contentFilter))
@@ -2845,7 +2847,7 @@ namespace wxd.files.winforms
                 .Replace("||", " | ").Replace("&&", " & ");
             var matchCells = new Dictionary<int, HashSet<int>>();
 
-            // æœç´¢æ‰€æœ‰è¡Œï¼šä» 0 åˆ° _fileData.Rows.Countï¼ˆåŒ…æ‹¬å†»ç»“è¡Œï¼‰
+            // ËÑË÷ËùÓĞĞĞ£º´Ó 0 µ½ _fileData.Rows.Count£¨°üÀ¨¶³½áĞĞ£©
             for (int i = 0; i < _fileData.Rows.Count; i++)
             {
                 var cells = _fileData.Rows[i].Cells;
@@ -2864,7 +2866,7 @@ namespace wxd.files.winforms
             return matchCells;
         }
 
-        /// <summary>é«˜çº§è¿‡æ»¤ï¼šä»…æ ¹æ®é«˜çº§è¿‡æ»¤è¡¨è¾¾å¼è¿”å›å¯è§è¡Œç´¢å¼• + åŒ¹é…çš„åŸå§‹å•å…ƒæ ¼ï¼ˆä¸è¿‡æ»¤å†…å®¹æœç´¢ï¼‰</summary>
+        /// <summary>¸ß¼¶¹ıÂË£º½ö¸ù¾İ¸ß¼¶¹ıÂË±í´ïÊ½·µ»Ø¿É¼ûĞĞË÷Òı + Æ¥ÅäµÄÔ­Ê¼µ¥Ôª¸ñ£¨²»¹ıÂËÄÚÈİËÑË÷£©</summary>
         private (List<int> rowIndices, Dictionary<int, HashSet<int>> matchCells) GetAdvVisibleRowIndices()
         {
             var result = new List<int>(_fileData.Rows.Count - _frozenRows);
@@ -2875,7 +2877,7 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(advFilter))
                 compiledExpr = CompileExpression(advFilter);
 
-            // æ— é«˜çº§è¿‡æ»¤ â†’ è¿”å›æ‰€æœ‰å†…å®¹è¡Œï¼ˆä» _frozenRows å¼€å§‹ï¼‰
+            // ÎŞ¸ß¼¶¹ıÂË ¡ú ·µ»ØËùÓĞÄÚÈİĞĞ£¨´Ó _frozenRows ¿ªÊ¼£©
             if (compiledExpr == null)
             {
                 for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
@@ -2895,9 +2897,9 @@ namespace wxd.files.winforms
                     matchCells[i] = advMatchCols;
             }
 
-            // â˜… é«˜çº§è¿‡æ»¤æ— åŒ¹é…æ—¶ï¼š
-            //   - _filterKeepAllRows == trueï¼ˆä¿ç•™æ‰€æœ‰è¡Œæ¨¡å¼ï¼‰ï¼šå›é€€æ˜¾ç¤ºæ‰€æœ‰å†…å®¹è¡Œ
-            //   - _filterKeepAllRows == falseï¼šresult ä¿æŒç©ºï¼Œå†»ç»“è¡Œæ­£å¸¸æ˜¾ç¤ºï¼Œå†…å®¹åŒºä¸ºç©º
+            // ¡ï ¸ß¼¶¹ıÂËÎŞÆ¥ÅäÊ±£º
+            //   - _filterKeepAllRows == true£¨±£ÁôËùÓĞĞĞÄ£Ê½£©£º»ØÍËÏÔÊ¾ËùÓĞÄÚÈİĞĞ
+            //   - _filterKeepAllRows == false£ºresult ±£³Ö¿Õ£¬¶³½áĞĞÕı³£ÏÔÊ¾£¬ÄÚÈİÇøÎª¿Õ
             if (result.Count == 0 && _filterKeepAllRows)
             {
                 for (int i = _frozenRows; i < _fileData.Rows.Count; i++)
@@ -2907,8 +2909,8 @@ namespace wxd.files.winforms
             return (result, matchCells);
         }
 
-        // ==================== é¢„ç¼–è¯‘è¿‡æ»¤è¡¨è¾¾å¼ AST ====================
-        /// <summary>è¿‡æ»¤è¡¨è¾¾å¼ AST èŠ‚ç‚¹</summary>
+        // ==================== Ô¤±àÒë¹ıÂË±í´ïÊ½ AST ====================
+        /// <summary>¹ıÂË±í´ïÊ½ AST ½Úµã</summary>
         private abstract class FilterNode { }
 
         private class BinOpNode : FilterNode
@@ -2920,25 +2922,25 @@ namespace wxd.files.winforms
 
         private class CondNode : FilterNode
         {
-            public string? ColumnName;    // åŸå§‹åˆ—åå­—ç¬¦ä¸²ï¼ˆæŒ‡å®šåˆ—è¿‡æ»¤æ—¶ï¼‰
-            public int ColumnIndex = -1;   // é¢„è§£æçš„åˆ—ç´¢å¼•ï¼Œ-1 è¡¨ç¤ºå…¨åˆ—æœç´¢
-            public string CompareOp = "";  // "=", "!=", ">", "<", ">=", "<=", "like", "" (å…¨åˆ—æ¨¡ç³Š)
-            public string Value = "";      // æ¯”è¾ƒå€¼ï¼ˆå·²å»å¼•å·ï¼‰
+            public string? ColumnName;    // Ô­Ê¼ÁĞÃû×Ö·û´®£¨Ö¸¶¨ÁĞ¹ıÂËÊ±£©
+            public int ColumnIndex = -1;   // Ô¤½âÎöµÄÁĞË÷Òı£¬-1 ±íÊ¾È«ÁĞËÑË÷
+            public string CompareOp = "";  // "=", "!=", ">", "<", ">=", "<=", "like", "" (È«ÁĞÄ£ºı)
+            public string Value = "";      // ±È½ÏÖµ£¨ÒÑÈ¥ÒıºÅ£©
             public bool IsNumeric;
             public double NumericValue;
         }
 
-        /// <summary>å°†å­—ç¬¦ä¸²è¡¨è¾¾å¼ç¼–è¯‘ä¸º ASTï¼ˆåªè§£æä¸€æ¬¡ï¼Œæ¯è¡Œå¤ç”¨ï¼‰</summary>
+        /// <summary>½«×Ö·û´®±í´ïÊ½±àÒëÎª AST£¨Ö»½âÎöÒ»´Î£¬Ã¿ĞĞ¸´ÓÃ£©</summary>
         private FilterNode? CompileExpression(string expr)
         {
             expr = expr.Trim();
             if (string.IsNullOrEmpty(expr)) return null;
 
-            // å»å¤–å±‚æ‹¬å·
+            // È¥Íâ²ãÀ¨ºÅ
             while (expr.StartsWith("(") && expr.EndsWith(")") && IsBalanced(expr))
                 expr = expr.Substring(1, expr.Length - 2).Trim();
 
-            // æ‰¾æœ€å¤–å±‚ or / andï¼ˆor ä¼˜å…ˆçŸ­è·¯ï¼‰
+            // ÕÒ×îÍâ²ã or / and£¨or ÓÅÏÈ¶ÌÂ·£©
             int parenDepth = 0, orPos = -1, andPos = -1;
             for (int i = 0; i < expr.Length; i++)
             {
@@ -2989,7 +2991,7 @@ namespace wxd.files.winforms
             if (likeIdx >= 0) { op = "like"; opPos = likeIdx; }
             else
             {
-                // æŒ‰é•¿åº¦é™åºæŸ¥æ‰¾ï¼Œé¿å… >= è¢« > è¯¯åŒ¹é…
+                // °´³¤¶È½µĞò²éÕÒ£¬±ÜÃâ >= ±» > ÎóÆ¥Åä
                 var geIdx = FindOperator(condition, ">=");
                 var leIdx = FindOperator(condition, "<=");
                 var neqIdx = FindOperator(condition, "!=");
@@ -3009,7 +3011,7 @@ namespace wxd.files.winforms
 
             if (opPos < 0)
             {
-                // æ— æ“ä½œç¬¦ â†’ å…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                // ÎŞ²Ù×÷·û ¡ú È«ÁĞÄ£ºıÆ¥Åä
                 return new CondNode { ColumnIndex = -1, CompareOp = "", Value = condition };
             }
 
@@ -3021,12 +3023,12 @@ namespace wxd.files.winforms
                 (value.StartsWith("\"") && value.EndsWith("\"")))
                 value = value.Substring(1, value.Length - 2);
 
-            // ä¿å­˜åŸå§‹åˆ—åï¼Œæ±‚å€¼æ—¶å†è§£æåˆ—ç´¢å¼•ï¼ˆå› ä¸ºåˆ—åå¯èƒ½å¯¹åº”è¡¨å¤´è¡Œï¼‰
+            // ±£´æÔ­Ê¼ÁĞÃû£¬ÇóÖµÊ±ÔÙ½âÎöÁĞË÷Òı£¨ÒòÎªÁĞÃû¿ÉÄÜ¶ÔÓ¦±íÍ·ĞĞ£©
             var columnName = rawColumnName.Trim();
             return new CondNode
             {
                 ColumnName = !string.IsNullOrEmpty(columnName) && char.IsLetter(columnName[0]) ? columnName : null,
-                ColumnIndex = -1,  // æ±‚å€¼æ—¶å†è§£æ
+                ColumnIndex = -1,  // ÇóÖµÊ±ÔÙ½âÎö
                 CompareOp = op,
                 Value = value,
                 IsNumeric = op != "like" && double.TryParse(value, out var nv),
@@ -3034,15 +3036,15 @@ namespace wxd.files.winforms
             };
         }
 
-        /// <summary>å¯¹ AST æ±‚å€¼ï¼ˆé›¶è£…ç®±ï¼Œç›´æ¥ä» List&lt;string&gt; è¯»å–ï¼‰</summary>
+        /// <summary>¶Ô AST ÇóÖµ£¨Áã×°Ïä£¬Ö±½Ó´Ó List&lt;string&gt; ¶ÁÈ¡£©</summary>
         private bool EvaluateCompiled(List<string> cells, FilterNode node)
         {
             switch (node)
             {
                 case BinOpNode bin:
                     bool left = EvaluateCompiled(cells, bin.Left!);
-                    if (bin.Op == "or" && left) return true;   // OR çŸ­è·¯
-                    if (bin.Op == "and" && !left) return false; // AND çŸ­è·¯
+                    if (bin.Op == "or" && left) return true;   // OR ¶ÌÂ·
+                    if (bin.Op == "and" && !left) return false; // AND ¶ÌÂ·
                     return EvaluateCompiled(cells, bin.Right!);
 
                 case CondNode cond:
@@ -3055,7 +3057,7 @@ namespace wxd.files.winforms
         {
             if (string.IsNullOrEmpty(cond.CompareOp))
             {
-                // æ— æ“ä½œç¬¦ï¼šå…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                // ÎŞ²Ù×÷·û£ºÈ«ÁĞÄ£ºıÆ¥Åä
                 foreach (var colIdx in _visibleColumnIndices)
                 {
                     if (colIdx < cells.Count &&
@@ -3065,7 +3067,7 @@ namespace wxd.files.winforms
                 return false;
             }
 
-            // æœ‰æ“ä½œç¬¦ + æŒ‡å®šåˆ—å â†’ è§£æåˆ—ç´¢å¼•
+            // ÓĞ²Ù×÷·û + Ö¸¶¨ÁĞÃû ¡ú ½âÎöÁĞË÷Òı
             int colIndex = -1;
             if (cond.ColumnIndex >= 0)
             {
@@ -3076,7 +3078,7 @@ namespace wxd.files.winforms
                 colIndex = ResolveColumnIndex(cond.ColumnName);
                 if (colIndex < 0)
                 {
-                    // åˆ—åæ²¡æ‰¾åˆ° â†’ å°è¯•å…¨åˆ—æ¨¡ç³ŠåŒ¹é…ï¼ˆå…¼å®¹æ—§è¡Œä¸ºï¼‰
+                    // ÁĞÃûÃ»ÕÒµ½ ¡ú ³¢ÊÔÈ«ÁĞÄ£ºıÆ¥Åä£¨¼æÈİ¾ÉĞĞÎª£©
                     foreach (var ci in _visibleColumnIndices)
                     {
                         if (ci < cells.Count &&
@@ -3085,12 +3087,12 @@ namespace wxd.files.winforms
                     }
                     return false;
                 }
-                // ç¼“å­˜è§£æç»“æœ
+                // »º´æ½âÎö½á¹û
                 cond.ColumnIndex = colIndex;
             }
             else
             {
-                // æ— åˆ—åä½†æœ‰æ“ä½œç¬¦ â†’ å…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                // ÎŞÁĞÃûµ«ÓĞ²Ù×÷·û ¡ú È«ÁĞÄ£ºıÆ¥Åä
                 foreach (var ci in _visibleColumnIndices)
                 {
                     if (ci < cells.Count &&
@@ -3105,7 +3107,7 @@ namespace wxd.files.winforms
             return CompareValue(cellValue, cond.Value, cond.CompareOp);
         }
 
-        /// <summary>ä»é«˜çº§è¿‡æ»¤ AST ä¸­æå–åŒ¹é…çš„åŸå§‹åˆ—ç´¢å¼•é›†åˆ</summary>
+        /// <summary>´Ó¸ß¼¶¹ıÂË AST ÖĞÌáÈ¡Æ¥ÅäµÄÔ­Ê¼ÁĞË÷Òı¼¯ºÏ</summary>
         private HashSet<int> GetAdvFilterMatchCols(List<string> cells, FilterNode node)
         {
             var result = new HashSet<int>();
@@ -3132,7 +3134,7 @@ namespace wxd.files.winforms
         {
             if (string.IsNullOrEmpty(cond.CompareOp))
             {
-                // æ— æ“ä½œç¬¦ï¼šå…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                // ÎŞ²Ù×÷·û£ºÈ«ÁĞÄ£ºıÆ¥Åä
                 foreach (var colIdx in _visibleColumnIndices)
                 {
                     if (colIdx < cells.Count &&
@@ -3142,7 +3144,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // æœ‰æ“ä½œç¬¦ + æŒ‡å®šåˆ—å â†’ è§£æåˆ—ç´¢å¼•
+            // ÓĞ²Ù×÷·û + Ö¸¶¨ÁĞÃû ¡ú ½âÎöÁĞË÷Òı
             int colIndex = -1;
             if (cond.ColumnIndex >= 0)
             {
@@ -3153,7 +3155,7 @@ namespace wxd.files.winforms
                 colIndex = ResolveColumnIndex(cond.ColumnName);
                 if (colIndex < 0)
                 {
-                    // åˆ—åæ²¡æ‰¾åˆ° â†’ å°è¯•å…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                    // ÁĞÃûÃ»ÕÒµ½ ¡ú ³¢ÊÔÈ«ÁĞÄ£ºıÆ¥Åä
                     foreach (var ci in _visibleColumnIndices)
                     {
                         if (ci < cells.Count &&
@@ -3165,7 +3167,7 @@ namespace wxd.files.winforms
             }
             else
             {
-                // æ— åˆ—åä½†æœ‰æ“ä½œç¬¦ â†’ å…¨åˆ—æ¨¡ç³ŠåŒ¹é…
+                // ÎŞÁĞÃûµ«ÓĞ²Ù×÷·û ¡ú È«ÁĞÄ£ºıÆ¥Åä
                 foreach (var ci in _visibleColumnIndices)
                 {
                     if (ci < cells.Count &&
@@ -3175,7 +3177,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // â˜… æœ‰æ“ä½œç¬¦æ—¶ï¼Œå¿…é¡»æ£€æŸ¥è¯¥å•å…ƒæ ¼çš„å€¼æ˜¯å¦çœŸçš„åŒ¹é…æ¡ä»¶ï¼Œå¦åˆ™ä¼šå¯¼è‡´æ•´åˆ—é«˜äº®
+            // ¡ï ÓĞ²Ù×÷·ûÊ±£¬±ØĞë¼ì²é¸Ãµ¥Ôª¸ñµÄÖµÊÇ·ñÕæµÄÆ¥ÅäÌõ¼ş£¬·ñÔò»áµ¼ÖÂÕûÁĞ¸ßÁÁ
             if (colIndex >= 0 && colIndex < cells.Count)
             {
                 string cellValue = cells[colIndex];
@@ -3184,7 +3186,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>åˆå¹¶ä¸¤ä¸ªåŒ¹é…å•å…ƒæ ¼å­—å…¸ï¼ˆkey ä¸ºåŸå§‹è¡Œç´¢å¼•ï¼Œvalue ä¸ºåŸå§‹åˆ—ç´¢å¼•é›†åˆï¼‰ï¼Œå†…å®¹æœç´¢ + é«˜çº§è¿‡æ»¤åˆå¹¶</summary>
+        /// <summary>ºÏ²¢Á½¸öÆ¥Åäµ¥Ôª¸ñ×Öµä£¨key ÎªÔ­Ê¼ĞĞË÷Òı£¬value ÎªÔ­Ê¼ÁĞË÷Òı¼¯ºÏ£©£¬ÄÚÈİËÑË÷ + ¸ß¼¶¹ıÂËºÏ²¢</summary>
         private static Dictionary<int, HashSet<int>> MergeMatchCells(
             Dictionary<int, HashSet<int>> dict1,
             Dictionary<int, HashSet<int>> dict2)
@@ -3207,10 +3209,10 @@ namespace wxd.files.winforms
         }
 
         /// <summary>
-        /// å†»ç»“è¡Œåœºæ™¯çš„å¼‚æ­¥åŠ è½½ç‰ˆæœ¬ï¼ˆå¸¦è¿›åº¦æ¡ï¼‰ã€‚
-        /// æŠŠ filteredTable æ„å»ºç§»åˆ°åå°çº¿ç¨‹ï¼Œç”¨ Progress&lt;T&gt; æŠ¥å‘Šè¿›åº¦ï¼ˆè‡ªåŠ¨åˆ‡ UI çº¿ç¨‹æ›´æ–°è¿›åº¦æ¡ï¼‰ã€‚
-        /// æ„å»ºå®Œæˆååˆ‡å› UI çº¿ç¨‹åšç»‘å®š + Tag + åˆ—å®½ã€‚
-        /// æ³¨æ„ï¼šå…¶ä»–åœºæ™¯ï¼ˆè¿‡æ»¤/æ’åº/åˆ—é€‰æ‹©ï¼‰ä»ç”¨åŒæ­¥çš„ RefreshGridLayoutï¼Œæœ¬æ–¹æ³•åªç”¨äºé¦–æ¬¡åŠ è½½ã€‚
+        /// ¶³½áĞĞ³¡¾°µÄÒì²½¼ÓÔØ°æ±¾£¨´ø½ø¶ÈÌõ£©¡£
+        /// °Ñ filteredTable ¹¹½¨ÒÆµ½ºóÌ¨Ïß³Ì£¬ÓÃ Progress&lt;T&gt; ±¨¸æ½ø¶È£¨×Ô¶¯ÇĞ UI Ïß³Ì¸üĞÂ½ø¶ÈÌõ£©¡£
+        /// ¹¹½¨Íê³ÉºóÇĞ»Ø UI Ïß³Ì×ö°ó¶¨ + Tag + ÁĞ¿í¡£
+        /// ×¢Òâ£ºÆäËû³¡¾°£¨¹ıÂË/ÅÅĞò/ÁĞÑ¡Ôñ£©ÈÔÓÃÍ¬²½µÄ RefreshGridLayout£¬±¾·½·¨Ö»ÓÃÓÚÊ×´Î¼ÓÔØ¡£
         /// </summary>
         private async Task RefreshGridLayoutWithProgressAsync()
         {
@@ -3221,8 +3223,8 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // ==================== é˜¶æ®µ1ï¼šæ„å»º _headerTable + ç»‘å®š _dataGridHeaderï¼ˆUI çº¿ç¨‹ï¼Œå¾ˆå¿«ï¼‰ ====================
-            UpdateLoadingProgress(5, "æ­£åœ¨å‡†å¤‡è¡¨å¤´...");
+            // ==================== ½×¶Î1£º¹¹½¨ _headerTable + °ó¶¨ _dataGridHeader£¨UI Ïß³Ì£¬ºÜ¿ì£© ====================
+            UpdateLoadingProgress(5, "ÕıÔÚ×¼±¸±íÍ·...");
             _visibleColumnIndices = GetVisibleColumnIndices();
             _headerTable = new DataTable();
             foreach (var colIndex in _visibleColumnIndices)
@@ -3263,22 +3265,22 @@ namespace wxd.files.winforms
                     dgvCol.SortMode = DataGridViewColumnSortMode.NotSortable;
                 }
             }
-            await Task.Yield();  // è®© UI çº¿ç¨‹æœ‰æœºä¼šåˆ·æ–°ä¸€æ¬¡
+            await Task.Yield();  // ÈÃ UI Ïß³ÌÓĞ»ú»áË¢ĞÂÒ»´Î
 
-            // ==================== é˜¶æ®µ2ï¼šåå°çº¿ç¨‹æ„å»º filteredTableï¼ˆProgress<T> è‡ªåŠ¨åˆ‡ UI çº¿ç¨‹æ›´æ–°è¿›åº¦æ¡ï¼‰ ====================
+            // ==================== ½×¶Î2£ººóÌ¨Ïß³Ì¹¹½¨ filteredTable£¨Progress<T> ×Ô¶¯ÇĞ UI Ïß³Ì¸üĞÂ½ø¶ÈÌõ£© ====================
             var contentFilter = _txtContentFilter.Text.Trim();
 
-            // â˜… å†…å®¹æœç´¢ï¼šä¸è¿‡æ»¤è¡Œï¼Œä»…è·å–åŒ¹é…å•å…ƒæ ¼ï¼ˆæ‰€æœ‰è¡ŒåŒ…æ‹¬å†»ç»“è¡Œï¼‰
+            // ¡ï ÄÚÈİËÑË÷£º²»¹ıÂËĞĞ£¬½ö»ñÈ¡Æ¥Åäµ¥Ôª¸ñ£¨ËùÓĞĞĞ°üÀ¨¶³½áĞĞ£©
             _contentSearchMatchCells = GetContentMatchCells(contentFilter);
 
-            // â˜… é«˜çº§è¿‡æ»¤ï¼šæŒ‰è¡¨è¾¾å¼è¿‡æ»¤è¡Œ + åŒ¹é…å•å…ƒæ ¼
+            // ¡ï ¸ß¼¶¹ıÂË£º°´±í´ïÊ½¹ıÂËĞĞ + Æ¥Åäµ¥Ôª¸ñ
             var (visibleRowIndices, advMatchCells) = GetAdvVisibleRowIndices();
             if (_filterKeepAllRows && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
             {
                 visibleRowIndices = Enumerable.Range(_frozenRows, _fileData.Rows.Count - _frozenRows).ToList();
             }
 
-            // â˜… åˆå¹¶å†…å®¹æœç´¢ + é«˜çº§è¿‡æ»¤çš„åŒ¹é…å•å…ƒæ ¼
+            // ¡ï ºÏ²¢ÄÚÈİËÑË÷ + ¸ß¼¶¹ıÂËµÄÆ¥Åäµ¥Ôª¸ñ
             _advFilterMatchCells = advMatchCells;
             _filterMatchCells.Clear();
             _headerFilterMatchCells.Clear();
@@ -3314,19 +3316,19 @@ namespace wxd.files.winforms
             }
             var progress = new Progress<(int percent, string text)>(p => UpdateLoadingProgress(p.percent, p.text));
 
-            // â˜… æ•è·åå°çº¿ç¨‹éœ€è¦çš„åªè¯»å¼•ç”¨ï¼ˆé¿å…åå°çº¿ç¨‹è®¿é—® UI æ§ä»¶ï¼‰
+            // ¡ï ²¶»ñºóÌ¨Ïß³ÌĞèÒªµÄÖ»¶ÁÒıÓÃ£¨±ÜÃâºóÌ¨Ïß³Ì·ÃÎÊ UI ¿Ø¼ş£©
             var dataTableRef = _dataTable;
             var visibleColIndicesRef = _visibleColumnIndices;
 
             var filteredTable = await Task.Run(() => BuildFilteredTableInBackground(
                 visibleRowIndices, visibleColIndicesRef, dataTableRef, progress));
 
-            // ==================== é˜¶æ®µ3ï¼šUI çº¿ç¨‹ç»‘å®š + Tag + åˆ—å®½ ====================
-            // è¿™ä¸€æ­¥çš„ _dataGrid.DataSource = filteredTable ä¼šåŒæ­¥åˆ›å»ºæ‰€æœ‰ DataGridViewRowï¼ˆçº¦ 6-8sï¼‰ï¼Œ
-            // UI çº¿ç¨‹ä¼šé˜»å¡ï¼Œä½†è¿›åº¦æ¡å·²èµ°åˆ° 85%ï¼Œç”¨æˆ·çŸ¥é“æ•°æ®å·²åŠ è½½å®Œæˆï¼Œæ­£åœ¨æ¸²æŸ“ã€‚
-            UpdateLoadingProgress(85, "æ­£åœ¨æ¸²æŸ“è¡¨æ ¼ï¼ˆå¯èƒ½éœ€è¦æ•°ç§’ï¼Œè¯·ç¨å€™ï¼‰...");
+            // ==================== ½×¶Î3£ºUI Ïß³Ì°ó¶¨ + Tag + ÁĞ¿í ====================
+            // ÕâÒ»²½µÄ _dataGrid.DataSource = filteredTable »áÍ¬²½´´½¨ËùÓĞ DataGridViewRow£¨Ô¼ 6-8s£©£¬
+            // UI Ïß³Ì»á×èÈû£¬µ«½ø¶ÈÌõÒÑ×ßµ½ 85%£¬ÓÃ»§ÖªµÀÊı¾İÒÑ¼ÓÔØÍê³É£¬ÕıÔÚäÖÈ¾¡£
+            UpdateLoadingProgress(85, "ÕıÔÚäÖÈ¾±í¸ñ£¨¿ÉÄÜĞèÒªÊıÃë£¬ÇëÉÔºò£©...");
 
-            // è¡Œç¼–è¾‘æ¨¡å¼ï¼šåˆ·æ–°å‰é€€å‡ºç¼–è¾‘
+            // ĞĞ±à¼­Ä£Ê½£ºË¢ĞÂÇ°ÍË³ö±à¼­
             if (_editingRowIndex >= 0)
             {
                 _enteringEditMode = true;
@@ -3341,7 +3343,7 @@ namespace wxd.files.winforms
 
             _dataGrid.DataSource = filteredTable;
 
-            // è®¾ç½® Tagï¼ˆä½¿ç”¨åŸå§‹è¡Œç´¢å¼•ï¼‰
+            // ÉèÖÃ Tag£¨Ê¹ÓÃÔ­Ê¼ĞĞË÷Òı£©
             for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
             {
                 int origIdx = visibleRowIndices[i];
@@ -3349,7 +3351,7 @@ namespace wxd.files.winforms
                     _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
             }
 
-            // é…ç½®åˆ—å®½/è¡¨å¤´
+            // ÅäÖÃÁĞ¿í/±íÍ·
             _dataGrid.SuspendLayout();
             for (int i = 0; i < _dataGrid.Columns.Count; i++)
             {
@@ -3375,7 +3377,7 @@ namespace wxd.files.winforms
             }
             _dataGrid.ResumeLayout(false);
 
-            _lblCellPos.Text = $"æ˜¾ç¤º {_visibleColumnIndices.Count} åˆ—, {visibleRowIndices.Count} è¡Œ";
+            _lblCellPos.Text = $"ÏÔÊ¾ {_visibleColumnIndices.Count} ÁĞ, {visibleRowIndices.Count} ĞĞ";
             _lblInfo.Text = "";
             if (_duplicateWarningText != null)
             {
@@ -3383,13 +3385,13 @@ namespace wxd.files.winforms
                 _lblInfo.Text = _duplicateWarningText;
             }
 
-            UpdateLoadingProgress(100, "å®Œæˆ");
+            UpdateLoadingProgress(100, "Íê³É");
         }
 
         /// <summary>
-        /// åå°çº¿ç¨‹æ„å»º filteredTableï¼ˆçº¯æ•°æ®æ“ä½œï¼Œä¸è§¦å‘ UI äº‹ä»¶ï¼‰ã€‚
-        /// é€šè¿‡ Progress&lt;T&gt; æŠ¥å‘Šè¿›åº¦ï¼ˆè‡ªåŠ¨åˆ‡ UI çº¿ç¨‹æ›´æ–°è¿›åº¦æ¡ï¼‰ã€‚
-        /// é€»è¾‘ä¸ RefreshFilteredDisplay ä¸­çš„æ„å»ºéƒ¨åˆ†å®Œå…¨ä¸€è‡´ï¼Œåªæ˜¯ç§»åˆ°äº†åå°çº¿ç¨‹æ‰§è¡Œã€‚
+        /// ºóÌ¨Ïß³Ì¹¹½¨ filteredTable£¨´¿Êı¾İ²Ù×÷£¬²»´¥·¢ UI ÊÂ¼ş£©¡£
+        /// Í¨¹ı Progress&lt;T&gt; ±¨¸æ½ø¶È£¨×Ô¶¯ÇĞ UI Ïß³Ì¸üĞÂ½ø¶ÈÌõ£©¡£
+        /// Âß¼­Óë RefreshFilteredDisplay ÖĞµÄ¹¹½¨²¿·ÖÍêÈ«Ò»ÖÂ£¬Ö»ÊÇÒÆµ½ÁËºóÌ¨Ïß³ÌÖ´ĞĞ¡£
         /// </summary>
         private DataTable BuildFilteredTableInBackground(
             List<int> visibleRowIndices,
@@ -3401,7 +3403,7 @@ namespace wxd.files.winforms
             foreach (var colIndex in visibleColumnIndices)
             {
                 var sourceCol = sourceTable.Columns[colIndex];
-                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string));  // ç»Ÿä¸€ string é¿å…ç±»å‹å†²çª
+                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string));  // Í³Ò» string ±ÜÃâÀàĞÍ³åÍ»
             }
 
             int total = visibleRowIndices.Count;
@@ -3422,16 +3424,16 @@ namespace wxd.files.winforms
                 if (added % batchSize == 0)
                 {
                     int percent = 10 + (int)((added / (double)total) * 70);  // 10% ~ 80%
-                    progress.Report((percent, $"æ­£åœ¨åŠ è½½è¡Œæ•°æ®... {added}/{total}"));
+                    progress.Report((percent, $"ÕıÔÚ¼ÓÔØĞĞÊı¾İ... {added}/{total}"));
                 }
             }
-            progress.Report((80, $"æ­£åœ¨åŠ è½½è¡Œæ•°æ®... {added}/{total}"));
+            progress.Report((80, $"ÕıÔÚ¼ÓÔØĞĞÊı¾İ... {added}/{total}"));
             return filteredTable;
         }
 
         private void RefreshFilteredDisplay(List<int> visibleRowIndices)
         {
-            // ==================== è¡Œç¼–è¾‘æ¨¡å¼ï¼šåˆ·æ–°å‰é€€å‡ºç¼–è¾‘ ====================
+            // ==================== ĞĞ±à¼­Ä£Ê½£ºË¢ĞÂÇ°ÍË³ö±à¼­ ====================
             if (_editingRowIndex >= 0)
             {
                 _enteringEditMode = true;
@@ -3445,11 +3447,11 @@ namespace wxd.files.winforms
             }
 
             var filteredTable = new DataTable();
-            // â˜… ä¸å†æ·»åŠ  __RowNum__ éšè—åˆ—ï¼›è¡Œå·é€šè¿‡ _fileData.Rows[origIdx].OriginalRowIndex è¿½è¸ª
+            // ¡ï ²»ÔÙÌí¼Ó __RowNum__ Òş²ØÁĞ£»ĞĞºÅÍ¨¹ı _fileData.Rows[origIdx].OriginalRowIndex ×·×Ù
             foreach (var colIndex in _visibleColumnIndices)
             {
                 var sourceCol = _dataTable.Columns[colIndex];
-                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string)); // â˜… ç»Ÿä¸€ string é¿å…ç±»å‹å†²çª
+                filteredTable.Columns.Add(sourceCol.ColumnName, typeof(string)); // ¡ï Í³Ò» string ±ÜÃâÀàĞÍ³åÍ»
             }
 
             foreach (var origRowIdx in visibleRowIndices)
@@ -3466,7 +3468,7 @@ namespace wxd.files.winforms
             }
 
             _dataGrid.DataSource = filteredTable;
-            // â˜… åŒæ­¥è®¾ç½® Tagï¼ˆDataSource èµ‹å€¼åè¡Œå·²åˆ›å»ºï¼‰ï¼Œä½¿ç”¨åŸå§‹è¡Œç´¢å¼•
+            // ¡ï Í¬²½ÉèÖÃ Tag£¨DataSource ¸³ÖµºóĞĞÒÑ´´½¨£©£¬Ê¹ÓÃÔ­Ê¼ĞĞË÷Òı
             for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
             {
                 int origIdx = visibleRowIndices[i];
@@ -3482,13 +3484,13 @@ namespace wxd.files.winforms
                     dgvCol.DisplayIndex = i;
                     dgvCol.Width = 120;
                     dgvCol.SortMode = DataGridViewColumnSortMode.Programmatic;
-                    // å¦‚æœè®¾ç½®äº†è¡¨å¤´è¡Œï¼Œç”¨è¡¨å¤´è¡Œçš„å€¼ä½œä¸ºåˆ—æ ‡é¢˜
+                    // Èç¹ûÉèÖÃÁË±íÍ·ĞĞ£¬ÓÃ±íÍ·ĞĞµÄÖµ×÷ÎªÁĞ±êÌâ
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count && i < _visibleColumnIndices.Count)
                     {
                         var srcColIdx = _visibleColumnIndices[i];
                         var headerVal = _dataTable.Rows[_headerRowIndex][srcColIdx]?.ToString() ?? GetExcelColumnName(i);
                         dgvCol.HeaderText = headerVal;
-                        // å¦‚æœè®¾ç½®äº†æ˜ å°„è¡Œï¼Œè®¾ç½® ToolTip ä¸º "æ˜ å°„å (è¡¨å¤´å)"
+                        // Èç¹ûÉèÖÃÁËÓ³ÉäĞĞ£¬ÉèÖÃ ToolTip Îª "Ó³ÉäÃû (±íÍ·Ãû)"
                         SetColumnHeaderToolTip(dgvCol, i, headerVal);
                     }
                     else
@@ -3497,30 +3499,30 @@ namespace wxd.files.winforms
                     }
                 }
             }
-            _lblCellPos.Text = $"æ˜¾ç¤º {_visibleColumnIndices.Count} åˆ—, {visibleRowIndices.Count} è¡Œ";
+            _lblCellPos.Text = $"ÏÔÊ¾ {_visibleColumnIndices.Count} ÁĞ, {visibleRowIndices.Count} ĞĞ";
             _lblInfo.Text = "";
 
-            // â˜… å¦‚æœæœ‰é‡å¤è­¦å‘Šï¼Œè¿½åŠ è­¦å‘Šæ–‡æœ¬å¹¶ä¿æŒçº¢è‰²
+            // ¡ï Èç¹ûÓĞÖØ¸´¾¯¸æ£¬×·¼Ó¾¯¸æÎÄ±¾²¢±£³ÖºìÉ«
             if (_duplicateWarningText != null)
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
                 _lblInfo.Text = _duplicateWarningText;
             }
 
-            // â˜… é«˜çº§è¿‡æ»¤æ— åŒ¹é…æç¤ºï¼ˆè¦†ç›–é‡å¤è­¦å‘Šï¼‰
+            // ¡ï ¸ß¼¶¹ıÂËÎŞÆ¥ÅäÌáÊ¾£¨¸²¸ÇÖØ¸´¾¯¸æ£©
             if (visibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
-                _lblInfo.Text = $"é«˜çº§è¿‡æ»¤ \"{_txtAdvancedFilter.Text.Trim()}\" æœªåŒ¹é…åˆ°ä»»ä½•è¡Œ";
+                _lblInfo.Text = $"¸ß¼¶¹ıÂË \"{_txtAdvancedFilter.Text.Trim()}\" Î´Æ¥Åäµ½ÈÎºÎĞĞ";
             }
         }
 
-        // ==================== æ’åº ====================
+        // ==================== ÅÅĞò ====================
         private void OnColumnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
             if (e.ColumnIndex < 0 || e.ColumnIndex >= _dataGrid.Columns.Count) return;
 
-            // ==================== è¡Œç¼–è¾‘æ¨¡å¼ï¼šæ’åºå‰é€€å‡ºç¼–è¾‘ ====================
+            // ==================== ĞĞ±à¼­Ä£Ê½£ºÅÅĞòÇ°ÍË³ö±à¼­ ====================
             if (_editingRowIndex >= 0)
                 ExitRowEditMode(commit: true);
 
@@ -3532,7 +3534,7 @@ namespace wxd.files.winforms
             var dataRows = _dataTable.AsEnumerable().Skip(_frozenRows).ToList();
             var sortedDataRows = dataRows.OrderBy(row => row.Field<string>(columnName), new NaturalStringComparer(_sortOrder)).ToList();
             _dataTable = frozenRows.Concat(sortedDataRows).ToArray().CopyToDataTable();
-            // â˜… æ’åºååŒæ­¥é‡å»º FileTableDataï¼ˆç»§æ‰¿æ—§å·®å¼‚ä¿¡æ¯ï¼ŒæŒ‰ OriginalRowIndex åŒ¹é…ï¼‰
+            // ¡ï ÅÅĞòºóÍ¬²½ÖØ½¨ FileTableData£¨¼Ì³Ğ¾É²îÒìĞÅÏ¢£¬°´ OriginalRowIndex Æ¥Åä£©
             _fileData = BuildFileData(_dataTable, _fileData);
             RefreshGridLayout();
             UpdateColumnHeaderSortGlyph();
@@ -3544,10 +3546,10 @@ namespace wxd.files.winforms
                 col.HeaderCell.SortGlyphDirection = col.Index == _sortColumnIndex ? _sortOrder : SortOrder.None;
         }
 
-        // ==================== å•å…ƒæ ¼äº‹ä»¶ ====================
+        // ==================== µ¥Ôª¸ñÊÂ¼ş ====================
         private void OnGridKeyDown(object? sender, KeyEventArgs e)
         {
-            // é¢„ç•™å¿«æ·é”®æ‰©å±•
+            // Ô¤Áô¿ì½İ¼üÀ©Õ¹
         }
 
         private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
@@ -3556,9 +3558,9 @@ namespace wxd.files.winforms
             var dgv = (DataGridView)sender!;
             int rowOff = (dgv == _dataGridHeader) ? 0 : _frozenRows;
             int colIdx = e.ColumnIndex;
-            // â˜… ä¸å†éœ€è¦ __RowNum__ åç§»
+            // ¡ï ²»ÔÙĞèÒª __RowNum__ Æ«ÒÆ
             string colName = colIdx >= 0 && colIdx < 26 ? ((char)('A' + colIdx)).ToString() : $"Col{colIdx}";
-            _lblCellPos.Text = $"è¡Œ {e.RowIndex + 1 + rowOff}  åˆ— {colName}({colIdx})";
+            _lblCellPos.Text = $"ĞĞ {e.RowIndex + 1 + rowOff}  ÁĞ {colName}({colIdx})";
         }
 
         private void EditCell(DataGridViewCell cell, DataGridView dgv)
@@ -3575,9 +3577,9 @@ namespace wxd.files.winforms
             {
                 if (_isEmbeddedMode)
                 {
-                    // å†å²å¯¹æ¯”ç­‰åµŒå…¥å¼æ¨¡å¼ï¼šåªè¯»ï¼Œä¸å…è®¸ä¿®æ”¹
+                    // ÀúÊ·¶Ô±ÈµÈÇ¶ÈëÊ½Ä£Ê½£ºÖ»¶Á£¬²»ÔÊĞíĞŞ¸Ä
                     var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                        onSave: null, readOnly: true, readOnlyMessage: "å½“å‰çŠ¶æ€ä¸æ”¯æŒä¿®æ”¹");
+                        onSave: null, readOnly: true, readOnlyMessage: "µ±Ç°×´Ì¬²»Ö§³ÖĞŞ¸Ä");
                     dialog.Show(this);
                 }
                 else
@@ -3588,13 +3590,13 @@ namespace wxd.files.winforms
                         if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                             originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                         {
-                            // 1. æ›´æ–°å†…å­˜ä¸­çš„æ•°æ®
+                            // 1. ¸üĞÂÄÚ´æÖĞµÄÊı¾İ
                             _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
 
-                            // 2. å›å†™æ–‡ä»¶
+                            // 2. »ØĞ´ÎÄ¼ş
                             SaveCsvFile();
 
-                            // 3. åªåœ¨ DataGridView ä¸­æ›´æ–°å¯¹åº”çš„æ˜¾ç¤ºå•å…ƒæ ¼ï¼Œä¸é‡å»ºæ•´ä¸ª Grid
+                            // 3. Ö»ÔÚ DataGridView ÖĞ¸üĞÂ¶ÔÓ¦µÄÏÔÊ¾µ¥Ôª¸ñ£¬²»ÖØ½¨Õû¸ö Grid
                             int displayColIndex = _visibleColumnIndices.Count > 0
                                 ? _visibleColumnIndices.IndexOf(originalColumnIndex)
                                 : originalColumnIndex;
@@ -3624,7 +3626,7 @@ namespace wxd.files.winforms
                     if (_isEditLocked)
                     {
                         var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                            onSave: null, readOnly: true, readOnlyMessage: "å½“å‰æ¨¡å¼ä¸å…è®¸ç¼–è¾‘ï¼ˆæ–‡ä»¶å·²é”å®šï¼‰");
+                            onSave: null, readOnly: true, readOnlyMessage: "µ±Ç°Ä£Ê½²»ÔÊĞí±à¼­£¨ÎÄ¼şÒÑËø¶¨£©");
                         dialog.Show(this);
                     }
                     else
@@ -3661,7 +3663,7 @@ namespace wxd.files.winforms
                 else
                 {
                     var dialog = new CellEditDialog(currentValue, originalRowIndex, originalColumnIndex, _filePath, colName,
-                        onSave: null, readOnly: true, readOnlyMessage: "ä¸æ”¯æŒæ­¤æ–‡ä»¶ç±»å‹çš„ä¿®æ”¹");
+                        onSave: null, readOnly: true, readOnlyMessage: "²»Ö§³Ö´ËÎÄ¼şÀàĞÍµÄĞŞ¸Ä");
                     dialog.Show(this);
                 }
             }
@@ -3672,7 +3674,7 @@ namespace wxd.files.winforms
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
             var dgv = (DataGridView)sender!;
             if (dgv == _dataGridHeader) return;
-            // åŒå‡»è¿›å…¥è¡Œç¼–è¾‘æ¨¡å¼ï¼Œå®šä½åˆ°åŒå‡»çš„åˆ—
+            // Ë«»÷½øÈëĞĞ±à¼­Ä£Ê½£¬¶¨Î»µ½Ë«»÷µÄÁĞ
             if (!_isEmbeddedMode && !_isEditLocked)
                 EnterRowEditMode(e.RowIndex, e.ColumnIndex);
         }
@@ -3687,21 +3689,21 @@ namespace wxd.files.winforms
 
         private void OnCellBeginEdit(object? sender, DataGridViewCellCancelEventArgs e)
         {
-            // åµŒå…¥å¼æ¨¡å¼ï¼ˆå†å²å¯¹æ¯”ç­‰ï¼‰ç¦æ­¢ç¼–è¾‘
+            // Ç¶ÈëÊ½Ä£Ê½£¨ÀúÊ·¶Ô±ÈµÈ£©½ûÖ¹±à¼­
             if (_isEmbeddedMode) { e.Cancel = true; return; }
-            // ç¼–è¾‘é”å®šæ¨¡å¼ç¦æ­¢ç¼–è¾‘ï¼ˆExcelé»˜è®¤é”å®šï¼‰
+            // ±à¼­Ëø¶¨Ä£Ê½½ûÖ¹±à¼­£¨ExcelÄ¬ÈÏËø¶¨£©
             if (_isEditLocked) { e.Cancel = true; return; }
 
-            // ==================== è¡Œç¼–è¾‘æ¨¡å¼ ====================
-            // å¦‚æœä¸æ˜¯é€šè¿‡ EnterRowEditMode è§¦å‘çš„ç¼–è¾‘ï¼ˆå³ç”¨æˆ·ç›´æ¥ç‚¹å‡»å•å…ƒæ ¼å°è¯•ç¼–è¾‘ï¼‰ï¼Œ
-            // ä¸”ä¸åœ¨è¡Œç¼–è¾‘æ¨¡å¼ä¸‹ï¼Œåˆ™è‡ªåŠ¨è¿›å…¥è¡Œç¼–è¾‘æ¨¡å¼
+            // ==================== ĞĞ±à¼­Ä£Ê½ ====================
+            // Èç¹û²»ÊÇÍ¨¹ı EnterRowEditMode ´¥·¢µÄ±à¼­£¨¼´ÓÃ»§Ö±½Óµã»÷µ¥Ôª¸ñ³¢ÊÔ±à¼­£©£¬
+            // ÇÒ²»ÔÚĞĞ±à¼­Ä£Ê½ÏÂ£¬Ôò×Ô¶¯½øÈëĞĞ±à¼­Ä£Ê½
             if (!_enteringEditMode && _editingRowIndex < 0)
             {
                 e.Cancel = true;
                 EnterRowEditMode(e.RowIndex, e.ColumnIndex);
                 return;
             }
-            // è¡Œç¼–è¾‘æ¨¡å¼ä¸‹ï¼Œåªå…è®¸ç¼–è¾‘å½“å‰ç¼–è¾‘è¡Œçš„å•å…ƒæ ¼
+            // ĞĞ±à¼­Ä£Ê½ÏÂ£¬Ö»ÔÊĞí±à¼­µ±Ç°±à¼­ĞĞµÄµ¥Ôª¸ñ
             if (_editingRowIndex >= 0 && e.RowIndex != _editingRowIndex)
             {
                 e.Cancel = true;
@@ -3713,32 +3715,32 @@ namespace wxd.files.winforms
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
-            // ==================== è¡Œç¼–è¾‘æ¨¡å¼ ====================
+            // ==================== ĞĞ±à¼­Ä£Ê½ ====================
             if (_editingRowIndex >= 0)
             {
-                // è¡Œç¼–è¾‘æ¨¡å¼ä¸‹ä¸é€å•å…ƒæ ¼ä¿å­˜ï¼Œç­‰æ•´è¡Œé€€å‡ºåç»Ÿä¸€ä¿å­˜
-                // ä½¿ç”¨ BeginInvoke å»¶è¿Ÿè·³è½¬ï¼Œé¿å…åœ¨ EndEdit è°ƒç”¨æ ˆå†…è®¾ç½® CurrentCell å¯¼è‡´é‡å…¥
+                // ĞĞ±à¼­Ä£Ê½ÏÂ²»Öğµ¥Ôª¸ñ±£´æ£¬µÈÕûĞĞÍË³öºóÍ³Ò»±£´æ
+                // Ê¹ÓÃ BeginInvoke ÑÓ³ÙÌø×ª£¬±ÜÃâÔÚ EndEdit µ÷ÓÃÕ»ÄÚÉèÖÃ CurrentCell µ¼ÖÂÖØÈë
                 if (e.ColumnIndex < _dataGrid.Columns.Count - 1 && !_enteringEditMode)
                 {
                     int nextRow = e.RowIndex;
                     int nextCol = e.ColumnIndex + 1;
                     BeginInvoke(new Action(() =>
                     {
-                        // å»¶è¿Ÿæ‰§è¡Œæ—¶å†æ¬¡æ ¡éªŒï¼šç¼–è¾‘è¡Œæœªå˜ä¸”è¡Œä»æœ‰æ•ˆ
+                        // ÑÓ³ÙÖ´ĞĞÊ±ÔÙ´ÎĞ£Ñé£º±à¼­ĞĞÎ´±äÇÒĞĞÈÔÓĞĞ§
                         if (_editingRowIndex == nextRow && nextRow < _dataGrid.Rows.Count)
                         {
-                            // å¦‚æœ CurrentCell å·²è¢«ç”¨æˆ·ï¼ˆé¼ æ ‡ç‚¹å‡»ï¼‰ç§»åˆ°äº†å…¶ä»–ä½ç½®ï¼Œä¸å†å¼ºåˆ¶è·³è½¬
+                            // Èç¹û CurrentCell ÒÑ±»ÓÃ»§£¨Êó±êµã»÷£©ÒÆµ½ÁËÆäËûÎ»ÖÃ£¬²»ÔÙÇ¿ÖÆÌø×ª
                             if (_dataGrid.CurrentCell != null
                                 && (_dataGrid.CurrentCell.RowIndex != nextRow
                                     || _dataGrid.CurrentCell.ColumnIndex != nextCol))
                             {
-                                // ç”¨æˆ·å·²ä¸»åŠ¨é€‰æ‹©äº†å…¶ä»–å•å…ƒæ ¼ï¼Œåªå°è¯•è¿›å…¥ç¼–è¾‘æ¨¡å¼
+                                // ÓÃ»§ÒÑÖ÷¶¯Ñ¡ÔñÁËÆäËûµ¥Ôª¸ñ£¬Ö»³¢ÊÔ½øÈë±à¼­Ä£Ê½
                                 if (_dataGrid.CurrentCell.RowIndex == nextRow)
                                     _dataGrid.BeginEdit(true);
                                 return;
                             }
 
-                            // CurrentCell åœ¨é¢„æœŸä½ç½®ï¼ˆTab/Enter å¯¼èˆªï¼‰ï¼Œè¿›å…¥ç¼–è¾‘æ¨¡å¼
+                            // CurrentCell ÔÚÔ¤ÆÚÎ»ÖÃ£¨Tab/Enter µ¼º½£©£¬½øÈë±à¼­Ä£Ê½
                             if (_dataGrid.CurrentCell != null
                                 && _dataGrid.CurrentCell.RowIndex == nextRow
                                 && _dataGrid.CurrentCell.ColumnIndex == nextCol)
@@ -3747,7 +3749,7 @@ namespace wxd.files.winforms
                             }
                             else
                             {
-                                // æ‰‹åŠ¨è·³è½¬åˆ°ä¸‹ä¸€åˆ—
+                                // ÊÖ¶¯Ìø×ªµ½ÏÂÒ»ÁĞ
                                 _enteringEditMode = true;
                                 try
                                 {
@@ -3762,7 +3764,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // éè¡Œç¼–è¾‘æ¨¡å¼ä¸‹çš„åŸæœ‰é€»è¾‘ï¼ˆæ­£å¸¸ä¸ä¼šèµ°åˆ°è¿™é‡Œï¼Œå› ä¸º ReadOnly=trueï¼‰
+            // ·ÇĞĞ±à¼­Ä£Ê½ÏÂµÄÔ­ÓĞÂß¼­£¨Õı³£²»»á×ßµ½ÕâÀï£¬ÒòÎª ReadOnly=true£©
             var cell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
             var newValue = cell.Value?.ToString() ?? "";
             var (originalRowIndex, originalColumnIndex) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
@@ -3775,23 +3777,23 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>è¡Œç¼–è¾‘æ¨¡å¼ä¸­å•å…ƒæ ¼å€¼å˜æ›´äº‹ä»¶ï¼šè®°å½•å·²ä¿®æ”¹çš„å•å…ƒæ ¼å¹¶åˆ·æ–°èƒŒæ™¯è‰²ï¼ˆæŒ‰è¡Œåˆ†ç»„å­˜å‚¨ï¼ŒGrid é‡å»ºåä»æœ‰æ•ˆï¼‰</summary>
+        /// <summary>ĞĞ±à¼­Ä£Ê½ÖĞµ¥Ôª¸ñÖµ±ä¸üÊÂ¼ş£º¼ÇÂ¼ÒÑĞŞ¸ÄµÄµ¥Ôª¸ñ²¢Ë¢ĞÂ±³¾°É«£¨°´ĞĞ·Ö×é´æ´¢£¬Grid ÖØ½¨ºóÈÔÓĞĞ§£©</summary>
         private void OnCellValueChangedInEdit(object? sender, DataGridViewCellEventArgs e)
         {
             if (_editingRowIndex < 0) return;
             if (e.RowIndex != _editingRowIndex) return;
             if (e.ColumnIndex < 0 || e.ColumnIndex >= (_dataGrid.Rows[e.RowIndex]?.Cells.Count ?? 0)) return;
 
-            // æ£€æŸ¥æ˜¯å¦ä¸åŸå§‹å€¼ä¸åŒ
+            // ¼ì²éÊÇ·ñÓëÔ­Ê¼Öµ²»Í¬
             if (_editingRowOriginalValues != null && e.ColumnIndex < _editingRowOriginalValues.Length)
             {
                 var currentValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
                 var originalValue = _editingRowOriginalValues[e.ColumnIndex];
 
-                // è½¬æ¢ä¸ºåŸå§‹è¡Œåˆ—ç´¢å¼•
+                // ×ª»»ÎªÔ­Ê¼ĞĞÁĞË÷Òı
                 var (origRow, origCol) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
 
-                // æŒ‰è¡Œåˆ†ç»„å­˜å‚¨
+                // °´ĞĞ·Ö×é´æ´¢
                 if (currentValue != originalValue)
                 {
                     if (!_modifiedCellsInEdit.TryGetValue(origRow, out var cols))
@@ -3803,7 +3805,7 @@ namespace wxd.files.winforms
                 }
                 else
                 {
-                    // æ”¹å›åŸå§‹å€¼ï¼Œä»è¯¥è¡Œçš„å·²ä¿®æ”¹é›†åˆä¸­ç§»é™¤
+                    // ¸Ä»ØÔ­Ê¼Öµ£¬´Ó¸ÃĞĞµÄÒÑĞŞ¸Ä¼¯ºÏÖĞÒÆ³ı
                     if (_modifiedCellsInEdit.TryGetValue(origRow, out var cols))
                     {
                         cols.Remove(origCol);
@@ -3812,7 +3814,7 @@ namespace wxd.files.winforms
                     }
                 }
 
-                // åˆ·æ–°è¯¥å•å…ƒæ ¼èƒŒæ™¯è‰²
+                // Ë¢ĞÂ¸Ãµ¥Ôª¸ñ±³¾°É«
                 _dataGrid.InvalidateCell(e.ColumnIndex, e.RowIndex);
             }
         }
@@ -3831,7 +3833,7 @@ namespace wxd.files.winforms
             }
             if (_dataGrid.DataSource is DataTable filteredTable && filteredTable.Columns.Count > 0)
             {
-                // â˜… ä» DataGridView è¡Œçš„ Tag ç›´æ¥è·å–åŸå§‹è¡Œå·
+                // ¡ï ´Ó DataGridView ĞĞµÄ Tag Ö±½Ó»ñÈ¡Ô­Ê¼ĞĞºÅ
                 int originalRowIndex = displayRowIndex;
                 if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
                 {
@@ -3850,7 +3852,7 @@ namespace wxd.files.winforms
             return (displayRowIndex + _frozenRows, displayColumnIndex);
         }
 
-        /// <returns>true=ä¿å­˜æˆåŠŸ, false=ä¿å­˜å¤±è´¥</returns>
+        /// <returns>true=±£´æ³É¹¦, false=±£´æÊ§°Ü</returns>
         private bool SaveCsvFile()
         {
             try
@@ -3878,49 +3880,49 @@ namespace wxd.files.winforms
                 string friendlyMsg;
                 if (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    friendlyMsg = "æ–‡ä»¶è¢«å…¶ä»–ç¨‹åºå ç”¨ï¼ˆå¦‚Excelå·²æ‰“å¼€æ­¤æ–‡ä»¶ï¼‰ï¼Œæ— æ³•ä¿å­˜ã€‚\n" +
-                                  "è¯·å…³é—­å…¶ä»–ç¨‹åºåé‡è¯•ï¼Œæˆ–å¦å­˜åˆ°å…¶ä»–ä½ç½®ã€‚";
+                    friendlyMsg = "ÎÄ¼ş±»ÆäËû³ÌĞòÕ¼ÓÃ£¨ÈçExcelÒÑ´ò¿ª´ËÎÄ¼ş£©£¬ÎŞ·¨±£´æ¡£\n" +
+                                  "Çë¹Ø±ÕÆäËû³ÌĞòºóÖØÊÔ£¬»òÁí´æµ½ÆäËûÎ»ÖÃ¡£";
                 }
                 else
                 {
-                    friendlyMsg = $"ä¿å­˜å¤±è´¥ï¼š{ex.Message}";
+                    friendlyMsg = $"±£´æÊ§°Ü£º{ex.Message}";
                 }
-                AlertForm.Show(this, friendlyMsg, "ä¿å­˜å¤±è´¥", AlertType.Warning);
+                AlertForm.Show(this, friendlyMsg, "±£´æÊ§°Ü", AlertType.Warning);
 
-                // æ ‡è®°è„æ•°æ®å¹¶å¯åŠ¨é‡è¯•å®šæ—¶å™¨ï¼ˆè®¾ç½® _hasUnsavedChangesã€çŠ¶æ€æ æç¤ºã€å¯åŠ¨å®šæ—¶å™¨ï¼‰
+                // ±ê¼ÇÔàÊı¾İ²¢Æô¶¯ÖØÊÔ¶¨Ê±Æ÷£¨ÉèÖÃ _hasUnsavedChanges¡¢×´Ì¬À¸ÌáÊ¾¡¢Æô¶¯¶¨Ê±Æ÷£©
                 MarkDirtyAndStartSaveTimer();
 
                 return false;
             }
 
-            // â˜… ä¿å­˜åé‡æ–°æ£€æµ‹å”¯ä¸€åˆ—é‡å¤
+            // ¡ï ±£´æºóÖØĞÂ¼ì²âÎ¨Ò»ÁĞÖØ¸´
             CheckUniqueColumnDuplicates();
             return true;
         }
 
-        /// <returns>true=ä¿å­˜æˆåŠŸ, false=ä¿å­˜å¤±è´¥</returns>
+        /// <returns>true=±£´æ³É¹¦, false=±£´æÊ§°Ü</returns>
         private bool SaveExcelFile()
         {
             var backupPath = _filePath + "." + DateTime.Now.ToString("yyyyMMddHHmmssfff") + ".bak";
             try
             {
-                // 1. å¤‡ä»½åŸå§‹æ–‡ä»¶å¹¶åˆ é™¤åŸæ–‡ä»¶ï¼ˆé¿å… MiniExcel æŠ¥"å·²å­˜åœ¨"ï¼‰
+                // 1. ±¸·İÔ­Ê¼ÎÄ¼ş²¢É¾³ıÔ­ÎÄ¼ş£¨±ÜÃâ MiniExcel ±¨"ÒÑ´æÔÚ"£©
                 if (File.Exists(_filePath))
                 {
                     File.Copy(_filePath, backupPath, overwrite: true);
                     File.Delete(_filePath);
                 }
 
-                // 2. å†™å…¥æ–°å†…å®¹
+                // 2. Ğ´ÈëĞÂÄÚÈİ
                 MiniExcel.SaveAs(_filePath, _dataTable, printHeader: false);
 
-                // 3. å†™å…¥æˆåŠŸï¼Œåˆ é™¤å¤‡ä»½
+                // 3. Ğ´Èë³É¹¦£¬É¾³ı±¸·İ
                 if (File.Exists(backupPath))
                     File.Delete(backupPath);
             }
             catch (Exception ex)
             {
-                // 4. å†™å…¥å¤±è´¥ï¼Œå°è¯•è¿˜åŸåŸå§‹æ–‡ä»¶
+                // 4. Ğ´ÈëÊ§°Ü£¬³¢ÊÔ»¹Ô­Ô­Ê¼ÎÄ¼ş
                 if (File.Exists(backupPath))
                 {
                     try
@@ -3931,34 +3933,34 @@ namespace wxd.files.winforms
                     }
                     catch
                     {
-                        // è¿˜åŸå¤±è´¥ä¹Ÿä¿ç•™å¤‡ä»½æ–‡ä»¶ï¼Œç”¨æˆ·å¯æ‰‹åŠ¨æ¢å¤
+                        // »¹Ô­Ê§°ÜÒ²±£Áô±¸·İÎÄ¼ş£¬ÓÃ»§¿ÉÊÖ¶¯»Ö¸´
                     }
                 }
                 string friendlyMsg;
                 if (ex is IOException || ex is UnauthorizedAccessException)
                 {
-                    friendlyMsg = "æ–‡ä»¶è¢«å…¶ä»–ç¨‹åºå ç”¨ï¼ˆå¦‚Excelå·²æ‰“å¼€æ­¤æ–‡ä»¶ï¼‰ï¼Œæ— æ³•ä¿å­˜ã€‚\n" +
-                                  "è¯·å…³é—­å…¶ä»–ç¨‹åºåé‡è¯•ã€‚\n" +
-                                  "å¤‡ä»½æ–‡ä»¶å·²ä¿ç•™åœ¨ï¼š" + backupPath;
+                    friendlyMsg = "ÎÄ¼ş±»ÆäËû³ÌĞòÕ¼ÓÃ£¨ÈçExcelÒÑ´ò¿ª´ËÎÄ¼ş£©£¬ÎŞ·¨±£´æ¡£\n" +
+                                  "Çë¹Ø±ÕÆäËû³ÌĞòºóÖØÊÔ¡£\n" +
+                                  "±¸·İÎÄ¼şÒÑ±£ÁôÔÚ£º" + backupPath;
                 }
                 else
                 {
-                    friendlyMsg = $"ä¿å­˜å¤±è´¥ï¼š{ex.Message}";
+                    friendlyMsg = $"±£´æÊ§°Ü£º{ex.Message}";
                 }
-                AlertForm.Show(this, friendlyMsg, "ä¿å­˜å¤±è´¥", AlertType.Warning);
+                AlertForm.Show(this, friendlyMsg, "±£´æÊ§°Ü", AlertType.Warning);
 
-                // æ ‡è®°è„æ•°æ®å¹¶å¯åŠ¨é‡è¯•å®šæ—¶å™¨ï¼ˆè®¾ç½® _hasUnsavedChangesã€çŠ¶æ€æ æç¤ºã€å¯åŠ¨å®šæ—¶å™¨ï¼‰
+                // ±ê¼ÇÔàÊı¾İ²¢Æô¶¯ÖØÊÔ¶¨Ê±Æ÷£¨ÉèÖÃ _hasUnsavedChanges¡¢×´Ì¬À¸ÌáÊ¾¡¢Æô¶¯¶¨Ê±Æ÷£©
                 MarkDirtyAndStartSaveTimer();
 
                 return false;
             }
 
-            // â˜… ä¿å­˜åé‡æ–°æ£€æµ‹å”¯ä¸€åˆ—é‡å¤
+            // ¡ï ±£´æºóÖØĞÂ¼ì²âÎ¨Ò»ÁĞÖØ¸´
             CheckUniqueColumnDuplicates();
             return true;
         }
 
-        /// <summary>å†»ç»“è¡ŒåŒºåŸŸï¼ˆ_dataGridHeaderï¼‰çš„ CellFormattingï¼šè¿‡æ»¤åŒ¹é…å•å…ƒæ ¼çº¢è‰²åŠ ç²—é«˜äº®</summary>
+        /// <summary>¶³½áĞĞÇøÓò£¨_dataGridHeader£©µÄ CellFormatting£º¹ıÂËÆ¥Åäµ¥Ôª¸ñºìÉ«¼Ó´Ö¸ßÁÁ</summary>
         private void OnHeaderCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
@@ -3980,25 +3982,25 @@ namespace wxd.files.winforms
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
-                // ==================== è¡Œç¼–è¾‘æ¨¡å¼ï¼šç¼–è¾‘è¡Œæµ…é»„è‰²èƒŒæ™¯ + ä¿®æ”¹çš„å•å…ƒæ ¼çº¢è‰²èƒŒæ™¯ ====================
+                // ==================== ĞĞ±à¼­Ä£Ê½£º±à¼­ĞĞÇ³»ÆÉ«±³¾° + ĞŞ¸ÄµÄµ¥Ôª¸ñºìÉ«±³¾° ====================
                 if (_editingRowIndex >= 0 && e.RowIndex == _editingRowIndex)
                 {
-                    // åˆ¤æ–­è¯¥å•å…ƒæ ¼æ˜¯å¦è¢«ä¿®æ”¹è¿‡
+                    // ÅĞ¶Ï¸Ãµ¥Ôª¸ñÊÇ·ñ±»ĞŞ¸Ä¹ı
                     var (modOrigRow, modOrigCol) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
                     if (_modifiedCellsInEdit.TryGetValue(modOrigRow, out var modCols) && modCols.Contains(modOrigCol))
                     {
-                        e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);  // æµ…çº¢è‰²ï¼ˆå·²ä¿®æ”¹å•å…ƒæ ¼ï¼‰
+                        e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);  // Ç³ºìÉ«£¨ÒÑĞŞ¸Äµ¥Ôª¸ñ£©
                         e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
                     }
                     else
                     {
-                        e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // æµ…é»„è‰²ï¼ˆä¸æœªä¿å­˜è¡Œé¢œè‰²ä¸€è‡´ï¼‰
+                        e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // Ç³»ÆÉ«£¨ÓëÎ´±£´æĞĞÑÕÉ«Ò»ÖÂ£©
                         e.CellStyle.SelectionBackColor = Color.FromArgb(255, 250, 180);
                     }
                 }
                 else
                 {
-                    // ==================== æœªä¿å­˜è¡Œï¼šæ·¡æ©™è‰²èƒŒæ™¯ ====================
+                    // ==================== Î´±£´æĞĞ£ºµ­³ÈÉ«±³¾° ====================
                     bool isUnsavedRow = false;
                     if (_unsavedRowIndices.Count > 0)
                     {
@@ -4006,9 +4008,9 @@ namespace wxd.files.winforms
                         if (tagRow != null && _unsavedRowIndices.Contains(tagRow.OriginalRowIndex))
                         {
                             isUnsavedRow = true;
-                            e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // æµ…é»„è‰²ï¼ˆä¸ç¼–è¾‘è¡Œä¸€è‡´ï¼‰
+                            e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // Ç³»ÆÉ«£¨Óë±à¼­ĞĞÒ»ÖÂ£©
                             e.CellStyle.SelectionBackColor = Color.FromArgb(255, 250, 180);
-                            // æ£€æŸ¥è¯¥å•å…ƒæ ¼æ˜¯å¦è¢«ä¿®æ”¹è¿‡ï¼ˆä½¿ç”¨åŸå§‹è¡Œåˆ—ç´¢å¼•åŒ¹é…ï¼‰
+                            // ¼ì²é¸Ãµ¥Ôª¸ñÊÇ·ñ±»ĞŞ¸Ä¹ı£¨Ê¹ÓÃÔ­Ê¼ĞĞÁĞË÷ÒıÆ¥Åä£©
                             if (_modifiedCellsInEdit.Count > 0)
                             {
                                 var (modOrigRow2, modOrigCol2) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
@@ -4023,7 +4025,7 @@ namespace wxd.files.winforms
 
                     if (!isUnsavedRow)
                     {
-                        // â˜… åˆ—å…³è”é¢œè‰²æ£€æŸ¥
+                        // ¡ï ÁĞ¹ØÁªÑÕÉ«¼ì²é
                         ColumnLinkChecker.CheckCellColor(e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
                         if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                         {
@@ -4033,7 +4035,7 @@ namespace wxd.files.winforms
                     }
                 }
             }
-            // ==================== è¿‡æ»¤åŒ¹é…å•å…ƒæ ¼é«˜äº®ï¼ˆçº¢è‰²åŠ ç²—å­—ä½“ï¼‰ ====================
+            // ==================== ¹ıÂËÆ¥Åäµ¥Ôª¸ñ¸ßÁÁ£¨ºìÉ«¼Ó´Ö×ÖÌå£© ====================
             if (_filterMatchCells.Count > 0 && e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
                 if (_filterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
@@ -4043,15 +4045,15 @@ namespace wxd.files.winforms
                     e.CellStyle.SelectionForeColor = Color.Red;
                 }
             }
-            // è½¬å‘ç»™å¤–éƒ¨äº‹ä»¶å¤„ç†å™¨ï¼ˆå¦‚ç‰ˆæœ¬å¯¹æ¯”çš„å·®å¼‚é«˜äº®ï¼‰
+            // ×ª·¢¸øÍâ²¿ÊÂ¼ş´¦ÀíÆ÷£¨Èç°æ±¾¶Ô±ÈµÄ²îÒì¸ßÁÁ£©
             OnExternalCellFormatting?.Invoke(sender, e);
         }
 
         private void OnCellToolTipTextNeeded(object? sender, DataGridViewCellToolTipTextNeededEventArgs e)
         {
-            // ç³»ç»Ÿ tooltip å·²ç”± DataGridLinkToolTip å–ä»£ï¼Œæ­¤å¤„ä¸å†è®¾ç½®æ–‡æœ¬
+            // ÏµÍ³ tooltip ÒÑÓÉ DataGridLinkToolTip È¡´ú£¬´Ë´¦²»ÔÙÉèÖÃÎÄ±¾
             if (sender == _dataGridHeader || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            // ä¸è®¾ç½® e.ToolTipTextï¼Œä¿æŒä¸ºç©ºï¼ˆè‡ªå®šä¹‰ tooltip ä¼šæ¥ç®¡ï¼‰
+            // ²»ÉèÖÃ e.ToolTipText£¬±£³ÖÎª¿Õ£¨×Ô¶¨Òå tooltip »á½Ó¹Ü£©
         }
 
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
@@ -4059,7 +4061,7 @@ namespace wxd.files.winforms
             if (e.Button != MouseButtons.Right || e.RowIndex < 0 || e.ColumnIndex < 0) return;
             if (_contextMenuMode == ContextMenuMode.None) return;
 
-            // â˜… Conflict æ¨¡å¼ï¼šè½¬å‘ç»™å¤–éƒ¨äº‹ä»¶å¤„ç†å™¨ï¼ˆå¦‚å†²çªè§£å†³çš„å³é”®èœå•ï¼‰
+            // ¡ï Conflict Ä£Ê½£º×ª·¢¸øÍâ²¿ÊÂ¼ş´¦ÀíÆ÷£¨Èç³åÍ»½â¾öµÄÓÒ¼ü²Ëµ¥£©
             if (_contextMenuMode == ContextMenuMode.Conflict)
             {
                 OnExternalCellMouseDown?.Invoke(sender, e);
@@ -4067,7 +4069,7 @@ namespace wxd.files.winforms
             }
 
             int adjCol = e.ColumnIndex;
-            // â˜… ä¸å†éœ€è¦ __RowNum__ åç§»
+            // ¡ï ²»ÔÙĞèÒª __RowNum__ Æ«ÒÆ
             int origCol = adjCol;
             if (adjCol >= 0 && adjCol < _visibleColumnIndices.Count)
                 origCol = _visibleColumnIndices[adjCol];
@@ -4081,11 +4083,11 @@ namespace wxd.files.winforms
             var ctx = new ContextMenuStrip();
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
 
-            var copyItem = new ToolStripMenuItem("å¤åˆ¶");
+            var copyItem = new ToolStripMenuItem("¸´ÖÆ");
             copyItem.Click += (s, args) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
             ctx.Items.Add(copyItem);
 
-            var editItem = new ToolStripMenuItem("ç¼–è¾‘");
+            var editItem = new ToolStripMenuItem("±à¼­");
             if (_isEmbeddedMode || _isEditLocked) editItem.Enabled = false;
             else
             {
@@ -4097,19 +4099,19 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(editItem);
 
-            // ==================== ç¼–è¾‘è¡Œèœå• ====================
-            var editRowItem = new ToolStripMenuItem(_editingRowIndex >= 0 ? "é€€å‡ºè¡Œç¼–è¾‘" : "ç¼–è¾‘è¡Œ");
+            // ==================== ±à¼­ĞĞ²Ëµ¥ ====================
+            var editRowItem = new ToolStripMenuItem(_editingRowIndex >= 0 ? "ÍË³öĞĞ±à¼­" : "±à¼­ĞĞ");
             if (_isEmbeddedMode || _isEditLocked) { editRowItem.Enabled = false; }
             else
             {
                 int targetRow = e.RowIndex;
                 editRowItem.Click += (s, args) =>
                 {
-                    // å…ˆé€‰ä¸­å³é”®ç‚¹å‡»çš„è¡Œ
+                    // ÏÈÑ¡ÖĞÓÒ¼üµã»÷µÄĞĞ
                     _dataGrid.CurrentCell = _dataGrid.Rows[targetRow].Cells[e.ColumnIndex];
                     if (_editingRowIndex >= 0)
                     {
-                        // å¦‚æœå½“å‰æ­£åœ¨ç¼–è¾‘ï¼Œåˆ™æäº¤é€€å‡º
+                        // Èç¹ûµ±Ç°ÕıÔÚ±à¼­£¬ÔòÌá½»ÍË³ö
                         ExitRowEditMode(commit: true);
                     }
                     else
@@ -4120,7 +4122,7 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(editRowItem);
 
-            var editDialogItem = new ToolStripMenuItem("å¼¹çª—ç¼–è¾‘");
+            var editDialogItem = new ToolStripMenuItem("µ¯´°±à¼­");
             if (_isEmbeddedMode) editDialogItem.Enabled = false;
             else
             {
@@ -4135,7 +4137,7 @@ namespace wxd.files.winforms
 
             ctx.Items.Add(new ToolStripSeparator());
 
-            var linkItem = new ToolStripMenuItem("æŸ¥çœ‹å…³è”è¡¨");
+            var linkItem = new ToolStripMenuItem("²é¿´¹ØÁª±í");
             if (link == null) { linkItem.Enabled = false; }
             else
             {
@@ -4148,7 +4150,7 @@ namespace wxd.files.winforms
                     string targetFullPath = Path.Combine(FrozenDir, targetFile);
                     if (!File.Exists(targetFullPath))
                     {
-                        AlertForm.Show(this, "å…³è”æ–‡ä»¶ä¸å­˜åœ¨: " + targetFile, "é”™è¯¯", AlertType.Error);
+                        AlertForm.Show(this, "¹ØÁªÎÄ¼ş²»´æÔÚ: " + targetFile, "´íÎó", AlertType.Error);
                         return;
                     }
                     var remarks = CsvSettings.GetFileRemarksByDirectory(FrozenDir);
@@ -4177,8 +4179,8 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(linkItem);
 
-            // "ç¼–è¾‘å…³è”è¡¨" - åœ¨çˆ¶çª—ä½“æ ‡ç­¾é¡µä¸­æ‰“å¼€
-            var editLinkItem = new ToolStripMenuItem("ç¼–è¾‘å…³è”è¡¨");
+            // "±à¼­¹ØÁª±í" - ÔÚ¸¸´°Ìå±êÇ©Ò³ÖĞ´ò¿ª
+            var editLinkItem = new ToolStripMenuItem("±à¼­¹ØÁª±í");
             if (link == null) { editLinkItem.Enabled = false; }
             else
             {
@@ -4190,7 +4192,7 @@ namespace wxd.files.winforms
                     string targetFullPath = Path.Combine(FrozenDir, targetFile);
                     if (!File.Exists(targetFullPath))
                     {
-                        AlertForm.Show(this, "å…³è”æ–‡ä»¶ä¸å­˜åœ¨: " + targetFile, "é”™è¯¯", AlertType.Error);
+                        AlertForm.Show(this, "¹ØÁªÎÄ¼ş²»´æÔÚ: " + targetFile, "´íÎó", AlertType.Error);
                         return;
                     }
                     EditLinkTableRequested?.Invoke(this, new EditLinkTableEventArgs
@@ -4204,13 +4206,13 @@ namespace wxd.files.winforms
 
             ctx.Items.Add(new ToolStripSeparator());
 
-            // å›ºå®šTips
-            var pinItem = new ToolStripMenuItem("å›ºå®šTips");
+            // ¹Ì¶¨Tips
+            var pinItem = new ToolStripMenuItem("¹Ì¶¨Tips");
             pinItem.Click += (s, args) =>
             {
-                // è·å–å½“å‰å•å…ƒæ ¼çš„ tooltip å†…å®¹
+                // »ñÈ¡µ±Ç°µ¥Ôª¸ñµÄ tooltip ÄÚÈİ
                 int adjCol2 = e.ColumnIndex;
-                // â˜… ä¸å†éœ€è¦ __RowNum__ åç§»
+                // ¡ï ²»ÔÙĞèÒª __RowNum__ Æ«ÒÆ
                 if (adjCol2 >= 0 && _linkToolTip?.GetToolTipContent != null)
                 {
                     var content = _linkToolTip.GetToolTipContent(_dataGrid, e.RowIndex, adjCol2);
@@ -4224,13 +4226,13 @@ namespace wxd.files.winforms
             };
             ctx.Items.Add(pinItem);
 
-            // ==================== è¡Œæ“ä½œèœå• ====================
+            // ==================== ĞĞ²Ù×÷²Ëµ¥ ====================
             ctx.Items.Add(new ToolStripSeparator());
 
-            // è¡Œç¼–è¾‘æ¨¡å¼ä¸‹ç¦ç”¨è¡Œæ“ä½œ
+            // ĞĞ±à¼­Ä£Ê½ÏÂ½ûÓÃĞĞ²Ù×÷
             bool rowOpsDisabled = _editingRowIndex >= 0 || _isEditLocked;
 
-            var insertAboveItem = new ToolStripMenuItem("åœ¨ä¸Šæ–¹æ’å…¥è¡Œ");
+            var insertAboveItem = new ToolStripMenuItem("ÔÚÉÏ·½²åÈëĞĞ");
             if (rowOpsDisabled) insertAboveItem.Enabled = false;
             else
             {
@@ -4242,7 +4244,7 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(insertAboveItem);
 
-            var insertBelowItem = new ToolStripMenuItem("åœ¨ä¸‹æ–¹æ’å…¥è¡Œ");
+            var insertBelowItem = new ToolStripMenuItem("ÔÚÏÂ·½²åÈëĞĞ");
             if (rowOpsDisabled) insertBelowItem.Enabled = false;
             else
             {
@@ -4254,7 +4256,7 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(insertBelowItem);
 
-            var duplicateItem = new ToolStripMenuItem("å¤åˆ¶å½“å‰è¡Œ");
+            var duplicateItem = new ToolStripMenuItem("¸´ÖÆµ±Ç°ĞĞ");
             if (rowOpsDisabled) duplicateItem.Enabled = false;
             else
             {
@@ -4266,7 +4268,7 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(duplicateItem);
 
-            var deleteItem = new ToolStripMenuItem("åˆ é™¤å½“å‰è¡Œ");
+            var deleteItem = new ToolStripMenuItem("É¾³ıµ±Ç°ĞĞ");
             if (rowOpsDisabled) deleteItem.Enabled = false;
             else
             {
@@ -4278,7 +4280,7 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(deleteItem);
 
-            // â˜… æ˜¾ç¤ºå³é”®èœå•å‰ä¸»åŠ¨éšè— ToolTipï¼Œé˜²æ­¢ ToolTip é®æŒ¡å³é”®èœå•
+            // ¡ï ÏÔÊ¾ÓÒ¼ü²Ëµ¥Ç°Ö÷¶¯Òş²Ø ToolTip£¬·ÀÖ¹ ToolTip ÕÚµ²ÓÒ¼ü²Ëµ¥
             _linkToolTip?.Hide();
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
         }
@@ -4290,7 +4292,7 @@ namespace wxd.files.winforms
             return Path.GetFileName(_filePath);
         }
 
-        /// <summary>åå°å¼‚æ­¥æ„å»ºå…³è” lookupï¼Œä¸é˜»å¡ UIï¼ˆfire-and-forgetï¼Œå†…éƒ¨é˜²é‡å…¥ï¼‰</summary>
+        /// <summary>ºóÌ¨Òì²½¹¹½¨¹ØÁª lookup£¬²»×èÈû UI£¨fire-and-forget£¬ÄÚ²¿·ÀÖØÈë£©</summary>
         private void FireAndForgetBuildLinkLookups(List<ColumnLinkConfig> columnLinks, string filePath)
         {
             var rootDir = FrozenDir;
@@ -4299,7 +4301,7 @@ namespace wxd.files.winforms
                 try
                 {
                     await FileDataCache.BuildLinkLookupsAsync(rootDir, columnLinks, filePath);
-                    // æ„å»ºå®Œæˆåï¼Œé€šçŸ¥ UI åˆ·æ–°ï¼ˆè®© tooltip èƒ½è·å–åˆ°æœ€æ–°æ•°æ®ï¼‰
+                    // ¹¹½¨Íê³Éºó£¬Í¨Öª UI Ë¢ĞÂ£¨ÈÃ tooltip ÄÜ»ñÈ¡µ½×îĞÂÊı¾İ£©
                     if (this.IsHandleCreated)
                         this.BeginInvoke(() => _dataGrid?.Invalidate());
                 }
@@ -4311,7 +4313,7 @@ namespace wxd.files.winforms
             });
         }
 
-        /// <summary>è·å–çŠ¶æ€æ æ˜¾ç¤ºæ–‡ä»¶åï¼ˆä¼˜å…ˆä½¿ç”¨å¤‡æ³¨åï¼‰</summary>
+        /// <summary>»ñÈ¡×´Ì¬À¸ÏÔÊ¾ÎÄ¼şÃû£¨ÓÅÏÈÊ¹ÓÃ±¸×¢Ãû£©</summary>
         private string GetDisplayFileName()
         {
             var relPath = GetCurrentRelativePath();
@@ -4321,13 +4323,13 @@ namespace wxd.files.winforms
             return Path.GetFileName(_filePath);
         }
 
-        /// <summary>ç‚¹å‡»é”å›¾æ ‡ï¼šåˆ‡æ¢ç¼–è¾‘é”å®š/è§£é”çŠ¶æ€</summary>
+        /// <summary>µã»÷ËøÍ¼±ê£ºÇĞ»»±à¼­Ëø¶¨/½âËø×´Ì¬</summary>
         private void OnLockLabelClick(object? sender, EventArgs e)
         {
             if (!_isEditLocked)
             {
-                // è§£é”çŠ¶æ€ â†’ é‡æ–°é”å®š
-                // å¦‚æœæ­£åœ¨è¡Œç¼–è¾‘ï¼Œå…ˆé€€å‡ºç¼–è¾‘æ¨¡å¼
+                // ½âËø×´Ì¬ ¡ú ÖØĞÂËø¶¨
+                // Èç¹ûÕıÔÚĞĞ±à¼­£¬ÏÈÍË³ö±à¼­Ä£Ê½
                 if (_editingRowIndex >= 0)
                     ExitRowEditMode(commit: true);
                 _isEditLocked = true;
@@ -4335,10 +4337,10 @@ namespace wxd.files.winforms
                 return;
             }
 
-            // é”å®šçŠ¶æ€ â†’ å¼¹å‡ºç¡®è®¤æ¡†è§£é”
+            // Ëø¶¨×´Ì¬ ¡ú µ¯³öÈ·ÈÏ¿ò½âËø
             var result = AlertForm.ShowConfirm(this,
-                "Excelæ–‡ä»¶å¦‚æœåŒ…å«å…¬å¼ã€å®å®šä¹‰ç­‰ï¼Œç¼–è¾‘åä¿å­˜å¯èƒ½å¯¼è‡´è¿™äº›å†…å®¹ä¸¢å¤±ã€‚" + GlobalConst.NewLine + "ç¡®è®¤è¦è§£é”ç¼–è¾‘å—ï¼Ÿ",
-                "è§£é”ç¼–è¾‘ç¡®è®¤", AlertType.Warning);
+                "ExcelÎÄ¼şÈç¹û°üº¬¹«Ê½¡¢ºê¶¨ÒåµÈ£¬±à¼­ºó±£´æ¿ÉÄÜµ¼ÖÂÕâĞ©ÄÚÈİ¶ªÊ§¡£" + GlobalConst.NewLine + "È·ÈÏÒª½âËø±à¼­Âğ£¿",
+                "½âËø±à¼­È·ÈÏ", AlertType.Warning);
 
             if (result == DialogResult.Yes)
             {
@@ -4347,25 +4349,25 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>æ›´æ–°çŠ¶æ€æ é”å›¾æ ‡å’Œæ–‡ä»¶åæ˜¾ç¤º</summary>
+        /// <summary>¸üĞÂ×´Ì¬À¸ËøÍ¼±êºÍÎÄ¼şÃûÏÔÊ¾</summary>
         private void UpdateLockDisplay()
         {
             if (_isEditLocked)
             {
-                _lblLock.Text = "ğŸ”’ é”å®š";
+                _lblLock.Text = "?? Ëø¶¨";
                 _lblLock.ForeColor = _colorLightTextSecondary;
             }
             else
             {
-                _lblLock.Text = "âœï¸ å¯ç¼–è¾‘";
-                _lblLock.ForeColor = Color.FromArgb(22, 163, 74); // ç»¿è‰²ï¼Œè¡¨ç¤ºå¯ç¼–è¾‘
+                _lblLock.Text = "?? ¿É±à¼­";
+                _lblLock.ForeColor = Color.FromArgb(22, 163, 74); // ÂÌÉ«£¬±íÊ¾¿É±à¼­
             }
         }
 
-        // ==================== è¡Œå·ç»˜åˆ¶ ====================
+        // ==================== ĞĞºÅ»æÖÆ ====================
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
         {
-            // â˜… ä» DataGridView è¡Œçš„ Tag ç›´æ¥è·å–åŸå§‹è¡Œå·
+            // ¡ï ´Ó DataGridView ĞĞµÄ Tag Ö±½Ó»ñÈ¡Ô­Ê¼ĞĞºÅ
             int rowIndex;
             if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
             {
@@ -4395,7 +4397,7 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== é«˜äº®é‡å»º ====================
+        // ==================== ¸ßÁÁÖØ½¨ ====================
         private void RebuildHighlightRows()
         {
             _highlightRows.Clear();
@@ -4522,7 +4524,7 @@ namespace wxd.files.winforms
             return text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        // ==================== å·¥å…·æ–¹æ³• ====================
+        // ==================== ¹¤¾ß·½·¨ ====================
         private static string GetExcelColumnName(int columnIndex)
         {
             var result = new StringBuilder();
@@ -4543,7 +4545,7 @@ namespace wxd.files.winforms
 
                 _btnHistory = new Button
                 {
-                    Text = vcs == VcsType.Svn ? "SVNå†å²" : "Gitå†å²",
+                    Text = vcs == VcsType.Svn ? "SVNÀúÊ·" : "GitÀúÊ·",
                     Size = new Size(75, 27),
                     Font = new Font("Microsoft YaHei UI", 9f),
                     FlatStyle = FlatStyle.Flat,
@@ -4575,31 +4577,31 @@ namespace wxd.files.winforms
             catch { }
         }
 
-        /// <summary>è·å–å†…éƒ¨ DataTableï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”ç­‰å¤–éƒ¨åŠŸèƒ½ä½¿ç”¨ï¼‰</summary>
+        /// <summary>»ñÈ¡ÄÚ²¿ DataTable£¨¹©°æ±¾¶Ô±ÈµÈÍâ²¿¹¦ÄÜÊ¹ÓÃ£©</summary>
         public DataTable GetDataTable() => _dataTable;
 
-        /// <summary>è·å–å†…éƒ¨ FileTableDataï¼ˆç”¨äºè¡Œå·è¿½è¸ªã€å·®å¼‚æ ‡è®°ï¼‰</summary>
+        /// <summary>»ñÈ¡ÄÚ²¿ FileTableData£¨ÓÃÓÚĞĞºÅ×·×Ù¡¢²îÒì±ê¼Ç£©</summary>
         public FileTableData GetFileData() => _fileData;
 
-        /// <summary>ç›´æ¥è®¾ç½® FileTableData å¹¶åˆ·æ–° Tagï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”ç­‰åœºæ™¯ä½¿ç”¨ï¼Œç»•è¿‡ BuildFileData ç»§æ‰¿é€»è¾‘ï¼‰</summary>
+        /// <summary>Ö±½ÓÉèÖÃ FileTableData ²¢Ë¢ĞÂ Tag£¨¹©°æ±¾¶Ô±ÈµÈ³¡¾°Ê¹ÓÃ£¬ÈÆ¹ı BuildFileData ¼Ì³ĞÂß¼­£©</summary>
         public void SetFileData(FileTableData fileData)
         {
             _fileData = fileData;
             SetRowTags();
         }
 
-        /// <summary>è·å–å†…éƒ¨ DataGridViewï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”ç­‰å¤–éƒ¨åŠŸèƒ½ä½¿ç”¨ï¼‰</summary>
+        /// <summary>»ñÈ¡ÄÚ²¿ DataGridView£¨¹©°æ±¾¶Ô±ÈµÈÍâ²¿¹¦ÄÜÊ¹ÓÃ£©</summary>
         public DataGridView GetDataGridView() => _dataGrid;
 
-        /// <summary>è·å–å›ºå®šè¡Œæ•°ï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”è®¡ç®—å†…å®¹è¡¨æ ¼è¡Œå·æ˜ å°„ï¼‰</summary>
+        /// <summary>»ñÈ¡¹Ì¶¨ĞĞÊı£¨¹©°æ±¾¶Ô±È¼ÆËãÄÚÈİ±í¸ñĞĞºÅÓ³Éä£©</summary>
         public int FrozenRows => _frozenRows;
 
         /// <summary>
-        /// ç›´æ¥è®¾ç½® DataTable å¹¶åˆ·æ–°æ˜¾ç¤ºï¼ˆä¾›ç‰ˆæœ¬å¯¹æ¯”ç­‰å¤–éƒ¨åŠŸèƒ½å¤ç”¨æ§ä»¶å®ä¾‹ï¼‰ã€‚
-        /// è·³è¿‡æ–‡ä»¶åŠ è½½ã€tooltip åˆå§‹åŒ–ã€VCS æ£€æµ‹ç­‰ã€‚
-        /// éšè—"é‡æ–°åŠ è½½"å’Œ"å†å²è®°å½•"æŒ‰é’®ï¼Œé¿å…ç‰ˆæœ¬å¯¹æ¯”ä¸­æ— é™åµŒå¥—ã€‚
+        /// Ö±½ÓÉèÖÃ DataTable ²¢Ë¢ĞÂÏÔÊ¾£¨¹©°æ±¾¶Ô±ÈµÈÍâ²¿¹¦ÄÜ¸´ÓÃ¿Ø¼şÊµÀı£©¡£
+        /// Ìø¹ıÎÄ¼ş¼ÓÔØ¡¢tooltip ³õÊ¼»¯¡¢VCS ¼ì²âµÈ¡£
+        /// Òş²Ø"ÖØĞÂ¼ÓÔØ"ºÍ"ÀúÊ·¼ÇÂ¼"°´Å¥£¬±ÜÃâ°æ±¾¶Ô±ÈÖĞÎŞÏŞÇ¶Ì×¡£
         /// </summary>
-        /// <summary>ä»çˆ¶å®¹å™¨ä¸­ç§»é™¤ DataGridViewï¼Œé˜²æ­¢è®¾ç½® DataSource æ—¶é€è¡Œç»˜åˆ¶</summary>
+        /// <summary>´Ó¸¸ÈİÆ÷ÖĞÒÆ³ı DataGridView£¬·ÀÖ¹ÉèÖÃ DataSource Ê±ÖğĞĞ»æÖÆ</summary>
         public void DetachGridFromParent()
         {
             var gridParent = _dataGrid.Parent;
@@ -4611,26 +4613,26 @@ namespace wxd.files.winforms
                 gridHeaderParent.Controls.Remove(_dataGridHeader);
         }
 
-        /// <summary>å°† DataGridView é‡æ–°åŠ å…¥çˆ¶å®¹å™¨ï¼ˆåœ¨æ•°æ®ç»‘å®šå®Œæˆåè°ƒç”¨ï¼‰</summary>
+        /// <summary>½« DataGridView ÖØĞÂ¼ÓÈë¸¸ÈİÆ÷£¨ÔÚÊı¾İ°ó¶¨Íê³Éºóµ÷ÓÃ£©</summary>
         public void AttachGridToParent()
         {
-            // _dataGrid çš„çˆ¶å®¹å™¨æ˜¯ _pnlGridContainer.Panel2
-            // _dataGridHeader çš„çˆ¶å®¹å™¨æ˜¯ _pnlGridContainer.Panel1
+            // _dataGrid µÄ¸¸ÈİÆ÷ÊÇ _pnlGridContainer.Panel2
+            // _dataGridHeader µÄ¸¸ÈİÆ÷ÊÇ _pnlGridContainer.Panel1
             if (!_pnlGridContainer.Panel2.Controls.Contains(_dataGrid))
                 _pnlGridContainer.Panel2.Controls.Add(_dataGrid);
             if (!_pnlGridContainer.Panel1Collapsed && _dataGridHeader.Parent == null)
             {
-                // å¤ç”¨å·²æœ‰çš„ _headerPanelï¼Œé¿å…æ¯æ¬¡åˆ›å»ºæ–° Panel å¯¼è‡´ç©º Panel å †ç§¯é®æŒ¡ _dataGridHeader
+                // ¸´ÓÃÒÑÓĞµÄ _headerPanel£¬±ÜÃâÃ¿´Î´´½¨ĞÂ Panel µ¼ÖÂ¿Õ Panel ¶Ñ»ıÕÚµ² _dataGridHeader
                 if (_headerPanel != null)
                 {
-                    // ç¡®ä¿æ—§ Panel ä»åœ¨ Panel1 ä¸­ï¼ˆDetachGridFromParent åªç§»é™¤ _dataGridHeaderï¼Œä¸ç§»é™¤ _headerPanelï¼‰
+                    // È·±£¾É Panel ÈÔÔÚ Panel1 ÖĞ£¨DetachGridFromParent Ö»ÒÆ³ı _dataGridHeader£¬²»ÒÆ³ı _headerPanel£©
                     if (!_pnlGridContainer.Panel1.Controls.Contains(_headerPanel))
                         _pnlGridContainer.Panel1.Controls.Add(_headerPanel);
                     _headerPanel.Controls.Add(_dataGridHeader);
                 }
                 else
                 {
-                    // é¦–æ¬¡åˆ›å»ºï¼ˆç†è®ºä¸Šä¸ä¼šèµ°åˆ°è¿™é‡Œï¼Œåˆå§‹åŒ–æ—¶å·²åˆ›å»ºï¼‰
+                    // Ê×´Î´´½¨£¨ÀíÂÛÉÏ²»»á×ßµ½ÕâÀï£¬³õÊ¼»¯Ê±ÒÑ´´½¨£©
                     var headerPanel = new Panel
                     {
                         Dock = DockStyle.Fill,
@@ -4643,7 +4645,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>ä» DataTable æ„å»º FileTableDataï¼ˆç”¨äºè¡Œå·è¿½è¸ªï¼‰</summary>
+        /// <summary>´Ó DataTable ¹¹½¨ FileTableData£¨ÓÃÓÚĞĞºÅ×·×Ù£©</summary>
         private static FileTableData BuildFileData(DataTable dt, FileTableData? inheritFrom = null)
         {
             var fd = new FileTableData();
@@ -4658,18 +4660,18 @@ namespace wxd.files.winforms
 
                 if (inheritFrom != null)
                 {
-                    // â˜… å¦‚æœæ–°æ—§è¡¨è¡Œæ•°ä¸€è‡´ â†’ æŒ‰ç´¢å¼•ç»§æ‰¿ï¼ˆæ’åºåœºæ™¯ï¼‰
+                    // ¡ï Èç¹ûĞÂ¾É±íĞĞÊıÒ»ÖÂ ¡ú °´Ë÷Òı¼Ì³Ğ£¨ÅÅĞò³¡¾°£©
                     if (dt.Rows.Count == inheritFrom.Rows.Count && r < inheritFrom.Rows.Count)
                     {
                         origRowIdx = inheritFrom.Rows[r].OriginalRowIndex;
                         isDiff = inheritFrom.Rows[r].IsDiffRow;
                         diffCols = inheritFrom.Rows[r].DiffColumns;
                     }
-                    // â˜… å¦‚æœè¡Œæ•°ä¸ä¸€è‡´ï¼ˆç­›é€‰å­é›†åœºæ™¯ï¼‰â†’ é€šè¿‡ OriginalRowIndex åæŸ¥
+                    // ¡ï Èç¹ûĞĞÊı²»Ò»ÖÂ£¨É¸Ñ¡×Ó¼¯³¡¾°£©¡ú Í¨¹ı OriginalRowIndex ·´²é
                     else
                     {
                         origRowIdx = r;
-                        // åœ¨ inheritFrom ä¸­æŸ¥æ‰¾ OriginalRowIndex == r çš„è¡Œ
+                        // ÔÚ inheritFrom ÖĞ²éÕÒ OriginalRowIndex == r µÄĞĞ
                         var matched = inheritFrom.Rows.FirstOrDefault(x => x.OriginalRowIndex == r);
                         if (matched != null)
                         {
@@ -4697,49 +4699,49 @@ namespace wxd.files.winforms
         {
             if (dataTable == null) return;
 
-            _isEmbeddedMode = true; // æ ‡è®°ä¸ºå¤–éƒ¨åµŒå…¥æ¨¡å¼ï¼ˆç‰ˆæœ¬å¯¹æ¯”ç­‰ï¼‰ï¼Œç¦æ­¢ç¼–è¾‘
+            _isEmbeddedMode = true; // ±ê¼ÇÎªÍâ²¿Ç¶ÈëÄ£Ê½£¨°æ±¾¶Ô±ÈµÈ£©£¬½ûÖ¹±à¼­
 
-            // â˜… å½»åº•æ¸…ç†æ—§ç»‘å®šï¼Œé¿å…å¤šæ¬¡åˆ‡æ¢åäº‹ä»¶/å¼•ç”¨ç´¯ç§¯å¯¼è‡´å¡é¡¿
+            // ¡ï ³¹µ×ÇåÀí¾É°ó¶¨£¬±ÜÃâ¶à´ÎÇĞ»»ºóÊÂ¼ş/ÒıÓÃÀÛ»ıµ¼ÖÂ¿¨¶Ù
             _dataGrid.DataSource = null;
             _dataGridHeader.DataSource = null;
-            // æ¸…ç†å¯èƒ½ç”±å¤–éƒ¨é™„åŠ çš„ CellFormatting äº‹ä»¶ï¼ˆå¦‚ç‰ˆæœ¬å¯¹æ¯”çš„å·®å¼‚é«˜äº®ï¼‰
+            // ÇåÀí¿ÉÄÜÓÉÍâ²¿¸½¼ÓµÄ CellFormatting ÊÂ¼ş£¨Èç°æ±¾¶Ô±ÈµÄ²îÒì¸ßÁÁ£©
             _dataGrid.CellFormatting -= OnExternalCellFormatting;
-            // æ¸…ç†é«˜äº®çŠ¶æ€
+            // ÇåÀí¸ßÁÁ×´Ì¬
             _highlightRows.Clear();
             _highlightsReady = false;
 
             _dataTable = dataTable;
-            // â˜… åŒæ­¥æ„å»º FileTableDataï¼ˆç»§æ‰¿æ—§å·®å¼‚ä¿¡æ¯ï¼‰
+            // ¡ï Í¬²½¹¹½¨ FileTableData£¨¼Ì³Ğ¾É²îÒìĞÅÏ¢£©
             _fileData = BuildFileData(dataTable, _fileData);
             _headerTable = dataTable.Clone();
 
             if (_externalColumnStates != null && _externalColumnStates.Length == _dataTable.Columns.Count)
             {
                 _columnCheckStates = (bool[])_externalColumnStates.Clone();
-                _externalColumnStates = null; // åªä½¿ç”¨ä¸€æ¬¡ï¼Œé¿å…å½±å“åç»­è°ƒç”¨
+                _externalColumnStates = null; // Ö»Ê¹ÓÃÒ»´Î£¬±ÜÃâÓ°ÏìºóĞøµ÷ÓÃ
             }
             else
             {
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
                 for (int i = 0; i < _columnCheckStates.Length; i++)
                     _columnCheckStates[i] = true;
-                _externalColumnStates = null; // â˜… elseåˆ†æ”¯ä¹Ÿéœ€è¦æ¸…é™¤ï¼Œé¿å…æ®‹ç•™çš„æ—§åˆ—çŠ¶æ€å½±å“ä¸‹æ¬¡è°ƒç”¨
+                _externalColumnStates = null; // ¡ï else·ÖÖ§Ò²ĞèÒªÇå³ı£¬±ÜÃâ²ĞÁôµÄ¾ÉÁĞ×´Ì¬Ó°ÏìÏÂ´Îµ÷ÓÃ
             }
 
             RebuildHighlightRows();
             _lblCellPos.Text = string.IsNullOrEmpty(infoText)
-                ? $"è¡Œæ•°: {dataTable.Rows.Count} | åˆ—æ•°: {dataTable.Columns.Count}"
+                ? $"ĞĞÊı: {dataTable.Rows.Count} | ÁĞÊı: {dataTable.Columns.Count}"
                 : infoText;
             _lblInfo.Text = "";
 
-            // â˜… å¦‚æœæœ‰é‡å¤è­¦å‘Šï¼Œè¿½åŠ è­¦å‘Šæ–‡æœ¬å¹¶ä¿æŒçº¢è‰²
+            // ¡ï Èç¹ûÓĞÖØ¸´¾¯¸æ£¬×·¼Ó¾¯¸æÎÄ±¾²¢±£³ÖºìÉ«
             if (_duplicateWarningText != null)
             {
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
                 _lblInfo.Text = _duplicateWarningText;
             }
 
-            // éšè—"é‡æ–°åŠ è½½"å’Œ"å†å²è®°å½•"æŒ‰é’®ï¼ˆé¿å…ç‰ˆæœ¬å¯¹æ¯”ä¸­æ— é™åµŒå¥—ï¼‰
+            // Òş²Ø"ÖØĞÂ¼ÓÔØ"ºÍ"ÀúÊ·¼ÇÂ¼"°´Å¥£¨±ÜÃâ°æ±¾¶Ô±ÈÖĞÎŞÏŞÇ¶Ì×£©
             if (_btnReload != null) _btnReload.Visible = false;
             if (_btnHistory != null) _btnHistory.Visible = false;
 
@@ -4753,7 +4755,7 @@ namespace wxd.files.winforms
                 {
                     _dataGrid.Columns[i].Width = 120;
                     _dataGrid.Columns[i].SortMode = DataGridViewColumnSortMode.Programmatic;
-                    // å¦‚æœè®¾ç½®äº†è¡¨å¤´è¡Œï¼Œç”¨è¡¨å¤´è¡Œçš„å€¼ä½œä¸ºåˆ—æ ‡é¢˜
+                    // Èç¹ûÉèÖÃÁË±íÍ·ĞĞ£¬ÓÃ±íÍ·ĞĞµÄÖµ×÷ÎªÁĞ±êÌâ
                     if (_headerRowIndex >= 0 && _headerRowIndex < _dataTable.Rows.Count)
                     {
                         var headerVal = _dataTable.Rows[_headerRowIndex][i]?.ToString() ?? GetExcelColumnName(i);
@@ -4765,10 +4767,10 @@ namespace wxd.files.winforms
                         _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     }
                 }
-                // â˜… åŒæ­¥è®¾ç½® Tagï¼ˆDataSource èµ‹å€¼åè¡Œå·²åˆ›å»ºï¼‰
+                // ¡ï Í¬²½ÉèÖÃ Tag£¨DataSource ¸³ÖµºóĞĞÒÑ´´½¨£©
                 SetRowTags();
 
-                // â˜… æ— å†»ç»“è¡Œæ¨¡å¼ä¸‹è®¡ç®—è¿‡æ»¤åŒ¹é…å•å…ƒæ ¼ï¼ˆå…¨è¡¨ä½œä¸º DataSourceï¼Œæ˜¾ç¤ºè¡Œ i å¯¹åº”åŸå§‹è¡Œ iï¼‰
+                // ¡ï ÎŞ¶³½áĞĞÄ£Ê½ÏÂ¼ÆËã¹ıÂËÆ¥Åäµ¥Ôª¸ñ£¨È«±í×÷Îª DataSource£¬ÏÔÊ¾ĞĞ i ¶ÔÓ¦Ô­Ê¼ĞĞ i£©
                 _filterMatchCells.Clear();
                 _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
                 var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
@@ -4788,12 +4790,12 @@ namespace wxd.files.winforms
                 }
             }
 
-            // â˜… æ•°æ®è¡¨å˜æ›´ååˆ·æ–°å”¯ä¸€åˆ—ä¸‹æ‹‰é€‰é¡¹
+            // ¡ï Êı¾İ±í±ä¸üºóË¢ĞÂÎ¨Ò»ÁĞÏÂÀ­Ñ¡Ïî
             RefreshUniqueColumnCombo();
-            // â˜… æ›´æ–°åˆ—ç®¡ç†æŒ‰é’®æ–‡æœ¬ï¼ˆæ˜¾ç¤º"åˆ—ç®¡ç†(x/y)"ï¼Œæœ‰éšè—åˆ—æ—¶çº¢è‰²æ˜¾ç¤ºï¼‰
+            // ¡ï ¸üĞÂÁĞ¹ÜÀí°´Å¥ÎÄ±¾£¨ÏÔÊ¾"ÁĞ¹ÜÀí(x/y)"£¬ÓĞÒş²ØÁĞÊ±ºìÉ«ÏÔÊ¾£©
             UpdateColumnSelectorButton();
 
-            // â˜… åˆå§‹åŒ–è‡ªå®šä¹‰ tooltipï¼ˆå¦‚æœå°šæœªåˆå§‹åŒ–ï¼Œä¸”éè½»é‡æ¨¡å¼ï¼‰
+            // ¡ï ³õÊ¼»¯×Ô¶¨Òå tooltip£¨Èç¹ûÉĞÎ´³õÊ¼»¯£¬ÇÒ·ÇÇáÁ¿Ä£Ê½£©
             if (!_lightweight && _linkToolTip == null)
             {
                 _linkToolTip = new DataGridLinkToolTip(_dataGrid);
@@ -4801,12 +4803,12 @@ namespace wxd.files.winforms
                 _linkToolTip.GetToolTipContent = GetLinkToolTipContent;
             }
 
-            // â˜… é‡æ–°åŠ è½½å…³è”é…ç½®ï¼ˆç¡®ä¿ _columnLinks å’Œç¼“å­˜æ­£ç¡®ï¼›
-            //   ç‰ˆæœ¬å¯¹æ¯”ç­‰ SetDataTable åœºæ™¯ä¸‹ _filePath ä¸ºç©ºå­—ç¬¦ä¸²ï¼Œéœ€è¦ä¾èµ– rootDir åŠ è½½é…ç½®ï¼‰
+            // ¡ï ÖØĞÂ¼ÓÔØ¹ØÁªÅäÖÃ£¨È·±£ _columnLinks ºÍ»º´æÕıÈ·£»
+            //   °æ±¾¶Ô±ÈµÈ SetDataTable ³¡¾°ÏÂ _filePath Îª¿Õ×Ö·û´®£¬ĞèÒªÒÀÀµ rootDir ¼ÓÔØÅäÖÃ£©
             if (!string.IsNullOrEmpty(_rootDir))
             {
                 _columnLinks = CsvSettings.GetColumnLinksByDirectory(_rootDir);
-                // â˜… å¯¹å¼•ç”¨æ¨¡æ¿çš„åˆ—ï¼Œä»æ¨¡æ¿åŠ è½½æœ€æ–°é…ç½®å¡«å……è¿è¡Œæ—¶æ•°æ®
+                // ¡ï ¶ÔÒıÓÃÄ£°åµÄÁĞ£¬´ÓÄ£°å¼ÓÔØ×îĞÂÅäÖÃÌî³äÔËĞĞÊ±Êı¾İ
                 foreach (var link in _columnLinks)
                 {
                     link.RefreshFromTemplate();
@@ -4816,14 +4818,14 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>ä¾›å¤–éƒ¨ï¼ˆç‰ˆæœ¬å¯¹æ¯”ç­‰ï¼‰ç§»é™¤çš„ CellFormatting äº‹ä»¶å ä½</summary>
+        /// <summary>¹©Íâ²¿£¨°æ±¾¶Ô±ÈµÈ£©ÒÆ³ıµÄ CellFormatting ÊÂ¼şÕ¼Î»</summary>
         internal event DataGridViewCellFormattingEventHandler? OnExternalCellFormatting;
 
-        /// <summary>ä¾›å¤–éƒ¨ï¼ˆå†²çªè§£å†³ç­‰ï¼‰ä½¿ç”¨çš„ CellMouseDown äº‹ä»¶å ä½ã€‚å½“ ContextMenuMode.Conflict æ—¶è§¦å‘ã€‚</summary>
+        /// <summary>¹©Íâ²¿£¨³åÍ»½â¾öµÈ£©Ê¹ÓÃµÄ CellMouseDown ÊÂ¼şÕ¼Î»¡£µ± ContextMenuMode.Conflict Ê±´¥·¢¡£</summary>
         internal event DataGridViewCellMouseEventHandler? OnExternalCellMouseDown;
 
-        /// <summary>è®¾ç½®å¤–éƒ¨ä¼ å…¥çš„åˆ—å¯è§æ€§çŠ¶æ€ï¼ˆç‰ˆæœ¬å¯¹æ¯”ç­‰åœºæ™¯ä½¿ç”¨ï¼‰ã€‚ä¸‹æ¬¡ SetDataTable è°ƒç”¨æ—¶ä¼šä¼˜å…ˆä½¿ç”¨æ­¤çŠ¶æ€ã€‚
-        /// åŒæ—¶ä¿å­˜å®Œæ•´åˆ—æ•°/å¯è§åˆ—æ•°ä¿¡æ¯ï¼Œç”¨äº UpdateColumnSelectorButton æ˜¾ç¤ºæ­£ç¡®çš„"åˆ—ç®¡ç†(x/y)"æ–‡æœ¬ã€‚</summary>
+        /// <summary>ÉèÖÃÍâ²¿´«ÈëµÄÁĞ¿É¼ûĞÔ×´Ì¬£¨°æ±¾¶Ô±ÈµÈ³¡¾°Ê¹ÓÃ£©¡£ÏÂ´Î SetDataTable µ÷ÓÃÊ±»áÓÅÏÈÊ¹ÓÃ´Ë×´Ì¬¡£
+        /// Í¬Ê±±£´æÍêÕûÁĞÊı/¿É¼ûÁĞÊıĞÅÏ¢£¬ÓÃÓÚ UpdateColumnSelectorButton ÏÔÊ¾ÕıÈ·µÄ"ÁĞ¹ÜÀí(x/y)"ÎÄ±¾¡£</summary>
         public void SetColumnVisibility(bool[]? states)
         {
             _externalColumnStates = states;
@@ -4842,25 +4844,26 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>è·å–å½“å‰åˆ—æ˜¾éšçŠ¶æ€çš„å‰¯æœ¬ï¼ˆç”¨äºåˆ‡æ¢æ•°æ®æ—¶ä¿æŒç”¨æˆ·é€‰æ‹©çš„åˆ—æ˜¾ç¤º/éšè—ï¼‰</summary>
+        /// <summary>»ñÈ¡µ±Ç°ÁĞÏÔÒş×´Ì¬µÄ¸±±¾£¨ÓÃÓÚÇĞ»»Êı¾İÊ±±£³ÖÓÃ»§Ñ¡ÔñµÄÁĞÏÔÊ¾/Òş²Ø£©</summary>
         public bool[] GetColumnCheckStates()
         {
             return (bool[])_columnCheckStates.Clone();
         }
 
-        /// <summary>è®¾ç½®åµŒå…¥å¼æ¨¡å¼ï¼ˆå†²çªè§£å†³ç­‰åœºæ™¯ä½¿ç”¨ï¼‰ã€‚è®¾ä¸º false å¯ä½¿è¡¨æ ¼å˜ä¸ºå¯ç¼–è¾‘ã€‚</summary>
+        /// <summary>ÉèÖÃÇ¶ÈëÊ½Ä£Ê½£¨³åÍ»½â¾öµÈ³¡¾°Ê¹ÓÃ£©¡£ÉèÎª false ¿ÉÊ¹±í¸ñ±äÎª¿É±à¼­¡£</summary>
         public void SetEmbeddedMode(bool embedded)
         {
             _isEmbeddedMode = embedded;
         }
 
-        /// <summary>ç¦ç”¨åˆ—ç®¡ç†å’Œæ‰€æœ‰é…ç½®æ§ä»¶ï¼ˆç‰ˆæœ¬å¯¹æ¯”ç­‰åœºæ™¯ï¼Œé…ç½®ç”±å¤–éƒ¨ä¼ å…¥ï¼Œä¸å…è®¸ç”¨æˆ·ä¿®æ”¹ï¼‰ã€‚
-        /// æ§ä»¶ä¿æŒæ˜¾ç¤ºï¼ˆåˆ—ç®¡ç†æŒ‰é’®ä»æ˜¾ç¤ºåˆ—æ•°é‡å’Œçº¢è‰²æç¤ºï¼ŒComboBox ä»æ˜¾ç¤ºå½“å‰å€¼ï¼‰ï¼Œä½†å…¨éƒ¨ç¦ç”¨äº¤äº’ã€‚</summary>
+        /// <summary>½ûÓÃÁĞ¹ÜÀíºÍËùÓĞÅäÖÃ¿Ø¼ş£¨°æ±¾¶Ô±ÈµÈ³¡¾°£¬ÅäÖÃÓÉÍâ²¿´«Èë£¬²»ÔÊĞíÓÃ»§ĞŞ¸Ä£©¡£
+        /// ¿Ø¼ş±£³ÖÏÔÊ¾£¨ÁĞ¹ÜÀí°´Å¥ÈÔÏÔÊ¾ÁĞÊıÁ¿ºÍºìÉ«ÌáÊ¾£¬ComboBox ÈÔÏÔÊ¾µ±Ç°Öµ£©£¬µ«È«²¿½ûÓÃ½»»¥¡£</summary>
         public void DisableColumnManagement()
         {
-            // ç¦ç”¨åˆ—ç®¡ç†æŒ‰é’®ï¼ˆä¿æŒæ˜¾ç¤º"åˆ—ç®¡ç†(x/y)"æ–‡æœ¬ï¼Œä½†ä¸å¯ç‚¹å‡»ï¼‰
-            _btnSelectColumns.Enabled = false;
-            // ç¦ç”¨ _flowTop ä¸­æ‰€æœ‰ ComboBoxï¼ˆå›ºå®šè¡Œ/è¡¨å¤´è¡Œ/æ˜ å°„è¡Œ/å”¯ä¸€åˆ—ï¼‰
+            _columnManagementDisabled = true;
+            // ¡ï ²»ÉèÖÃ _btnSelectColumns.Enabled = false£¬ÒòÎª WinForms ½ûÓÃ°´Å¥»áÓÃ»ÒÉ«»æÖÆÎÄ±¾£¬
+            //   ¸²¸ÇºìÉ« ForeColor¡£¸ÄÎªÓÃ±êÖ¾Î»ÔÚ Click ÊÂ¼şÖĞÀ¹½Ø£¬°´Å¥Íâ¹Û±£³ÖÕı³£¡£
+            // ½ûÓÃ _flowTop ÖĞËùÓĞ ComboBox£¨¹Ì¶¨ĞĞ/±íÍ·ĞĞ/Ó³ÉäĞĞ/Î¨Ò»ÁĞ£©
             if (_flowTop != null)
             {
                 foreach (Control c in _flowTop.Controls)
@@ -4871,28 +4874,28 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== è¡Œç¼–è¾‘æ¨¡å¼ ====================
+        // ==================== ĞĞ±à¼­Ä£Ê½ ====================
 
-        /// <summary>è¿›å…¥è¡Œç¼–è¾‘æ¨¡å¼</summary>
-        /// <param name="displayRowIndex">DataGridView æ˜¾ç¤ºè¡Œç´¢å¼•</param>
-        /// <param name="columnIndex">å¯é€‰ï¼šè¿›å…¥ç¼–è¾‘åå®šä½åˆ°çš„åˆ—ç´¢å¼•ï¼ˆ-1=é»˜è®¤ç¬¬ä¸€åˆ—ï¼‰</param>
+        /// <summary>½øÈëĞĞ±à¼­Ä£Ê½</summary>
+        /// <param name="displayRowIndex">DataGridView ÏÔÊ¾ĞĞË÷Òı</param>
+        /// <param name="columnIndex">¿ÉÑ¡£º½øÈë±à¼­ºó¶¨Î»µ½µÄÁĞË÷Òı£¨-1=Ä¬ÈÏµÚÒ»ÁĞ£©</param>
         private void EnterRowEditMode(int displayRowIndex, int columnIndex = -1)
         {
             if (_isEmbeddedMode) return;
             if (_isEditLocked) return;
             if (displayRowIndex < 0 || displayRowIndex >= _dataGrid.Rows.Count) return;
 
-            // å¦‚æœæ­£åœ¨ç¼–è¾‘åŒä¸€è¡Œï¼Œä¸é‡å¤è¿›å…¥
+            // Èç¹ûÕıÔÚ±à¼­Í¬Ò»ĞĞ£¬²»ÖØ¸´½øÈë
             if (_editingRowIndex == displayRowIndex) return;
 
-            // å¦‚æœæ­£åœ¨ç¼–è¾‘å¦ä¸€è¡Œï¼Œå…ˆé€€å‡º
+            // Èç¹ûÕıÔÚ±à¼­ÁíÒ»ĞĞ£¬ÏÈÍË³ö
             if (_editingRowIndex >= 0)
                 ExitRowEditMode(commit: true);
 
             _enteringEditMode = true;
             try
             {
-                // å¿«ç…§å½“å‰è¡Œæ‰€æœ‰å•å…ƒæ ¼å€¼
+                // ¿ìÕÕµ±Ç°ĞĞËùÓĞµ¥Ôª¸ñÖµ
                 var row = _dataGrid.Rows[displayRowIndex];
                 _editingRowOriginalValues = new string[row.Cells.Count];
                 for (int i = 0; i < row.Cells.Count; i++)
@@ -4900,11 +4903,11 @@ namespace wxd.files.winforms
 
                 _editingRowIndex = displayRowIndex;
 
-                // åªæ¸…é™¤å½“å‰è¡Œçš„å·²ä¿®æ”¹å•å…ƒæ ¼è®°å½•ï¼ˆä¸å½±å“å…¶ä»–è¡Œçš„æ ‡è®°ï¼‰
+                // Ö»Çå³ıµ±Ç°ĞĞµÄÒÑĞŞ¸Äµ¥Ôª¸ñ¼ÇÂ¼£¨²»Ó°ÏìÆäËûĞĞµÄ±ê¼Ç£©
                 if (_editingRowOrigIndex >= 0)
                     _modifiedCellsInEdit.Remove(_editingRowOrigIndex);
 
-                // è·å–åŸå§‹è¡Œç´¢å¼•ï¼ˆå¦‚æœ _editingRowOrigIndex å°šæœªè¢«å¤–éƒ¨è®¾ç½®ï¼‰
+                // »ñÈ¡Ô­Ê¼ĞĞË÷Òı£¨Èç¹û _editingRowOrigIndex ÉĞÎ´±»Íâ²¿ÉèÖÃ£©
                 if (_editingRowOrigIndex < 0)
                 {
                     if (row.Tag is TableRow tr)
@@ -4913,14 +4916,14 @@ namespace wxd.files.winforms
                         _editingRowOrigIndex = displayRowIndex + _frozenRows;
                 }
 
-                // ä¸´æ—¶è§£é™¤åªè¯» + åˆ‡æ¢ EditMode ä¸º EditProgrammatically é˜»æ­¢æ–¹å‘é”®å¯¼èˆª
+                // ÁÙÊ±½â³ıÖ»¶Á + ÇĞ»» EditMode Îª EditProgrammatically ×èÖ¹·½Ïò¼üµ¼º½
                 _dataGrid.ReadOnly = false;
                 _dataGrid.EditMode = DataGridViewEditMode.EditProgrammatically;
 
-                // åˆ·æ–°è¡Œé«˜äº®
+                // Ë¢ĞÂĞĞ¸ßÁÁ
                 _dataGrid.InvalidateRow(displayRowIndex);
 
-                // è‡ªåŠ¨å®šä½åˆ°æŒ‡å®šåˆ—æˆ–ç¬¬ä¸€ä¸ªå¯ç¼–è¾‘åˆ—å¹¶è¿›å…¥ç¼–è¾‘
+                // ×Ô¶¯¶¨Î»µ½Ö¸¶¨ÁĞ»òµÚÒ»¸ö¿É±à¼­ÁĞ²¢½øÈë±à¼­
                 if (_dataGrid.Columns.Count > 0)
                 {
                     int targetCol = columnIndex >= 0 && columnIndex < row.Cells.Count
@@ -4933,8 +4936,8 @@ namespace wxd.files.winforms
             finally { _enteringEditMode = false; }
         }
 
-        /// <summary>é€€å‡ºè¡Œç¼–è¾‘æ¨¡å¼ï¼ˆæäº¤ä¿®æ”¹ï¼‰</summary>
-        /// <param name="commit">true=æäº¤ä¿®æ”¹ä¿å­˜æ–‡ä»¶ï¼Œfalse=åªé€€å‡ºä¸ä¿å­˜</param>
+        /// <summary>ÍË³öĞĞ±à¼­Ä£Ê½£¨Ìá½»ĞŞ¸Ä£©</summary>
+        /// <param name="commit">true=Ìá½»ĞŞ¸Ä±£´æÎÄ¼ş£¬false=Ö»ÍË³ö²»±£´æ</param>
         private void ExitRowEditMode(bool commit)
         {
             if (_editingRowIndex < 0) return;
@@ -4944,7 +4947,7 @@ namespace wxd.files.winforms
             {
                 int editingRow = _editingRowIndex;
 
-                // å…ˆæ¸…é™¤çŠ¶æ€ï¼Œé¿å…äº‹ä»¶é‡å…¥
+                // ÏÈÇå³ı×´Ì¬£¬±ÜÃâÊÂ¼şÖØÈë
                 _editingRowIndex = -1;
                 var snapShot = _editingRowOriginalValues;
                 _editingRowOriginalValues = null;
@@ -4953,18 +4956,18 @@ namespace wxd.files.winforms
                 bool wasNewRow = _isNewRowForEdit;
                 _isNewRowForEdit = false;
 
-                // æ¢å¤åªè¯» + æ¢å¤ EditMode
+                // »Ö¸´Ö»¶Á + »Ö¸´ EditMode
                 _dataGrid.ReadOnly = true;
                 _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
 
-                // æš‚ä¸æ¸…ç† _modifiedCellsInEditï¼Œä¿å­˜æˆåŠŸåå†æ¸…ç†ï¼ˆä¿å­˜å¤±è´¥æ—¶ä¿ç•™çº¢è‰²æ ‡è®°ï¼‰
+                // Ôİ²»ÇåÀí _modifiedCellsInEdit£¬±£´æ³É¹¦ºóÔÙÇåÀí£¨±£´æÊ§°ÜÊ±±£ÁôºìÉ«±ê¼Ç£©
 
                 if (commit && editingRow >= 0 && editingRow < _dataGrid.Rows.Count && origIndex >= 0)
                 {
                     bool hasChanges = false;
                     var row = _dataGrid.Rows[editingRow];
 
-                    // å°† DataGridView ä¸­çš„ä¿®æ”¹å†™å› _dataTable
+                    // ½« DataGridView ÖĞµÄĞŞ¸ÄĞ´»Ø _dataTable
                     for (int col = 0; col < row.Cells.Count; col++)
                     {
                         var newValue = row.Cells[col].Value?.ToString() ?? "";
@@ -4973,7 +4976,7 @@ namespace wxd.files.winforms
                         if (newValue != oldValue)
                         {
                             hasChanges = true;
-                            // è®¡ç®—åŸå§‹åˆ—ç´¢å¼•
+                            // ¼ÆËãÔ­Ê¼ÁĞË÷Òı
                             int origCol = col;
                             if (_visibleColumnIndices.Count > 0 && col < _visibleColumnIndices.Count)
                                 origCol = _visibleColumnIndices[col];
@@ -4985,33 +4988,33 @@ namespace wxd.files.winforms
 
                     if (hasChanges || wasNewRow)
                     {
-                        // é‡å»º _fileData
+                        // ÖØ½¨ _fileData
                         _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-                        // é‡å»ºå…³è”ç¼“å­˜
+                        // ÖØ½¨¹ØÁª»º´æ
                         if (_columnLinks.Count > 0)
                             FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
-                        // ä¸€æ¬¡æ€§ä¿å­˜æ–‡ä»¶
+                        // Ò»´ÎĞÔ±£´æÎÄ¼ş
                         bool saved = SaveCurrentFile();
 
                         if (saved)
                         {
                             _unsavedRowIndices.Clear();
-                            // ä¿å­˜æˆåŠŸï¼Œæ¸…é™¤è¯¥è¡Œçš„å·²ä¿®æ”¹å•å…ƒæ ¼æ ‡è®°ï¼ˆä¸å½±å“å…¶ä»–è¡Œï¼‰
+                            // ±£´æ³É¹¦£¬Çå³ı¸ÃĞĞµÄÒÑĞŞ¸Äµ¥Ôª¸ñ±ê¼Ç£¨²»Ó°ÏìÆäËûĞĞ£©
                             _modifiedCellsInEdit.Remove(origIndex);
                         }
                         else
                         {
-                            // ä¿å­˜å¤±è´¥ï¼Œæ ‡è®°è¿™ä¸€è¡Œä¸ºæœªä¿å­˜ï¼ˆä¿ç•™ _modifiedCellsInEdit ä¸­çš„çº¢è‰²æ ‡è®°ï¼‰
+                            // ±£´æÊ§°Ü£¬±ê¼ÇÕâÒ»ĞĞÎªÎ´±£´æ£¨±£Áô _modifiedCellsInEdit ÖĞµÄºìÉ«±ê¼Ç£©
                             _hasUnsavedChanges = true;
                             _unsavedRowIndices.Add(origIndex);
                         }
 
-                        // åˆ·æ–°æ˜¾ç¤ºï¼ˆé‡å»º Grid ä»¥åæ˜  _dataTable çš„å˜æ›´ï¼‰
+                        // Ë¢ĞÂÏÔÊ¾£¨ÖØ½¨ Grid ÒÔ·´Ó³ _dataTable µÄ±ä¸ü£©
                         RefreshGridLayout();
 
-                        // å¦‚æœä¿å­˜å¤±è´¥ï¼Œåˆ·æ–°åéœ€è¦æ¢å¤çŠ¶æ€æ æç¤ºï¼ˆRefreshGridLayout ä¼šæ¸…ç©º _lblInfo.Textï¼‰
+                        // Èç¹û±£´æÊ§°Ü£¬Ë¢ĞÂºóĞèÒª»Ö¸´×´Ì¬À¸ÌáÊ¾£¨RefreshGridLayout »áÇå¿Õ _lblInfo.Text£©
                         if (!saved && _unsavedRowIndices.Count > 0)
                         {
                             ShowDirtyIndicator();
@@ -5019,13 +5022,13 @@ namespace wxd.files.winforms
                     }
                     else
                     {
-                        // æ²¡æœ‰å®é™…ä¿®æ”¹ï¼Œåªéœ€åˆ·æ–°ç¼–è¾‘è¡Œçš„é«˜äº®
+                        // Ã»ÓĞÊµ¼ÊĞŞ¸Ä£¬Ö»ĞèË¢ĞÂ±à¼­ĞĞµÄ¸ßÁÁ
                         _dataGrid.InvalidateRow(editingRow);
                     }
                 }
                 else
                 {
-                    // ä¸æäº¤ï¼Œåˆ·æ–°ç¼–è¾‘è¡Œçš„é«˜äº®
+                    // ²»Ìá½»£¬Ë¢ĞÂ±à¼­ĞĞµÄ¸ßÁÁ
                     if (editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
                         _dataGrid.InvalidateRow(editingRow);
                 }
@@ -5033,7 +5036,7 @@ namespace wxd.files.winforms
             finally { _enteringEditMode = false; }
         }
 
-        /// <summary>å–æ¶ˆè¡Œç¼–è¾‘æ¨¡å¼ï¼ˆEscï¼Œæ¢å¤åŸå§‹å€¼ï¼‰</summary>
+        /// <summary>È¡ÏûĞĞ±à¼­Ä£Ê½£¨Esc£¬»Ö¸´Ô­Ê¼Öµ£©</summary>
         private void CancelRowEditMode()
         {
             if (_editingRowIndex < 0) return;
@@ -5050,30 +5053,30 @@ namespace wxd.files.winforms
                 _editingRowOrigIndex = -1;
                 _isNewRowForEdit = false;
 
-                // æ¢å¤åªè¯» + æ¢å¤ EditMode
+                // »Ö¸´Ö»¶Á + »Ö¸´ EditMode
                 _dataGrid.ReadOnly = true;
                 _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
 
-                // åªæ¸…é™¤å½“å‰è¡Œçš„å·²ä¿®æ”¹å•å…ƒæ ¼è®°å½•ï¼ˆå–æ¶ˆç¼–è¾‘æ—¶è¯¥è¡Œçš„ä¿®æ”¹è¢«æ’¤é”€ï¼‰
+                // Ö»Çå³ıµ±Ç°ĞĞµÄÒÑĞŞ¸Äµ¥Ôª¸ñ¼ÇÂ¼£¨È¡Ïû±à¼­Ê±¸ÃĞĞµÄĞŞ¸Ä±»³·Ïú£©
                 if (origIndex >= 0)
                     _modifiedCellsInEdit.Remove(origIndex);
 
-                // å…ˆç»“æŸå½“å‰å•å…ƒæ ¼ç¼–è¾‘
+                // ÏÈ½áÊøµ±Ç°µ¥Ôª¸ñ±à¼­
                 if (_dataGrid.IsCurrentCellInEditMode)
                 {
-                    // ä¸æäº¤ï¼Œç›´æ¥å–æ¶ˆç¼–è¾‘
+                    // ²»Ìá½»£¬Ö±½ÓÈ¡Ïû±à¼­
                     _dataGrid.CancelEdit();
                 }
 
                 if (wasNewRow && origIndex >= 0 && origIndex < _dataTable.Rows.Count)
                 {
-                    // æ–°å¢è¡Œï¼šåˆ é™¤è¯¥è¡Œ
+                    // ĞÂÔöĞĞ£ºÉ¾³ı¸ÃĞĞ
                     _dataTable.Rows.RemoveAt(origIndex);
 
-                    // é‡å»º _fileData
+                    // ÖØ½¨ _fileData
                     _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-                    // é‡å»ºå…³è”ç¼“å­˜
+                    // ÖØ½¨¹ØÁª»º´æ
                     if (_columnLinks.Count > 0)
                         FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
@@ -5081,21 +5084,21 @@ namespace wxd.files.winforms
                 }
                 else if (snapShot != null && editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
                 {
-                    // æ¢å¤åŸå§‹å€¼åˆ° DataGridView
+                    // »Ö¸´Ô­Ê¼Öµµ½ DataGridView
                     var row = _dataGrid.Rows[editingRow];
                     for (int i = 0; i < Math.Min(snapShot.Length, row.Cells.Count); i++)
                         row.Cells[i].Value = snapShot[i];
 
-                    // åˆ·æ–°ç¼–è¾‘è¡Œçš„é«˜äº®
+                    // Ë¢ĞÂ±à¼­ĞĞµÄ¸ßÁÁ
                     _dataGrid.InvalidateRow(editingRow);
                 }
             }
             finally { _enteringEditMode = false; }
         }
 
-        // ==================== è¡Œæ“ä½œ ====================
+        // ==================== ĞĞ²Ù×÷ ====================
 
-        /// <summary>ä» DataGridView æ˜¾ç¤ºè¡Œç´¢å¼•è·å–åŸå§‹ DataTable è¡Œç´¢å¼•</summary>
+        /// <summary>´Ó DataGridView ÏÔÊ¾ĞĞË÷Òı»ñÈ¡Ô­Ê¼ DataTable ĞĞË÷Òı</summary>
         private int GetOriginalRowIndexFromDisplay(int displayRowIndex)
         {
             if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
@@ -5103,69 +5106,69 @@ namespace wxd.files.winforms
                 if (_dataGrid.Rows[displayRowIndex].Tag is TableRow tr)
                     return tr.OriginalRowIndex;
             }
-            // å›é€€ï¼šæ— å†»ç»“è¡Œæ—¶ displayRowIndex å³åŸå§‹è¡Œç´¢å¼•
+            // »ØÍË£ºÎŞ¶³½áĞĞÊ± displayRowIndex ¼´Ô­Ê¼ĞĞË÷Òı
             return displayRowIndex;
         }
 
-        /// <summary>åœ¨æŒ‡å®šä½ç½®ä¹‹åæ’å…¥ç©ºè¡Œ</summary>
-        /// <param name="afterOriginalRowIndex">åœ¨æ­¤åŸå§‹è¡Œç´¢å¼•ä¹‹åæ’å…¥ï¼ˆ-1=æœ€å‰é¢æ’å…¥ï¼Œ>=Rows.Count=æœ«å°¾è¿½åŠ ï¼‰</param>
+        /// <summary>ÔÚÖ¸¶¨Î»ÖÃÖ®ºó²åÈë¿ÕĞĞ</summary>
+        /// <param name="afterOriginalRowIndex">ÔÚ´ËÔ­Ê¼ĞĞË÷ÒıÖ®ºó²åÈë£¨-1=×îÇ°Ãæ²åÈë£¬>=Rows.Count=Ä©Î²×·¼Ó£©</param>
         private void InsertRowAt(int afterOriginalRowIndex)
         {
             if (_isEmbeddedMode)
             {
-                AlertForm.Show(this, "å½“å‰çŠ¶æ€ä¸æ”¯æŒæ’å…¥è¡Œ", "æç¤º", AlertType.Information);
+                AlertForm.Show(this, "µ±Ç°×´Ì¬²»Ö§³Ö²åÈëĞĞ", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
-            // å¦‚æœæœ‰æ’åºï¼Œå…ˆå–æ¶ˆæ’åº
+            // Èç¹ûÓĞÅÅĞò£¬ÏÈÈ¡ÏûÅÅĞò
             if (_sortColumnIndex >= 0)
             {
                 var result = AlertForm.Show(this,
-                    "å½“å‰å¤„äºæ’åºçŠ¶æ€ï¼Œæ’å…¥è¡Œå‰éœ€è¦å…ˆå–æ¶ˆæ’åºã€‚æ˜¯å¦ç»§ç»­ï¼Ÿ",
-                    "æç¤º", AlertType.Warning);
+                    "µ±Ç°´¦ÓÚÅÅĞò×´Ì¬£¬²åÈëĞĞÇ°ĞèÒªÏÈÈ¡ÏûÅÅĞò¡£ÊÇ·ñ¼ÌĞø£¿",
+                    "ÌáÊ¾", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
                 _sortColumnIndex = -1;
                 _sortOrder = SortOrder.None;
             }
 
-            // ä¿å­˜æ»šåŠ¨ä½ç½®
+            // ±£´æ¹ö¶¯Î»ÖÃ
             int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
             int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
             int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
 
-            // åˆ›å»ºæ–°è¡Œï¼Œæ‰€æœ‰åˆ—åˆå§‹åŒ–ä¸ºç©ºå­—ç¬¦ä¸²
+            // ´´½¨ĞÂĞĞ£¬ËùÓĞÁĞ³õÊ¼»¯Îª¿Õ×Ö·û´®
             var newRow = _dataTable.NewRow();
             for (int i = 0; i < _dataTable.Columns.Count; i++)
                 newRow[i] = "";
 
-            // æ’å…¥åˆ° _dataTable
+            // ²åÈëµ½ _dataTable
             if (afterOriginalRowIndex >= 0 && afterOriginalRowIndex < _dataTable.Rows.Count - 1)
                 _dataTable.Rows.InsertAt(newRow, afterOriginalRowIndex + 1);
             else if (afterOriginalRowIndex < 0)
-                _dataTable.Rows.InsertAt(newRow, 0);  // æœ€å‰é¢æ’å…¥
+                _dataTable.Rows.InsertAt(newRow, 0);  // ×îÇ°Ãæ²åÈë
             else
-                _dataTable.Rows.Add(newRow);  // æœ«å°¾è¿½åŠ 
+                _dataTable.Rows.Add(newRow);  // Ä©Î²×·¼Ó
 
-            // é‡å»º _fileData
+            // ÖØ½¨ _fileData
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-            // é‡å»ºå…³è”ç¼“å­˜
+            // ÖØ½¨¹ØÁª»º´æ
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
-            // åˆ·æ–°æ˜¾ç¤º
+            // Ë¢ĞÂÏÔÊ¾
             RefreshGridLayout();
 
-            // æ¢å¤æ»šåŠ¨ä½ç½®
+            // »Ö¸´¹ö¶¯Î»ÖÃ
             if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
                 _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
             if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
                 _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
 
-            // ä¸å†å³æ—¶ä¿å­˜ï¼Œç­‰è¡Œç¼–è¾‘æ¨¡å¼é€€å‡ºåç»Ÿä¸€ä¿å­˜
+            // ²»ÔÙ¼´Ê±±£´æ£¬µÈĞĞ±à¼­Ä£Ê½ÍË³öºóÍ³Ò»±£´æ
 
-            // ==================== è‡ªåŠ¨è¿›å…¥è¡Œç¼–è¾‘æ¨¡å¼ ====================
-            // æ‰¾åˆ°æ–°æ’å…¥è¡Œåœ¨æ˜¾ç¤ºè¡¨æ ¼ä¸­çš„ä½ç½®
+            // ==================== ×Ô¶¯½øÈëĞĞ±à¼­Ä£Ê½ ====================
+            // ÕÒµ½ĞÂ²åÈëĞĞÔÚÏÔÊ¾±í¸ñÖĞµÄÎ»ÖÃ
             int newOrigIndex;
             if (afterOriginalRowIndex >= 0 && afterOriginalRowIndex < _dataTable.Rows.Count - 2)
                 newOrigIndex = afterOriginalRowIndex + 1;
@@ -5174,7 +5177,7 @@ namespace wxd.files.winforms
             else
                 newOrigIndex = _dataTable.Rows.Count - 1;
 
-            // åœ¨ _dataGrid ä¸­å®šä½åˆ°æ–°è¡Œ
+            // ÔÚ _dataGrid ÖĞ¶¨Î»µ½ĞÂĞĞ
             int displayRow = -1;
             for (int i = 0; i < _dataGrid.Rows.Count; i++)
             {
@@ -5188,63 +5191,63 @@ namespace wxd.files.winforms
             EnterRowEditMode(displayRow);
         }
 
-        /// <summary>å¤åˆ¶æŒ‡å®šè¡Œå¹¶æ’å…¥åˆ°å…¶ä¸‹æ–¹</summary>
+        /// <summary>¸´ÖÆÖ¸¶¨ĞĞ²¢²åÈëµ½ÆäÏÂ·½</summary>
         private void DuplicateRowAt(int originalRowIndex)
         {
             if (_isEmbeddedMode)
             {
-                AlertForm.Show(this, "å½“å‰çŠ¶æ€ä¸æ”¯æŒå¤åˆ¶è¡Œ", "æç¤º", AlertType.Information);
+                AlertForm.Show(this, "µ±Ç°×´Ì¬²»Ö§³Ö¸´ÖÆĞĞ", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
             if (originalRowIndex < 0 || originalRowIndex >= _dataTable.Rows.Count)
                 return;
 
-            // å¦‚æœæœ‰æ’åºï¼Œå…ˆå–æ¶ˆæ’åº
+            // Èç¹ûÓĞÅÅĞò£¬ÏÈÈ¡ÏûÅÅĞò
             if (_sortColumnIndex >= 0)
             {
                 var result = AlertForm.Show(this,
-                    "å½“å‰å¤„äºæ’åºçŠ¶æ€ï¼Œå¤åˆ¶è¡Œå‰éœ€è¦å…ˆå–æ¶ˆæ’åºã€‚æ˜¯å¦ç»§ç»­ï¼Ÿ",
-                    "æç¤º", AlertType.Warning);
+                    "µ±Ç°´¦ÓÚÅÅĞò×´Ì¬£¬¸´ÖÆĞĞÇ°ĞèÒªÏÈÈ¡ÏûÅÅĞò¡£ÊÇ·ñ¼ÌĞø£¿",
+                    "ÌáÊ¾", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
                 _sortColumnIndex = -1;
                 _sortOrder = SortOrder.None;
             }
 
-            // ä¿å­˜æ»šåŠ¨ä½ç½®
+            // ±£´æ¹ö¶¯Î»ÖÃ
             int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
             int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
             int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
 
-            // å¤åˆ¶æºè¡Œæ•°æ®
+            // ¸´ÖÆÔ´ĞĞÊı¾İ
             var newRow = _dataTable.NewRow();
             var sourceRow = _dataTable.Rows[originalRowIndex];
             for (int i = 0; i < _dataTable.Columns.Count; i++)
                 newRow[i] = sourceRow[i];
 
-            // æ’å…¥åˆ°æºè¡Œä¸‹æ–¹
+            // ²åÈëµ½Ô´ĞĞÏÂ·½
             _dataTable.Rows.InsertAt(newRow, originalRowIndex + 1);
 
-            // é‡å»º _fileData
+            // ÖØ½¨ _fileData
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-            // é‡å»ºå…³è”ç¼“å­˜
+            // ÖØ½¨¹ØÁª»º´æ
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
-            // åˆ·æ–°æ˜¾ç¤º
+            // Ë¢ĞÂÏÔÊ¾
             RefreshGridLayout();
 
-            // æ¢å¤æ»šåŠ¨ä½ç½®
+            // »Ö¸´¹ö¶¯Î»ÖÃ
             if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
                 _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
             if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
                 _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
 
-            // ä¸å†å³æ—¶ä¿å­˜ï¼Œç­‰è¡Œç¼–è¾‘æ¨¡å¼é€€å‡ºåç»Ÿä¸€ä¿å­˜
+            // ²»ÔÙ¼´Ê±±£´æ£¬µÈĞĞ±à¼­Ä£Ê½ÍË³öºóÍ³Ò»±£´æ
 
-            // ==================== è‡ªåŠ¨è¿›å…¥è¡Œç¼–è¾‘æ¨¡å¼ ====================
-            // æ‰¾åˆ°æ–°å¤åˆ¶è¡Œåœ¨æ˜¾ç¤ºè¡¨æ ¼ä¸­çš„ä½ç½®
+            // ==================== ×Ô¶¯½øÈëĞĞ±à¼­Ä£Ê½ ====================
+            // ÕÒµ½ĞÂ¸´ÖÆĞĞÔÚÏÔÊ¾±í¸ñÖĞµÄÎ»ÖÃ
             int dupOrigIndex = originalRowIndex + 1;
             int dupDisplayRow = -1;
             for (int i = 0; i < _dataGrid.Rows.Count; i++)
@@ -5254,80 +5257,80 @@ namespace wxd.files.winforms
             }
             if (dupDisplayRow < 0) dupDisplayRow = 0;
 
-            _isNewRowForEdit = false;  // å¤åˆ¶è¡Œä¸æ˜¯æ–°å¢è¡Œï¼ŒEscä¸åˆ é™¤
+            _isNewRowForEdit = false;  // ¸´ÖÆĞĞ²»ÊÇĞÂÔöĞĞ£¬Esc²»É¾³ı
             _editingRowOrigIndex = dupOrigIndex;
             EnterRowEditMode(dupDisplayRow);
         }
 
-        /// <summary>åˆ é™¤æŒ‡å®šè¡Œ</summary>
+        /// <summary>É¾³ıÖ¸¶¨ĞĞ</summary>
         private void DeleteRowAt(int originalRowIndex)
         {
             if (_isEmbeddedMode)
             {
-                AlertForm.Show(this, "å½“å‰çŠ¶æ€ä¸æ”¯æŒåˆ é™¤è¡Œ", "æç¤º", AlertType.Information);
+                AlertForm.Show(this, "µ±Ç°×´Ì¬²»Ö§³ÖÉ¾³ıĞĞ", "ÌáÊ¾", AlertType.Information);
                 return;
             }
 
             if (originalRowIndex < 0 || originalRowIndex >= _dataTable.Rows.Count)
                 return;
 
-            // ==================== è¡Œç¼–è¾‘æ¨¡å¼ï¼šä¸å…è®¸åˆ é™¤æ­£åœ¨ç¼–è¾‘çš„è¡Œ ====================
+            // ==================== ĞĞ±à¼­Ä£Ê½£º²»ÔÊĞíÉ¾³ıÕıÔÚ±à¼­µÄĞĞ ====================
             if (_editingRowIndex >= 0 && _editingRowOrigIndex == originalRowIndex)
             {
-                AlertForm.Show(this, "è¯·å…ˆå®Œæˆæˆ–å–æ¶ˆå½“å‰è¡Œçš„ç¼–è¾‘å†åˆ é™¤ã€‚",
-                    "æç¤º", AlertType.Warning);
+                AlertForm.Show(this, "ÇëÏÈÍê³É»òÈ¡Ïûµ±Ç°ĞĞµÄ±à¼­ÔÙÉ¾³ı¡£",
+                    "ÌáÊ¾", AlertType.Warning);
                 return;
             }
 
-            // å†»ç»“è¡Œä¸å…è®¸åˆ é™¤
+            // ¶³½áĞĞ²»ÔÊĞíÉ¾³ı
             if (originalRowIndex < _frozenRows)
             {
-                AlertForm.Show(this, "å†»ç»“è¡Œä¸å…è®¸åˆ é™¤ã€‚è¯·å…ˆè°ƒæ•´å†»ç»“è¡Œè®¾ç½®ã€‚",
-                    "æç¤º", AlertType.Warning);
+                AlertForm.Show(this, "¶³½áĞĞ²»ÔÊĞíÉ¾³ı¡£ÇëÏÈµ÷Õû¶³½áĞĞÉèÖÃ¡£",
+                    "ÌáÊ¾", AlertType.Warning);
                 return;
             }
 
             var result = AlertForm.ShowConfirm(this,
-                $"ç¡®è®¤åˆ é™¤ç¬¬ {originalRowIndex + 1} è¡Œï¼Ÿæ­¤æ“ä½œä¸å¯æ’¤é”€ã€‚",
-                "ç¡®è®¤åˆ é™¤", AlertType.Warning);
+                $"È·ÈÏÉ¾³ıµÚ {originalRowIndex + 1} ĞĞ£¿´Ë²Ù×÷²»¿É³·Ïú¡£",
+                "È·ÈÏÉ¾³ı", AlertType.Warning);
             if (result != DialogResult.Yes) return;
 
-            // å–æ¶ˆæ’åº
+            // È¡ÏûÅÅĞò
             if (_sortColumnIndex >= 0)
             {
                 _sortColumnIndex = -1;
                 _sortOrder = SortOrder.None;
             }
 
-            // ä¿å­˜æ»šåŠ¨ä½ç½®
+            // ±£´æ¹ö¶¯Î»ÖÃ
             int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
             int selectedRow = _dataGrid.CurrentRow?.Index ?? -1;
             int selectedCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
 
             _dataTable.Rows.RemoveAt(originalRowIndex);
 
-            // é‡å»º _fileData
+            // ÖØ½¨ _fileData
             _fileData = BuildFileData(_dataTable, inheritFrom: null);
 
-            // é‡å»ºå…³è”ç¼“å­˜
+            // ÖØ½¨¹ØÁª»º´æ
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
-            // åˆ·æ–°æ˜¾ç¤º
+            // Ë¢ĞÂÏÔÊ¾
             RefreshGridLayout();
 
-            // æ¢å¤æ»šåŠ¨ä½ç½®
+            // »Ö¸´¹ö¶¯Î»ÖÃ
             if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
                 _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
             if (selectedRow >= 0 && selectedRow < _dataGrid.Rows.Count && selectedCol >= 0)
                 _dataGrid.CurrentCell = _dataGrid.Rows[selectedRow].Cells[selectedCol];
 
-            // å³æ—¶ä¿å­˜
+            // ¼´Ê±±£´æ
             SaveCurrentFile();
         }
 
-        /// <summary>ç»Ÿä¸€ä¿å­˜ï¼ˆæ ¹æ®æ–‡ä»¶ç±»å‹è°ƒç”¨ CSV æˆ– Excel ä¿å­˜ï¼‰</summary>
-        /// <returns>true=ä¿å­˜æˆåŠŸ, false=ä¿å­˜å¤±è´¥</returns>
+        /// <summary>Í³Ò»±£´æ£¨¸ù¾İÎÄ¼şÀàĞÍµ÷ÓÃ CSV »ò Excel ±£´æ£©</summary>
+        /// <returns>true=±£´æ³É¹¦, false=±£´æÊ§°Ü</returns>
         private bool SaveCurrentFile()
         {
             if (_fileType == TableFileType.Csv)
@@ -5336,9 +5339,9 @@ namespace wxd.files.winforms
                 return SaveExcelFile();
         }
 
-        // ==================== é˜²æŠ–ä¿å­˜ ====================
+        // ==================== ·À¶¶±£´æ ====================
 
-        /// <summary>æ ‡è®°è„æ•°æ®å¹¶å¯åŠ¨é˜²æŠ–å®šæ—¶å™¨</summary>
+        /// <summary>±ê¼ÇÔàÊı¾İ²¢Æô¶¯·À¶¶¶¨Ê±Æ÷</summary>
         private void MarkDirtyAndStartSaveTimer()
         {
             _hasUnsavedChanges = true;
@@ -5347,7 +5350,7 @@ namespace wxd.files.winforms
             ShowDirtyIndicator();
         }
 
-        /// <summary>å°è¯•å†™ç£ç›˜</summary>
+        /// <summary>³¢ÊÔĞ´´ÅÅÌ</summary>
         private void TryFlushToDisk()
         {
             if (!_hasUnsavedChanges) return;
@@ -5367,7 +5370,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>å…³é—­å‰å¼ºåˆ¶ä¿å­˜ï¼ˆä¾›å¤–éƒ¨ CsvReaderForm ç­‰è°ƒç”¨ï¼‰</summary>
+        /// <summary>¹Ø±ÕÇ°Ç¿ÖÆ±£´æ£¨¹©Íâ²¿ CsvReaderForm µÈµ÷ÓÃ£©</summary>
         public bool ForceFlushBeforeClose()
         {
             _retrySaveTimer?.Stop();
@@ -5376,10 +5379,10 @@ namespace wxd.files.winforms
             TryFlushToDisk();
             if (!_hasUnsavedChanges) return true;
 
-            // ä»å¤±è´¥ â†’ å¼¹çª—è®©ç”¨æˆ·å†³å®š
+            // ÈÔÊ§°Ü ¡ú µ¯´°ÈÃÓÃ»§¾ö¶¨
             var result = AlertForm.Show(null,
-                $"æ–‡ä»¶è¢«å ç”¨æ— æ³•ä¿å­˜ï¼Œ{_unsavedRowIndices.Count} è¡Œä¿®æ”¹ä»…ä¿ç•™åœ¨å†…å­˜ä¸­ã€‚" + GlobalConst.NewLine + "å…³é—­åä¿®æ”¹å°†ä¸¢å¤±ï¼Œæ˜¯å¦ç»§ç»­ï¼Ÿ",
-                "ä¿å­˜å¤±è´¥", AlertType.Warning);
+                $"ÎÄ¼ş±»Õ¼ÓÃÎŞ·¨±£´æ£¬{_unsavedRowIndices.Count} ĞĞĞŞ¸Ä½ö±£ÁôÔÚÄÚ´æÖĞ¡£" + GlobalConst.NewLine + "¹Ø±ÕºóĞŞ¸Ä½«¶ªÊ§£¬ÊÇ·ñ¼ÌĞø£¿",
+                "±£´æÊ§°Ü", AlertType.Warning);
             return result == DialogResult.Yes;
         }
 
@@ -5387,7 +5390,7 @@ namespace wxd.files.winforms
         {
             if (_lblInfo.IsHandleCreated)
             {
-                _lblInfo.Text = $"âš  æ–‡ä»¶è¢«å ç”¨ï¼Œ{_unsavedRowIndices.Count} è¡Œä¿®æ”¹æœªä¿å­˜ï¼ˆç­‰å¾…é‡è¯•...ï¼‰";
+                _lblInfo.Text = $"? ÎÄ¼ş±»Õ¼ÓÃ£¬{_unsavedRowIndices.Count} ĞĞĞŞ¸ÄÎ´±£´æ£¨µÈ´ıÖØÊÔ...£©";
                 _lblInfo.ForeColor = Color.FromArgb(200, 130, 30);
             }
         }
@@ -5401,8 +5404,8 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>ç¼–è¾‘æ¨¡å¼ä¸‹é˜»æ­¢å·¦å³æ–¹å‘é”®åœ¨æ–‡æœ¬è¾¹ç•Œæ—¶è·³æ ¼</summary>
-        /// <summary>åœ¨ ProcessDialogKey ä¹‹å‰æ‹¦æˆªæ–¹å‘é”®ï¼Œé˜»æ­¢ DataGridView å¯¼èˆª</summary>
+        /// <summary>±à¼­Ä£Ê½ÏÂ×èÖ¹×óÓÒ·½Ïò¼üÔÚÎÄ±¾±ß½çÊ±Ìø¸ñ</summary>
+        /// <summary>ÔÚ ProcessDialogKey Ö®Ç°À¹½Ø·½Ïò¼ü£¬×èÖ¹ DataGridView µ¼º½</summary>
         private void OnEditTextBoxPreviewKeyDown(object? sender, PreviewKeyDownEventArgs e)
         {
             if (_editingRowIndex >= 0)
@@ -5410,24 +5413,24 @@ namespace wxd.files.winforms
                 if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Right
                     || e.KeyCode == Keys.Up || e.KeyCode == Keys.Down)
                 {
-                    e.IsInputKey = true; // å‘Šè¯‰ DataGridViewï¼šè¿™ä¸ªé”®ç”±ç¼–è¾‘æ§ä»¶è‡ªå·±å¤„ç†
+                    e.IsInputKey = true; // ¸æËß DataGridView£ºÕâ¸ö¼üÓÉ±à¼­¿Ø¼ş×Ô¼º´¦Àí
                 }
             }
         }
 
-        /// <summary>ç¼–è¾‘æ¨¡å¼ä¸‹é˜»æ­¢æ–¹å‘é”®è·³æ ¼</summary>
+        /// <summary>±à¼­Ä£Ê½ÏÂ×èÖ¹·½Ïò¼üÌø¸ñ</summary>
         private void OnEditTextBoxKeyDown(object? sender, KeyEventArgs e)
         {
             if (sender is not TextBox tb) return;
 
-            // ä¸Šä¸‹å·¦å³æ–¹å‘é”®ä¸€å¾‹é˜»æ­¢ï¼Œé˜²æ­¢è·³æ ¼
+            // ÉÏÏÂ×óÓÒ·½Ïò¼üÒ»ÂÉ×èÖ¹£¬·ÀÖ¹Ìø¸ñ
             if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Right
                 || e.KeyCode == Keys.Up || e.KeyCode == Keys.Down)
             {
                 e.Handled = true;
                 e.SuppressKeyPress = true;
 
-                // å·¦å³é”®ï¼šåœ¨ TextBox å†…æ¨¡æ‹Ÿå…‰æ ‡ç§»åŠ¨ï¼ˆä¸Š/ä¸‹é”®ä¸æ¨¡æ‹Ÿï¼Œä¿æŒåŸåœ°ï¼‰
+                // ×óÓÒ¼ü£ºÔÚ TextBox ÄÚÄ£Äâ¹â±êÒÆ¶¯£¨ÉÏ/ÏÂ¼ü²»Ä£Äâ£¬±£³ÖÔ­µØ£©
                 if (e.KeyCode == Keys.Left && tb.SelectionStart > 0)
                     tb.Select(tb.SelectionStart - 1, 0);
                 else if (e.KeyCode == Keys.Right && tb.SelectionStart < tb.Text.Length)
