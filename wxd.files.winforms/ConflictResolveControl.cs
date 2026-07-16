@@ -452,7 +452,7 @@ namespace wxd.files.winforms
 
             int maxCols = Math.Max(_remoteData.Columns.Count, _localData.Columns.Count);
             _useIdAlign = DetectIdColumn();
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
 
             await Task.Run(() =>
             {
@@ -587,7 +587,7 @@ namespace wxd.files.winforms
         /// </summary>
         private (FileTableData remoteAligned, FileTableData localAligned) BuildAlignedTables()
         {
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
             int idCol = _idColumnIndex;
 
             // ★ 从 DataTable 构建临时 FileTableData（行索引 = OriginalRowIndex）
@@ -1516,7 +1516,7 @@ namespace wxd.files.winforms
         private void SelectAllRemoteRows()
         {
             _selectedRemoteRows.Clear();
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
             foreach (int r in _remoteDiffRows)
             {
                 if (r >= dataStartRow)
@@ -1531,7 +1531,7 @@ namespace wxd.files.winforms
         private void SelectAllLocalRows()
         {
             _selectedLocalRows.Clear();
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
             foreach (int r in _localDiffRows)
             {
                 if (r >= dataStartRow)
@@ -1616,7 +1616,7 @@ namespace wxd.files.winforms
             {
                 try
                 {
-                    int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+                    int dataStartRow = _frozenRows;
                     if (dataStartRow > 0 && dataStartRow < _mergedTable.Rows.Count)
                     {
                         var fixedRows = _mergedTable.AsEnumerable().Take(dataStartRow).ToList();

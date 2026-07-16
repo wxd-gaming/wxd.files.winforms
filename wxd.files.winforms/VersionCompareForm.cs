@@ -1075,7 +1075,7 @@ namespace wxd.files.winforms
             if (leftData == null || rightData == null) return;
 
             bool useIdAlign = DetectIdColumn();
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
             int maxCols = Math.Max(leftData.Columns.Count, rightData.Columns.Count);
 
             await Task.Run(() =>
@@ -1225,7 +1225,7 @@ namespace wxd.files.winforms
             FileTableData leftFd, FileTableData rightFd,
             DataTable leftData, DataTable rightData)
         {
-            int dataStartRow = _headerRowIndex >= 0 ? _headerRowIndex + 1 : _frozenRows;
+            int dataStartRow = _frozenRows;
             int idCol = _idColumnIndex;
 
             // 构建 ID → FileTableData 行索引 的映射

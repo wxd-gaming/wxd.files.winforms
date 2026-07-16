@@ -21,6 +21,7 @@ namespace wxd.files.winforms
         private DataGridView _dataGridHeader = new();
         private DataGridView _dataGrid = new();
         private SplitContainer _pnlGridContainer = new();
+        private Panel? _headerPanel;  // 固定行区域容器引用，避免每次 AttachGridToParent 创建新 Panel 导致空 Panel 堆积遮挡
         private Button _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
@@ -956,6 +957,7 @@ namespace wxd.files.winforms
             };
             headerPanel.Controls.Add(_dataGridHeader);
             splitContainer.Panel1.Controls.Add(headerPanel);
+            _headerPanel = headerPanel;
             splitContainer.Panel2.Controls.Add(_dataGrid);
             splitContainer.Panel1Collapsed = true;
             _pnlGridContainer = splitContainer;
@@ -4605,13 +4607,26 @@ namespace wxd.files.winforms
                 _pnlGridContainer.Panel2.Controls.Add(_dataGrid);
             if (!_pnlGridContainer.Panel1Collapsed && _dataGridHeader.Parent == null)
             {
-                var headerPanel = new Panel
+                // 复用已有的 _headerPanel，避免每次创建新 Panel 导致空 Panel 堆积遮挡 _dataGridHeader
+                if (_headerPanel != null)
                 {
-                    Dock = DockStyle.Fill,
-                    Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0)
-                };
-                headerPanel.Controls.Add(_dataGridHeader);
-                _pnlGridContainer.Panel1.Controls.Add(headerPanel);
+                    // 确保旧 Panel 仍在 Panel1 中（DetachGridFromParent 只移除 _dataGridHeader，不移除 _headerPanel）
+                    if (!_pnlGridContainer.Panel1.Controls.Contains(_headerPanel))
+                        _pnlGridContainer.Panel1.Controls.Add(_headerPanel);
+                    _headerPanel.Controls.Add(_dataGridHeader);
+                }
+                else
+                {
+                    // 首次创建（理论上不会走到这里，初始化时已创建）
+                    var headerPanel = new Panel
+                    {
+                        Dock = DockStyle.Fill,
+                        Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0)
+                    };
+                    headerPanel.Controls.Add(_dataGridHeader);
+                    _pnlGridContainer.Panel1.Controls.Add(headerPanel);
+                    _headerPanel = headerPanel;
+                }
             }
         }
 
