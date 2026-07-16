@@ -62,6 +62,8 @@ namespace wxd.files.winforms
         private Button? _btnHistory;
         private ComboBox? _cboUniqueColumn;
         private bool[]? _externalColumnStates = null;
+        private int? _externalTotalColumns = null;    // 外部注入的完整列数（不含序号列）
+        private int? _externalVisibleColumns = null;   // 外部注入的可见列数（不含序号列）
         private bool _isEmbeddedMode; // 是否为外部嵌入模式（版本对比等），禁止编辑
         private bool _isEditLocked = false; // Excel默认锁定编辑，CSV默认解锁
         private ContextMenuMode _contextMenuMode = ContextMenuMode.Normal; // 右键菜单模式
@@ -2404,11 +2406,22 @@ namespace wxd.files.winforms
         private void UpdateColumnSelectorButton()
         {
             if (_dataTable.Columns.Count == 0) return;
-            int checkedCount = 0;
-            for (int i = 0; i < _columnCheckStates.Length; i++)
-                if (_columnCheckStates[i]) checkedCount++;
-            int dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
-            int checkedData = Math.Max(0, checkedCount - 1);
+            int dataColumns, checkedData;
+            if (_externalTotalColumns.HasValue && _externalVisibleColumns.HasValue)
+            {
+                // ★ 版本对比场景：使用外部注入的完整列数信息（避免投影后 _columnCheckStates 长度不匹配）
+                dataColumns = _externalTotalColumns.Value;
+                checkedData = _externalVisibleColumns.Value;
+            }
+            else
+            {
+                // 正常场景：基于 _columnCheckStates 计算
+                int checkedCount = 0;
+                for (int i = 0; i < _columnCheckStates.Length; i++)
+                    if (_columnCheckStates[i]) checkedCount++;
+                dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
+                checkedData = Math.Max(0, checkedCount - 1);
+            }
             _btnSelectColumns.Text = $"列管理({checkedData}/{dataColumns})";
             _btnSelectColumns.ForeColor = checkedData < dataColumns ? Color.Red : _colorLightText;
         }
@@ -4710,6 +4723,7 @@ namespace wxd.files.winforms
                 _columnCheckStates = new bool[_dataTable.Columns.Count];
                 for (int i = 0; i < _columnCheckStates.Length; i++)
                     _columnCheckStates[i] = true;
+                _externalColumnStates = null; // ★ else分支也需要清除，避免残留的旧列状态影响下次调用
             }
 
             RebuildHighlightRows();
@@ -4776,6 +4790,8 @@ namespace wxd.files.winforms
 
             // ★ 数据表变更后刷新唯一列下拉选项
             RefreshUniqueColumnCombo();
+            // ★ 更新列管理按钮文本（显示"列管理(x/y)"，有隐藏列时红色显示）
+            UpdateColumnSelectorButton();
 
             // ★ 初始化自定义 tooltip（如果尚未初始化，且非轻量模式）
             if (!_lightweight && _linkToolTip == null)
@@ -4806,10 +4822,24 @@ namespace wxd.files.winforms
         /// <summary>供外部（冲突解决等）使用的 CellMouseDown 事件占位。当 ContextMenuMode.Conflict 时触发。</summary>
         internal event DataGridViewCellMouseEventHandler? OnExternalCellMouseDown;
 
-        /// <summary>设置外部传入的列可见性状态（版本对比等场景使用）。下次 SetDataTable 调用时会优先使用此状态。</summary>
+        /// <summary>设置外部传入的列可见性状态（版本对比等场景使用）。下次 SetDataTable 调用时会优先使用此状态。
+        /// 同时保存完整列数/可见列数信息，用于 UpdateColumnSelectorButton 显示正确的"列管理(x/y)"文本。</summary>
         public void SetColumnVisibility(bool[]? states)
         {
             _externalColumnStates = states;
+            if (states != null && states.Length > 1)
+            {
+                _externalTotalColumns = states.Length - 1;
+                int visible = 0;
+                for (int i = 1; i < states.Length; i++)
+                    if (states[i]) visible++;
+                _externalVisibleColumns = visible;
+            }
+            else
+            {
+                _externalTotalColumns = null;
+                _externalVisibleColumns = null;
+            }
         }
 
         /// <summary>获取当前列显隐状态的副本（用于切换数据时保持用户选择的列显示/隐藏）</summary>
@@ -4822,6 +4852,23 @@ namespace wxd.files.winforms
         public void SetEmbeddedMode(bool embedded)
         {
             _isEmbeddedMode = embedded;
+        }
+
+        /// <summary>禁用列管理和所有配置控件（版本对比等场景，配置由外部传入，不允许用户修改）。
+        /// 控件保持显示（列管理按钮仍显示列数量和红色提示，ComboBox 仍显示当前值），但全部禁用交互。</summary>
+        public void DisableColumnManagement()
+        {
+            // 禁用列管理按钮（保持显示"列管理(x/y)"文本，但不可点击）
+            _btnSelectColumns.Enabled = false;
+            // 禁用 _flowTop 中所有 ComboBox（固定行/表头行/映射行/唯一列）
+            if (_flowTop != null)
+            {
+                foreach (Control c in _flowTop.Controls)
+                {
+                    if (c is ComboBox combo)
+                        combo.Enabled = false;
+                }
+            }
         }
 
         // ==================== 行编辑模式 ====================

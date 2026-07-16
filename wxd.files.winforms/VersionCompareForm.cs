@@ -39,7 +39,7 @@ namespace wxd.files.winforms
         private int _mappingRowIndex = -1;
         private bool[]? _columnVisibility;
 
-        // 左右两个 TableBrowserControl（复用，不每次创建销毁）
+        // 左右两个 TableBrowserControl（每次切换版本都销毁重建，避免列状态残留）
         private TableBrowserControl? _leftView;
         private TableBrowserControl? _rightView;
         private string? _leftRevision;
@@ -74,9 +74,8 @@ namespace wxd.files.winforms
         private List<int> _leftColToOriginalIndex = new();
         private List<int> _rightColToOriginalIndex = new();
 
-        // ★ 完整列数的列隐藏状态（阶段3.5会覆盖 _columnCheckStates 为投影后列数，需要独立保存）
-        private bool[]? _savedLeftColStates = null;
-        private bool[]? _savedRightColStates = null;
+        // ★ _columnVisibility 是唯一权威来源（只读配置，版本对比中不允许修改列显隐）
+        // 已删除 _savedLeftColStates / _savedRightColStates，全部从 _columnVisibility 派生
 
         private int _diffRowCount = 0;
         private bool _diffComputed = false;
@@ -704,10 +703,8 @@ namespace wxd.files.winforms
 
             _isLoading = true;
 
-            // ★ 阶段0：先从界面中移除 DataGridView 控件，防止设置 DataSource 时逐行绘制
-            EnsureViewsCreated();
-            _leftView?.DetachGridFromParent();
-            _rightView?.DetachGridFromParent();
+            // ★ 阶段0：销毁旧控件并重建新的 TableBrowserControl（避免列状态残留）
+            RecreateViews();
 
             ShowLoading($"{leftLabel} ← → {rightLabel}");
             // 给消息循环一点时间处理，确保 LoadingForm 被绘制
@@ -741,17 +738,11 @@ namespace wxd.files.winforms
                 await Task.WhenAll(loadTasks);
 
                 // 阶段2：更新 TableBrowserControl 数据（控件已移除，不会逐行绘制）
-                // ★ 在 SetDataTable 之前，用完整列数的保存状态注入 _externalColumnStates
-                // （_externalColumnStates 在第一次 SetDataTable 后被清空；阶段3.5会覆盖 _columnCheckStates，
-                //   所以不能依赖 GetColumnCheckStates()，需要独立保存完整列数的状态）
-                if (_leftView != null && _savedLeftColStates != null)
-                    _leftView.SetColumnVisibility(_savedLeftColStates);
-                else if (_leftView != null && _columnVisibility != null)
+                // ★ 每次都是新控件，直接用 _columnVisibility（唯一权威来源）
+                if (_leftView != null && _columnVisibility != null)
                     _leftView.SetColumnVisibility(_columnVisibility);
 
-                if (_rightView != null && _savedRightColStates != null)
-                    _rightView.SetColumnVisibility(_savedRightColStates);
-                else if (_rightView != null && _columnVisibility != null)
+                if (_rightView != null && _columnVisibility != null)
                     _rightView.SetColumnVisibility(_columnVisibility);
 
                 if (leftData != null)
@@ -769,10 +760,6 @@ namespace wxd.files.winforms
                 // ★ 保存原始 FileTableData（用于筛选后恢复全部显示）
                 _leftFullFileData = _leftView?.GetFileData();
                 _rightFullFileData = _rightView?.GetFileData();
-
-                // ★ 保存完整列数的列隐藏状态（阶段3.5会覆盖 _columnCheckStates，需要独立保存）
-                _savedLeftColStates = _leftView?.GetColumnCheckStates();
-                _savedRightColStates = _rightView?.GetColumnCheckStates();
 
                 _splitCompare.SplitterDistance = _splitCompare.Width / 2;
 
@@ -821,11 +808,11 @@ namespace wxd.files.winforms
                 }
 
                 // 阶段3.5：★ 根据当前列显隐状态重新构建投影后的 FileTableData → DataTable
-                // ★ 先保存当前列显隐状态（基于完整列数），后续 SetDataTable 会重置 _columnCheckStates
-                var leftColStatesBefore = _leftView?.GetColumnCheckStates();
-                var rightColStatesBefore = _rightView?.GetColumnCheckStates();
-                var leftVisibleCols = _leftView?.GetVisibleColumnIndices() ?? new List<int> { };
-                var rightVisibleCols = _rightView?.GetVisibleColumnIndices() ?? new List<int> { };
+                // ★ 直接使用 _columnVisibility（只读配置，唯一权威来源），不再依赖控件内部状态
+                var leftColStatesBefore = _columnVisibility;
+                var rightColStatesBefore = _columnVisibility;
+                var leftVisibleCols = GetVisibleColsFromVisibility();
+                var rightVisibleCols = GetVisibleColsFromVisibility();
 
                 if (_leftFullFileData != null && leftVisibleCols.Count > 0 && _leftView != null)
                 {
@@ -894,17 +881,34 @@ namespace wxd.files.winforms
         }
 
         /// <summary>确保左右 TableBrowserControl 已创建（只创建一次）。
-        /// 传入空路径避免自动加载当前文件，数据由后续 SetDataTable 注入。</summary>
-        private void EnsureViewsCreated()
+        /// <summary>销毁旧的左右控件并重建新的 TableBrowserControl（每次切换版本时调用，避免列状态残留）。
+        /// 初始注入 _columnVisibility 并禁用列管理按钮。</summary>
+        private void RecreateViews()
         {
             var leftPanel = _splitCompare.Panel1.Controls[0] as TableLayoutPanel;
             var rightPanel = _splitCompare.Panel2.Controls[0] as TableLayoutPanel;
 
-            if (_leftView == null && leftPanel != null)
+            // ★ 销毁旧控件（从父容器移除并 Dispose）
+            if (_leftView != null)
             {
-                // 传入原始文件路径和 rootDir：让构造函数加载关联配置（_columnLinks、_fileRemarks 等），
-                // 数据由后续 SetDataTable 注入（构造函数中 filePath 为空时跳过自动文件加载）
-                var rootDir = Path.GetDirectoryName(_filePath);
+                var parent = _leftView.Parent;
+                if (parent != null) parent.Controls.Remove(_leftView);
+                _leftView.Dispose();
+                _leftView = null;
+            }
+            if (_rightView != null)
+            {
+                var parent = _rightView.Parent;
+                if (parent != null) parent.Controls.Remove(_rightView);
+                _rightView.Dispose();
+                _rightView = null;
+            }
+
+            // ★ 创建新控件
+            var rootDir = Path.GetDirectoryName(_filePath);
+
+            if (leftPanel != null)
+            {
                 var leftOptions = new TableBrowserOptions(_filePath)
                 {
                     RootDir = rootDir,
@@ -917,12 +921,12 @@ namespace wxd.files.winforms
                 _leftView = new TableBrowserControl(leftOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
                     _leftView.SetColumnVisibility(_columnVisibility);
+                _leftView.DisableColumnManagement();
                 leftPanel.Controls.Add(_leftView, 0, 1);
             }
 
-            if (_rightView == null && rightPanel != null)
+            if (rightPanel != null)
             {
-                var rootDir = Path.GetDirectoryName(_filePath);
                 var rightOptions = new TableBrowserOptions(_filePath)
                 {
                     RootDir = rootDir,
@@ -935,8 +939,20 @@ namespace wxd.files.winforms
                 _rightView = new TableBrowserControl(rightOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
                     _rightView.SetColumnVisibility(_columnVisibility);
+                _rightView.DisableColumnManagement();
                 rightPanel.Controls.Add(_rightView, 0, 1);
             }
+        }
+
+        /// <summary>从 _columnVisibility 派生可见列索引列表（第0列始终包含）</summary>
+        private List<int> GetVisibleColsFromVisibility()
+        {
+            var result = new List<int>();
+            if (_columnVisibility == null) return result;
+            result.Add(0); // 第0列（序号列）始终显示
+            for (int i = 1; i < _columnVisibility.Length; i++)
+                if (_columnVisibility[i]) result.Add(i);
+            return result;
         }
 
         /// <summary>加载指定版本的 DataTable（带缓存）。
@@ -1017,8 +1033,8 @@ namespace wxd.files.winforms
             if (_leftFullFileData == null || _rightFullFileData == null) return;
             if (_leftView == null || _rightView == null) return;
 
-            var leftColStatesBefore = _savedLeftColStates ?? _leftView.GetColumnCheckStates();
-            var rightColStatesBefore = _savedRightColStates ?? _rightView.GetColumnCheckStates();
+            var leftColStatesBefore = _columnVisibility;
+            var rightColStatesBefore = _columnVisibility;
             var leftVisibleCols = _leftColToOriginalIndex;
             var rightVisibleCols = _rightColToOriginalIndex;
 
