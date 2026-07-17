@@ -12,7 +12,7 @@ namespace wxd.files.winforms
     /// <summary>
     /// 带页签的文件浏览面板容器。
     /// 内部为每个页签维护一个独立的 FileBrowserPanel 实例，完全隔离状态。
-    /// 页签上限 10 个，不显示关闭按钮，鼠标悬停显示完整路径 ToolTip。
+    /// 页签上限 10 个，每个页签显示关闭按钮（始终保留至少 1 个页签），鼠标悬停显示完整路径 ToolTip。
     /// </summary>
     public class TabbedFileBrowserPanel : UserControl
     {
@@ -23,6 +23,8 @@ namespace wxd.files.winforms
         private const int TabMaxWidth = 200;
         private const int TabPaddingX = 14;
         private const int AddButtonWidth = 26;
+        private const int TabCloseButtonSize = 14;
+        private const int TabCloseRightMargin = 6;
 
         // ==================== 主题颜色 ====================
         // 浅色：页签条用比主界面浅蓝(235,248,255)更深的蓝灰，激活页签用更亮的蓝白形成对比
@@ -53,6 +55,7 @@ namespace wxd.files.winforms
         private int _activeTabIndex = 0;
         private bool _isDark = false;
         private int _hoveredTab = -1;       // 鼠标悬停的页签索引（-1 表示无）
+        private int _hoveredCloseTab = -1;  // 鼠标悬停在关闭按钮上的页签索引（-1 表示无）
         private bool _hoverAddButton = false;
 
         // ==================== 控件 ====================
@@ -193,6 +196,41 @@ namespace wxd.files.winforms
             CsvSettings.SetPaneTabCount(_paneIndex, _tabPanels.Count);
             CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
 
+            _pnlTabBar.Invalidate();
+            return true;
+        }
+
+        /// <summary>
+        /// 关闭指定页签。始终保留至少 1 个页签。
+        /// 如果关闭的是激活页签，自动切换到相邻页签。
+        /// </summary>
+        public bool CloseTab(int tabIndex)
+        {
+            if (tabIndex < 0 || tabIndex >= _tabPanels.Count || _tabPanels.Count <= 1)
+                return false;
+
+            var panel = _tabPanels[tabIndex];
+            panel.DirectoryChanged -= OnPanelDirectoryChanged;
+            _tabPanels.RemoveAt(tabIndex);
+
+            if (!panel.IsDisposed)
+                panel.Dispose();
+
+            // 调整激活索引
+            if (_activeTabIndex == tabIndex)
+            {
+                // 关闭的是激活页签，切换到相邻页签
+                _activeTabIndex = Math.Min(tabIndex, _tabPanels.Count - 1);
+            }
+            else if (_activeTabIndex > tabIndex)
+            {
+                // 关闭的页签在激活页签之前，索引前移
+                _activeTabIndex--;
+            }
+
+            ShowActiveTab();
+            CsvSettings.SetPaneTabCount(_paneIndex, _tabPanels.Count);
+            CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
             _pnlTabBar.Invalidate();
             return true;
         }
@@ -339,8 +377,31 @@ namespace wxd.files.winforms
                     Trimming = StringTrimming.EllipsisCharacter,
                     FormatFlags = StringFormatFlags.NoWrap,
                 };
-                var textRect = new Rectangle(tabRect.Left + TabPaddingX / 2, tabRect.Top, tabRect.Width - TabPaddingX, tabRect.Height);
+                int textWidth = tabRect.Width - TabPaddingX - (tabCount > 1 ? TabCloseButtonSize + TabCloseRightMargin : 0);
+                var textRect = new Rectangle(tabRect.Left + TabPaddingX / 2, tabRect.Top, textWidth, tabRect.Height);
                 g.DrawString(displayName, fontToUse, textBrush, textRect, sf);
+
+                // 关闭按钮（×）：仅当页签数 > 1 时显示
+                if (tabCount > 1)
+                {
+                    var closeRect = GetCloseButtonRect(i, tabWidth);
+                    bool isCloseHover = (i == _hoveredCloseTab);
+
+                    if (isCloseHover)
+                    {
+                        // 悬停时画圆形背景
+                        using var closeBgBrush = new SolidBrush(_isDark ? Color.FromArgb(70, 70, 70) : Color.FromArgb(220, 220, 220));
+                        g.FillEllipse(closeBgBrush, closeRect);
+                    }
+
+                    // 画 × 符号
+                    using var closePen = new Pen(isCloseHover
+                        ? (_isDark ? Color.FromArgb(255, 90, 90) : Color.FromArgb(200, 40, 40))
+                        : (_isDark ? Color.FromArgb(170, 170, 170) : Color.FromArgb(120, 120, 120)), 1.5f);
+                    int pad = 3;
+                    g.DrawLine(closePen, closeRect.Left + pad, closeRect.Top + pad, closeRect.Right - pad, closeRect.Bottom - pad);
+                    g.DrawLine(closePen, closeRect.Right - pad, closeRect.Top + pad, closeRect.Left + pad, closeRect.Bottom - pad);
+                }
             }
 
             // 绘制 "+" 新增按钮
@@ -392,6 +453,15 @@ namespace wxd.files.winforms
             return panel?.CurrentDirectory ?? "";
         }
 
+        /// <summary>获取页签关闭按钮的矩形区域</summary>
+        private Rectangle GetCloseButtonRect(int tabIndex, int tabWidth)
+        {
+            int x = tabIndex * tabWidth;
+            int closeX = x + tabWidth - TabCloseRightMargin - TabCloseButtonSize;
+            int closeY = (TabBarHeight - TabCloseButtonSize) / 2;
+            return new Rectangle(closeX, closeY, TabCloseButtonSize, TabCloseButtonSize);
+        }
+
         /// <summary>子面板目录变更回调：刷新页签标题（解决页签内导航后标题延迟更新）</summary>
         private void OnPanelDirectoryChanged(string newPath)
         {
@@ -404,8 +474,30 @@ namespace wxd.files.winforms
         {
             if (e.Button != MouseButtons.Left) return;
 
-            // 检查是否点击了 "+" 按钮
+            // 计算页签宽度（用于关闭按钮命中检测）
             int addBtnX = _pnlTabBar.ClientRectangle.Right - AddButtonWidth;
+            int tabAreaWidth = addBtnX;
+            int tabCount = _tabPanels.Count;
+            int tabWidth = tabCount > 0
+                ? Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount))
+                : TabMinWidth;
+
+            // 检查是否点击了关闭按钮
+            if (tabCount > 1)
+            {
+                int tabIndex = GetTabIndexAtX(e.X);
+                if (tabIndex >= 0)
+                {
+                    var closeRect = GetCloseButtonRect(tabIndex, tabWidth);
+                    if (closeRect.Contains(e.Location))
+                    {
+                        CloseTab(tabIndex);
+                        return;
+                    }
+                }
+            }
+
+            // 检查是否点击了 "+" 按钮
             if (e.X >= addBtnX)
             {
                 if (_tabPanels.Count < MaxTabCount)
@@ -418,31 +510,61 @@ namespace wxd.files.winforms
             }
 
             // 检查点击了哪个页签
-            int tabIndex = GetTabIndexAtX(e.X);
-            if (tabIndex >= 0)
+            int tabIndexClick = GetTabIndexAtX(e.X);
+            if (tabIndexClick >= 0)
             {
-                SwitchToTab(tabIndex);
+                SwitchToTab(tabIndexClick);
             }
         }
 
         private void OnTabBarMouseMove(object? sender, MouseEventArgs e)
         {
-            // 检查是否悬停在 "+" 按钮上
+            // 计算页签宽度（用于关闭按钮命中检测）
             int addBtnX = _pnlTabBar.ClientRectangle.Right - AddButtonWidth;
+            int tabAreaWidth = addBtnX;
+            int tabCount = _tabPanels.Count;
+            int tabWidth = tabCount > 0
+                ? Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount))
+                : TabMinWidth;
+
+            // 检查是否悬停在 "+" 按钮上
             bool overAdd = (e.X >= addBtnX && _tabPanels.Count < MaxTabCount);
 
             // 检查悬停在哪个页签上
             int hoveredTab = GetTabIndexAtX(e.X);
 
-            if (overAdd != _hoverAddButton || hoveredTab != _hoveredTab)
+            // 检查是否悬停在关闭按钮上
+            int hoveredCloseTab = -1;
+            if (hoveredTab >= 0 && tabCount > 1)
+            {
+                var closeRect = GetCloseButtonRect(hoveredTab, tabWidth);
+                if (closeRect.Contains(e.Location))
+                    hoveredCloseTab = hoveredTab;
+            }
+
+            if (overAdd != _hoverAddButton || hoveredTab != _hoveredTab || hoveredCloseTab != _hoveredCloseTab)
             {
                 _hoverAddButton = overAdd;
                 _hoveredTab = hoveredTab;
+                _hoveredCloseTab = hoveredCloseTab;
                 _pnlTabBar.Invalidate();
             }
 
+            // 更新光标
+            if (hoveredCloseTab >= 0 || overAdd)
+                _pnlTabBar.Cursor = Cursors.Hand;
+            else
+                _pnlTabBar.Cursor = Cursors.Default;
+
             // 更新 ToolTip
-            if (hoveredTab >= 0)
+            if (hoveredCloseTab >= 0)
+            {
+                string tip = "关闭页签";
+                string currentTip = _tabToolTip.GetToolTip(_pnlTabBar);
+                if (currentTip != tip)
+                    _tabToolTip.SetToolTip(_pnlTabBar, tip);
+            }
+            else if (hoveredTab >= 0)
             {
                 string fullPath = GetTabFullPath(hoveredTab);
                 string displayName = GetTabDisplayName(hoveredTab);
@@ -467,12 +589,14 @@ namespace wxd.files.winforms
 
         private void OnTabBarMouseLeave(object? sender, EventArgs e)
         {
-            if (_hoveredTab != -1 || _hoverAddButton)
+            if (_hoveredTab != -1 || _hoverAddButton || _hoveredCloseTab != -1)
             {
                 _hoveredTab = -1;
                 _hoverAddButton = false;
+                _hoveredCloseTab = -1;
                 _pnlTabBar.Invalidate();
             }
+            _pnlTabBar.Cursor = Cursors.Default;
             _tabToolTip.SetToolTip(_pnlTabBar, "");
         }
 
