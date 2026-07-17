@@ -28,6 +28,22 @@ namespace wxd.files.winforms
             Tile        // 平铺
         }
 
+        // ==================== 排序枚举 ====================
+        /// <summary>排序字段</summary>
+        public enum SortField
+        {
+            Name,   // 名称
+            Size,   // 文件大小
+            Date    // 修改日期
+        }
+
+        /// <summary>排序方向</summary>
+        public enum SortDirection
+        {
+            Ascending,  // 递增
+            Descending  // 递减
+        }
+
         // ==================== 控件声明 ====================
         private ComboBox? _cboPath;      // 路径选择下拉框（替代原先的 TextBox 路径 + 磁盘下拉框）
         private Button? _btnUp;
@@ -41,6 +57,15 @@ namespace wxd.files.winforms
         private Button? _btnOpenCsvReader;
         private ToolStripMenuItem? _menuViewModeItem;
         private readonly ToolStripMenuItem[] _viewModeSubItems = new ToolStripMenuItem[5];
+
+        // 排序方式二级菜单
+        private ToolStripMenuItem? _menuSortFieldItem;
+        private readonly ToolStripMenuItem[] _sortFieldSubItems = new ToolStripMenuItem[3]; // 名称/大小/日期
+        private readonly ToolStripMenuItem[] _sortDirectionSubItems = new ToolStripMenuItem[2]; // 递增/递减
+
+        // 当前排序状态
+        private SortField _sortField = SortField.Name;
+        private SortDirection _sortDirection = SortDirection.Ascending;
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
@@ -291,8 +316,8 @@ namespace wxd.files.winforms
             public override string ToString() => "──────────";
         }
 
-        // ==================== 自然排序比较器 ====================
-        /// <summary>按字符逐个比较，数字部分按数值比较</summary>
+        // ==================== 名称排序比较器 ====================
+        /// <summary>按字符串逐字符比较（忽略大小写），数字不做特殊处理</summary>
         private class NaturalSortComparer : IComparer<string>
         {
             public int Compare(string? x, string? y)
@@ -301,42 +326,13 @@ namespace wxd.files.winforms
                 if (x == null) return -1;
                 if (y == null) return 1;
 
-                int i = 0, j = 0;
-                while (i < x.Length && j < y.Length)
+                int len = Math.Min(x.Length, y.Length);
+                for (int i = 0; i < len; i++)
                 {
-                    char cx = x[i];
-                    char cy = y[j];
-
-                    // 如果都是数字，按数值比较
-                    if (char.IsDigit(cx) && char.IsDigit(cy))
-                    {
-                        // 提取完整的数字
-                        int numX = 0, numY = 0;
-                        while (i < x.Length && char.IsDigit(x[i]))
-                        {
-                            numX = numX * 10 + (x[i] - '0');
-                            i++;
-                        }
-                        while (j < y.Length && char.IsDigit(y[j]))
-                        {
-                            numY = numY * 10 + (y[j] - '0');
-                            j++;
-                        }
-                        if (numX != numY)
-                            return numX.CompareTo(numY);
-                    }
-                    else
-                    {
-                        // 非数字字符，忽略大小写比较
-                        int result = char.ToUpperInvariant(cx).CompareTo(char.ToUpperInvariant(cy));
-                        if (result != 0)
-                            return result;
-                        i++;
-                        j++;
-                    }
+                    int result = char.ToUpperInvariant(x[i]).CompareTo(char.ToUpperInvariant(y[i]));
+                    if (result != 0)
+                        return result;
                 }
-
-                // 比较剩余长度
                 return x.Length.CompareTo(y.Length);
             }
         }
@@ -371,11 +367,18 @@ namespace wxd.files.winforms
             // ==== 第一步：恢复视图模式 ====
             var savedViewMode = CsvSettings.GetPaneViewMode(panelIndex);
             _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedViewMode));
+
+            // ==== 恢复排序状态 ====
+            _sortField = (SortField)CsvSettings.GetPaneSortField(panelIndex);
+            _sortDirection = (SortDirection)CsvSettings.GetPaneSortDirection(panelIndex);
+
             // 面板句柄创建后延迟恢复视图（确保子控件句柄也已就绪）
             HandleCreated += (_, _) => BeginInvoke(new Action(() =>
             {
                 PopulateListView();
                 SyncViewModeMenuCheck();
+                SyncSortMenuCheck();
+                UpdateColumnHeaderSortIndicator();
             }));
             _suppressEvents = true;
             SyncViewModeMenuCheck();
@@ -631,6 +634,7 @@ namespace wxd.files.winforms
 
             _lstFiles.DoubleClick += OnFileDoubleClick;
             _lstFiles.MouseUp += OnListViewMouseUp;
+            _lstFiles.ColumnClick += OnColumnHeaderClick;
             _lstFiles.SelectedIndexChanged += (s, e) =>
             {
                 if (_lstFiles.SelectedItems.Count > 0) _lstFiles.Focus();
@@ -699,6 +703,37 @@ namespace wxd.files.winforms
             }
             _viewModeSubItems[(int)_viewMode].Checked = true;
             _menuMoreActions.Items.Add(_menuViewModeItem);
+
+            // 排序方式二级菜单
+            _menuSortFieldItem = new ToolStripMenuItem("排序方式");
+
+            string[] sortFieldNames = { "名称", "文件大小", "修改日期" };
+            for (int i = 0; i < sortFieldNames.Length; i++)
+            {
+                int idx = i;
+                _sortFieldSubItems[i] = new ToolStripMenuItem(sortFieldNames[i], null, (s, e) => OnSortFieldChanged(idx))
+                {
+                    CheckOnClick = true
+                };
+                _menuSortFieldItem.DropDownItems.Add(_sortFieldSubItems[i]);
+            }
+
+            // 分隔线 + 排序方向
+            _menuSortFieldItem.DropDownItems.Add(new ToolStripSeparator());
+            string[] sortDirNames = { "递增", "递减" };
+            for (int i = 0; i < sortDirNames.Length; i++)
+            {
+                int idx = i;
+                _sortDirectionSubItems[i] = new ToolStripMenuItem(sortDirNames[i], null, (s, e) => OnSortDirectionChanged(idx))
+                {
+                    CheckOnClick = true
+                };
+                _menuSortFieldItem.DropDownItems.Add(_sortDirectionSubItems[i]);
+            }
+
+            _sortFieldSubItems[(int)_sortField].Checked = true;
+            _sortDirectionSubItems[(int)_sortDirection].Checked = true;
+            _menuMoreActions.Items.Add(_menuSortFieldItem);
 
             _menuMoreActions.Font = new Font("Microsoft YaHei UI", 9f);
 
@@ -1105,7 +1140,7 @@ namespace wxd.files.winforms
                             }
                             try { dirs.Add(new DirInfo { Name = Path.GetFileName(dir), FullName = dir }); } catch { }
                         }
-                        dirs.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
+                        SortDirectories(dirs);
 
                         if (token.IsCancellationRequested) return;
 
@@ -1119,7 +1154,7 @@ namespace wxd.files.winforms
                             }
                             try { files.Add(new FileInfo(file)); } catch { }
                         }
-                        files.Sort((a, b) => new NaturalSortComparer().Compare(a.Name, b.Name));
+                        SortFiles(files);
                     }
                     catch (UnauthorizedAccessException) { }
                 }, token);
@@ -1499,6 +1534,9 @@ namespace wxd.files.winforms
                 _lstFiles.View = View.SmallIcon;
                 _lstFiles.EndUpdate();
             }
+
+            // ===== 更新列头排序标记（仅 Details 模式可见列头）=====
+            UpdateColumnHeaderSortIndicator();
         }
 
         private void ApplyFilter()
@@ -1754,6 +1792,163 @@ namespace wxd.files.winforms
                 if (_viewModeSubItems[i] != null)
                     _viewModeSubItems[i].Checked = (i == (int)_viewMode);
             }
+        }
+
+        // ==================== 排序方式切换 ====================
+
+        /// <summary>排序字段菜单点击</summary>
+        private void OnSortFieldChanged(int newIndex)
+        {
+            if (_suppressEvents) return;
+            if (newIndex < 0 || newIndex >= _sortFieldSubItems.Length) return;
+            _sortField = (SortField)newIndex;
+            SyncSortMenuCheck();
+            RefreshCurrentDirectory();
+            try
+            {
+                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
+                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
+            }
+            catch { }
+        }
+
+        /// <summary>排序方向菜单点击</summary>
+        private void OnSortDirectionChanged(int newIndex)
+        {
+            if (_suppressEvents) return;
+            if (newIndex < 0 || newIndex >= _sortDirectionSubItems.Length) return;
+            _sortDirection = (SortDirection)newIndex;
+            SyncSortMenuCheck();
+            RefreshCurrentDirectory();
+            try
+            {
+                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
+                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
+            }
+            catch { }
+        }
+
+        /// <summary>同步排序菜单勾选状态</summary>
+        private void SyncSortMenuCheck()
+        {
+            for (int i = 0; i < _sortFieldSubItems.Length; i++)
+            {
+                if (_sortFieldSubItems[i] != null)
+                    _sortFieldSubItems[i].Checked = (i == (int)_sortField);
+            }
+            for (int i = 0; i < _sortDirectionSubItems.Length; i++)
+            {
+                if (_sortDirectionSubItems[i] != null)
+                    _sortDirectionSubItems[i].Checked = (i == (int)_sortDirection);
+            }
+        }
+
+        /// <summary>目录排序：始终按名称自然排序（保持稳定顺序，符合资源管理器行为）</summary>
+        private void SortDirectories(List<DirInfo> dirs)
+        {
+            var cmp = new NaturalSortComparer();
+            if (_sortDirection == SortDirection.Descending)
+                dirs.Sort((a, b) => cmp.Compare(b.Name, a.Name));
+            else
+                dirs.Sort((a, b) => cmp.Compare(a.Name, b.Name));
+        }
+
+        /// <summary>文件排序：按当前字段和方向排序</summary>
+        private void SortFiles(List<FileInfo> files)
+        {
+            var cmp = new NaturalSortComparer();
+            int dir = _sortDirection == SortDirection.Ascending ? 1 : -1;
+            switch (_sortField)
+            {
+                case SortField.Size:
+                    files.Sort((a, b) =>
+                    {
+                        int r = a.Length.CompareTo(b.Length);
+                        return r == 0 ? cmp.Compare(a.Name, b.Name) : r * dir;
+                    });
+                    break;
+                case SortField.Date:
+                    files.Sort((a, b) =>
+                    {
+                        int r = a.LastWriteTime.CompareTo(b.LastWriteTime);
+                        return r == 0 ? cmp.Compare(a.Name, b.Name) : r * dir;
+                    });
+                    break;
+                default: // Name
+                    files.Sort((a, b) => cmp.Compare(a.Name, b.Name) * dir);
+                    break;
+            }
+        }
+
+        /// <summary>更新 Details 视图列头排序标记（▲/▼），其他视图模式不做处理</summary>
+        private void UpdateColumnHeaderSortIndicator()
+        {
+            if (_lstFiles == null || _lstFiles.IsDisposed) return;
+            if (_lstFiles.Columns.Count < 4) return;
+
+            // 仅 Details 模式显示列头
+            if (_viewMode != FileListViewMode.Details) return;
+
+            string arrow = _sortDirection == SortDirection.Ascending ? " ▲" : " ▼";
+
+            // 列头顺序：0=名称, 1=修改日期, 2=类型, 3=大小
+            // 重置文本（去除已有箭头）
+            _lstFiles.Columns[0].Text = "名称";
+            _lstFiles.Columns[1].Text = "修改日期";
+            _lstFiles.Columns[2].Text = "类型";
+            _lstFiles.Columns[3].Text = "大小";
+
+            switch (_sortField)
+            {
+                case SortField.Size:
+                    _lstFiles.Columns[3].Text = "大小" + arrow;
+                    break;
+                case SortField.Date:
+                    _lstFiles.Columns[1].Text = "修改日期" + arrow;
+                    break;
+                default: // Name
+                    _lstFiles.Columns[0].Text = "名称" + arrow;
+                    break;
+            }
+        }
+
+        /// <summary>列头点击：切换排序字段，再次点击同列则切换方向</summary>
+        private void OnColumnHeaderClick(object? sender, ColumnClickEventArgs e)
+        {
+            // 列0=名称, 列1=修改日期, 列2=类型(不响应), 列3=大小
+            SortField newField = e.Column switch
+            {
+                0 => SortField.Name,
+                1 => SortField.Date,
+                3 => SortField.Size,
+                _ => _sortField // 列2(类型)不响应
+            };
+
+            // 列2(类型)不响应
+            if (e.Column == 2) return;
+
+            if (newField == _sortField)
+            {
+                // 同列再次点击：切换方向
+                _sortDirection = _sortDirection == SortDirection.Ascending
+                    ? SortDirection.Descending
+                    : SortDirection.Ascending;
+            }
+            else
+            {
+                _sortField = newField;
+                // 切换字段时默认递增
+                _sortDirection = SortDirection.Ascending;
+            }
+
+            SyncSortMenuCheck();
+            RefreshCurrentDirectory();
+            try
+            {
+                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
+                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
+            }
+            catch { }
         }
 
         // ==================== 双击 & 右键菜单 ====================
@@ -2332,6 +2527,8 @@ namespace wxd.files.winforms
                 CsvSettings.SetPaneDirectory(PanelIndex, _currentDir);
                 CsvSettings.SetPaneFilter(PanelIndex, filter);
                 CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode);
+                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
+                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
             }
             catch (Exception ex)
             {

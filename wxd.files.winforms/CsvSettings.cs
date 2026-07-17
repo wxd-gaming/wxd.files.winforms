@@ -117,6 +117,34 @@ namespace wxd.files.winforms
             SetIntValue(key, Math.Max(0, Math.Min(4, mode)));
         }
 
+        /// <summary>获取窗格排序字段: 0=名称, 1=大小, 2=修改日期</summary>
+        public static int GetPaneSortField(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}SortField";
+            return GetIntValue(key, 0, 0, 2);
+        }
+
+        /// <summary>设置窗格排序字段</summary>
+        public static void SetPaneSortField(int paneIndex, int field)
+        {
+            var key = $"Pane{paneIndex}SortField";
+            SetIntValue(key, Math.Max(0, Math.Min(2, field)));
+        }
+
+        /// <summary>获取窗格排序方向: 0=递增, 1=递减</summary>
+        public static int GetPaneSortDirection(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}SortDirection";
+            return GetIntValue(key, 0, 0, 1);
+        }
+
+        /// <summary>设置窗格排序方向</summary>
+        public static void SetPaneSortDirection(int paneIndex, int direction)
+        {
+            var key = $"Pane{paneIndex}SortDirection";
+            SetIntValue(key, Math.Max(0, Math.Min(1, direction)));
+        }
+
         #endregion
 
         #region 显示隐藏文件夹设置
