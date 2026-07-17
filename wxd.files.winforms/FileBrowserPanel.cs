@@ -319,7 +319,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 名称排序比较器 ====================
-        /// <summary>按字符串逐字符比较（忽略大小写），数字不做特殊处理</summary>
+        /// <summary>自然排序比较器：将连续数字段按数值比较，其余字符按字典序（忽略大小写）比较</summary>
         private class NaturalSortComparer : IComparer<string>
         {
             public int Compare(string? x, string? y)
@@ -328,14 +328,42 @@ namespace wxd.files.winforms
                 if (x == null) return -1;
                 if (y == null) return 1;
 
-                int len = Math.Min(x.Length, y.Length);
-                for (int i = 0; i < len; i++)
+                int i = 0, j = 0;
+                while (i < x.Length && j < y.Length)
                 {
-                    int result = char.ToUpperInvariant(x[i]).CompareTo(char.ToUpperInvariant(y[i]));
+                    char cx = x[i];
+                    char cy = y[j];
+
+                    // 两个字符都是数字：提取完整数字段按数值比较
+                    if (char.IsDigit(cx) && char.IsDigit(cy))
+                    {
+                        int xStart = i;
+                        while (i < x.Length && char.IsDigit(x[i])) i++;
+                        int yStart = j;
+                        while (j < y.Length && char.IsDigit(y[j])) j++;
+
+                        int xLen = i - xStart;
+                        int yLen = j - yStart;
+                        if (xLen != yLen)
+                            return xLen.CompareTo(yLen);
+
+                        for (int k = 0; k < xLen; k++)
+                        {
+                            int r = x[xStart + k].CompareTo(y[yStart + k]);
+                            if (r != 0) return r;
+                        }
+                        continue;
+                    }
+
+                    int result = char.ToUpperInvariant(cx).CompareTo(char.ToUpperInvariant(cy));
                     if (result != 0)
                         return result;
+
+                    i++;
+                    j++;
                 }
-                return x.Length.CompareTo(y.Length);
+
+                return (x.Length - i).CompareTo(y.Length - j);
             }
         }
 
