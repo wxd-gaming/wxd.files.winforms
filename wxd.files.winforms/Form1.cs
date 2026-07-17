@@ -31,7 +31,7 @@ namespace wxd.files.winforms
         private Label? _lblTheme;
         private Button? _btnOpenCsvReader;
         private Panel _pnlContainer = new();
-        private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
+        private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
         private Button? _btnCmdManager;                      // 命令管理按钮
         private Button? _btnSettings;                         // ≡ 设置按钮
@@ -701,9 +701,8 @@ namespace wxd.files.winforms
         }
 
         /// <summary>应用主题到单个文件浏览面板</summary>
-        private void ApplyThemeToPanel(FileBrowserPanel panel, bool isDark)
+        private void ApplyThemeToPanel(TabbedFileBrowserPanel panel, bool isDark)
         {
-            // 使用反射或公共方法设置面板主题
             panel.ApplyTheme(isDark);
         }
 
@@ -722,15 +721,17 @@ namespace wxd.files.winforms
             foreach (var p in _panels) p.Dispose();
             _pnlContainer.Controls.Clear();
 
-            _panels = new FileBrowserPanel[count];
+            _panels = new TabbedFileBrowserPanel[count];
             for (int i = 0; i < count; i++)
             {
-                _panels[i] = new FileBrowserPanel(i)
+                _panels[i] = new TabbedFileBrowserPanel(i)
                 {
                     Dock = DockStyle.None,
                     BorderStyle = BorderStyle.FixedSingle,
                     Padding = new Padding(0)
                 };
+                // 恢复页签配置（不跳过自动导航）
+                _panels[i].RestoreTabs(skipAutoNavigate: false);
                 // 应用当前主题到新面板
                 _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
                 _pnlContainer.Controls.Add(_panels[i]);
@@ -743,17 +744,19 @@ namespace wxd.files.winforms
             foreach (var p in _panels) p.Dispose();
             _pnlContainer.Controls.Clear();
 
-            _panels = new FileBrowserPanel[count];
+            _panels = new TabbedFileBrowserPanel[count];
             for (int i = 0; i < count; i++)
             {
                 // 使用轻量构造模式：skipAutoNavigate=true 跳过构造函数中的自动导航
-                _panels[i] = new FileBrowserPanel(i, skipAutoNavigate: true)
+                _panels[i] = new TabbedFileBrowserPanel(i)
                 {
                     Dock = DockStyle.None,
                     BorderStyle = BorderStyle.FixedSingle,
                     Padding = new Padding(0),
                     Visible = false  // 初始隐藏，避免空白闪烁
                 };
+                // 恢复页签配置（跳过自动导航，后续由 InitializeDeferredAsync 加载）
+                _panels[i].RestoreTabs(skipAutoNavigate: true);
                 // 应用当前主题到新面板
                 _panels[i].ApplyTheme(_currentTheme == ThemeMode.Dark);
                 _pnlContainer.Controls.Add(_panels[i]);

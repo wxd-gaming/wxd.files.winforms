@@ -69,6 +69,8 @@ namespace wxd.files.winforms
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
+        /// <summary>当前目录变更时触发（参数为新路径）</summary>
+        public event Action<string>? DirectoryChanged;
         private string _filterText = "";
         private List<FileInfo> _allFiles = new();
         private List<DirInfo> _allDirs = new();
@@ -991,6 +993,7 @@ namespace wxd.files.winforms
                 }
 
                 _currentDir = trimmed;
+                DirectoryChanged?.Invoke(_currentDir);
                 // 记录到最近访问历史
                 CsvSettings.AddRecentPath(_currentDir);
                 // 重建下拉框选项（刷新驱动器和最近路径）
@@ -1027,6 +1030,7 @@ namespace wxd.files.winforms
                     _currentDir = trimmed + Path.DirectorySeparatorChar;
                 else
                     _currentDir = trimmed;
+                DirectoryChanged?.Invoke(_currentDir);
                 VcsStatusCache.Invalidate(_currentDir);
                 CsvSettings.AddRecentPath(_currentDir);
                 RebuildPathComboItems();

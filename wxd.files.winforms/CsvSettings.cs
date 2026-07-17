@@ -147,6 +147,40 @@ namespace wxd.files.winforms
 
         #endregion
 
+        #region 页签设置（每个窗格内部的多页签）
+
+        private const int MaxTabCountPerPane = 10;
+
+        /// <summary>获取指定窗格的页签数量（默认1）</summary>
+        public static int GetPaneTabCount(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}TabCount";
+            return GetIntValue(key, 1, 1, MaxTabCountPerPane);
+        }
+
+        /// <summary>设置指定窗格的页签数量</summary>
+        public static void SetPaneTabCount(int paneIndex, int count)
+        {
+            var key = $"Pane{paneIndex}TabCount";
+            SetIntValue(key, Math.Max(1, Math.Min(MaxTabCountPerPane, count)));
+        }
+
+        /// <summary>获取指定窗格的当前激活页签索引（默认0）</summary>
+        public static int GetPaneActiveTab(int paneIndex)
+        {
+            var key = $"Pane{paneIndex}ActiveTab";
+            return GetIntValue(key, 0, 0, MaxTabCountPerPane - 1);
+        }
+
+        /// <summary>设置指定窗格的当前激活页签索引</summary>
+        public static void SetPaneActiveTab(int paneIndex, int tabIndex)
+        {
+            var key = $"Pane{paneIndex}ActiveTab";
+            SetIntValue(key, Math.Max(0, Math.Min(MaxTabCountPerPane - 1, tabIndex)));
+        }
+
+        #endregion
+
         #region 显示隐藏文件夹设置
 
         private const string ShowHiddenFilesKey = "ShowHiddenFiles";
