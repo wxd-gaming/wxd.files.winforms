@@ -39,7 +39,8 @@ namespace wxd.files.winforms
         private Button? _btnMoreActions;
         private ContextMenuStrip? _menuMoreActions;
         private Button? _btnOpenCsvReader;
-        private ComboBox? _cboViewMode;
+        private ToolStripMenuItem? _menuViewModeItem;
+        private readonly ToolStripMenuItem[] _viewModeSubItems = new ToolStripMenuItem[5];
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
@@ -371,10 +372,13 @@ namespace wxd.files.winforms
             var savedViewMode = CsvSettings.GetPaneViewMode(panelIndex);
             _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedViewMode));
             // 面板句柄创建后延迟恢复视图（确保子控件句柄也已就绪）
-            HandleCreated += (_, _) => BeginInvoke(PopulateListView);
+            HandleCreated += (_, _) => BeginInvoke(new Action(() =>
+            {
+                PopulateListView();
+                SyncViewModeMenuCheck();
+            }));
             _suppressEvents = true;
-            if (_cboViewMode != null)
-                _cboViewMode.SelectedIndex = (int)_viewMode;
+            SyncViewModeMenuCheck();
             _suppressEvents = false;
 
             // ==== 第二步：恢复过滤关键词 ====
@@ -474,13 +478,6 @@ namespace wxd.files.winforms
                 _txtFilter.BorderStyle = BorderStyle.FixedSingle;
             }
 
-            // 更新下拉框（视图模式）
-            if (_cboViewMode != null)
-            {
-                _cboViewMode.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
-                _cboViewMode.ForeColor = _colorTextPrimary;
-            }
-
             // 更新数量标签
             if (_lblFileCount != null)
             {
@@ -525,12 +522,6 @@ namespace wxd.files.winforms
                 _btnOpenCsvReader.BackColor = btnBackColor;
                 _btnOpenCsvReader.ForeColor = btnForeColor;
                 _btnOpenCsvReader.FlatAppearance.BorderSize = 0;
-            }
-
-            if (_cboViewMode != null)
-            {
-                _cboViewMode.BackColor = isDark ? _colorDarkToolbarBg : Color.White;
-                _cboViewMode.ForeColor = _colorTextPrimary;
             }
 
             // 更新更多操作菜单主题
@@ -602,33 +593,18 @@ namespace wxd.files.winforms
             };
             _btnUp.Click += (s, e) => GoUp();
 
-            // 视图模式选择 ComboBox（替换刷新按钮位置）
-            _cboViewMode = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(386, 5),
-                Size = new Size(90, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            _cboViewMode.Items.AddRange(new object[] { "详细信息", "列表", "小图标", "大图标", "平铺" });
-            _cboViewMode.SelectedIndex = (int)_viewMode;
-            _cboViewMode.SelectedIndexChanged += OnViewModeChanged;
-
-            _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnUp, _cboViewMode });
+            _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnUp });
 
             // 工具栏大小改变时调整路径下拉框宽度
             _pnlToolbar.Resize += (s, e) =>
             {
-                if (_cboPath != null && _btnUp != null && _cboViewMode != null)
+                if (_cboPath != null && _btnUp != null)
                 {
-                    int buttonsWidth = _btnUp.Width + _cboViewMode.Width + 12;
+                    int buttonsWidth = _btnUp.Width + 10;
                     int newWidth = _pnlToolbar.Width - _cboPath.Left - buttonsWidth;
                     if (newWidth > 100)
                         _cboPath.Width = newWidth;
-                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - _cboViewMode.Width - 10;
-                    _cboViewMode.Left = _pnlToolbar.Width - _cboViewMode.Width - 6;
+                    _btnUp.Left = _pnlToolbar.Width - _btnUp.Width - 6;
                 }
             };
 
@@ -708,6 +684,22 @@ namespace wxd.files.winforms
             _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
             _menuVcsUpdateItem.Enabled = false;
             _menuMoreActions.Items.Add(_menuVcsUpdateItem);
+
+            // 视图模式二级菜单
+            _menuViewModeItem = new ToolStripMenuItem("视图模式");
+            string[] viewModeNames = { "详细信息", "列表", "小图标", "大图标", "平铺" };
+            for (int i = 0; i < viewModeNames.Length; i++)
+            {
+                int idx = i;
+                _viewModeSubItems[i] = new ToolStripMenuItem(viewModeNames[i], null, (s, e) => OnViewModeMenuChanged(idx))
+                {
+                    CheckOnClick = true
+                };
+                _menuViewModeItem.DropDownItems.Add(_viewModeSubItems[i]);
+            }
+            _viewModeSubItems[(int)_viewMode].Checked = true;
+            _menuMoreActions.Items.Add(_menuViewModeItem);
+
             _menuMoreActions.Font = new Font("Microsoft YaHei UI", 9f);
 
             // Ԥ��Ⱦ�˵��Ի�ȡ��ȷ�ĸ߶ȣ���һ����ʾǰ Height Ϊ 0��
@@ -1740,16 +1732,28 @@ namespace wxd.files.winforms
         }
 
         // ==================== 视图模式切换 ====================
-        private void OnViewModeChanged(object? sender, EventArgs e)
+        private void OnViewModeMenuChanged(int newIndex)
         {
-            if (_suppressEvents || _cboViewMode == null) return;
-            _viewMode = (FileListViewMode)_cboViewMode.SelectedIndex;
+            if (_suppressEvents) return;
+            if (newIndex < 0 || newIndex >= _viewModeSubItems.Length) return;
+            for (int i = 0; i < _viewModeSubItems.Length; i++)
+                _viewModeSubItems[i].Checked = (i == newIndex);
+            _viewMode = (FileListViewMode)newIndex;
             // 用 PopulateListView 重新渲染列表（switch 内部根据 _viewMode 切换布局）
             PopulateListView();
 
             // 立即持久化视图模式
             try { CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode); }
             catch { }
+        }
+
+        private void SyncViewModeMenuCheck()
+        {
+            for (int i = 0; i < _viewModeSubItems.Length; i++)
+            {
+                if (_viewModeSubItems[i] != null)
+                    _viewModeSubItems[i].Checked = (i == (int)_viewMode);
+            }
         }
 
         // ==================== 双击 & 右键菜单 ====================
