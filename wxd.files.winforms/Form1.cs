@@ -30,6 +30,8 @@ namespace wxd.files.winforms
         private ComboBox? _cboTheme;
         private Label? _lblTheme;
         private Button? _btnOpenCsvReader;
+        private Button? _btnNotes;                          // 笔记按钮
+        private NoteForm? _noteForm;                        // 笔记窗体（单例）
         private Panel _pnlContainer = new();
         private FileBrowserPanel[] _panels = Array.Empty<FileBrowserPanel>();
         private Panel? _pnlTopBar;
@@ -499,6 +501,21 @@ namespace wxd.files.winforms
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
+            // 笔记按钮
+            _btnNotes = new Button
+            {
+                Text = "📝 笔记",
+                Size = new Size(75, ctrlHeight),
+                Font = new Font("Microsoft YaHei UI", 9f),
+                Cursor = Cursors.Hand,
+                BackColor = Color.FromArgb(255, 152, 0),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(245, 124, 0) },
+                Margin = new Padding(2, 2, 2, 0)
+            };
+            _btnNotes.Click += OnOpenNotesClick;
+
             // 关于 / 更新按钮
             var btnHelp = new Button
             {
@@ -520,7 +537,7 @@ namespace wxd.files.winforms
                 lblTitle, _chkShowHidden, _btnSettings,
                 _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme,
                 _btnSaveState, _btnCmdManager,
-                _btnOpenCsvReader, btnLargeFileViewer, btnHelp
+                _btnOpenCsvReader, btnLargeFileViewer, _btnNotes, btnHelp
             });
 
             _pnlTopBar.Controls.Add(_flowPanel);
@@ -573,6 +590,24 @@ namespace wxd.files.winforms
 
             var f = new LargeFileViewer(dialog.SelectedPath);
             f.Show();
+        }
+
+        // ==================== 打开笔记窗体（单例） ====================
+        private void OnOpenNotesClick(object? sender, EventArgs e)
+        {
+            if (_noteForm != null && !_noteForm.IsDisposed)
+            {
+                if (_noteForm.WindowState == FormWindowState.Minimized)
+                    _noteForm.WindowState = FormWindowState.Normal;
+                _noteForm.Activate();
+                return;
+            }
+
+            var isDark = _currentTheme == ThemeMode.Dark;
+            _noteForm = new NoteForm(isDark);
+            _noteForm.Owner = null;
+            _noteForm.FormClosed += (s, e2) => _noteForm = null;
+            _noteForm.Show();
         }
 
         // ==================== 关于 / 更新 ====================
