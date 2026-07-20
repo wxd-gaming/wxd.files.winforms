@@ -60,6 +60,9 @@ namespace wxd.files.winforms
         private const int CHUNK = 4 * 1024 * 1024;
         private const int DISPLAY_LINE_LIMIT = 8 * 1024;          // 列表面板显示截断：8KB
         private const int FULL_LINE_LIMIT = 64 * 1024 * 1024;     // 弹窗原始内容上限：64MB
+        // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
+        // 同时水平滚动范围过大也会导致滚动条精度问题。上限夹紧到 10MB 像素。
+        private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
         // ★ _idxCount 改为 long，行数也可能超 int.MaxValue（极端超短行场景）
         private long _idxCount;
         private volatile int _idxProg;
@@ -198,12 +201,13 @@ namespace wxd.files.winforms
             _lstContent.RetrieveVirtualItem += OnRetrieve;
             _lstContent.CacheVirtualItems += OnCache;
             _lstContent.DrawItem += OnDrawItem;
-            _lstContent.DrawSubItem += (s, e) => { };
-            _lstContent.DrawColumnHeader += (s, e) => { };
+            // ★ 修复：OwnerDraw + FullRowSelect 下，空 DrawSubItem 处理器会让系统默认选中色（蓝色）
+            // 覆盖 OnDrawItem 已绘制的自定义色。必须显式设置 e.DrawDefault = false，让 OnDrawItem
+            // 完全接管 SubItem 绘制，避免系统补绘选中背景。
+            _lstContent.DrawSubItem += (s, e) => { e.DrawDefault = false; };
+            _lstContent.DrawColumnHeader += (s, e) => { e.DrawDefault = true; };
             _lstContent.MouseDoubleClick += OnDoubleClick;
             _lstContent.KeyDown += OnListViewKeyDown;
-            _lstContent.DrawSubItem += (s, e) => { };
-            _lstContent.DrawColumnHeader += (s, e) => { };
 
             // ★ 底部状态栏：6 个 Label，流式自动排列
             _lblFileModify = MakeStatusLabel("最后修改：-");
@@ -357,6 +361,14 @@ namespace wxd.files.winforms
 
             int drawX = e.Bounds.X - hPos + 4;
             int drawY = e.Bounds.Y + (e.Bounds.Height - _lstContent.Font.Height) / 2;
+            // ★ 修复D：超长行（>1024字符）输出绘制诊断日志，便于排查水平滚动条问题
+            if (text.Length > 1024)
+            {
+                var msz = TextRenderer.MeasureText(e.Graphics, text, _lstContent.Font,
+                    new Size(int.MaxValue, int.MaxValue),
+                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                Debug.WriteLine($"[Draw] 行{e.ItemIndex} text.Length={text.Length} 测量宽={msz.Width} drawX={drawX} hPos={hPos} MaxContentWidth={_lstContent.MaxContentWidth}");
+            }
             TextRenderer.DrawText(e.Graphics, text, _lstContent.Font,
                 new Rectangle(drawX, drawY, int.MaxValue, e.Bounds.Height),
                 selected ? Color.White : _lstContent.ForeColor,
@@ -669,20 +681,43 @@ namespace wxd.files.winforms
             try
             {
                 using var g = _lstContent.CreateGraphics();
-                int maxW = _lstContent.ClientRectangle.Width;
+                // ★ 修复C：从当前 MaxContentWidth 起步，"只增不减"，避免缓存波动导致范围缩回
+                int maxW = Math.Max(_lstContent.MaxContentWidth, _lstContent.ClientRectangle.Width);
+                int maxLineIdx = -1;
                 foreach (var kv in _cache)
                 {
                     if (!string.IsNullOrEmpty(kv.Value))
                     {
                         string measureText = TruncateLineText(kv.Value);
-                        var sz = g.MeasureString(measureText, _lstContent.Font);
-                        if (sz.Width + 10 > maxW) maxW = (int)sz.Width + 10;
+                        // ★ 修复D：从 Graphics.MeasureString（GDI+）改为 TextRenderer.MeasureText（GDI）。
+                        // GDI+ 对超长字符串可能返回 Infinity，(int)Infinity = int.MinValue，
+                        // 导致 MaxContentWidth 为负数，SetScrollInfo 静默失败，滚动条完全失效。
+                        // TextRenderer.MeasureText 与绘制路径 TextRenderer.DrawText 同栈，结果一致。
+                        var sz = TextRenderer.MeasureText(g, measureText, _lstContent.Font,
+                            new Size(int.MaxValue, int.MaxValue),
+                            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                        int candidate = sz.Width + 10;
+                        if (candidate <= 0 || candidate > MAX_SCROLL_RANGE)
+                        {
+                            // 防护：异常测量结果（负数/溢出/超大）跳过，避免污染 MaxContentWidth
+                            Debug.WriteLine($"[Measure] 行{kv.Key} 异常 candidate={candidate} text.Length={measureText.Length} sz.Width={sz.Width}");
+                            continue;
+                        }
+                        if (candidate > maxW)
+                        {
+                            maxW = candidate;
+                            maxLineIdx = kv.Key;
+                        }
                     }
                 }
-                _lstContent.MaxContentWidth = maxW;
-                _lstContent.InitHScroll();
+                if (maxW != _lstContent.MaxContentWidth)
+                {
+                    Debug.WriteLine($"[Measure] MaxContentWidth {_lstContent.MaxContentWidth} -> {maxW} (峰值行={maxLineIdx}, 缓存行数={_cache.Count})");
+                    _lstContent.MaxContentWidth = maxW;
+                    _lstContent.InitHScroll();
+                }
             }
-            catch { }
+            catch (Exception ex) { Debug.WriteLine($"[Measure] UpdateMaxContentWidth 异常: {ex.Message}"); }
         }
 
         private string ReadLine(long idx)
@@ -786,6 +821,8 @@ namespace wxd.files.winforms
             for (int i = _cS; i <= _cE; i++) if (i < start || i > end) _cache.TryRemove(i, out _);
             for (int i = start; i <= end; i++) if (!_cache.ContainsKey(i)) _cache[i] = ReadLine(i);
             _cS = start; _cE = end;
+            // ★ 修复D：新行加载后重新测量，确保长行进入可视区时水平滚动范围扩展
+            UpdateMaxContentWidth();
         }
 
         private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
@@ -3137,8 +3174,12 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
     {
         private const int WM_HSCROLL = 0x114;
         private const int WM_SIZE = 0x0005;
+        private const int WM_PAINT = 0x000F;
         private const int WM_LBUTTONDBLCLK = 0x0203;
         private const int SB_HORZ = 0;
+        // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
+        // 与外层 LargeFileReaderControl.MAX_SCROLL_RANGE 保持一致。
+        private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SCROLLINFO
@@ -3156,6 +3197,16 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         private static extern int SetScrollInfo(IntPtr hWnd, int fnBar, ref SCROLLINFO lpsi, bool fRedraw);
         [DllImport("user32.dll")]
         private static extern int GetScrollInfo(IntPtr hWnd, int fnBar, ref SCROLLINFO lpsi);
+        [DllImport("user32.dll")]
+        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_FRAMECHANGED = 0x0020;
+        private const uint SWP_NOACTIVATE = 0x0010;
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public int HScrollPos { get; set; }
@@ -3163,22 +3214,71 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public int MaxContentWidth { get; set; } = 1000;
 
+        // ★ 修复B：WM_SIZE 去抖字段，避免重复异步触发 InitHScroll
+        private int _lastClientWidthForSize = -1;
+        private int _lastMaxContentWidthForSize = -1;
+
         public event EventHandler<MouseEventArgs>? ItemDoubleClick;
 
         public void InitHScroll()
         {
             if (!IsHandleCreated) return;
+            // ★ 修复D：夹紧到 MAX_SCROLL_RANGE，防止 nMax 负值或超大值导致 SetScrollInfo 失败
+            int clampedMax = Math.Min(Math.Max(MaxContentWidth, 1), MAX_SCROLL_RANGE);
+            if (clampedMax != MaxContentWidth)
+            {
+                Debug.WriteLine($"[HScroll] MaxContentWidth 夹紧 {MaxContentWidth} -> {clampedMax}");
+                MaxContentWidth = clampedMax;
+            }
+            // ★ 修复：ListView 在 Details 模式下水平滚动条由**列宽**驱动，而非 SCROLLINFO 的 nMax。
+            // 若列宽 != nMax，ListView 在后续 WM_PAINT/WM_NCCALCSIZE 中会按列宽重新计算并隐藏滚动条。
+            // 必须让列宽 = 内容宽度（clampedMax），与 nMax 严格对齐。
+            // 仅当内容宽度 < ClientWidth 时（无需滚动），列宽兜底为 ClientWidth 以填满可视区。
+            int colWidth = clampedMax < ClientRectangle.Width ? ClientRectangle.Width : clampedMax;
             if (Columns.Count > 0)
-                Columns[0].Width = Math.Max(MaxContentWidth, ClientRectangle.Width) + 50;
+                Columns[0].Width = colWidth;
+            // nMax 与列宽对齐
+            int maxRange = colWidth;
+            int page = ClientRectangle.Width;
+            int maxScroll = Math.Max(0, maxRange - page + 1);
+            // ★ 修复A：保留当前滚动位置，仅夹紧到合法范围，不再强制清零
+            int newPos = HScrollPos;
+            if (newPos < 0) newPos = 0;
+            if (newPos > maxScroll) newPos = maxScroll;
             var si = new SCROLLINFO();
             si.cbSize = Marshal.SizeOf(si);
-            si.fMask = 0x0003;
+            // SIF_RANGE(0x0001) | SIF_PAGE(0x0002) | SIF_POS(0x0004) = 0x0007
+            si.fMask = 0x0007;
             si.nMin = 0;
-            si.nMax = Math.Max(MaxContentWidth, ClientRectangle.Width);
-            si.nPage = ClientRectangle.Width;
-            si.nPos = 0;
+            si.nMax = maxRange;
+            si.nPage = page;
+            si.nPos = newPos;
             SetScrollInfo(Handle, SB_HORZ, ref si, true);
-            HScrollPos = 0;
+            // ★ v3 修复：ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下会在 WM_NCCALCSIZE/WM_PAINT
+            // 内部用列宽覆盖 SetScrollInfo 的 nMax。此处立即用 GetScrollInfo 验证是否生效，
+            // 若 nMax 被改回（通常是改回 ClientWidth），则双重 SetScrollInfo 并触发 SWP_FRAMECHANGED
+            // 强制 ListView 重算非客户区（含滚动条）。
+            var siCheck = new SCROLLINFO();
+            siCheck.cbSize = Marshal.SizeOf(siCheck);
+            siCheck.fMask = 0x0001 | 0x0002 | 0x0004; // SIF_RANGE | SIF_PAGE | SIF_POS
+            GetScrollInfo(Handle, SB_HORZ, ref siCheck);
+            if (siCheck.nMax != maxRange || siCheck.nPage != page)
+            {
+                Debug.WriteLine($"[HScroll] 检测到 nMax 被覆盖: 期望 nMax={maxRange} nPage={page}, 实际 nMax={siCheck.nMax} nPage={siCheck.nPage} -> 双重重设");
+                // 再次设置，并触发非客户区重算
+                SetScrollInfo(Handle, SB_HORZ, ref si, true);
+                SetWindowPos(Handle, HWND_TOP, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                // 重算后再校验一次
+                GetScrollInfo(Handle, SB_HORZ, ref siCheck);
+                Debug.WriteLine($"[HScroll] 双重重设后: nMax={siCheck.nMax} nPage={siCheck.nPage} nPos={siCheck.nPos}");
+            }
+            // ★ 修复E：ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下会自动隐藏水平滚动条，
+            // 此处强制重新显示，确保用户可见可用
+            if (maxRange > page)
+                ShowScrollBar(Handle, SB_HORZ, true);
+            HScrollPos = newPos;
+            Debug.WriteLine($"[HScroll] nMax={maxRange} nPage={page} nPos={newPos} maxScroll={maxScroll} shown={maxRange > page}");
         }
 
         protected override void WndProc(ref Message m)
@@ -3222,7 +3322,48 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             if (m.Msg == WM_SIZE)
             {
                 base.WndProc(ref m);
-                BeginInvoke(new Action(InitHScroll));
+                // ★ 修复B：去抖判断，仅在 ClientWidth/MaxContentWidth 真正变化时才刷新滚动条
+                int curW = ClientRectangle.Width;
+                if (curW != _lastClientWidthForSize || MaxContentWidth != _lastMaxContentWidthForSize)
+                {
+                    _lastClientWidthForSize = curW;
+                    _lastMaxContentWidthForSize = MaxContentWidth;
+                    BeginInvoke(new Action(InitHScroll));
+                }
+                return;
+            }
+            if (m.Msg == WM_PAINT)
+            {
+                base.WndProc(ref m);
+                // ★ v3 修复：兜底重设完整 SCROLLINFO（不仅是 ShowScrollBar）。
+                // ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下，即使 SetScrollInfo
+                // 设置了正确的范围，WM_PAINT 内部仍可能用列宽覆盖 nMax 并隐藏滚动条。
+                // 此处在每次 WM_PAINT 后检查：若内容需要滚动但 nMax 不正确，则重设并强制显示。
+                int contentW = MaxContentWidth;
+                int clientW = ClientRectangle.Width;
+                if (contentW > clientW)
+                {
+                    var siPaint = new SCROLLINFO();
+                    siPaint.cbSize = Marshal.SizeOf(siPaint);
+                    siPaint.fMask = 0x0001 | 0x0002 | 0x0004; // SIF_RANGE | SIF_PAGE | SIF_POS
+                    GetScrollInfo(Handle, SB_HORZ, ref siPaint);
+                    int maxScroll = Math.Max(0, contentW - clientW + 1);
+                    int pos = HScrollPos;
+                    if (pos < 0) pos = 0;
+                    if (pos > maxScroll) pos = maxScroll;
+                    if (siPaint.nMax != contentW || siPaint.nPage != clientW || siPaint.nPos != pos)
+                    {
+                        siPaint.nMin = 0;
+                        siPaint.nMax = contentW;
+                        siPaint.nPage = clientW;
+                        siPaint.nPos = pos;
+                        siPaint.fMask = 0x0007;
+                        SetScrollInfo(Handle, SB_HORZ, ref siPaint, true);
+                        HScrollPos = pos;
+                        Debug.WriteLine($"[HScroll] WM_PAINT 兜底重设: nMax={contentW} nPage={clientW} nPos={pos}");
+                    }
+                    ShowScrollBar(Handle, SB_HORZ, true);
+                }
                 return;
             }
             base.WndProc(ref m);
