@@ -362,6 +362,14 @@ namespace wxd.files.winforms
             _allNotes = NoteStore.GetAll();
             ApplyFilter();
             UpdateCount();
+
+            // 列表非空则默认选中并显示第一条
+            if (_filtered.Count > 0)
+            {
+                _currentId = _filtered[0].Id;
+                LoadNoteToEditor(_filtered[0]);
+                FindControlByNoteId(_currentId)?.SetSelected(true);
+            }
         }
 
         private void ApplyFilter()
@@ -435,16 +443,6 @@ namespace wxd.files.winforms
             var max = _splitter.Width - _splitter.SplitterWidth - _splitter.Panel2MinSize;
             if (max < desired) desired = Math.Max(_splitter.Panel1MinSize, max);
             _splitter.SplitterDistance = desired;
-
-            // 如无选中，自动选中第一条
-            if (_currentId == null && _filtered.Count > 0)
-            {
-                _currentId = _filtered[0].Id;
-                LoadNoteToEditor(_filtered[0]);
-                // 标记第一个控件为选中
-                if (_listPanel.Controls.Count > 0 && _listPanel.Controls[0] is NoteListItemControl firstCtrl)
-                    firstCtrl.SetSelected(true);
-            }
         }
 
         /// <summary>面板尺寸变化时不需要额外处理，Dock=Top 的子控件会自动占满宽度</summary>
