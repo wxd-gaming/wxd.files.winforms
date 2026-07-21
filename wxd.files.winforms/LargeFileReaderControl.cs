@@ -78,6 +78,9 @@ namespace wxd.files.winforms
         private CancellationTokenSource? _indexCts;
         private volatile int _completedBlocks;        // 已完成块数（原子计数）
         private long _partialMaxLine;                 // 已连续构建的最大行号（long）
+        // ★ 横向滚动条：索引构建期间按字节长度跟踪的最长行（索引完成后一次性测量并设置滚动条，之后不再重算）
+        private long _longestLineOffset = -1;         // 最长行起始字节偏移（-1 表示尚未发现）
+        private long _longestLineBytes = 0;           // 最长行字节长度
         // 并行搜索：每块的局部结果
         private readonly ConcurrentDictionary<int, List<long>> _blockSearchResults = new();
 
@@ -90,6 +93,8 @@ namespace wxd.files.winforms
             public List<long> LineStarts;   // 块内每行起始偏移（绝对偏移，long）
             public bool EndsWithNewline;    // 块尾是否以LF换行符结尾
             public long FirstLineStart;     // 块第一行真正起始偏移（已修正跨块）
+            public long MaxLineLen;         // 块内最长行字节长度
+            public long MaxLineOffset;      // 块内最长行起始偏移（-1 表示无）
         }
 
         private FileStream? _readStream;
@@ -253,6 +258,7 @@ namespace wxd.files.winforms
             _filePath = path;
             _fileLength = new FileInfo(path).Length;
             _cancel = false; _indexReady = false; _idxProg = 0; _idxCount = 0;
+            _longestLineOffset = -1; _longestLineBytes = 0;
             _lstContent.HScrollPos = 0;
             _lstContent.MaxContentWidth = _lstContent.ClientRectangle.Width;
 
@@ -323,8 +329,6 @@ namespace wxd.files.winforms
 
             _lstContent.VirtualListSize = Math.Max(loaded, 1);
             _cS = 0; _cE = loaded - 1;
-
-            UpdateMaxContentWidth();
 
             Status($"前 {loaded} 行已加载，正在构建索引...");
             _lblFileLines.Text = "行数：索引中...";
@@ -450,14 +454,32 @@ namespace wxd.files.winforms
                 using var fs = new FileStream(_filePath!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, CHUNK, FileOptions.SequentialScan);
                 var buf = new byte[CHUNK];
                 long pos = 0; int n;
+                long lineStart = 0;        // 当前行起始偏移
+                long maxLen = 0, maxOff = -1;  // 本文件最长行（按字节长度）
                 while ((n = fs.Read(buf, 0, buf.Length)) > 0)
                 {
                     if (_cancel || token.IsCancellationRequested) return;
                     for (int i = 0; i < n; i++, pos++)
-                        if (buf[i] == GlobalConst.LfChar) off.Add(pos + 1);
+                    {
+                        if (buf[i] == GlobalConst.LfChar)
+                        {
+                            off.Add(pos + 1);
+                            long lineLen = pos - lineStart;  // 不含 LF 的行字节长度
+                            if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
+                            lineStart = pos + 1;
+                        }
+                    }
                     _idxCount = off.Count - 1;
                     _idxProg = (int)(pos * 100 / _fileLength);
                 }
+                // 文件末尾无换行符的最后一行也要参与最长行统计
+                if (_fileLength > lineStart)
+                {
+                    long lineLen = _fileLength - lineStart;
+                    if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
+                }
+                _longestLineOffset = maxOff;
+                _longestLineBytes = maxLen;
                 if (off.Count > 1 && off[off.Count - 1] >= _fileLength) off.RemoveAt(off.Count - 1);
                 _lineOffsets = off.ToArray();
                 _idxCount = _lineOffsets.Length;
@@ -528,6 +550,8 @@ namespace wxd.files.winforms
             var buf = new byte[CHUNK];
             long pos = firstLineStart;
             bool endsWithNewline = false;
+            long lineStart = firstLineStart;         // 当前行起始偏移
+            long maxLen = 0, maxOff = -1;            // 块内最长行（按字节长度）
 
             while (pos < blockEnd)
             {
@@ -541,13 +565,23 @@ namespace wxd.files.winforms
                     if (buf[i] == GlobalConst.LfChar)
                     {
                         long nextLineStart = pos + i + 1;
+                        // 统计本行长度（不含 LF）；跨块首行完整落入本块统计，块尾部分行仅部分长度，取全局 max 仍正确
+                        long lineLen = pos + i - lineStart;
+                        if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
                         if (nextLineStart < blockEnd)
                             lineStarts.Add(nextLineStart);
                         else
                             endsWithNewline = true;
+                        lineStart = nextLineStart;
                     }
                 }
                 pos += n;
+            }
+            // 块尾无换行符的部分行也参与统计（其完整长度会在下一块被完整统计，此处仅为兜底）
+            if (pos > lineStart)
+            {
+                long lineLen = pos - lineStart;
+                if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
             }
 
             return new BlockIndexResult
@@ -557,7 +591,9 @@ namespace wxd.files.winforms
                 BlockEnd = blockEnd,
                 LineStarts = lineStarts,
                 EndsWithNewline = endsWithNewline,
-                FirstLineStart = firstLineStart
+                FirstLineStart = firstLineStart,
+                MaxLineLen = maxLen,
+                MaxLineOffset = maxOff
             };
         }
 
@@ -580,6 +616,16 @@ namespace wxd.files.winforms
             // 修正：如果最后一块尾部不是 LF，移除最后一个虚拟行偏移
             if (merged.Count > 1 && merged[merged.Count - 1] >= _fileLength)
                 merged.RemoveAt(merged.Count - 1);
+
+            // ★ 汇总各块最长行，取全局最大（跨块首行完整落入其起始块统计，取 max 正确）
+            long maxLen = 0, maxOff = -1;
+            for (int i = 0; i < _blockCount; i++)
+            {
+                if (!_blockResults.TryGetValue(i, out var br)) continue;
+                if (br.MaxLineLen > maxLen) { maxLen = br.MaxLineLen; maxOff = br.MaxLineOffset; }
+            }
+            _longestLineOffset = maxOff;
+            _longestLineBytes = maxLen;
 
             return merged.ToArray();
         }
@@ -641,8 +687,8 @@ namespace wxd.files.winforms
                 RefreshCacheSizeStatus();
                 // ★ long → int 安全转换（WinForms ListView 限制为 int）
                 _lstContent.VirtualListSize = (int)Math.Min(_idxCount, int.MaxValue);
-                // ★ 索引完成后重新测量 MaxContentWidth，基于当前可见区域的截断后缓存数据
-                UpdateMaxContentWidth();
+                // ★ 索引完成后一次性测量最长行并设置横向滚动条，之后纵向滚动不再重算（与 Sublime 一致）
+                SetHorizontalScrollOnce();
                 _timerScroll.Start();
                 try { _lstContent.RedrawItems(0, Math.Min(_lstContent.VirtualListSize - 1, _lstContent.ClientRectangle.Height / Math.Max(_lstContent.Font.Height + 6, 1)), true); } catch { }
                 return;
@@ -675,49 +721,55 @@ namespace wxd.files.winforms
             return fullText;
         }
 
-        /// <summary>基于当前可见区域的缓存数据刷新 MaxContentWidth（截断后测量，避免超长行像素宽度过大）</summary>
-        private void UpdateMaxContentWidth()
+        /// <summary>索引完成后一次性设置横向滚动条：测量索引期发现的最长行（已截断 8K），只设置一次，之后纵向滚动不再重算</summary>
+        private void SetHorizontalScrollOnce()
         {
             try
             {
-                using var g = _lstContent.CreateGraphics();
-                // ★ 修复C：从当前 MaxContentWidth 起步，"只增不减"，避免缓存波动导致范围缩回
-                int maxW = Math.Max(_lstContent.MaxContentWidth, _lstContent.ClientRectangle.Width);
-                int maxLineIdx = -1;
-                foreach (var kv in _cache)
+                int clientW = _lstContent.ClientRectangle.Width;
+                string? text = null;
+                int lineIdx = -1;
+
+                // 定位最长行：通过行偏移数组二分查找行号，再 ReadLine 读取（内部已截断 DISPLAY_LINE_LIMIT）
+                var off = _lineOffsets;
+                if (off != null && _longestLineOffset >= 0)
                 {
-                    if (!string.IsNullOrEmpty(kv.Value))
+                    int idx = Array.BinarySearch(off, _longestLineOffset);
+                    if (idx >= 0)
                     {
-                        string measureText = TruncateLineText(kv.Value);
-                        // ★ 修复D：从 Graphics.MeasureString（GDI+）改为 TextRenderer.MeasureText（GDI）。
-                        // GDI+ 对超长字符串可能返回 Infinity，(int)Infinity = int.MinValue，
-                        // 导致 MaxContentWidth 为负数，SetScrollInfo 静默失败，滚动条完全失效。
-                        // TextRenderer.MeasureText 与绘制路径 TextRenderer.DrawText 同栈，结果一致。
-                        var sz = TextRenderer.MeasureText(g, measureText, _lstContent.Font,
-                            new Size(int.MaxValue, int.MaxValue),
-                            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                        int candidate = sz.Width + 10;
-                        if (candidate <= 0 || candidate > MAX_SCROLL_RANGE)
-                        {
-                            // 防护：异常测量结果（负数/溢出/超大）跳过，避免污染 MaxContentWidth
-                            Debug.WriteLine($"[Measure] 行{kv.Key} 异常 candidate={candidate} text.Length={measureText.Length} sz.Width={sz.Width}");
-                            continue;
-                        }
-                        if (candidate > maxW)
-                        {
-                            maxW = candidate;
-                            maxLineIdx = kv.Key;
-                        }
+                        lineIdx = idx;
+                        text = ReadLine(idx);
                     }
                 }
-                if (maxW != _lstContent.MaxContentWidth)
+                // 兜底：最长行定位失败时，退化为缓存中最长文本
+                if (text == null && !_cache.IsEmpty)
                 {
-                    Debug.WriteLine($"[Measure] MaxContentWidth {_lstContent.MaxContentWidth} -> {maxW} (峰值行={maxLineIdx}, 缓存行数={_cache.Count})");
-                    _lstContent.MaxContentWidth = maxW;
-                    _lstContent.InitHScroll();
+                    var kv = _cache.OrderByDescending(p => p.Value?.Length ?? 0).FirstOrDefault();
+                    text = kv.Value;
+                    lineIdx = kv.Key;
                 }
+
+                int maxW = clientW;
+                if (!string.IsNullOrEmpty(text))
+                {
+                    using var g = _lstContent.CreateGraphics();
+                    // TextRenderer.MeasureText 与绘制路径 TextRenderer.DrawText 同栈，结果一致（避免 GDI+ 超长返回 Infinity）
+                    var sz = TextRenderer.MeasureText(g, text, _lstContent.Font,
+                        new Size(int.MaxValue, int.MaxValue),
+                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                    int candidate = sz.Width + 10;
+                    if (candidate > 0)
+                        maxW = Math.Max(clientW, candidate);
+                    else
+                        Debug.WriteLine($"[Measure] 最长行{lineIdx} 异常测量 candidate={candidate} text.Length={text.Length} sz.Width={sz.Width}");
+                }
+                maxW = Math.Min(maxW, MAX_SCROLL_RANGE);
+
+                Debug.WriteLine($"[Measure] SetHorizontalScrollOnce MaxContentWidth {_lstContent.MaxContentWidth} -> {maxW} (最长行={lineIdx}, 字节数={_longestLineBytes})");
+                _lstContent.MaxContentWidth = maxW;
+                _lstContent.InitHScroll();
             }
-            catch (Exception ex) { Debug.WriteLine($"[Measure] UpdateMaxContentWidth 异常: {ex.Message}"); }
+            catch (Exception ex) { Debug.WriteLine($"[Measure] SetHorizontalScrollOnce 异常: {ex.Message}"); }
         }
 
         private string ReadLine(long idx)
@@ -821,8 +873,6 @@ namespace wxd.files.winforms
             for (int i = _cS; i <= _cE; i++) if (i < start || i > end) _cache.TryRemove(i, out _);
             for (int i = start; i <= end; i++) if (!_cache.ContainsKey(i)) _cache[i] = ReadLine(i);
             _cS = start; _cE = end;
-            // ★ 修复D：新行加载后重新测量，确保长行进入可视区时水平滚动范围扩展
-            UpdateMaxContentWidth();
         }
 
         private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
