@@ -152,7 +152,7 @@ namespace wxd.files.winforms
         public void EnsureVisible(long index)
         {
             if (index < 0 || index >= _totalLines) return;
-            int visible = VisibleRowCount;
+            int visible = FullyVisibleRowCount;
             int idx = (int)Math.Min(index, int.MaxValue);
             if (idx < _vPos)
                 _vPos = idx;
@@ -167,7 +167,9 @@ namespace wxd.files.winforms
         public int TopIndex => _vPos;
 
         // ==================== 绘制 ====================
-        private int VisibleRowCount => Math.Max(1, (ClientRectangle.Height + RowHeight - 1) / RowHeight);
+        // 完全可见的行数（向下取整，仅用于滚动判定/翻页/滚动条配置）。
+        // 注意：OnPaint 的绘制范围用此值即可，无需 +1；底部多余像素由客户区自然裁剪。
+        private int FullyVisibleRowCount => Math.Max(1, ClientRectangle.Height / RowHeight);
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -182,9 +184,9 @@ namespace wxd.files.winforms
             // 背景宽度：取内容宽与客户区宽的较大者（选中行蓝底铺满）
             int bgWidth = Math.Max(_maxLineWidth, clientW);
 
-            int visible = VisibleRowCount;
+            int visible = FullyVisibleRowCount;
             long start = _vPos;
-            long end = Math.Min(_totalLines, start + visible + 1);
+            long end = Math.Min(_totalLines, start + visible);
 
             // 绘制可见行
             for (long i = start; i < end; i++)
@@ -210,9 +212,9 @@ namespace wxd.files.winforms
                     int drawX = LeftMargin - _hPos;
                     int drawY = y + (rowH - Font.Height) / 2;
                     TextRenderer.DrawText(g, text, Font,
-                        new Rectangle(drawX, drawY, int.MaxValue, Font.Height),
+                        new Point(drawX, drawY),
                         selected ? SelectionTextColor : ForeColor,
-                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                        TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
                 }
             }
 
@@ -232,7 +234,7 @@ namespace wxd.files.winforms
         // ==================== 滚动条 ====================
         private void ClampVPos()
         {
-            int max = Math.Max(0, (int)Math.Min(_totalLines - VisibleRowCount, int.MaxValue));
+            int max = Math.Max(0, (int)Math.Min(_totalLines - FullyVisibleRowCount, int.MaxValue));
             if (_vPos > max) _vPos = max;
             if (_vPos < 0) _vPos = 0;
         }
@@ -246,7 +248,7 @@ namespace wxd.files.winforms
 
         private void UpdateVScroll()
         {
-            int visible = VisibleRowCount;
+            int visible = FullyVisibleRowCount;
             bool need = _totalLines > visible;
             _vScroll.Visible = need;
             if (!need) return;
@@ -341,10 +343,10 @@ namespace wxd.files.winforms
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             int delta = e.Delta / 120;
-            int step = (Control.ModifierKeys & Keys.Shift) != 0 ? VisibleRowCount : 3;
+            int step = (Control.ModifierKeys & Keys.Shift) != 0 ? FullyVisibleRowCount : 3;
             int newPos = _vPos - delta * step;
             if (newPos < 0) newPos = 0;
-            int max = Math.Max(0, (int)Math.Min(_totalLines - VisibleRowCount, int.MaxValue));
+            int max = Math.Max(0, (int)Math.Min(_totalLines - FullyVisibleRowCount, int.MaxValue));
             if (newPos > max) newPos = max;
             if (newPos != _vPos)
             {
@@ -387,10 +389,29 @@ namespace wxd.files.winforms
             {
                 case Keys.Up: newIdx = cur - 1; break;
                 case Keys.Down: newIdx = cur + 1; break;
-                case Keys.PageUp: newIdx = cur - VisibleRowCount; break;
-                case Keys.PageDown: newIdx = cur + VisibleRowCount; break;
+                case Keys.PageUp: newIdx = cur - FullyVisibleRowCount; break;
+                case Keys.PageDown: newIdx = cur + FullyVisibleRowCount; break;
                 case Keys.Home: newIdx = 0; break;
                 case Keys.End: newIdx = _totalLines - 1; break;
+                case Keys.Left:
+                    {
+                        int step = (e.Modifiers & Keys.Shift) != 0 ? ClientRectangle.Width : 40;
+                        int newPos = _hPos - step;
+                        if (newPos < 0) newPos = 0;
+                        if (newPos != _hPos) { _hPos = newPos; UpdateHScroll(); Invalidate(); }
+                        e.Handled = true;
+                        return;
+                    }
+                case Keys.Right:
+                    {
+                        int step = (e.Modifiers & Keys.Shift) != 0 ? ClientRectangle.Width : 40;
+                        int max = Math.Max(0, _maxLineWidth - ClientRectangle.Width);
+                        int newPos = _hPos + step;
+                        if (newPos > max) newPos = max;
+                        if (newPos != _hPos) { _hPos = newPos; UpdateHScroll(); Invalidate(); }
+                        e.Handled = true;
+                        return;
+                    }
                 default:
                     base.OnKeyDown(e);
                     return;
