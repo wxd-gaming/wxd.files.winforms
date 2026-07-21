@@ -49,6 +49,9 @@
     <Compile Update="LargeFileViewer.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Update="LineListView.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Update="LinkTableSelectorDialog.cs">
       <SubType>Form</SubType>
     </Compile>
