@@ -118,36 +118,36 @@ namespace wxd.files.winforms
         // ==================== 初始化页签（恢复配置） ====================
 
         /// <summary>
-        /// 从配置恢复页签：读取保存的页签数量，为每个页签创建独立 FileBrowserPanel。
-        /// 第一个页签的 PanelIndex 使用 paneIndex，其余使用复合索引 paneIndex*100+tabIndex。
-        /// 每个 FileBrowserPanel 内部会自动从 CsvSettings 读取对应索引的目录/过滤/视图。
+        /// 从 AppStateStore 恢复页签：读取保存的页签数量，为每个页签创建独立 FileBrowserPanel。
+        /// 每个页签使用 (paneIndex, tabIndex) 双键从 AppStateStore 读取/写入状态。
         /// </summary>
         public void RestoreTabs(bool skipAutoNavigate)
         {
-            int savedTabCount = CsvSettings.GetPaneTabCount(_paneIndex);
-            int savedActiveTab = CsvSettings.GetPaneActiveTab(_paneIndex);
+            int savedTabCount = AppStateStore.GetPaneTabCount(_paneIndex);
+            int savedActiveTab = AppStateStore.GetPaneActiveTab(_paneIndex);
 
             for (int i = 0; i < savedTabCount; i++)
             {
-                int compositeIndex = (i == 0) ? _paneIndex : _paneIndex * 100 + i;
-                var panel = new FileBrowserPanel(compositeIndex, skipAutoNavigate)
+                var panel = new FileBrowserPanel(_paneIndex, i, skipAutoNavigate)
                 {
                     Dock = DockStyle.Fill,
                     BorderStyle = BorderStyle.None,
                 };
                 panel.DirectoryChanged += OnPanelDirectoryChanged;
+                panel.StateChanged += OnPanelStateChanged;
                 _tabPanels.Add(panel);
             }
 
             // 确保至少有一个页签
             if (_tabPanels.Count == 0)
             {
-                var panel = new FileBrowserPanel(_paneIndex, skipAutoNavigate)
+                var panel = new FileBrowserPanel(_paneIndex, 0, skipAutoNavigate)
                 {
                     Dock = DockStyle.Fill,
                     BorderStyle = BorderStyle.None,
                 };
                 panel.DirectoryChanged += OnPanelDirectoryChanged;
+                panel.StateChanged += OnPanelStateChanged;
                 _tabPanels.Add(panel);
                 savedActiveTab = 0;
             }
@@ -169,15 +169,15 @@ namespace wxd.files.winforms
                 return false;
 
             int tabIndex = _tabPanels.Count;
-            int compositeIndex = (tabIndex == 0) ? _paneIndex : _paneIndex * 100 + tabIndex;
 
             // 创建新面板（skipAutoNavigate=true，因为我们会手动导航）
-            var panel = new FileBrowserPanel(compositeIndex, skipAutoNavigate: true)
+            var panel = new FileBrowserPanel(_paneIndex, tabIndex, skipAutoNavigate: true)
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
             };
             panel.DirectoryChanged += OnPanelDirectoryChanged;
+            panel.StateChanged += OnPanelStateChanged;
 
             // 应用当前主题
             panel.ApplyTheme(_isDark);
@@ -193,8 +193,8 @@ namespace wxd.files.winforms
             ShowActiveTab();
 
             // 持久化页签数量
-            CsvSettings.SetPaneTabCount(_paneIndex, _tabPanels.Count);
-            CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
+            AppStateStore.SetPaneTabCount(_paneIndex, _tabPanels.Count);
+            AppStateStore.SetPaneActiveTab(_paneIndex, _activeTabIndex);
 
             _pnlTabBar.Invalidate();
             return true;
@@ -211,6 +211,7 @@ namespace wxd.files.winforms
 
             var panel = _tabPanels[tabIndex];
             panel.DirectoryChanged -= OnPanelDirectoryChanged;
+            panel.StateChanged -= OnPanelStateChanged;
             _tabPanels.RemoveAt(tabIndex);
 
             if (!panel.IsDisposed)
@@ -229,8 +230,8 @@ namespace wxd.files.winforms
             }
 
             ShowActiveTab();
-            CsvSettings.SetPaneTabCount(_paneIndex, _tabPanels.Count);
-            CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
+            AppStateStore.SetPaneTabCount(_paneIndex, _tabPanels.Count);
+            AppStateStore.SetPaneActiveTab(_paneIndex, _activeTabIndex);
             _pnlTabBar.Invalidate();
             return true;
         }
@@ -243,7 +244,7 @@ namespace wxd.files.winforms
 
             _activeTabIndex = tabIndex;
             ShowActiveTab();
-            CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
+            AppStateStore.SetPaneActiveTab(_paneIndex, _activeTabIndex);
             _pnlTabBar.Invalidate();
         }
 
@@ -298,13 +299,17 @@ namespace wxd.files.winforms
         /// <summary>强制保存所有页签面板的状态</summary>
         public void ForceSaveState()
         {
-            foreach (var panel in _tabPanels)
+            for (int i = 0; i < _tabPanels.Count; i++)
             {
+                var panel = _tabPanels[i];
                 if (!panel.IsDisposed)
-                    panel.ForceSaveState();
+                {
+                    var state = panel.GetCurrentState();
+                    AppStateStore.SetTabState(_paneIndex, i, state);
+                }
             }
-            CsvSettings.SetPaneTabCount(_paneIndex, _tabPanels.Count);
-            CsvSettings.SetPaneActiveTab(_paneIndex, _activeTabIndex);
+            AppStateStore.SetPaneTabCount(_paneIndex, _tabPanels.Count);
+            AppStateStore.SetPaneActiveTab(_paneIndex, _activeTabIndex);
         }
 
         /// <summary>刷新所有页签面板的当前目录</summary>
@@ -468,6 +473,16 @@ namespace wxd.files.winforms
             _pnlTabBar.Invalidate();
         }
 
+        /// <summary>子面板状态变更回调：写入 AppStateStore（仅更新内存，不持久化）</summary>
+        private void OnPanelStateChanged(FileBrowserPanel sender, TabPageState state)
+        {
+            int tabIndex = sender.TabIndex;
+            if (tabIndex >= 0 && tabIndex < _tabPanels.Count)
+            {
+                AppStateStore.SetTabState(_paneIndex, tabIndex, state);
+            }
+        }
+
         // ==================== 页签条鼠标交互 ====================
 
         private void OnTabBarMouseDown(object? sender, MouseEventArgs e)
@@ -625,6 +640,7 @@ namespace wxd.files.winforms
                     if (!panel.IsDisposed)
                     {
                         panel.DirectoryChanged -= OnPanelDirectoryChanged;
+                        panel.StateChanged -= OnPanelStateChanged;
                         panel.Dispose();
                     }
                 }

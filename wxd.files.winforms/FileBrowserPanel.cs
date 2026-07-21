@@ -371,22 +371,38 @@ namespace wxd.files.winforms
         public string CurrentDirectory => _currentDir;
         public string FilterText => _filterText;
 
+        /// <summary>窗格索引 (0~9)</summary>
+        public int PaneIndex { get; }
+
+        /// <summary>窗格内页签索引 (0~9)</summary>
+        public int TabIndex { get; }
+
+        /// <summary>旧 PanelIndex（兼容保留，实际等于 PaneIndex）</summary>
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public int PanelIndex { get; set; }
+        public int PanelIndex => PaneIndex;
+
+        /// <summary>状态变更事件（参数：触发面板 + 新状态快照）</summary>
+        public event Action<FileBrowserPanel, TabPageState>? StateChanged;
 
         // ==================== 构造 & 初始化 ====================
-        public FileBrowserPanel() : this(-1) { }
+        public FileBrowserPanel() : this(0, 0) { }
 
-        public FileBrowserPanel(int panelIndex) : this(panelIndex, skipAutoNavigate: false) { }
+        public FileBrowserPanel(int paneIndex, int tabIndex) : this(paneIndex, tabIndex, skipAutoNavigate: false) { }
 
         /// <summary>
         /// 完整构造函数
         /// </summary>
-        /// <param name="panelIndex">面板索引</param>
+        /// <param name="paneIndex">窗格索引 (0~9)</param>
+        /// <param name="tabIndex">窗格内页签索引 (0~9)</param>
         /// <param name="skipAutoNavigate">是否跳过自动导航到上次目录（用于启动优化，先显示UI再加载数据）</param>
-        public FileBrowserPanel(int panelIndex, bool skipAutoNavigate)
+        public FileBrowserPanel(int paneIndex, int tabIndex, bool skipAutoNavigate)
         {
-            PanelIndex = panelIndex;
+            PaneIndex = paneIndex;
+            TabIndex = tabIndex;
+
+            // 从 AppStateStore 读取保存的状态
+            var savedState = AppStateStore.GetTabState(paneIndex, tabIndex);
+
             // 默认使用浅色主题
             SetThemeColors(false);
             InitializeComponent();
@@ -395,12 +411,11 @@ namespace wxd.files.winforms
             RebuildPathComboItems();
 
             // ==== 第一步：恢复视图模式 ====
-            var savedViewMode = CsvSettings.GetPaneViewMode(panelIndex);
-            _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedViewMode));
+            _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedState.ViewMode));
 
             // ==== 恢复排序状态 ====
-            _sortField = (SortField)CsvSettings.GetPaneSortField(panelIndex);
-            _sortDirection = (SortDirection)CsvSettings.GetPaneSortDirection(panelIndex);
+            _sortField = (SortField)savedState.SortField;
+            _sortDirection = (SortDirection)savedState.SortDirection;
 
             // 面板句柄创建后延迟恢复视图（确保子控件句柄也已就绪）
             HandleCreated += (_, _) => BeginInvoke(new Action(() =>
@@ -415,13 +430,12 @@ namespace wxd.files.winforms
             _suppressEvents = false;
 
             // ==== 第二步：恢复过滤关键词 ====
-            var savedFilter = CsvSettings.GetPaneFilter(panelIndex);
-            if (!string.IsNullOrEmpty(savedFilter))
+            if (!string.IsNullOrEmpty(savedState.Filter))
             {
-                _filterText = savedFilter;
+                _filterText = savedState.Filter;
                 if (_txtFilter != null)
                 {
-                    _txtFilter.Text = savedFilter;
+                    _txtFilter.Text = savedState.Filter;
                     _txtFilter.ForeColor = _colorTextPrimary;
                 }
             }
@@ -429,7 +443,7 @@ namespace wxd.files.winforms
             // ==== 第三步：导航到上次目录（可被跳过） ====
             if (!skipAutoNavigate)
             {
-                var startPath = CsvSettings.GetPaneDirectory(panelIndex);
+                var startPath = savedState.Directory;
                 if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
                     NavigateTo(startPath, restoreFilter: false, saveState: false);
                 else
@@ -443,7 +457,8 @@ namespace wxd.files.winforms
         /// </summary>
         public void InitializeDeferred()
         {
-            var startPath = CsvSettings.GetPaneDirectory(PanelIndex);
+            var savedState = AppStateStore.GetTabState(PaneIndex, TabIndex);
+            var startPath = savedState.Directory;
             if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
                 NavigateTo(startPath, restoreFilter: false, saveState: false);
             else
@@ -453,7 +468,8 @@ namespace wxd.files.winforms
         /// <summary>异步版本的延迟初始化，等待文件列表加载完成</summary>
         public async Task InitializeDeferredAsync()
         {
-            var startPath = CsvSettings.GetPaneDirectory(PanelIndex);
+            var savedState = AppStateStore.GetTabState(PaneIndex, TabIndex);
+            var startPath = savedState.Directory;
             if (!string.IsNullOrEmpty(startPath) && Directory.Exists(startPath))
                 await NavigateToAsync(startPath, restoreFilter: false, saveState: false);
             else
@@ -1812,8 +1828,8 @@ namespace wxd.files.winforms
             // 用 PopulateListView 重新渲染列表（switch 内部根据 _viewMode 切换布局）
             PopulateListView();
 
-            // 立即持久化视图模式
-            try { CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode); }
+            // 立即通知状态变更
+            try { SavePanelState(); }
             catch { }
         }
 
@@ -1836,11 +1852,7 @@ namespace wxd.files.winforms
             _sortField = (SortField)newIndex;
             SyncSortMenuCheck();
             RefreshCurrentDirectory();
-            try
-            {
-                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
-                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
-            }
+            try { SavePanelState(); }
             catch { }
         }
 
@@ -1852,11 +1864,7 @@ namespace wxd.files.winforms
             _sortDirection = (SortDirection)newIndex;
             SyncSortMenuCheck();
             RefreshCurrentDirectory();
-            try
-            {
-                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
-                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
-            }
+            try { SavePanelState(); }
             catch { }
         }
 
@@ -1975,11 +1983,7 @@ namespace wxd.files.winforms
 
             SyncSortMenuCheck();
             RefreshCurrentDirectory();
-            try
-            {
-                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
-                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
-            }
+            try { SavePanelState(); }
             catch { }
         }
 
@@ -2549,18 +2553,29 @@ namespace wxd.files.winforms
             RefreshCurrentDirectory();
         }
 
+        /// <summary>构建当前状态的快照</summary>
+        public TabPageState GetCurrentState()
+        {
+            var filter = _filterText == FilterPlaceholder ? "" : _filterText;
+            return new TabPageState
+            {
+                Directory = _currentDir,
+                Filter = filter,
+                ViewMode = (int)_viewMode,
+                SortField = (int)_sortField,
+                SortDirection = (int)_sortDirection,
+            };
+        }
+
+        /// <summary>触发状态变更通知，将当前状态写入 AppStateStore（仅更新内存，不持久化到文件）</summary>
         private void SavePanelState()
         {
             try
             {
-                // 使用ConfigurationManager保存各窗格的目录和过滤条件
-                var filter = _filterText == FilterPlaceholder ? "" : _filterText;
-                System.Diagnostics.Debug.WriteLine($"SavePanelState: PanelIndex={PanelIndex}, Filter={filter}, _filterText={_filterText}");
-                CsvSettings.SetPaneDirectory(PanelIndex, _currentDir);
-                CsvSettings.SetPaneFilter(PanelIndex, filter);
-                CsvSettings.SetPaneViewMode(PanelIndex, (int)_viewMode);
-                CsvSettings.SetPaneSortField(PanelIndex, (int)_sortField);
-                CsvSettings.SetPaneSortDirection(PanelIndex, (int)_sortDirection);
+                var state = GetCurrentState();
+                System.Diagnostics.Debug.WriteLine($"SavePanelState: PaneIndex={PaneIndex}, TabIndex={TabIndex}, Filter={state.Filter}");
+                // 通过事件通知 TabbedFileBrowserPanel → AppStateStore.SetTabState()
+                StateChanged?.Invoke(this, state);
             }
             catch (Exception ex)
             {
@@ -2568,7 +2583,7 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>强制立即保存当前面板状态（用于手动保存按钮）</summary>
+        /// <summary>强制立即保存当前面板状态</summary>
         public void ForceSaveState()
         {
             // 停止定时器

@@ -204,6 +204,9 @@ namespace wxd.files.winforms
         /// <summary>异步初始化所有面板：先创建空面板做布局，再逐个异步加载数据（后台线程执行）</summary>
         private async void AsyncInitializePanels()
         {
+            // ★ 启动时加载 AppStateStore
+            AppStateStore.Load();
+
             int panelCount = _cboCount!.SelectedIndex + 1;
 
             try
@@ -645,14 +648,17 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>保存所有状态（包含每个面板的过滤文本）</summary>
+        /// <summary>保存所有状态（包含每个面板的页签状态）</summary>
         private void SaveAllState()
         {
-            // 强制保存每个面板的过滤文本和目录
+            // 强制保存每个面板的所有页签状态
             for (int i = 0; i < _panels.Length; i++)
             {
                 _panels[i].ForceSaveState();
             }
+
+            // 持久化到文件
+            AppStateStore.Save();
 
             // 保存全局状态
             SaveGlobalState();
@@ -960,11 +966,11 @@ namespace wxd.files.winforms
             // 强制保存每个面板的全部状态（含目录、过滤条件、视图模式）
             for (int i = 0; i < _panels.Length; i++)
             {
-                var filter = _panels[i].FilterText;
-                System.Diagnostics.Debug.WriteLine($"OnFormClosing: Panel {i} Filter={filter}");
-                CsvSettings.SetPaneFilter(i, filter);
                 _panels[i].ForceSaveState();
             }
+
+            // 持久化到文件
+            AppStateStore.Save();
 
             CsvSettings.PaneCount = _panels.Length;
             CsvSettings.LayoutIndex = _cboLayout?.SelectedIndex ?? 2;
