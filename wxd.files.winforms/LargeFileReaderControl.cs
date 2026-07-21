@@ -63,6 +63,10 @@ namespace wxd.files.winforms
         // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
         // 同时水平滚动范围过大也会导致滚动条精度问题。上限夹紧到 10MB 像素。
         private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
+        // ★ 文件切割相关常量
+        private const int TAIL_EMPTY_LINES = 2;
+        private const long SPLIT_LINE_THRESHOLD = 1_000_000_000L; // 10亿行
+        private const long SPLIT_LINES_PER_FILE = 500_000_000L;   // 每5亿行
         // ★ _idxCount 改为 long，行数也可能超 int.MaxValue（极端超短行场景）
         private long _idxCount;
         private volatile int _idxProg;
@@ -681,12 +685,20 @@ namespace wxd.files.winforms
             if (_indexReady)
             {
                 _timer.Stop();
+
+                // ★ 检测行数是否超过切割阈值
+                if (_lineOffsets != null && _lineOffsets.Length > SPLIT_LINE_THRESHOLD)
+                {
+                    CheckAndPromptSplit(_lineOffsets.Length);
+                    return;
+                }
+
                 Status($"{FormatSize(_fileLength)} | {_idxCount:N0} 行");
                 // ★ 底部状态栏：行数 + 当前缓存大小
                 _lblFileLines.Text = $"行数：{_idxCount:N0}";
                 RefreshCacheSizeStatus();
-                // ★ long → int 安全转换（WinForms ListView 限制为 int）
-                _lstContent.VirtualListSize = (int)Math.Min(_idxCount, int.MaxValue);
+                // ★ long → int 安全转换（WinForms ListView 限制为 int），末尾追加空白行确保最后一行完整显示
+                _lstContent.VirtualListSize = (int)Math.Min(_idxCount + TAIL_EMPTY_LINES, int.MaxValue);
                 // ★ 索引完成后一次性测量最长行并设置横向滚动条，之后纵向滚动不再重算（与 Sublime 一致）
                 SetHorizontalScrollOnce();
                 _timerScroll.Start();
@@ -3151,6 +3163,75 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 result = result.Substring(0, maxLength).TrimEnd(' ', '.');
             
             return result;
+        }
+
+        /// <summary>检测行数是否超过切割阈值，弹窗提示用户进行文件切割</summary>
+        private void CheckAndPromptSplit(long totalLines)
+        {
+            if (_lineOffsets == null || string.IsNullOrEmpty(_filePath)) return;
+
+            string baseName = Path.GetFileNameWithoutExtension(_filePath);
+            string ext = Path.GetExtension(_filePath);
+            int fileCount = FileSplitter.GetFileCount(totalLines, SPLIT_LINES_PER_FILE);
+
+            var result = MessageBox.Show(
+                ParentForm,
+                $"文件 {Path.GetFileName(_filePath)} 总行数 {totalLines:N0}，\n" +
+                $"超过显示上限，将按照每 {SPLIT_LINES_PER_FILE:N0} 行一个文件进行切割。\n\n" +
+                $"切割后文件示例：\n" +
+                $"  {baseName}-0{ext}\n" +
+                $"  {baseName}-1{ext}\n" +
+                $"  ...\n\n" +
+                $"共切割为 {fileCount} 个文件，是否继续？",
+                "文件切割",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning);
+
+            if (result != DialogResult.OK) return;
+
+            Status("正在切割文件...");
+            _lblFileLines.Text = "行数：切割中...";
+
+            // 后台执行切割
+            Task.Run(() =>
+            {
+                try
+                {
+                    var splitFiles = FileSplitter.Split(
+                        _filePath, _lineOffsets, _fileLength, SPLIT_LINES_PER_FILE,
+                        (current, total, percent) =>
+                        {
+                            BeginInvoke(() =>
+                            {
+                                Status($"正在切割文件... ({current}/{total}, {percent}%)");
+                                _lblFileLines.Text = $"行数：切割中 {percent}%";
+                            });
+                        });
+
+                    // 切割完成后在 UI 线程提示
+                    BeginInvoke(() =>
+                    {
+                        Status($"切割完成，共生成 {splitFiles.Count} 个文件");
+                        _lblFileLines.Text = "行数：已切割";
+                        AlertForm.Show(ParentForm,
+                            $"文件切割完成！\n\n" +
+                            $"原始文件：{Path.GetFileName(_filePath)}\n" +
+                            $"总行数：{totalLines:N0}\n" +
+                            $"切割文件数：{splitFiles.Count}\n\n" +
+                            $"请分别打开切割后的文件进行查看。",
+                            "切割完成", AlertType.Information);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke(() =>
+                    {
+                        Status("文件切割失败");
+                        _lblFileLines.Text = "行数：切割失败";
+                        AlertForm.Show(ParentForm, $"文件切割失败：{ex.Message}", "错误", AlertType.Error);
+                    });
+                }
+            });
         }
 
         public void Cleanup()
