@@ -152,7 +152,8 @@ namespace wxd.files.winforms
         public void EnsureVisible(long index)
         {
             if (index < 0 || index >= _totalLines) return;
-            int visible = FullyVisibleRowCount;
+            // 判定滚动时少算 1 行，让滚动提前 1 行触发（留 1 行余量）
+            int visible = Math.Max(1, FullyVisibleRowCount - 1);
             int idx = (int)Math.Min(index, int.MaxValue);
             if (idx < _vPos)
                 _vPos = idx;
@@ -389,8 +390,9 @@ namespace wxd.files.winforms
             {
                 case Keys.Up: newIdx = cur - 1; break;
                 case Keys.Down: newIdx = cur + 1; break;
-                case Keys.PageUp: newIdx = cur - FullyVisibleRowCount; break;
-                case Keys.PageDown: newIdx = cur + FullyVisibleRowCount; break;
+                // 翻页少跳 1 行，保留 1 行上下文重叠
+                case Keys.PageUp: newIdx = cur - Math.Max(1, FullyVisibleRowCount - 1); break;
+                case Keys.PageDown: newIdx = cur + Math.Max(1, FullyVisibleRowCount - 1); break;
                 case Keys.Home: newIdx = 0; break;
                 case Keys.End: newIdx = _totalLines - 1; break;
                 case Keys.Left:
