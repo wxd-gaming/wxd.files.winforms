@@ -757,7 +757,7 @@ namespace wxd.files.winforms
                     var sz = TextRenderer.MeasureText(g, text, _lstContent.Font,
                         new Size(int.MaxValue, int.MaxValue),
                         TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                    int candidate = sz.Width + 10;
+                    int candidate = sz.Width + 60;  // 额外 60px 充裕空间，避免最长行贴边
                     if (candidate > 0)
                         maxW = Math.Max(clientW, candidate);
                     else
