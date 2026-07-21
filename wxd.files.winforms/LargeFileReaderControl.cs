@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -30,7 +31,7 @@ namespace wxd.files.winforms
         private FlowLayoutPanel _statusBar = null!;
         private Label _lblFileModify = null!, _lblFileSize = null!, _lblFileLines = null!;
         private Label _lblCacheSize = null!, _lblSearchPos = null!, _lblCurLine = null!;
-        private HScrollListView _lstContent = null!;
+        private LineListView _lstContent = null!;
         private System.Windows.Forms.Timer _timer = null!, _timerScroll = null!;
         private TableLayoutPanel _topPanel = null!;
 
@@ -63,6 +64,10 @@ namespace wxd.files.winforms
         // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
         // 同时水平滚动范围过大也会导致滚动条精度问题。上限夹紧到 10MB 像素。
         private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
+        // ★ 文件切割相关常量
+        private const int TAIL_EMPTY_LINES = 2;
+        private const long SPLIT_LINE_THRESHOLD = 1_000_000_000L; // 10亿行
+        private const long SPLIT_LINES_PER_FILE = 500_000_000L;   // 每5亿行
         // ★ _idxCount 改为 long，行数也可能超 int.MaxValue（极端超短行场景）
         private long _idxCount;
         private volatile int _idxProg;
@@ -78,6 +83,9 @@ namespace wxd.files.winforms
         private CancellationTokenSource? _indexCts;
         private volatile int _completedBlocks;        // 已完成块数（原子计数）
         private long _partialMaxLine;                 // 已连续构建的最大行号（long）
+        // ★ 横向滚动条：索引构建期间按字节长度跟踪的最长行（索引完成后一次性测量并设置滚动条，之后不再重算）
+        private long _longestLineOffset = -1;         // 最长行起始字节偏移（-1 表示尚未发现）
+        private long _longestLineBytes = 0;           // 最长行字节长度
         // 并行搜索：每块的局部结果
         private readonly ConcurrentDictionary<int, List<long>> _blockSearchResults = new();
 
@@ -90,6 +98,8 @@ namespace wxd.files.winforms
             public List<long> LineStarts;   // 块内每行起始偏移（绝对偏移，long）
             public bool EndsWithNewline;    // 块尾是否以LF换行符结尾
             public long FirstLineStart;     // 块第一行真正起始偏移（已修正跨块）
+            public long MaxLineLen;         // 块内最长行字节长度
+            public long MaxLineOffset;      // 块内最长行起始偏移（-1 表示无）
         }
 
         private FileStream? _readStream;
@@ -185,28 +195,26 @@ namespace wxd.files.winforms
             _topPanel.Controls.Add(separator, 0, 1);
             _topPanel.Controls.Add(row2, 0, 2);
 
-            _lstContent = new HScrollListView();
+            _lstContent = new LineListView();
             _lstContent.Dock = DockStyle.Fill;
-            _lstContent.View = View.Details;
-            _lstContent.FullRowSelect = true;
-            _lstContent.HeaderStyle = ColumnHeaderStyle.None;
-            _lstContent.VirtualMode = true;
-            _lstContent.HideSelection = false;
-            _lstContent.Scrollable = true;
-            _lstContent.OwnerDraw = true;
             _lstContent.Font = new Font("Consolas", 10F);
             _lstContent.BackColor = Color.White;
             _lstContent.ForeColor = Color.FromArgb(30, 30, 30);
-            _lstContent.Columns.Add("");
-            _lstContent.RetrieveVirtualItem += OnRetrieve;
-            _lstContent.CacheVirtualItems += OnCache;
-            _lstContent.DrawItem += OnDrawItem;
-            // ★ 修复：OwnerDraw + FullRowSelect 下，空 DrawSubItem 处理器会让系统默认选中色（蓝色）
-            // 覆盖 OnDrawItem 已绘制的自定义色。必须显式设置 e.DrawDefault = false，让 OnDrawItem
-            // 完全接管 SubItem 绘制，避免系统补绘选中背景。
-            _lstContent.DrawSubItem += (s, e) => { e.DrawDefault = false; };
-            _lstContent.DrawColumnHeader += (s, e) => { e.DrawDefault = true; };
-            _lstContent.MouseDoubleClick += OnDoubleClick;
+            _lstContent.GetLineText = idx => _cache.TryGetValue((int)idx, out var v) ? v : ReadLine(idx);
+            _lstContent.SelectedIndexChanged += (s, e) =>
+            {
+                // 选中变化时刷新底部状态栏当前行
+                try
+                {
+                    long cur = _lstContent.SelectedIndices.Count > 0
+                        ? (new List<long>(_lstContent.SelectedIndices))[0]
+                        : _lstContent.TopIndex;
+                    _lblCurLine.Text = $"行：第{cur + 1:N0}行";
+                }
+                catch { }
+            };
+            _lstContent.ItemDoubleClick += OnDoubleClick;
+            _lstContent.VScrollChanged += (s, e) => UpdateScrollPos();
             _lstContent.KeyDown += OnListViewKeyDown;
 
             // ★ 底部状态栏：6 个 Label，流式自动排列
@@ -253,8 +261,10 @@ namespace wxd.files.winforms
             _filePath = path;
             _fileLength = new FileInfo(path).Length;
             _cancel = false; _indexReady = false; _idxProg = 0; _idxCount = 0;
-            _lstContent.HScrollPos = 0;
-            _lstContent.MaxContentWidth = _lstContent.ClientRectangle.Width;
+            _longestLineOffset = -1; _longestLineBytes = 0;
+            _lstContent.SetMaxLineWidth(0);
+            _lstContent.SetTotalLines(0);
+            _lstContent.ClearSelection();
 
             // ★ 检测文件是否变化，变化则清理磁盘缓存（后台执行，不阻塞）
             try { FileCacheStore.CheckFileValid(path, _fileLength, File.GetLastWriteTime(path)); } catch { }
@@ -321,61 +331,15 @@ namespace wxd.files.winforms
             }
             catch { }
 
-            _lstContent.VirtualListSize = Math.Max(loaded, 1);
+            _lstContent.SetTotalLines(Math.Max(loaded, 1));
             _cS = 0; _cE = loaded - 1;
-
-            UpdateMaxContentWidth();
 
             Status($"前 {loaded} 行已加载，正在构建索引...");
             _lblFileLines.Text = "行数：索引中...";
-            try { _lstContent.RedrawItems(0, Math.Max(loaded - 1, 0), true); } catch { }
+            _lstContent.Invalidate();
 
             _timer.Start();
             _ = Task.Run(() => BuildIndex());
-        }
-
-        // ==================== OwnerDraw 绘制 ====================
-        private void OnDrawItem(object? s, DrawListViewItemEventArgs e)
-        {
-            e.DrawDefault = false;
-            int hPos = _lstContent.HScrollPos;
-            string? text = null;
-            _cache.TryGetValue(e.ItemIndex, out text);
-
-            if (string.IsNullOrEmpty(text))
-            {
-                e.Graphics.FillRectangle(new SolidBrush(_lstContent.BackColor), e.Bounds);
-                return;
-            }
-
-            // ★ 绘制时截断保护：GDI DrawText 无法渲染超过约 32767 字符的字符串，
-            // 超长文本会导致静默不绘制（界面空白）。截断为 DISPLAY_LINE_LIMIT 字符。
-            if (text.Length > DISPLAY_LINE_LIMIT)
-                text = text.Substring(0, DISPLAY_LINE_LIMIT) + "...更多";
-
-            bool selected = _lstContent.SelectedIndices.Contains(e.ItemIndex);
-            using var backBrush = new SolidBrush(selected ? Color.FromArgb(66, 165, 245) : _lstContent.BackColor);
-            using var textBrush = new SolidBrush(selected ? Color.White : _lstContent.ForeColor);
-
-            e.Graphics.FillRectangle(backBrush, e.Bounds);
-
-            int drawX = e.Bounds.X - hPos + 4;
-            int drawY = e.Bounds.Y + (e.Bounds.Height - _lstContent.Font.Height) / 2;
-            // ★ 修复D：超长行（>1024字符）输出绘制诊断日志，便于排查水平滚动条问题
-            if (text.Length > 1024)
-            {
-                var msz = TextRenderer.MeasureText(e.Graphics, text, _lstContent.Font,
-                    new Size(int.MaxValue, int.MaxValue),
-                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                Debug.WriteLine($"[Draw] 行{e.ItemIndex} text.Length={text.Length} 测量宽={msz.Width} drawX={drawX} hPos={hPos} MaxContentWidth={_lstContent.MaxContentWidth}");
-            }
-            TextRenderer.DrawText(e.Graphics, text, _lstContent.Font,
-                new Rectangle(drawX, drawY, int.MaxValue, e.Bounds.Height),
-                selected ? Color.White : _lstContent.ForeColor,
-                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-
-            if ((e.State & ListViewItemStates.Focused) != 0)
-                e.DrawFocusRectangle();
         }
 
         // ==================== 索引构建 ====================
@@ -450,14 +414,32 @@ namespace wxd.files.winforms
                 using var fs = new FileStream(_filePath!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, CHUNK, FileOptions.SequentialScan);
                 var buf = new byte[CHUNK];
                 long pos = 0; int n;
+                long lineStart = 0;        // 当前行起始偏移
+                long maxLen = 0, maxOff = -1;  // 本文件最长行（按字节长度）
                 while ((n = fs.Read(buf, 0, buf.Length)) > 0)
                 {
                     if (_cancel || token.IsCancellationRequested) return;
                     for (int i = 0; i < n; i++, pos++)
-                        if (buf[i] == GlobalConst.LfChar) off.Add(pos + 1);
+                    {
+                        if (buf[i] == GlobalConst.LfChar)
+                        {
+                            off.Add(pos + 1);
+                            long lineLen = pos - lineStart;  // 不含 LF 的行字节长度
+                            if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
+                            lineStart = pos + 1;
+                        }
+                    }
                     _idxCount = off.Count - 1;
                     _idxProg = (int)(pos * 100 / _fileLength);
                 }
+                // 文件末尾无换行符的最后一行也要参与最长行统计
+                if (_fileLength > lineStart)
+                {
+                    long lineLen = _fileLength - lineStart;
+                    if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
+                }
+                _longestLineOffset = maxOff;
+                _longestLineBytes = maxLen;
                 if (off.Count > 1 && off[off.Count - 1] >= _fileLength) off.RemoveAt(off.Count - 1);
                 _lineOffsets = off.ToArray();
                 _idxCount = _lineOffsets.Length;
@@ -528,6 +510,8 @@ namespace wxd.files.winforms
             var buf = new byte[CHUNK];
             long pos = firstLineStart;
             bool endsWithNewline = false;
+            long lineStart = firstLineStart;         // 当前行起始偏移
+            long maxLen = 0, maxOff = -1;            // 块内最长行（按字节长度）
 
             while (pos < blockEnd)
             {
@@ -541,13 +525,23 @@ namespace wxd.files.winforms
                     if (buf[i] == GlobalConst.LfChar)
                     {
                         long nextLineStart = pos + i + 1;
+                        // 统计本行长度（不含 LF）；跨块首行完整落入本块统计，块尾部分行仅部分长度，取全局 max 仍正确
+                        long lineLen = pos + i - lineStart;
+                        if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
                         if (nextLineStart < blockEnd)
                             lineStarts.Add(nextLineStart);
                         else
                             endsWithNewline = true;
+                        lineStart = nextLineStart;
                     }
                 }
                 pos += n;
+            }
+            // 块尾无换行符的部分行也参与统计（其完整长度会在下一块被完整统计，此处仅为兜底）
+            if (pos > lineStart)
+            {
+                long lineLen = pos - lineStart;
+                if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
             }
 
             return new BlockIndexResult
@@ -557,7 +551,9 @@ namespace wxd.files.winforms
                 BlockEnd = blockEnd,
                 LineStarts = lineStarts,
                 EndsWithNewline = endsWithNewline,
-                FirstLineStart = firstLineStart
+                FirstLineStart = firstLineStart,
+                MaxLineLen = maxLen,
+                MaxLineOffset = maxOff
             };
         }
 
@@ -580,6 +576,16 @@ namespace wxd.files.winforms
             // 修正：如果最后一块尾部不是 LF，移除最后一个虚拟行偏移
             if (merged.Count > 1 && merged[merged.Count - 1] >= _fileLength)
                 merged.RemoveAt(merged.Count - 1);
+
+            // ★ 汇总各块最长行，取全局最大（跨块首行完整落入其起始块统计，取 max 正确）
+            long maxLen = 0, maxOff = -1;
+            for (int i = 0; i < _blockCount; i++)
+            {
+                if (!_blockResults.TryGetValue(i, out var br)) continue;
+                if (br.MaxLineLen > maxLen) { maxLen = br.MaxLineLen; maxOff = br.MaxLineOffset; }
+            }
+            _longestLineOffset = maxOff;
+            _longestLineBytes = maxLen;
 
             return merged.ToArray();
         }
@@ -620,9 +626,9 @@ namespace wxd.files.winforms
                 {
                     if (_indexReady) return;
                     int newSize = (int)Math.Min(_partialMaxLine, int.MaxValue);
-                    if (newSize > _lstContent.VirtualListSize)
+                    if (newSize > _lstContent.TotalLines)
                     {
-                        _lstContent.VirtualListSize = newSize;
+                        _lstContent.SetTotalLines(newSize);
                         _lblFileLines.Text = $"行数：已构建 {continuous:N0} 行 ({doneBlocks}/{_blockCount}块 {_idxProg}%)";
                     }
                 });
@@ -635,16 +641,24 @@ namespace wxd.files.winforms
             if (_indexReady)
             {
                 _timer.Stop();
+
+                // ★ 检测行数是否超过切割阈值
+                if (_lineOffsets != null && _lineOffsets.Length > SPLIT_LINE_THRESHOLD)
+                {
+                    CheckAndPromptSplit(_lineOffsets.Length);
+                    return;
+                }
+
                 Status($"{FormatSize(_fileLength)} | {_idxCount:N0} 行");
                 // ★ 底部状态栏：行数 + 当前缓存大小
                 _lblFileLines.Text = $"行数：{_idxCount:N0}";
                 RefreshCacheSizeStatus();
-                // ★ long → int 安全转换（WinForms ListView 限制为 int）
-                _lstContent.VirtualListSize = (int)Math.Min(_idxCount, int.MaxValue);
-                // ★ 索引完成后重新测量 MaxContentWidth，基于当前可见区域的截断后缓存数据
-                UpdateMaxContentWidth();
+                // ★ LineListView 支持 long 行数，末尾追加空白行确保最后一行完整显示
+                _lstContent.SetTotalLines(_idxCount + TAIL_EMPTY_LINES);
+                // ★ 索引完成后一次性测量最长行并设置横向滚动条，之后纵向滚动不再重算（与 Sublime 一致）
+                SetHorizontalScrollOnce();
                 _timerScroll.Start();
-                try { _lstContent.RedrawItems(0, Math.Min(_lstContent.VirtualListSize - 1, _lstContent.ClientRectangle.Height / Math.Max(_lstContent.Font.Height + 6, 1)), true); } catch { }
+                _lstContent.Invalidate();
                 return;
             }
             // ★ 索引构建过程中实时刷新底部状态栏的行数和缓存大小
@@ -658,13 +672,31 @@ namespace wxd.files.winforms
         {
             try
             {
-                int line = (_lstContent.TopItem?.Index ?? 0) + 1;
+                int line = _lstContent.TopIndex + 1;
                 // ★ 底部状态栏：当前行（滚动时更新）
                 _lblCurLine.Text = $"行：第{line:N0}行";
                 // ★ 同时定时刷新缓存大小（缓存随时可能因搜索而增长）
                 RefreshCacheSizeStatus();
+                // 预读可见行缓存
+                EnsureVisibleCache();
             }
             catch { }
+        }
+
+        /// <summary>预读可见行到缓存，模拟原 ListView 的 CacheVirtualItems 行为</summary>
+        private void EnsureVisibleCache()
+        {
+            if (_filePath == null || _lineOffsets == null) return;
+            int top = _lstContent.TopIndex;
+            int visible = Math.Max(1, _lstContent.ClientRectangle.Height / Math.Max(_lstContent.Font.Height + 6, 1));
+            int start = Math.Max(0, top - 5);
+            int end = (int)Math.Min(_lstContent.TotalLines - 1, top + visible + 5);
+            if (start > end) return;
+            // 若已在缓存范围内则跳过
+            if (_cS >= 0 && start >= _cS && end <= _cE) return;
+            for (int i = _cS; i <= _cE; i++) if (i < start || i > end) _cache.TryRemove(i, out _);
+            for (int i = start; i <= end; i++) if (!_cache.ContainsKey(i)) _cache[i] = ReadLine(i);
+            _cS = start; _cE = end;
         }
 
         /// <summary>对行文本进行截断处理（与 ReadLine/预加载 共用），超长行截断为 DISPLAY_LINE_LIMIT 字符</summary>
@@ -675,49 +707,54 @@ namespace wxd.files.winforms
             return fullText;
         }
 
-        /// <summary>基于当前可见区域的缓存数据刷新 MaxContentWidth（截断后测量，避免超长行像素宽度过大）</summary>
-        private void UpdateMaxContentWidth()
+        /// <summary>索引完成后一次性设置横向滚动条：测量索引期发现的最长行（已截断 8K），只设置一次，之后纵向滚动不再重算</summary>
+        private void SetHorizontalScrollOnce()
         {
             try
             {
-                using var g = _lstContent.CreateGraphics();
-                // ★ 修复C：从当前 MaxContentWidth 起步，"只增不减"，避免缓存波动导致范围缩回
-                int maxW = Math.Max(_lstContent.MaxContentWidth, _lstContent.ClientRectangle.Width);
-                int maxLineIdx = -1;
-                foreach (var kv in _cache)
+                int clientW = _lstContent.ClientRectangle.Width;
+                string? text = null;
+                int lineIdx = -1;
+
+                // 定位最长行：通过行偏移数组二分查找行号，再 ReadLine 读取（内部已截断 DISPLAY_LINE_LIMIT）
+                var off = _lineOffsets;
+                if (off != null && _longestLineOffset >= 0)
                 {
-                    if (!string.IsNullOrEmpty(kv.Value))
+                    int idx = Array.BinarySearch(off, _longestLineOffset);
+                    if (idx >= 0)
                     {
-                        string measureText = TruncateLineText(kv.Value);
-                        // ★ 修复D：从 Graphics.MeasureString（GDI+）改为 TextRenderer.MeasureText（GDI）。
-                        // GDI+ 对超长字符串可能返回 Infinity，(int)Infinity = int.MinValue，
-                        // 导致 MaxContentWidth 为负数，SetScrollInfo 静默失败，滚动条完全失效。
-                        // TextRenderer.MeasureText 与绘制路径 TextRenderer.DrawText 同栈，结果一致。
-                        var sz = TextRenderer.MeasureText(g, measureText, _lstContent.Font,
-                            new Size(int.MaxValue, int.MaxValue),
-                            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                        int candidate = sz.Width + 10;
-                        if (candidate <= 0 || candidate > MAX_SCROLL_RANGE)
-                        {
-                            // 防护：异常测量结果（负数/溢出/超大）跳过，避免污染 MaxContentWidth
-                            Debug.WriteLine($"[Measure] 行{kv.Key} 异常 candidate={candidate} text.Length={measureText.Length} sz.Width={sz.Width}");
-                            continue;
-                        }
-                        if (candidate > maxW)
-                        {
-                            maxW = candidate;
-                            maxLineIdx = kv.Key;
-                        }
+                        lineIdx = idx;
+                        text = ReadLine(idx);
                     }
                 }
-                if (maxW != _lstContent.MaxContentWidth)
+                // 兜底：最长行定位失败时，退化为缓存中最长文本
+                if (text == null && !_cache.IsEmpty)
                 {
-                    Debug.WriteLine($"[Measure] MaxContentWidth {_lstContent.MaxContentWidth} -> {maxW} (峰值行={maxLineIdx}, 缓存行数={_cache.Count})");
-                    _lstContent.MaxContentWidth = maxW;
-                    _lstContent.InitHScroll();
+                    var kv = _cache.OrderByDescending(p => p.Value?.Length ?? 0).FirstOrDefault();
+                    text = kv.Value;
+                    lineIdx = kv.Key;
                 }
+
+                int maxW = clientW;
+                if (!string.IsNullOrEmpty(text))
+                {
+                    using var g = _lstContent.CreateGraphics();
+                    // TextRenderer.MeasureText 与绘制路径 TextRenderer.DrawText 同栈，结果一致（避免 GDI+ 超长返回 Infinity）
+                    var sz = TextRenderer.MeasureText(g, text, _lstContent.Font,
+                        new Size(int.MaxValue, int.MaxValue),
+                        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                    int candidate = sz.Width + 60;  // 额外 60px 充裕空间，避免最长行贴边
+                    if (candidate > 0)
+                        maxW = Math.Max(clientW, candidate);
+                    else
+                        Debug.WriteLine($"[Measure] 最长行{lineIdx} 异常测量 candidate={candidate} text.Length={text.Length} sz.Width={sz.Width}");
+                }
+                maxW = Math.Min(maxW, MAX_SCROLL_RANGE);
+
+                Debug.WriteLine($"[Measure] SetHorizontalScrollOnce MaxLineWidth {_lstContent.MaxLineWidth} -> {maxW} (最长行={lineIdx}, 字节数={_longestLineBytes})");
+                _lstContent.SetMaxLineWidth(maxW);
             }
-            catch (Exception ex) { Debug.WriteLine($"[Measure] UpdateMaxContentWidth 异常: {ex.Message}"); }
+            catch (Exception ex) { Debug.WriteLine($"[Measure] SetHorizontalScrollOnce 异常: {ex.Message}"); }
         }
 
         private string ReadLine(long idx)
@@ -799,31 +836,9 @@ namespace wxd.files.winforms
             }
         }
 
-        private void OnRetrieve(object? s, RetrieveVirtualItemEventArgs e)
-        {
-            e.Item = new ListViewItem(_filePath != null && _cache.TryGetValue(e.ItemIndex, out var v) ? v : "");
-        }
 
-        private void OnCache(object? s, CacheVirtualItemsEventArgs e)
-        {
-            if (_filePath == null) return;
-            // ★ 部分索引可用时也允许构建缓存，但需检查是否在已构建范围
-            // _indexReady 为 true 时 _lineOffsets 完整可用
-            // _indexReady 为 false 但 _partialMaxLine > 0 时，只允许访问 [0, _partialMaxLine)
-            if (!_indexReady)
-            {
-                if (_partialMaxLine <= 0 || _lineOffsets == null) return;
-            }
-            else if (_lineOffsets == null) return;
-            int start = Math.Max(0, e.StartIndex), end = Math.Min(_lstContent.VirtualListSize - 1, e.EndIndex);
-            if (start > end) return;
-            if (_cS >= 0 && start >= _cS && end <= _cE) return;
-            for (int i = _cS; i <= _cE; i++) if (i < start || i > end) _cache.TryRemove(i, out _);
-            for (int i = start; i <= end; i++) if (!_cache.ContainsKey(i)) _cache[i] = ReadLine(i);
-            _cS = start; _cE = end;
-            // ★ 修复D：新行加载后重新测量，确保长行进入可视区时水平滚动范围扩展
-            UpdateMaxContentWidth();
-        }
+
+
 
         private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
         static string FormatSize(long b) { string[] u = ["B", "KB", "MB", "GB", "TB"]; double v = b; int o = 0; while (v >= 1024 && o < 4) { o++; v /= 1024; } return $"{v:0.##}{u[o]}"; }
@@ -855,9 +870,19 @@ namespace wxd.files.winforms
 
         private void OnListViewKeyDown(object? s, KeyEventArgs e)
         {
+            // Ctrl+C 已由 LineListView 内部处理，此处保留兼容
             if (e.Control && e.KeyCode == Keys.C)
             {
-                CopySelectedLines();
+                string text = _lstContent.GetSelectedText();
+                if (!string.IsNullOrEmpty(text))
+                {
+                    try { Clipboard.SetText(text); }
+                    catch
+                    {
+                        try { Thread.Sleep(100); Clipboard.SetDataObject(text, true); }
+                        catch { }
+                    }
+                }
                 e.Handled = true;
                 e.SuppressKeyPress = true;
             }
@@ -865,38 +890,22 @@ namespace wxd.files.winforms
 
         private void CopySelectedLines()
         {
-            var indices = _lstContent.SelectedIndices;
-            if (indices.Count == 0) return;
-
-            var sb = new StringBuilder();
-            foreach (int idx in indices)
+            string text = _lstContent.GetSelectedText();
+            if (string.IsNullOrEmpty(text)) return;
+            try { Clipboard.SetText(text); }
+            catch
             {
-                string text = ReadLine(idx);
-                sb.AppendLine(text);
-            }
-
-            if (sb.Length > 0)
-            {
-                string text = sb.ToString().TrimEnd('\r', '\n');
-                try { Clipboard.SetText(text); }
-                catch
-                {
-                    try { Thread.Sleep(100); Clipboard.SetDataObject(text, true); }
-                    catch { }
-                }
+                try { Thread.Sleep(100); Clipboard.SetDataObject(text, true); }
+                catch { }
             }
         }
 
-        private async void OnDoubleClick(object? s, MouseEventArgs e)
+        private async void OnDoubleClick(long idx)
         {
-            int idx = _lstContent.SelectedIndices.Count > 0
-                ? _lstContent.SelectedIndices[0]
-                : (e.Y / (_lstContent.Font.Height + 6) + (_lstContent.TopItem?.Index ?? 0));
-            if (idx < 0 || idx >= _lstContent.VirtualListSize) return;
-            _lstContent.SelectedIndices.Clear();
-            _lstContent.SelectedIndices.Add(idx);
+            if (idx < 0 || idx >= _lstContent.TotalLines) return;
+            _lstContent.SelectRow(idx);
 
-            string originalText = _cache.TryGetValue(idx, out var v) ? v : "";
+            string originalText = _cache.TryGetValue((int)idx, out var v) ? v : "";
             if (string.IsNullOrEmpty(originalText)) return;
 
             // 读取完整行内容用于弹窗（不截断），并计算内容大小
@@ -907,8 +916,13 @@ namespace wxd.files.winforms
 
             var f = new Form
             {
-                Text = $"行 {idx + 1} — {sizeLabel}", Size = new Size(950, 550), StartPosition = FormStartPosition.CenterParent,
-                MinimizeBox = true, MaximizeBox = true, ShowIcon = false, ShowInTaskbar = false
+                Text = $"行 {idx + 1} — {sizeLabel}",
+                Size = new Size(950, 550),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = true,
+                MaximizeBox = true,
+                ShowIcon = false,
+                ShowInTaskbar = false
             };
 
             // 如果超过 64MB，弹出警告
@@ -937,9 +951,13 @@ namespace wxd.files.winforms
 
             var rtb = new RichTextBox
             {
-                Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 10F), ScrollBars = RichTextBoxScrollBars.Both,
-                WordWrap = false, BackColor = Color.White,
+                Multiline = true,
+                ReadOnly = true,
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 10F),
+                ScrollBars = RichTextBoxScrollBars.Both,
+                WordWrap = false,
+                BackColor = Color.White,
                 Text = "正在格式化..."
             };
 
@@ -958,7 +976,8 @@ namespace wxd.files.winforms
                 try { rtb.Rtf = rtf ?? fullLine; }
                 catch { try { rtb.Text = fullLine; } catch { } }
             };
-            btnRaw.Click += (_, _) => {
+            btnRaw.Click += (_, _) =>
+            {
                 SetActive(btnRaw, btnFormat);
                 rtb.WordWrap = true;
                 rtb.ScrollBars = RichTextBoxScrollBars.Vertical;
@@ -1737,7 +1756,7 @@ namespace wxd.files.winforms
             return sb.ToString();
         }
 
-                /// <summary>RTF 转义（ANSI 模式，所有字节用 \'HH hex 编码）</summary>
+        /// <summary>RTF 转义（ANSI 模式，所有字节用 \'HH hex 编码）</summary>
         private static string EscapeRtf(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -1746,18 +1765,18 @@ namespace wxd.files.winforms
             {
                 switch (b)
                 {
-                    case 92:  sb.Append(@"\\"); break;  // \
+                    case 92: sb.Append(@"\\"); break;  // \
                     case 123: sb.Append(@"\{ "); break; // {
                     case 125: sb.Append(@"\} "); break; // }
-                    case 10:  sb.Append(@"\par "); break; // \n
-                    case 13:  break;                  // \r
-                    default:  sb.Append($"\\'{(int)b:X2}"); break;
+                    case 10: sb.Append(@"\par "); break; // \n
+                    case 13: break;                  // \r
+                    default: sb.Append($"\\'{(int)b:X2}"); break;
                 }
             }
             return sb.ToString();
         }
 
-private static List<(SegType Type, string Text)> TokenizeLine(string line) => TokenizeLine(line, Deadline.Default);
+        private static List<(SegType Type, string Text)> TokenizeLine(string line) => TokenizeLine(line, Deadline.Default);
 
         private static List<(SegType Type, string Text)> TokenizeLine(string line, Deadline deadline)
         {
@@ -1941,10 +1960,10 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         {
             // ★ 行号支持 long（超过 int 的超大文件）
             if (!long.TryParse(_txtGotoLine.Text, out long ln) || ln < 1) { AlertForm.Show(ParentForm, "请输入有效行号", "提示", AlertType.Information); return; }
-            // ★ long → int 安全转换（ListView 限制为 int）
-            int virtualSize = _lstContent.VirtualListSize;
+            long virtualSize = _lstContent.TotalLines;
             if (ln > virtualSize) { AlertForm.Show(ParentForm, $"超出范围，共 {virtualSize:N0} 行", "提示", AlertType.Information); return; }
-            int idx = (int)(ln - 1); _lstContent.EnsureVisible(idx); _lstContent.SelectedIndices.Clear(); _lstContent.SelectedIndices.Add(idx); _lstContent.Focus();
+            _lstContent.SelectRow(ln - 1);
+            _lstContent.Focus();
         }
 
         // ==================== 搜索功能 ====================
@@ -1954,8 +1973,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             try
             {
                 if (_lstContent.SelectedIndices.Count > 0)
-                    return _lstContent.SelectedIndices[0];
-                return _lstContent.TopItem?.Index ?? 0;
+                    return (new List<long>(_lstContent.SelectedIndices))[0];
+                return _lstContent.TopIndex;
             }
             catch { return 0; }
         }
@@ -2464,11 +2483,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         {
             _searchCurrentIndex = index;
             long line = results[(int)index];
-            // ★ long → int 安全转换（ListView 限制为 int）
-            int listViewIdx = (int)Math.Min(line, int.MaxValue);
-            _lstContent.EnsureVisible(listViewIdx);
-            _lstContent.SelectedIndices.Clear();
-            _lstContent.SelectedIndices.Add(listViewIdx);
+            _lstContent.SelectRow(line);
             _lstContent.Focus();
             _lastNavigatedMatchLine = line;
             // ★ 底部状态栏：搜索位置 + 当前行
@@ -2479,9 +2494,12 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         private bool userHasMovedAway()
         {
             if (_lastNavigatedMatchLine < 0) return true;
-            if (_lstContent.SelectedIndices.Count > 0 && _lstContent.SelectedIndices[0] != _lastNavigatedMatchLine)
+            long sel = -1;
+            if (_lstContent.SelectedIndices.Count > 0)
+                sel = (new List<long>(_lstContent.SelectedIndices))[0];
+            if (sel != _lastNavigatedMatchLine)
                 return true;
-            int top = _lstContent.TopItem?.Index ?? 0;
+            int top = _lstContent.TopIndex;
             if (Math.Abs((long)top - _lastNavigatedMatchLine) > (_lstContent.ClientRectangle.Height / (_lstContent.Font.Height + 6)))
                 return true;
             return false;
@@ -3075,7 +3093,7 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
         {
             if (string.IsNullOrEmpty(name))
                 return "";
-            
+
             // Windows 文件名禁止的字符：\/:*?"<>|
             var invalidChars = Path.GetInvalidFileNameChars();
             var sb = new StringBuilder(name.Length);
@@ -3086,21 +3104,90 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 else
                     sb.Append('_'); // 非法字符替换为下划线
             }
-            
+
             string result = sb.ToString();
-            
+
             // 去除开头和结尾的空格或点号（Windows 限制）
             result = result.TrimStart(' ', '.').TrimEnd(' ', '.');
-            
+
             // 空或全是空格/点的情况
             if (string.IsNullOrEmpty(result))
                 return "_";
-            
+
             // 截断到最大长度，但保留结尾的结构
             if (result.Length > maxLength)
                 result = result.Substring(0, maxLength).TrimEnd(' ', '.');
-            
+
             return result;
+        }
+
+        /// <summary>检测行数是否超过切割阈值，弹窗提示用户进行文件切割</summary>
+        private void CheckAndPromptSplit(long totalLines)
+        {
+            if (_lineOffsets == null || string.IsNullOrEmpty(_filePath)) return;
+
+            string baseName = Path.GetFileNameWithoutExtension(_filePath);
+            string ext = Path.GetExtension(_filePath);
+            int fileCount = FileSplitter.GetFileCount(totalLines, SPLIT_LINES_PER_FILE);
+
+            var result = MessageBox.Show(
+                ParentForm,
+                $"文件 {Path.GetFileName(_filePath)} 总行数 {totalLines:N0}，\n" +
+                $"超过显示上限，将按照每 {SPLIT_LINES_PER_FILE:N0} 行一个文件进行切割。\n\n" +
+                $"切割后文件示例：\n" +
+                $"  {baseName}-0{ext}\n" +
+                $"  {baseName}-1{ext}\n" +
+                $"  ...\n\n" +
+                $"共切割为 {fileCount} 个文件，是否继续？",
+                "文件切割",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning);
+
+            if (result != DialogResult.OK) return;
+
+            Status("正在切割文件...");
+            _lblFileLines.Text = "行数：切割中...";
+
+            // 后台执行切割
+            Task.Run(() =>
+            {
+                try
+                {
+                    var splitFiles = FileSplitter.Split(
+                        _filePath, _lineOffsets, _fileLength, SPLIT_LINES_PER_FILE,
+                        (current, total, percent) =>
+                        {
+                            BeginInvoke(() =>
+                            {
+                                Status($"正在切割文件... ({current}/{total}, {percent}%)");
+                                _lblFileLines.Text = $"行数：切割中 {percent}%";
+                            });
+                        });
+
+                    // 切割完成后在 UI 线程提示
+                    BeginInvoke(() =>
+                    {
+                        Status($"切割完成，共生成 {splitFiles.Count} 个文件");
+                        _lblFileLines.Text = "行数：已切割";
+                        AlertForm.Show(ParentForm,
+                            $"文件切割完成！\n\n" +
+                            $"原始文件：{Path.GetFileName(_filePath)}\n" +
+                            $"总行数：{totalLines:N0}\n" +
+                            $"切割文件数：{splitFiles.Count}\n\n" +
+                            $"请分别打开切割后的文件进行查看。",
+                            "切割完成", AlertType.Information);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    BeginInvoke(() =>
+                    {
+                        Status("文件切割失败");
+                        _lblFileLines.Text = "行数：切割失败";
+                        AlertForm.Show(ParentForm, $"文件切割失败：{ex.Message}", "错误", AlertType.Error);
+                    });
+                }
+            });
         }
 
         public void Cleanup()
@@ -3132,8 +3219,8 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
             {
                 try { FileCacheStore.UnloadFile(oldPath); } catch { }
             }
-            // ★ 先清空 VirtualListSize，大幅减少 ListView 在 Dispose 时的清理开销
-            try { _lstContent.VirtualListSize = 0; } catch { }
+            // ★ 先清空总行数，减少 Dispose 时的清理开销
+            try { _lstContent.SetTotalLines(0); } catch { }
             // ★ 清空缓存
             _cache.Clear();
             _cS = _cE = -1;
@@ -3164,209 +3251,6 @@ private static List<(SegType Type, string Text)> TokenizeLine(string line) => To
                 _indexCts?.Dispose();
             }
             base.Dispose(disposing);
-        }
-    }
-
-    /// <summary>
-    /// 自定义 ListView：重写 WndProc 处理水平滚动，用 Win32 API 控制真正的水平滚动
-    /// </summary>
-    public class HScrollListView : ListView
-    {
-        private const int WM_HSCROLL = 0x114;
-        private const int WM_SIZE = 0x0005;
-        private const int WM_PAINT = 0x000F;
-        private const int WM_LBUTTONDBLCLK = 0x0203;
-        private const int SB_HORZ = 0;
-        // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
-        // 与外层 LargeFileReaderControl.MAX_SCROLL_RANGE 保持一致。
-        private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct SCROLLINFO
-        {
-            public int cbSize;
-            public int fMask;
-            public int nMin;
-            public int nMax;
-            public int nPage;
-            public int nPos;
-            public int nTrackPos;
-        }
-
-        [DllImport("user32.dll")]
-        private static extern int SetScrollInfo(IntPtr hWnd, int fnBar, ref SCROLLINFO lpsi, bool fRedraw);
-        [DllImport("user32.dll")]
-        private static extern int GetScrollInfo(IntPtr hWnd, int fnBar, ref SCROLLINFO lpsi);
-        [DllImport("user32.dll")]
-        private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-        private static readonly IntPtr HWND_TOP = IntPtr.Zero;
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOSIZE = 0x0001;
-        private const uint SWP_NOZORDER = 0x0004;
-        private const uint SWP_FRAMECHANGED = 0x0020;
-        private const uint SWP_NOACTIVATE = 0x0010;
-
-        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public int HScrollPos { get; set; }
-
-        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public int MaxContentWidth { get; set; } = 1000;
-
-        // ★ 修复B：WM_SIZE 去抖字段，避免重复异步触发 InitHScroll
-        private int _lastClientWidthForSize = -1;
-        private int _lastMaxContentWidthForSize = -1;
-
-        public event EventHandler<MouseEventArgs>? ItemDoubleClick;
-
-        public void InitHScroll()
-        {
-            if (!IsHandleCreated) return;
-            // ★ 修复D：夹紧到 MAX_SCROLL_RANGE，防止 nMax 负值或超大值导致 SetScrollInfo 失败
-            int clampedMax = Math.Min(Math.Max(MaxContentWidth, 1), MAX_SCROLL_RANGE);
-            if (clampedMax != MaxContentWidth)
-            {
-                Debug.WriteLine($"[HScroll] MaxContentWidth 夹紧 {MaxContentWidth} -> {clampedMax}");
-                MaxContentWidth = clampedMax;
-            }
-            // ★ 修复：ListView 在 Details 模式下水平滚动条由**列宽**驱动，而非 SCROLLINFO 的 nMax。
-            // 若列宽 != nMax，ListView 在后续 WM_PAINT/WM_NCCALCSIZE 中会按列宽重新计算并隐藏滚动条。
-            // 必须让列宽 = 内容宽度（clampedMax），与 nMax 严格对齐。
-            // 仅当内容宽度 < ClientWidth 时（无需滚动），列宽兜底为 ClientWidth 以填满可视区。
-            int colWidth = clampedMax < ClientRectangle.Width ? ClientRectangle.Width : clampedMax;
-            if (Columns.Count > 0)
-                Columns[0].Width = colWidth;
-            // nMax 与列宽对齐
-            int maxRange = colWidth;
-            int page = ClientRectangle.Width;
-            int maxScroll = Math.Max(0, maxRange - page + 1);
-            // ★ 修复A：保留当前滚动位置，仅夹紧到合法范围，不再强制清零
-            int newPos = HScrollPos;
-            if (newPos < 0) newPos = 0;
-            if (newPos > maxScroll) newPos = maxScroll;
-            var si = new SCROLLINFO();
-            si.cbSize = Marshal.SizeOf(si);
-            // SIF_RANGE(0x0001) | SIF_PAGE(0x0002) | SIF_POS(0x0004) = 0x0007
-            si.fMask = 0x0007;
-            si.nMin = 0;
-            si.nMax = maxRange;
-            si.nPage = page;
-            si.nPos = newPos;
-            SetScrollInfo(Handle, SB_HORZ, ref si, true);
-            // ★ v3 修复：ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下会在 WM_NCCALCSIZE/WM_PAINT
-            // 内部用列宽覆盖 SetScrollInfo 的 nMax。此处立即用 GetScrollInfo 验证是否生效，
-            // 若 nMax 被改回（通常是改回 ClientWidth），则双重 SetScrollInfo 并触发 SWP_FRAMECHANGED
-            // 强制 ListView 重算非客户区（含滚动条）。
-            var siCheck = new SCROLLINFO();
-            siCheck.cbSize = Marshal.SizeOf(siCheck);
-            siCheck.fMask = 0x0001 | 0x0002 | 0x0004; // SIF_RANGE | SIF_PAGE | SIF_POS
-            GetScrollInfo(Handle, SB_HORZ, ref siCheck);
-            if (siCheck.nMax != maxRange || siCheck.nPage != page)
-            {
-                Debug.WriteLine($"[HScroll] 检测到 nMax 被覆盖: 期望 nMax={maxRange} nPage={page}, 实际 nMax={siCheck.nMax} nPage={siCheck.nPage} -> 双重重设");
-                // 再次设置，并触发非客户区重算
-                SetScrollInfo(Handle, SB_HORZ, ref si, true);
-                SetWindowPos(Handle, HWND_TOP, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                // 重算后再校验一次
-                GetScrollInfo(Handle, SB_HORZ, ref siCheck);
-                Debug.WriteLine($"[HScroll] 双重重设后: nMax={siCheck.nMax} nPage={siCheck.nPage} nPos={siCheck.nPos}");
-            }
-            // ★ 修复E：ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下会自动隐藏水平滚动条，
-            // 此处强制重新显示，确保用户可见可用
-            if (maxRange > page)
-                ShowScrollBar(Handle, SB_HORZ, true);
-            HScrollPos = newPos;
-            Debug.WriteLine($"[HScroll] nMax={maxRange} nPage={page} nPos={newPos} maxScroll={maxScroll} shown={maxRange > page}");
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == WM_HSCROLL)
-            {
-                var si = new SCROLLINFO();
-                si.cbSize = Marshal.SizeOf(si);
-                si.fMask = 0x0001 | 0x0010 | 0x0004;
-                GetScrollInfo(Handle, SB_HORZ, ref si);
-
-                int scrollCode = (int)m.WParam.ToInt64() & 0xFFFF;
-                int newPos = HScrollPos;
-                int pageSize = ClientRectangle.Width;
-                int maxScroll = Math.Max(MaxContentWidth - pageSize, 0);
-
-                switch (scrollCode)
-                {
-                    case 0: newPos -= 40; break;
-                    case 1: newPos += 40; break;
-                    case 2: newPos -= pageSize; break;
-                    case 3: newPos += pageSize; break;
-                    case 4:
-                    case 5:
-                        newPos = si.nTrackPos; break;
-                    case 6: newPos = 0; break;
-                    case 7: newPos = maxScroll; break;
-                }
-
-                newPos = Math.Max(0, Math.Min(newPos, maxScroll));
-                if (newPos != HScrollPos)
-                {
-                    HScrollPos = newPos;
-                    si.nPos = newPos;
-                    si.fMask = 0x0002;
-                    SetScrollInfo(Handle, SB_HORZ, ref si, true);
-                    Invalidate();
-                }
-                return;
-            }
-            if (m.Msg == WM_SIZE)
-            {
-                base.WndProc(ref m);
-                // ★ 修复B：去抖判断，仅在 ClientWidth/MaxContentWidth 真正变化时才刷新滚动条
-                int curW = ClientRectangle.Width;
-                if (curW != _lastClientWidthForSize || MaxContentWidth != _lastMaxContentWidthForSize)
-                {
-                    _lastClientWidthForSize = curW;
-                    _lastMaxContentWidthForSize = MaxContentWidth;
-                    BeginInvoke(new Action(InitHScroll));
-                }
-                return;
-            }
-            if (m.Msg == WM_PAINT)
-            {
-                base.WndProc(ref m);
-                // ★ v3 修复：兜底重设完整 SCROLLINFO（不仅是 ShowScrollBar）。
-                // ListView 在 OwnerDraw+VirtualMode+HeaderStyle.None 下，即使 SetScrollInfo
-                // 设置了正确的范围，WM_PAINT 内部仍可能用列宽覆盖 nMax 并隐藏滚动条。
-                // 此处在每次 WM_PAINT 后检查：若内容需要滚动但 nMax 不正确，则重设并强制显示。
-                int contentW = MaxContentWidth;
-                int clientW = ClientRectangle.Width;
-                if (contentW > clientW)
-                {
-                    var siPaint = new SCROLLINFO();
-                    siPaint.cbSize = Marshal.SizeOf(siPaint);
-                    siPaint.fMask = 0x0001 | 0x0002 | 0x0004; // SIF_RANGE | SIF_PAGE | SIF_POS
-                    GetScrollInfo(Handle, SB_HORZ, ref siPaint);
-                    int maxScroll = Math.Max(0, contentW - clientW + 1);
-                    int pos = HScrollPos;
-                    if (pos < 0) pos = 0;
-                    if (pos > maxScroll) pos = maxScroll;
-                    if (siPaint.nMax != contentW || siPaint.nPage != clientW || siPaint.nPos != pos)
-                    {
-                        siPaint.nMin = 0;
-                        siPaint.nMax = contentW;
-                        siPaint.nPage = clientW;
-                        siPaint.nPos = pos;
-                        siPaint.fMask = 0x0007;
-                        SetScrollInfo(Handle, SB_HORZ, ref siPaint, true);
-                        HScrollPos = pos;
-                        Debug.WriteLine($"[HScroll] WM_PAINT 兜底重设: nMax={contentW} nPage={clientW} nPos={pos}");
-                    }
-                    ShowScrollBar(Handle, SB_HORZ, true);
-                }
-                return;
-            }
-            base.WndProc(ref m);
         }
     }
 }
