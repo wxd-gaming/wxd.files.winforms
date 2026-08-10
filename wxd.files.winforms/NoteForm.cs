@@ -60,6 +60,11 @@ namespace wxd.files.winforms
         private string? _currentId;                          // 当前选中的笔记 Id
         private readonly System.Windows.Forms.Timer _debounceTimer;
         private bool _dirty;                                 // 是否有待保存的修改
+        // 编辑内容缓存：在 TextChanged 事件中写入，FlushSave 只读取缓存，
+        // 避免防抖保存时访问 RichTextBox 的 .Rtf/.Text 打断 IME 组合输入
+        private string _pendingTitle = "";
+        private string _pendingRtf = "";
+        private string _pendingPlain = "";
 
         public NoteForm(bool isDark)
         {
@@ -466,6 +471,10 @@ namespace wxd.files.winforms
                 {
                     _rtbContent.Clear();
                 }
+                // 同步缓存，使 FlushSave 在未发生新的编辑时也有正确的值
+                _pendingTitle = note.Title;
+                _pendingRtf = _rtbContent.Rtf;
+                _pendingPlain = _rtbContent.Text;
                 _dirty = false;
                 _debounceTimer.Stop();
                 _lblStatus.Text = "";
@@ -485,11 +494,14 @@ namespace wxd.files.winforms
             // 清空搜索以便显示新笔记
             _txtSearch.Text = "";
             ApplyFilter();
-            // 选中新建的笔记（位于列表第一项）
-            if (_listPanel.Controls.Count > 0 && _listPanel.Controls[0] is NoteListItemControl newCtrl)
+            // 直接选中新建的笔记（ApplyFilter 后它位于列表顶部）
+            _currentId = note.Id;
+            LoadNoteToEditor(note);
+            var ctrl = FindControlByNoteId(_currentId);
+            if (ctrl != null)
             {
-                newCtrl.SetSelected(true);
-                OnItemSelected(newCtrl);
+                ctrl.SetSelected(true);
+                ctrl.ScrollIntoViewSafe();
             }
             _txtTitle.Focus();
             _txtTitle.SelectAll();
@@ -511,11 +523,18 @@ namespace wxd.files.winforms
             _txtTitle.Clear();
             _rtbContent.Clear();
             ApplyFilter();
-            // 选中第一条
-            if (_listPanel.Controls.Count > 0 && _listPanel.Controls[0] is NoteListItemControl firstCtrl)
+            // 选中第一条（_filtered[0] 是最新的第一条）
+            if (_filtered.Count > 0)
             {
-                firstCtrl.SetSelected(true);
-                OnItemSelected(firstCtrl);
+                var firstNote = _filtered[0];
+                _currentId = firstNote.Id;
+                LoadNoteToEditor(firstNote);
+                var ctrl = FindControlByNoteId(_currentId);
+                if (ctrl != null)
+                {
+                    ctrl.SetSelected(true);
+                    ctrl.ScrollIntoViewSafe();
+                }
             }
         }
 
@@ -525,18 +544,26 @@ namespace wxd.files.winforms
         private void OnTitleChanged(object? sender, EventArgs e)
         {
             if (_suppressContentEvents || _currentId == null) return;
+            _pendingTitle = _txtTitle.Text;   // 缓存标题，FlushSave 不再读取 TextBox
             _dirty = true;
             _debounceTimer.Stop();
             _debounceTimer.Start();
             _lblStatus.Text = "编辑中...";
-            // 同步列表项控件显示的标题
+            // 同步列表项控件显示的标题（实时，不依赖保存）
             var ctrl = FindControlByNoteId(_currentId);
-            if (ctrl != null) ctrl.UpdateTitle();
+            if (ctrl != null)
+            {
+                ctrl.Note.Title = _pendingTitle;
+                ctrl.UpdateTitle();
+            }
         }
 
         private void OnContentChanged(object? sender, EventArgs e)
         {
             if (_suppressContentEvents || _currentId == null) return;
+            // 缓存 RTF 和纯文本，FlushSave 不再访问 RichTextBox（避免打断 IME 组合输入）
+            _pendingRtf = _rtbContent.Rtf;
+            _pendingPlain = _rtbContent.Text;
             _dirty = true;
             _debounceTimer.Stop();
             _debounceTimer.Start();
@@ -558,12 +585,14 @@ namespace wxd.files.winforms
         private void FlushSave()
         {
             if (!_dirty || _currentId == null) return;
-            var title = _txtTitle.Text;
-            var rtf = _rtbContent.Rtf;
-            var plain = _rtbContent.Text;
+            // 只使用缓存值，不访问 RichTextBox/TextBox，避免打断 IME 组合输入
+            var title = _pendingTitle;
+            var rtf = _pendingRtf;
+            var plain = _pendingPlain;
             NoteStore.Update(_currentId, title, rtf, plain);
 
-            // 同步内存中的笔记
+            // 同步内存中的笔记（标题已在 OnTitleChanged 实时更新到列表控件，
+            // 此处只更新数据层；时间/排序在切换笔记、新建、删除等非输入时机由 ApplyFilter 刷新）
             var n = _allNotes.FirstOrDefault(x => x.Id == _currentId);
             if (n != null)
             {
@@ -576,15 +605,7 @@ namespace wxd.files.winforms
                 _allNotes.Insert(0, n);
             }
             _dirty = false;
-
-            // 刷新列表显示（更新时间与排序），并恢复当前选中
-            ApplyFilter();
-            var ctrl = FindControlByNoteId(_currentId);
-            if (ctrl != null)
-            {
-                ctrl.SetSelected(true);
-                ctrl.ScrollIntoViewSafe();
-            }
+            // 注意：不调用 ctrl.UpdateTitle()/UpdateTime()，避免防抖保存触发 UI 重绘打断输入
         }
 
         /// <summary>按笔记 Id 查找对应的列表项控件</summary>
