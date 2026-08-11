@@ -854,7 +854,7 @@ namespace wxd.files.winforms
 
             _dataGrid.Scroll += (s, e) =>
             {
-                if (_syncingScroll) return;
+                if (_syncingScroll || _syncingColumnWidth) return;
                 _syncingScroll = true;
                 try { _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset; }
                 finally { _syncingScroll = false; }
@@ -863,11 +863,17 @@ namespace wxd.files.winforms
             {
                 if (_syncingColumnWidth) return;
                 _syncingColumnWidth = true;
+                int savedOffset = _dataGrid.HorizontalScrollingOffset;
                 try
                 {
                     // 全量同步所有列宽（避免键盘导航后索引不一致导致错位）
                     for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
                         _dataGridHeader.Columns[i].Width = _dataGrid.Columns[i].Width;
+                    // 列宽变化后 DataGridView 可能自动重置滚动偏移，恢复之
+                    if (_dataGrid.HorizontalScrollingOffset != savedOffset)
+                        _dataGrid.HorizontalScrollingOffset = savedOffset;
+                    if (_dataGridHeader.HorizontalScrollingOffset != savedOffset)
+                        _dataGridHeader.HorizontalScrollingOffset = savedOffset;
                 }
                 finally { _syncingColumnWidth = false; }
             };
@@ -875,7 +881,7 @@ namespace wxd.files.winforms
             // ★ 固定行滚动同步到内容行
             _dataGridHeader.Scroll += (s, e) =>
             {
-                if (_syncingScroll) return;
+                if (_syncingScroll || _syncingColumnWidth) return;
                 _syncingScroll = true;
                 try { _dataGrid.HorizontalScrollingOffset = _dataGridHeader.HorizontalScrollingOffset; }
                 finally { _syncingScroll = false; }
@@ -886,10 +892,16 @@ namespace wxd.files.winforms
             {
                 if (_syncingColumnWidth) return;
                 _syncingColumnWidth = true;
+                int savedOffset = _dataGridHeader.HorizontalScrollingOffset;
                 try
                 {
                     for (int i = 0; i < Math.Min(_dataGrid.Columns.Count, _dataGridHeader.Columns.Count); i++)
                         _dataGrid.Columns[i].Width = _dataGridHeader.Columns[i].Width;
+                    // 列宽变化后 DataGridView 可能自动重置滚动偏移，恢复之
+                    if (_dataGridHeader.HorizontalScrollingOffset != savedOffset)
+                        _dataGridHeader.HorizontalScrollingOffset = savedOffset;
+                    if (_dataGrid.HorizontalScrollingOffset != savedOffset)
+                        _dataGrid.HorizontalScrollingOffset = savedOffset;
                 }
                 finally { _syncingColumnWidth = false; }
             };
