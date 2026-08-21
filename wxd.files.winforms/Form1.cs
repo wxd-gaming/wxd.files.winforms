@@ -1134,10 +1134,28 @@ namespace wxd.files.winforms
                     System.IO.Path.GetTempPath(),
                     $"wxd_cmd_{Guid.NewGuid():N}.bat");
 
-                // 归一化换行为 CRLF，UTF-8 BOM + chcp 65001 确保中文路径/输出正常
+                // 归一化换行为 CRLF
                 var normalized = cmd.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
-                var batContent = "@echo off\r\nchcp 65001 >nul\r\n" + normalized + "\r\n";
-                System.IO.File.WriteAllText(tempBat, batContent, new System.Text.UTF8Encoding(true));
+
+                // 优先 GBK(ANSI/936) 无 BOM 写入：
+                // 1) 不带 BOM，@echo off 位于真正第一行，能正常生效（不回显命令）；
+                // 2) 控制台保持默认 936，svn 等程序的 GBK 输出不会乱码。
+                // 若命令含 GBK 无法表示的字符，回退到 UTF-8(无 BOM) + chcp 65001。
+                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                var gbk = System.Text.Encoding.GetEncoding(936);
+                string batContent;
+                System.Text.Encoding encoding;
+                if (gbk.GetString(gbk.GetBytes(normalized)) == normalized)
+                {
+                    batContent = "@echo off\r\n" + normalized + "\r\n";
+                    encoding = gbk;
+                }
+                else
+                {
+                    batContent = "@echo off\r\nchcp 65001 >nul\r\n" + normalized + "\r\n";
+                    encoding = new System.Text.UTF8Encoding(false);
+                }
+                System.IO.File.WriteAllText(tempBat, batContent, encoding);
 
                 var showWindow = item.ShowWindow;
                 var psi = new System.Diagnostics.ProcessStartInfo
