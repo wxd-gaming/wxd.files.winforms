@@ -58,6 +58,8 @@ public class CustomCommandManagerForm : Form
             DataPropertyName = "Command",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
             FillWeight = 40,
+            ReadOnly = true, // 禁用单元格内编辑，改为双击/右键弹窗编辑
+            SortMode = DataGridViewColumnSortMode.NotSortable,
             DefaultCellStyle = { WrapMode = DataGridViewTriState.True }
         };
         var colWorkDir = new DataGridViewTextBoxColumn
@@ -141,10 +143,12 @@ public class CustomCommandManagerForm : Form
             }
         };
 
-        // 双击工作目录列弹出目录选择对话框
+        // 双击工作目录列弹出目录选择对话框；双击命令列弹出文本编辑对话框
         _dgv.CellDoubleClick += (s, e) =>
         {
-            if (_dgv.Columns[e.ColumnIndex].DataPropertyName == "WorkDir" && e.RowIndex >= 0)
+            if (e.RowIndex < 0) return;
+            var dataProp = _dgv.Columns[e.ColumnIndex].DataPropertyName;
+            if (dataProp == "WorkDir")
             {
                 var row = _dgv.Rows[e.RowIndex];
                 if (row.DataBoundItem is CustomCommandItem item)
@@ -157,6 +161,20 @@ public class CustomCommandManagerForm : Form
                         item.WorkDir = fbd.SelectedPath;
                     }
                 }
+            }
+            else if (dataProp == "Command")
+            {
+                EditCommandViaDialog(e.RowIndex);
+            }
+        };
+
+        // 右键命令列弹出文本编辑对话框
+        _dgv.CellMouseDown += (s, e) =>
+        {
+            if (e.Button == MouseButtons.Right && e.RowIndex >= 0
+                && _dgv.Columns[e.ColumnIndex].DataPropertyName == "Command")
+            {
+                EditCommandViaDialog(e.RowIndex);
             }
         };
 
@@ -251,9 +269,6 @@ public class CustomCommandManagerForm : Form
                     _dgv.CurrentCell = _dgv.Rows[row].Cells[0];
             }
         };
-
-        // 命令列支持多行编辑
-        _dgv.EditingControlShowing += OnEditingControlShowing;
 
         // 行高自适应：根据命令列内容自动调整行高
         _dgv.RowsAdded += (s, e) => AutoSizeAllRows();
@@ -423,17 +438,20 @@ public class CustomCommandManagerForm : Form
         row.Height = Math.Min(estimatedHeight, 230);
     }
 
-    /// <summary>进入编辑时，将命令列设为多行模式</summary>
-    private void OnEditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
+    /// <summary>通过弹窗编辑指定行的命令（双击/右键触发）</summary>
+    private void EditCommandViaDialog(int rowIndex)
     {
-        if (e.Control is TextBox tb)
+        if (rowIndex < 0 || rowIndex >= _dgv.Rows.Count) return;
+        if (_dgv.Rows[rowIndex].DataBoundItem is not CustomCommandItem item) return;
+
+        var cmdColIndex = _dgv.Columns["colCmd"].Index;
+        using var dlg = new CellEditDialog(item.Command, rowIndex, cmdColIndex, "", "执行的命令",
+            customTitle: $"编辑命令 — {item.Name}", closeOnSave: true);
+        if (dlg.ShowDialog(this) == DialogResult.OK)
         {
-            // 命令列支持多行编辑
-            if (_dgv.CurrentCell?.OwningColumn?.DataPropertyName == "Command")
-            {
-                tb.Multiline = true;
-                _dgv.Rows[_dgv.CurrentCell.RowIndex].Height = 90;
-            }
+            item.Command = dlg.CellValue;          // CellValue 已将换行归一化为 Lf
+            _dgv.InvalidateCell(cmdColIndex, rowIndex); // 刷新单元格显示
+            AutoSizeRow(rowIndex);                 // 按新内容重算行高
         }
     }
 
