@@ -1121,25 +1121,39 @@ namespace wxd.files.winforms
             ExecuteCustomCommand(item);
         }
 
-        /// <summary>执行自定义命令</summary>
+        /// <summary>执行自定义命令（写入临时 bat 文件执行，避免 & 拼接导致的解析问题）</summary>
         private void ExecuteCustomCommand(CustomCommandItem item)
         {
             var cmd = item.Command;
             if (string.IsNullOrWhiteSpace(cmd)) return;
 
-            var lines = cmd.Split(new[] { GlobalConst.CrLf, GlobalConst.Cr, GlobalConst.Lf }, StringSplitOptions.None);
-            var fullCmd = string.Join(" & ", lines);
-
+            string? tempBat = null;
             try
             {
+                tempBat = System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(),
+                    $"wxd_cmd_{Guid.NewGuid():N}.bat");
+
+                // 归一化换行为 CRLF，UTF-8 BOM + chcp 65001 确保中文路径/输出正常
+                var normalized = cmd.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+                var batContent = "@echo off\r\nchcp 65001 >nul\r\n" + normalized + "\r\n";
+                System.IO.File.WriteAllText(tempBat, batContent, new System.Text.UTF8Encoding(true));
+
                 var showWindow = item.ShowWindow;
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "cmd.exe",
-                    Arguments = "/c " + fullCmd,
-                    UseShellExecute = false,
+                    FileName = tempBat,
+                    UseShellExecute = true,
                     CreateNoWindow = !showWindow
                 };
+
+                if (!showWindow)
+                {
+                    psi.FileName = "cmd.exe";
+                    psi.Arguments = $"/c \"\"{tempBat}\"\"";
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                }
 
                 var workDir = item.WorkDir;
                 if (!string.IsNullOrWhiteSpace(workDir) && System.IO.Directory.Exists(workDir))
@@ -1147,10 +1161,24 @@ namespace wxd.files.winforms
                     psi.WorkingDirectory = workDir;
                 }
 
-                System.Diagnostics.Process.Start(psi);
+                var proc = System.Diagnostics.Process.Start(psi);
+
+                // 进程退出后删除临时文件，避免残留垃圾
+                if (proc != null)
+                {
+                    proc.EnableRaisingEvents = true;
+                    proc.Exited += (_, _) =>
+                    {
+                        try { System.IO.File.Delete(tempBat); } catch { }
+                    };
+                }
             }
             catch (Exception ex)
             {
+                if (tempBat != null)
+                {
+                    try { System.IO.File.Delete(tempBat); } catch { }
+                }
                 AlertForm.Show(null, $"执行命令 [{item.Name}] 失败：{ex.Message}", "错误", AlertType.Error, exception: ex);
             }
         }
