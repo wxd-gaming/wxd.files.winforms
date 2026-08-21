@@ -76,6 +76,9 @@ namespace wxd.files.winforms
         private const int SaveDebounceMs = 3000; // 3秒无操作后自动保存
         /// <summary>已修改但尚未保存到磁盘的原始行索引集合（用于单元格橙色背景标记）</summary>
         private HashSet<int> _unsavedRowIndices = new();
+        /// <summary>后台异步保存任务链（串行化多次保存，避免并发写同一文件）</summary>
+        private Task _pendingSaveTask = Task.CompletedTask;
+        private readonly object _pendingSaveLock = new();
 
         // ==================== 行编辑模式 ====================
         private int _editingRowIndex = -1;           // 当前正在编辑的显示行索引（-1=无）
@@ -5092,30 +5095,13 @@ namespace wxd.files.winforms
                         if (_columnLinks.Count > 0)
                             FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
-                        // 一次性保存文件
-                        bool saved = SaveCurrentFile();
+                        // ★ 不再 RefreshGridLayout() 全量刷新：用户已在 DataGridView 就地编辑，
+                        //   单元格值已是最新，全量重建会重置滚动位置/选中状态。
+                        //   只重绘编辑行，更新"已修改单元格/未保存行"背景标记。
+                        _dataGrid.InvalidateRow(editingRow);
 
-                        if (saved)
-                        {
-                            _unsavedRowIndices.Clear();
-                            // 保存成功，清除该行的已修改单元格标记（不影响其他行）
-                            _modifiedCellsInEdit.Remove(origIndex);
-                        }
-                        else
-                        {
-                            // 保存失败，标记这一行为未保存（保留 _modifiedCellsInEdit 中的红色标记）
-                            _hasUnsavedChanges = true;
-                            _unsavedRowIndices.Add(origIndex);
-                        }
-
-                        // 刷新显示（重建 Grid 以反映 _dataTable 的变更）
-                        RefreshGridLayout();
-
-                        // 如果保存失败，刷新后需要恢复状态栏提示（RefreshGridLayout 会清空 _lblInfo.Text）
-                        if (!saved && _unsavedRowIndices.Count > 0)
-                        {
-                            ShowDirtyIndicator();
-                        }
+                        // ★ 异步保存：不阻塞 UI，保存完成后回 UI 线程更新标记
+                        SaveAfterEditAsync(origIndex, editingRow);
                     }
                     else
                     {
@@ -5436,6 +5422,61 @@ namespace wxd.files.winforms
                 return SaveExcelFile();
         }
 
+        /// <summary>退出编辑后异步保存：后台线程写盘，不阻塞 UI、不刷新表格（保留滚动位置）</summary>
+        /// <param name="origIndex">编辑行的原始行索引</param>
+        /// <param name="displayRow">编辑行的显示行索引（完成后重绘用）</param>
+        private void SaveAfterEditAsync(int origIndex, int displayRow)
+        {
+            // 先标记脏数据：异步保存窗口期内若用户关闭窗体，ForceFlushBeforeClose 仍能兜底
+            _hasUnsavedChanges = true;
+
+            // UI 线程快照数据（后台线程只写快照，避免与 UI 并发读写 _dataTable）
+            var snapshot = _dataTable.Copy();
+            var filePath = _filePath;
+            var delimiter = _delimiter;
+
+            var uiScheduler = TaskScheduler.FromCurrentSynchronizationContext();
+
+            Task<bool> saveTask;
+            lock (_pendingSaveLock)
+            {
+                // 串接在上一次保存任务之后，保证串行执行，避免两次保存并发写同一文件
+                saveTask = _pendingSaveTask.ContinueWith(
+                    _ => FileDataCache.SaveFile(filePath, snapshot, delimiter),
+                    CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                _pendingSaveTask = saveTask;
+            }
+
+            _ = saveTask.ContinueWith(t =>
+            {
+                if (IsDisposed) return;
+
+                bool saved = t.Status == TaskStatus.RanToCompletion && t.Result;
+                if (saved)
+                {
+                    _hasUnsavedChanges = false;
+                    _unsavedRowIndices.Clear();
+                    // 保存成功，清除该行的已修改单元格标记（不影响其他行）
+                    _modifiedCellsInEdit.Remove(origIndex);
+                    HideDirtyIndicator();
+                }
+                else
+                {
+                    // 保存失败：标记该行未保存（保留红色标记），状态栏提示并启动重试定时器
+                    _unsavedRowIndices.Add(origIndex);
+                    MarkDirtyAndStartSaveTimer();
+                }
+
+                // 重绘编辑行（更新未保存行橙色背景/已修改单元格标记）
+                if (displayRow >= 0 && displayRow < _dataGrid.Rows.Count)
+                    _dataGrid.InvalidateRow(displayRow);
+
+                // 保存成功后重新检测唯一列重复
+                if (saved)
+                    CheckUniqueColumnDuplicates();
+            }, CancellationToken.None, TaskContinuationOptions.None, uiScheduler);
+        }
+
         // ==================== 防抖保存 ====================
 
         /// <summary>标记脏数据并启动防抖定时器</summary>
@@ -5457,9 +5498,21 @@ namespace wxd.files.winforms
             if (saved)
             {
                 _hasUnsavedChanges = false;
+                // ★ 不再 RefreshGridLayout()（会重置滚动位置）：只重绘之前的未保存行
+                var dirtyRows = _unsavedRowIndices.ToList();
                 _unsavedRowIndices.Clear();
                 HideDirtyIndicator();
-                RefreshGridLayout();
+                foreach (int origIdx in dirtyRows)
+                {
+                    for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                    {
+                        if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == origIdx)
+                        {
+                            _dataGrid.InvalidateRow(i);
+                            break;
+                        }
+                    }
+                }
             }
             else
             {
@@ -5471,6 +5524,11 @@ namespace wxd.files.winforms
         public bool ForceFlushBeforeClose()
         {
             _retrySaveTimer?.Stop();
+
+            // ★ 先等待进行中的后台异步保存完成，避免异步窗口期的修改丢失/并发写同一文件
+            try { _pendingSaveTask.Wait(TimeSpan.FromSeconds(10)); }
+            catch { /* 任务异常忽略，下方 flush 逻辑会再次尝试 */ }
+
             if (!_hasUnsavedChanges) return true;
 
             TryFlushToDisk();
