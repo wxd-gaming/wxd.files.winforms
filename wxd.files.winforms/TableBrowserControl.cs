@@ -1096,7 +1096,7 @@ namespace wxd.files.winforms
                 AllowUserToDeleteRows = false,
                 ReadOnly = true,  // 默认只读（浏览模式），行编辑模式下临时设为false
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
-                EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
+                EditMode = DataGridViewEditMode.EditProgrammatically,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
                 ColumnHeadersHeight = 28,
@@ -1139,10 +1139,19 @@ namespace wxd.files.winforms
             dgv.CellClick += OnCellClick;
             dgv.RowHeaderMouseClick += OnRowHeaderMouseClick;
             dgv.CellToolTipTextNeeded += OnCellToolTipTextNeeded;
-            dgv.SelectionChanged += (s, e) => dgv.Invalidate();
+            // ★ 仅重绘当前单元格所在行，避免每次点击触发全表重绘（横向滚动到后面时单元格多、格式化慢，闪烁最明显）
+            dgv.SelectionChanged += (s, e) =>
+            {
+                if (dgv.CurrentCell != null && dgv.CurrentCell.RowIndex >= 0)
+                    dgv.InvalidateRow(dgv.CurrentCell.RowIndex);
+            };
             dgv.CellBeginEdit += OnCellBeginEdit;
             dgv.CellEndEdit += OnCellEndEdit;
             dgv.CellValueChanged += OnCellValueChangedInEdit;
+            // ★ 反射启用双缓冲，消除 DataGridView 擦背景带来的重绘闪烁
+            typeof(DataGridView).GetProperty("DoubleBuffered",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?
+                .SetValue(dgv, true);
             return dgv;
         }
 
@@ -3576,11 +3585,16 @@ namespace wxd.files.winforms
         private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            // 点击其他行内容单元格取消行选中
-            if (_selectedRows.Count > 0 && !_selectedRows.Contains(e.RowIndex))
+            var dgv = (DataGridView)sender!;
+            // ★ 单击任意单元格 = 点击行号：标记所在行（红框）；Ctrl 多选切换；重复点击不取消
+            int displayRow = e.RowIndex;
+            bool ctrlHeld = (Control.ModifierKeys & Keys.Control) == Keys.Control;
+            if (!ctrlHeld)
             {
+                // 单选：清除其他行的标记，当前行始终标记
                 var oldSelected = _selectedRows.ToList();
                 _selectedRows.Clear();
+                _selectedRows.Add(displayRow);
                 foreach (var r in oldSelected)
                 {
                     if (r >= 0 && r < _dataGrid.Rows.Count)
@@ -3590,8 +3604,17 @@ namespace wxd.files.winforms
                         if (r + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(r + 1);
                     }
                 }
+                _dataGrid.InvalidateRow(displayRow);
+                if (displayRow + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(displayRow + 1);
             }
-            var dgv = (DataGridView)sender!;
+            else
+            {
+                // Ctrl+点击：多选切换（与行号 Ctrl 行为一致）
+                if (_selectedRows.Contains(displayRow)) _selectedRows.Remove(displayRow);
+                else _selectedRows.Add(displayRow);
+                _dataGrid.InvalidateRow(displayRow);
+                if (displayRow + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(displayRow + 1);
+            }
             int rowOff = (dgv == _dataGridHeader) ? 0 : _frozenRows;
             int colIdx = e.ColumnIndex;
             // ★ 不再需要 __RowNum__ 偏移
@@ -3754,12 +3777,7 @@ namespace wxd.files.winforms
 
         private void OnCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            var dgv = (DataGridView)sender!;
-            if (dgv == _dataGridHeader) return;
-            // 双击进入行编辑模式，定位到双击的列
-            if (!_isEmbeddedMode && !_isEditLocked)
-                EnterRowEditMode(e.RowIndex, e.ColumnIndex);
+            // 双击仅选中单元格，不再进入编辑模式
         }
 
         private void OnFrozenCellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -4061,7 +4079,8 @@ namespace wxd.files.winforms
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
             if (sender == _dataGridHeader) return;
-            if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
+            if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count &&
+                _dataGrid.Rows[e.RowIndex].Height != 24)
                 _dataGrid.Rows[e.RowIndex].Height = 24;
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
@@ -4170,41 +4189,7 @@ namespace wxd.files.winforms
             copyItem.Click += (s, args) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
             ctx.Items.Add(copyItem);
 
-            var editItem = new ToolStripMenuItem("编辑");
-            if (_isEmbeddedMode || _isEditLocked) editItem.Enabled = false;
-            else
-            {
-                editItem.Click += (s, args) =>
-                {
-                    _dataGrid.CurrentCell = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                    _dataGrid.BeginEdit(true);
-                };
-            }
-            ctx.Items.Add(editItem);
-
-            // ==================== 编辑行菜单 ====================
-            var editRowItem = new ToolStripMenuItem(_editingRowIndex >= 0 ? "退出行编辑" : "编辑行");
-            if (_isEmbeddedMode || _isEditLocked) { editRowItem.Enabled = false; }
-            else
-            {
-                int targetRow = e.RowIndex;
-                editRowItem.Click += (s, args) =>
-                {
-                    // 先选中右键点击的行
-                    _dataGrid.CurrentCell = _dataGrid.Rows[targetRow].Cells[e.ColumnIndex];
-                    if (_editingRowIndex >= 0)
-                    {
-                        // 如果当前正在编辑，则提交退出
-                        ExitRowEditMode(commit: true);
-                    }
-                    else
-                    {
-                        EnterRowEditMode(targetRow);
-                    }
-                };
-            }
-            ctx.Items.Add(editRowItem);
-
+            // ==================== 弹窗编辑（唯一编辑方式）====================
             var editDialogItem = new ToolStripMenuItem("弹窗编辑");
             if (_isEmbeddedMode) editDialogItem.Enabled = false;
             else
@@ -5058,7 +5043,7 @@ namespace wxd.files.winforms
 
                 // 恢复只读 + 恢复 EditMode
                 _dataGrid.ReadOnly = true;
-                _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
+                _dataGrid.EditMode = DataGridViewEditMode.EditProgrammatically;
 
                 // 暂不清理 _modifiedCellsInEdit，保存成功后再清理（保存失败时保留红色标记）
 
@@ -5138,7 +5123,7 @@ namespace wxd.files.winforms
 
                 // 恢复只读 + 恢复 EditMode
                 _dataGrid.ReadOnly = true;
-                _dataGrid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
+                _dataGrid.EditMode = DataGridViewEditMode.EditProgrammatically;
 
                 // 只清除当前行的已修改单元格记录（取消编辑时该行的修改被撤销）
                 if (origIndex >= 0)
