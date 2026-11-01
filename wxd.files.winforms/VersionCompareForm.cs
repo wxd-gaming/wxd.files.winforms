@@ -42,21 +42,32 @@ namespace wxd.files.winforms
         // 左右两个 TableBrowserControl（每次切换版本都销毁重建，避免列状态残留）
         private TableBrowserControl? _leftView;
         private TableBrowserControl? _rightView;
+        /// <summary>宿主阅读器窗口的表格数据缓存；为 null 时左右视图各自持有私有缓存</summary>
+        private readonly FileDataCache? _ownerCache;
         private string? _leftRevision;
         private string? _rightRevision;
 
         // 加载守卫
         private bool _isLoading;
 
-        // DataTable 缓存：key = revision, value = DataTable
-        private readonly Dictionary<string, DataTable> _dataCache = new();
+        // 版本数据缓存：key = revision 或 "__CURRENT_FILE__", value = 该版本的 DataTable + FileTableData
+        // ★ 左右两侧在 Task.Run 中并行读写，必须持 _dataCacheLock 访问；_dataCacheAccessOrder 实现 LRU 淘汰
+        // ★ FileTableData 带源文件物理行号，交给视图前先 Clone，避免差异标记写回污染缓存
+        private readonly Dictionary<string, CachedVersionData> _dataCache = new();
+        private readonly List<string> _dataCacheAccessOrder = new();
+        private readonly object _dataCacheLock = new();
+        private const int MaxCachedVersions = 10;
+        private const string CurrentFileCacheKey = "__CURRENT_FILE__";
 
-        // 差异数据 —— 用行号集合记录原始DataTable中的差异行索引
+        /// <summary>某个版本的解析结果：DataTable 用于绑定，FileTableData 用于行号/差异标记</summary>
+        private sealed record CachedVersionData(DataTable Table, FileTableData Data);
+
+        // 差异数据 —— 记录原始 DataTable 行索引（0-based，不是源文件行号）
         // 保留这些字段用于恢复全部显示（保存原始完整 FileTableData）
         private FileTableData? _leftFullFileData;
         private FileTableData? _rightFullFileData;
 
-        // ★ 差异行原始行号集合（0-based，对应 DataTable.Rows 的索引，包含固定行）
+        // ★ 差异行索引集合（0-based，对应 DataTable.Rows 的索引，包含固定行）
         private HashSet<int> _leftDiffRows = new();
         private HashSet<int> _rightDiffRows = new();
         private HashSet<int> _leftDiffCells = new();    // (row << 16) | col 编码的差异单元格集合（左）
@@ -106,10 +117,12 @@ namespace wxd.files.winforms
             string? rootDir = null,
             bool[]? columnVisibility = null,
             int uniqueColumnIndex = -1,
-            int mappingRowIndex = -1)
+            int mappingRowIndex = -1,
+            FileDataCache? cache = null)
         {
             _filePath = filePath;
             _vcsType = vcsType;
+            _ownerCache = cache;
 
             // ✅ 优先使用调用方传入的值（调用方已正确获取配置）
             _frozenRows = frozenRows;
@@ -720,22 +733,37 @@ namespace wxd.files.winforms
                 _lblLeftHeader.Text = $"旧版本 - {leftLabel}";
                 _lblRightHeader.Text = $"新版本 - {rightLabel}";
 
-                // 阶段1：加载 DataTable（从缓存或导出文件）—— 后台并行执行
+                // 阶段1：加载 DataTable + FileTableData（从缓存或导出文件）—— 后台并行执行
                 DataTable? leftData = null;
                 DataTable? rightData = null;
+                FileTableData? leftFullData = null;
+                FileTableData? rightFullData = null;
+                string? leftError = null;
+                string? rightError = null;
 
                 var loadTasks = new List<Task>();
                 // 左边：从 SVN/Git 导出选中版本
                 loadTasks.Add(Task.Run(async () =>
                 {
-                    leftData = await LoadDataTableAsync(leftRevision);
+                    (leftData, leftFullData, leftError) = await LoadDataTableAsync(leftRevision, leftLabel);
                 }));
                 // 右边：导出更新版本，或读取当前文件
                 loadTasks.Add(Task.Run(async () =>
                 {
-                    rightData = await LoadDataTableAsync(rightRevision);
+                    (rightData, rightFullData, rightError) = await LoadDataTableAsync(rightRevision, rightLabel);
                 }));
                 await Task.WhenAll(loadTasks);
+
+                // ★ 任一侧没取到数据就不做对比：半张表 + 全红差异只会误导
+                if (leftData == null || rightData == null)
+                {
+                    var message = leftData == null ? leftError : rightError;
+                    // 清掉去重标记，让用户重新点同一行即可重试，而不必先切到别的提交再切回来
+                    _leftRevision = null;
+                    _rightRevision = null;
+                    ShowError(message ?? "版本数据加载失败");
+                    return;
+                }
 
                 // 阶段2：更新 TableBrowserControl 数据（控件已移除，不会逐行绘制）
                 // ★ 每次都是新控件，直接用 _columnVisibility（唯一权威来源）
@@ -745,19 +773,12 @@ namespace wxd.files.winforms
                 if (_rightView != null && _columnVisibility != null)
                     _rightView.SetColumnVisibility(_columnVisibility);
 
-                if (leftData != null)
-                    _leftView!.SetDataTable(leftData,
-                        $"旧版本 {leftLabel} | 行数: {leftData.Rows.Count}");
-                else if (_leftView != null)
-                    _leftView.SetDataTable(new DataTable(), "无数据");
+                _leftView!.SetDataTable(leftData,
+                    $"旧版本 {leftLabel} | 行数: {leftData.Rows.Count}", leftFullData);
+                _rightView!.SetDataTable(rightData,
+                    $"新版本 {rightLabel} | 行数: {rightData.Rows.Count}", rightFullData);
 
-                if (rightData != null)
-                    _rightView!.SetDataTable(rightData,
-                        $"新版本 {rightLabel} | 行数: {rightData.Rows.Count}");
-                else if (_rightView != null)
-                    _rightView.SetDataTable(new DataTable(), "无数据");
-
-                // ★ 保存原始 FileTableData（用于筛选后恢复全部显示）
+                // ★ 保存原始 FileTableData（带源文件物理行号，用于筛选后恢复全部显示）
                 _leftFullFileData = _leftView?.GetFileData();
                 _rightFullFileData = _rightView?.GetFileData();
 
@@ -818,7 +839,7 @@ namespace wxd.files.winforms
                 {
                     var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
                     _leftView.SetColumnVisibility(leftColStatesBefore);
-                    _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
+                    _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text, leftProjected);
                     // ★ 构建行/列索引映射（DGV行/列→原始行/列），不再依赖 Tag 或 GetVisibleColumnIndices
                     _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected, out _leftRowProperties);
                     _leftColToOriginalIndex = new List<int>(leftVisibleCols);
@@ -827,7 +848,7 @@ namespace wxd.files.winforms
                 {
                     var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
                     _rightView.SetColumnVisibility(rightColStatesBefore);
-                    _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
+                    _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text, rightProjected);
                     _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected, out _rightRowProperties);
                     _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                 }
@@ -843,7 +864,7 @@ namespace wxd.files.winforms
                     {
                         var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
                         _leftView.SetColumnVisibility(leftColStatesBefore);
-                        _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
+                        _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text, leftFiltered);
                         _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered, out _leftRowProperties);
                         _leftColToOriginalIndex = new List<int>(leftVisibleCols);
                     }
@@ -851,7 +872,7 @@ namespace wxd.files.winforms
                     {
                         var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
                         _rightView.SetColumnVisibility(rightColStatesBefore);
-                        _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
+                        _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text, rightFiltered);
                         _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered, out _rightRowProperties);
                         _rightColToOriginalIndex = new List<int>(rightVisibleCols);
                     }
@@ -917,6 +938,7 @@ namespace wxd.files.winforms
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
                     SkipAutoLoad = true,
+                    Cache = _ownerCache,
                 };
                 _leftView = new TableBrowserControl(leftOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -935,6 +957,7 @@ namespace wxd.files.winforms
                     UniqueColumnIndex = _uniqueColumnIndex,
                     MappingRowIndex = _mappingRowIndex,
                     SkipAutoLoad = true,
+                    Cache = _ownerCache,
                 };
                 _rightView = new TableBrowserControl(rightOptions) { Dock = DockStyle.Fill };
                 if (_columnVisibility != null)
@@ -949,22 +972,24 @@ namespace wxd.files.winforms
         {
             var result = new List<int>();
             if (_columnVisibility == null) return result;
-            result.Add(0); // 第0列（序号列）始终显示
+            result.Add(0); // 第0列（主键/唯一ID列）始终显示，行号不是数据列
             for (int i = 1; i < _columnVisibility.Length; i++)
                 if (_columnVisibility[i]) result.Add(i);
             return result;
         }
 
-        /// <summary>加载指定版本的 DataTable（带缓存）。
-        /// revision 为空字符串时，直接读取当前目录文件（不通过 VCS 导出）。</summary>
-        private async Task<DataTable?> LoadDataTableAsync(string revision)
+        /// <summary>加载指定版本的 DataTable + FileTableData（带线程安全缓存）。
+        /// revision 为空字符串时，直接读取当前目录文件（不通过 VCS 导出）。
+        /// ★ 本方法在 Task.Run 中执行，禁止直接操作 UI；失败原因通过 Error 返回，由 UI 线程统一提示。
+        /// ★ 返回的 FileTableData 是缓存条目的副本，调用方可以安全写回差异标记。</summary>
+        private async Task<(DataTable? Data, FileTableData? FullData, string? Error)> LoadDataTableAsync(string revision, string revisionLabel)
         {
             // 缓存 key：空字符串表示"当前文件"
-            var cacheKey = string.IsNullOrEmpty(revision) ? "__CURRENT_FILE__" : revision;
+            var cacheKey = string.IsNullOrEmpty(revision) ? CurrentFileCacheKey : revision;
 
-            // 检查缓存
-            if (_dataCache.TryGetValue(cacheKey, out var cached))
-                return cached;
+            var cached = CacheTryGet(cacheKey);
+            if (cached != null)
+                return (cached.Table, FileDataCache.CloneFileData(cached.Data), null);
 
             string? file;
             if (string.IsNullOrEmpty(revision))
@@ -978,42 +1003,71 @@ namespace wxd.files.winforms
                 var exportResult = await VersionControlHelper.ExportRevisionAsync(
                     _filePath, _vcsType, revision, _tempDir);
                 if (!exportResult.Success)
-                {
-                    ShowError(exportResult.ErrorMessage!);
-                    return null;
-                }
+                    return (null, null, $"导出 {revisionLabel} 失败: {exportResult.ErrorMessage}");
                 file = exportResult.TempFile;
             }
 
             if (file == null || !File.Exists(file))
-                return null;
+                return (null, null, $"{revisionLabel} 导出结果为空，未取到版本内容");
 
-            // 解析文件到 DataTable
-            var dataTable = await Task.Run(() => ParseFileToDataTable(file));
+            // 解析文件
+            var parsed = await Task.Run(() => ParseFileToDataTable(file));
+            if (parsed.Data == null)
+                return (null, null, $"{revisionLabel} 读取失败: {parsed.Error}");
 
-            if (dataTable != null)
-            {
-                // 缓存（限制最多 10 个）
-                if (_dataCache.Count >= 10)
-                {
-                    var oldestKey = _dataCache.Keys.First();
-                    _dataCache.Remove(oldestKey);
-                }
-                _dataCache[cacheKey] = dataTable;
-            }
-
-            return dataTable;
+            CacheSet(cacheKey, parsed.Data, parsed.FullData);
+            // 交给视图的副本：DataTable 只读共享，FileTableData 复制后被写回差异标记
+            return (parsed.Data, FileDataCache.CloneFileData(parsed.FullData), null);
         }
 
-        /// <summary>解析文件为 DataTable（CSV 或 Excel），使用统一的 FileDataCache.LoadFileDirect</summary>
-        private static DataTable? ParseFileToDataTable(string filePath)
+        /// <summary>解析文件为 DataTable + FileTableData（CSV 或 Excel），使用统一的 FileDataCache.LoadFileDirect</summary>
+        private static (DataTable? Data, FileTableData FullData, string? Error) ParseFileToDataTable(string filePath)
         {
             try
             {
-                var (dataTable, _) = FileDataCache.LoadFileDirect(filePath);
-                return dataTable;
+                var (dataTable, fileData) = FileDataCache.LoadFileDirect(filePath);
+                if (dataTable == null)
+                    return (null, fileData, $"解析结果为空：{Path.GetFileName(filePath)}");
+                return (dataTable, fileData, null);
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                return (null, new FileTableData(), $"解析文件失败：{Path.GetFileName(filePath)}，{ex.Message}");
+            }
+        }
+
+        // ==================== 版本数据缓存（线程安全） ====================
+        /// <summary>命中缓存时刷新其为"最近使用"</summary>
+        private CachedVersionData? CacheTryGet(string key)
+        {
+            lock (_dataCacheLock)
+            {
+                if (!_dataCache.TryGetValue(key, out var data)) return null;
+                _dataCacheAccessOrder.Remove(key);
+                _dataCacheAccessOrder.Add(key);
+                return data;
+            }
+        }
+
+        /// <summary>写入缓存，超出上限时淘汰最久未使用的一个版本</summary>
+        private void CacheSet(string key, DataTable table, FileTableData data)
+        {
+            lock (_dataCacheLock)
+            {
+                if (_dataCache.ContainsKey(key))
+                    _dataCacheAccessOrder.Remove(key);
+                else if (_dataCache.Count >= MaxCachedVersions)
+                {
+                    var oldestKey = _dataCacheAccessOrder.Count > 0 ? _dataCacheAccessOrder[0] : null;
+                    if (oldestKey != null)
+                    {
+                        _dataCache.Remove(oldestKey);
+                        _dataCacheAccessOrder.RemoveAt(0);
+                    }
+                }
+                _dataCache[key] = new CachedVersionData(table, data);
+                _dataCacheAccessOrder.Add(key);
+            }
         }
 
         // ==================== 清理临时文件 ====================
@@ -1045,13 +1099,13 @@ namespace wxd.files.winforms
                 // 仅显示差异行
                 var leftFiltered = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: true);
                 _leftView.SetColumnVisibility(leftColStatesBefore);
-                _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text);
+                _leftView.SetDataTable(BuildDataTableFromFileData(leftFiltered), _lblLeftHeader.Text, leftFiltered);
                 _leftRowToOriginalIndex = BuildRowIndexMap(leftFiltered, out _leftRowProperties);
                 _leftColToOriginalIndex = new List<int>(leftVisibleCols);
 
                 var rightFiltered = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: true);
                 _rightView.SetColumnVisibility(rightColStatesBefore);
-                _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text);
+                _rightView.SetDataTable(BuildDataTableFromFileData(rightFiltered), _lblRightHeader.Text, rightFiltered);
                 _rightRowToOriginalIndex = BuildRowIndexMap(rightFiltered, out _rightRowProperties);
                 _rightColToOriginalIndex = new List<int>(rightVisibleCols);
             }
@@ -1060,13 +1114,13 @@ namespace wxd.files.winforms
                 // 显示全部行
                 var leftProjected = BuildProjectedFileData(_leftFullFileData, leftVisibleCols, diffOnly: false);
                 _leftView.SetColumnVisibility(leftColStatesBefore);
-                _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text);
+                _leftView.SetDataTable(BuildDataTableFromFileData(leftProjected), _lblLeftHeader.Text, leftProjected);
                 _leftRowToOriginalIndex = BuildRowIndexMap(leftProjected, out _leftRowProperties);
                 _leftColToOriginalIndex = new List<int>(leftVisibleCols);
 
                 var rightProjected = BuildProjectedFileData(_rightFullFileData, rightVisibleCols, diffOnly: false);
                 _rightView.SetColumnVisibility(rightColStatesBefore);
-                _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text);
+                _rightView.SetDataTable(BuildDataTableFromFileData(rightProjected), _lblRightHeader.Text, rightProjected);
                 _rightRowToOriginalIndex = BuildRowIndexMap(rightProjected, out _rightRowProperties);
                 _rightColToOriginalIndex = new List<int>(rightVisibleCols);
             }
@@ -1362,6 +1416,8 @@ namespace wxd.files.winforms
             var row = new TableRow
             {
                 OriginalRowIndex = src.OriginalRowIndex,
+                PhysicalStartLine = src.PhysicalStartLine,
+                PhysicalEndLine = src.PhysicalEndLine,
                 IsDiffRow = src.IsDiffRow,
                 DiffType = src.DiffType,
                 IsBlankRow = src.IsBlankRow,
@@ -1411,6 +1467,8 @@ namespace wxd.files.winforms
                     var projRow = new TableRow
                     {
                         OriginalRowIndex = row.OriginalRowIndex,
+                        PhysicalStartLine = row.PhysicalStartLine,
+                        PhysicalEndLine = row.PhysicalEndLine,
                         IsDiffRow = row.IsDiffRow,
                         DiffType = row.DiffType,
                         IsBlankRow = row.IsBlankRow,
@@ -1429,6 +1487,8 @@ namespace wxd.files.winforms
                 var dataProjRow = new TableRow
                 {
                     OriginalRowIndex = row.OriginalRowIndex,
+                    PhysicalStartLine = row.PhysicalStartLine,
+                    PhysicalEndLine = row.PhysicalEndLine,
                     IsDiffRow = row.IsDiffRow,
                     DiffType = row.DiffType,
                     IsBlankRow = row.IsBlankRow,

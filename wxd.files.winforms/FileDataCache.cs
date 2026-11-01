@@ -12,38 +12,49 @@ using ExcelDataReader;
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// 文件数据缓存（AppDomain 级别）。
+    /// 表格数据缓存（实例级，由目录阅读器窗体持有）。
     /// key = 全小写绝对路径（如 "c:\work\a.csv"）。
-    /// 30分钟无访问自动过期，过期返回旧数据 + 后台异步刷新。
-    /// 关联查找（LinkLookup）key 保持相对路径格式，与 ColumnLinkConfig 一致。
-    /// 
-    /// 并发设计：
+    ///
+    /// 生命周期：一个 CsvReaderForm（一个目录的阅读器窗口）持有一个实例，
+    /// 窗口关闭时 Dispose，缓存里的 DataTable / FileTableData / LinkLookup 一起失去引用被回收。
+    /// A 目录窗口和 B 目录窗口各持一份，互不干扰；同一文件被两个窗口打开时各自解析一份，
+    /// 另一窗口写入磁盘后，本窗口下次访问会因 LastWriteTime/FileSize 不符自动重建。
+    ///
+    /// 释放后的行为：不抛异常，读请求退化为"直接解析、不进字典"，写请求只落盘，
+    /// 这样窗口关闭时仍在跑的后台任务（关联 lookup 构建、内容搜索）只会白跑一次，不会崩溃也不会留内存。
+    ///
+    /// 并发设计（同一实例内）：
     /// - 不同文件使用独立锁（_fileLocks），可并行加载/访问
     /// - 同一文件的并发请求通过 per-file lock + double-check 保证只加载一次
     /// - _entries 使用 ConcurrentDictionary，字典操作本身线程安全
     /// - LinkLookup 相关操作使用独立的 _linkLock，与文件缓存互不干扰
+    ///
+    /// 无状态部分（解析/写盘/克隆）保持静态：调用方只需要"读一份磁盘文件"时不必扯上缓存归属。
     /// </summary>
-    public static class FileDataCache
+    public class FileDataCache : IDisposable
     {
         /// <summary>缓存条目（key = NormalizePath(fullPath)）</summary>
-        private static readonly ConcurrentDictionary<string, CacheEntry> _entries =
+        private readonly ConcurrentDictionary<string, CacheEntry> _entries =
             new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>关联查找缓存（key 沿用现有格式："sourceRel|srcCol->targetRel:targetCol"）</summary>
-        private static readonly Dictionary<string, LinkLookupEntry> _linkLookups =
+        private readonly Dictionary<string, LinkLookupEntry> _linkLookups =
             new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>LinkLookup 专用锁（跨文件关联，需全局视角）</summary>
-        private static readonly object _linkLock = new();
+        /// <summary>LinkLookup 专用锁（跨文件关联，但作用域只到本实例）</summary>
+        private readonly object _linkLock = new();
 
         /// <summary>每个文件的独立锁对象（保证同一文件的 load 不重入）</summary>
-        private static readonly ConcurrentDictionary<string, object> _fileLocks =
+        private readonly ConcurrentDictionary<string, object> _fileLocks =
             new(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly TimeSpan ExpireDuration = TimeSpan.FromMinutes(30);
-
         /// <summary>正在后台构建关联 lookup 的源文件相对路径集合（防重入）</summary>
-        private static readonly HashSet<string> _buildingLinkLookups = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _buildingLinkLookups = new(StringComparer.OrdinalIgnoreCase);
+
+        private bool _disposed;
+
+        /// <summary>当前缓存是否已释放（调用方可据此放弃后台工作）</summary>
+        public bool IsDisposed => _disposed;
 
         /// <summary>将绝对路径标准化为 key</summary>
         private static string NormalizePath(string path)
@@ -57,61 +68,259 @@ namespace wxd.files.winforms
             return Path.GetFileName(fullPath);
         }
 
-        // ============ 公共 API：读取（走缓存） ============
+        // ============ 公共 API：读取（走本实例缓存） ============
 
         /// <summary>读取文件（走缓存）。自动判断 CSV/Excel。返回深拷贝副本。</summary>
-        public static (DataTable, FileTableData) LoadFile(string filePath)
+        public (DataTable, FileTableData) LoadFile(string filePath)
         {
-            var key = NormalizePath(filePath);
-            var entry = GetOrLoadEntry(key, filePath);
-            entry.Touch();
+            var entry = GetOrLoadEntry(NormalizePath(filePath), filePath);
             return (entry.MasterDataTable.Copy(), CloneFileData(entry.MasterFileData));
         }
 
-        /// <summary>获取 DataTable 副本（走缓存）</summary>
-        public static DataTable GetDataTableCopy(string filePath)
-        {
-            var key = NormalizePath(filePath);
-            var entry = GetOrLoadEntry(key, filePath);
-            entry.Touch();
-            return entry.MasterDataTable.Copy();
-        }
-
-        /// <summary>获取 FileTableData 副本（走缓存）</summary>
-        public static FileTableData GetFileDataCopy(string filePath)
-        {
-            var key = NormalizePath(filePath);
-            var entry = GetOrLoadEntry(key, filePath);
-            entry.Touch();
-            return CloneFileData(entry.MasterFileData);
-        }
-
         /// <summary>获取只读 DataTable（走缓存，返回引用，调用方不应修改）</summary>
-        public static DataTable GetDataTableReadOnly(string filePath)
+        public DataTable GetDataTableReadOnly(string filePath)
         {
-            var key = NormalizePath(filePath);
-            var entry = GetOrLoadEntry(key, filePath);
-            entry.Touch();
-            return entry.MasterDataTable;
-        }
-
-        /// <summary>获取只读 FileTableData（走缓存，返回引用）</summary>
-        public static FileTableData GetFileDataReadOnly(string filePath)
-        {
-            var key = NormalizePath(filePath);
-            var entry = GetOrLoadEntry(key, filePath);
-            entry.Touch();
-            return entry.MasterFileData;
+            return GetOrLoadEntry(NormalizePath(filePath), filePath).MasterDataTable;
         }
 
         /// <summary>确保文件已加载到缓存（预加载用）</summary>
-        public static void EnsureLoaded(string filePath)
+        public void EnsureLoaded(string filePath)
         {
-            var key = NormalizePath(filePath);
-            GetOrLoadEntry(key, filePath);
+            GetOrLoadEntry(NormalizePath(filePath), filePath);
         }
 
-        // ============ 公共 API：读取（不走缓存） ============
+        /// <summary>清除指定文件的缓存（本实例内）</summary>
+        public void InvalidateFile(string filePath)
+        {
+            if (_disposed) return;
+            var key = NormalizePath(filePath);
+            _entries.TryRemove(key, out _);
+            _fileLocks.TryRemove(key, out _);
+            ClearLinkLookupsForFile(key);
+        }
+
+        // ============ 公共 API：写入 ============
+
+        /// <summary>
+        /// 写入文件并更新本实例缓存。自动判断 CSV/Excel。
+        /// ★ 缓存条目用"重新解析磁盘文件"的结果，不从 DataTable 反推：
+        ///   只有磁盘解析才能拿到每条记录的物理起止行号，行号区才不会退化。
+        /// </summary>
+        public bool SaveFile(string filePath, DataTable dataTable, char delimiter = ',')
+        {
+            if (!WriteToDisk(filePath, dataTable, delimiter)) return false;
+
+            if (!_disposed)
+            {
+                var key = NormalizePath(filePath);
+                var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
+                lock (fileLock)
+                {
+                    _entries[key] = LoadAndParseFile(key, filePath);
+                    // 清除该文件相关的旧 linkLookup（下次访问时懒重建）
+                    ClearLinkLookupsForFile(key);
+                }
+            }
+            return true;
+        }
+
+        /// <summary>写入文件（不碰任何缓存）。自动判断 CSV/Excel。</summary>
+        public static bool SaveFileDirect(string filePath, DataTable dataTable, char delimiter = ',')
+            => WriteToDisk(filePath, dataTable, delimiter);
+
+        /// <summary>统一落盘逻辑（无状态）</summary>
+        private static bool WriteToDisk(string fullPath, DataTable dataTable, char delimiter)
+        {
+            var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+            if (ext == ".csv")
+                return WriteCsvToDisk(fullPath, dataTable, delimiter);
+            return WriteExcelToDisk(fullPath, dataTable);
+        }
+
+        // ============ 关联查找（LinkLookup，key 保持相对路径格式） ============
+
+        /// <summary>获取所有已缓存的关联查找条目（本实例）</summary>
+        public Dictionary<string, LinkLookupEntry> GetLookups()
+        {
+            lock (_linkLock)
+            {
+                return new Dictionary<string, LinkLookupEntry>(_linkLookups, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>异步构建所有关联配置的 lookup</summary>
+        public async Task BuildLinkLookupsAsync(
+            string rootDir, List<ColumnLinkConfig> columnLinks, string sourceFilePath,
+            CancellationToken cancellationToken = default)
+        {
+            if (_disposed) return;
+
+            string sourceRel = GetRelativePath(sourceFilePath, rootDir);
+
+            // ★ 防重入检查
+            lock (_linkLock)
+            {
+                if (_buildingLinkLookups.Contains(sourceRel))
+                    return;
+
+                _buildingLinkLookups.Add(sourceRel);
+
+                string prefix = sourceRel + "|";
+                var keysToRemove = _linkLookups.Keys
+                    .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var k in keysToRemove)
+                    _linkLookups.Remove(k);
+            }
+
+            try
+            {
+                var relevantLinks = columnLinks
+                    .Where(l => l.SourceFile.EndsWith(Path.GetFileName(sourceFilePath),
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                foreach (var link in relevantLinks)
+                {
+                    if (_disposed) return;
+
+                    if (link.FieldLinks == null || link.FieldLinks.Count == 0)
+                        continue;
+
+                    foreach (var fl in link.FieldLinks)
+                    {
+                        if (_disposed) return;
+
+                        if (string.IsNullOrEmpty(fl.TargetFile) || fl.TargetColumnIndex < 0)
+                            continue;
+
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        string targetFullPath = Path.Combine(rootDir, fl.TargetFile);
+                        if (!File.Exists(targetFullPath)) continue;
+
+                        var targetKey = NormalizePath(targetFullPath);
+                        CacheEntry entry = await Task.Run(() =>
+                        {
+                            return GetOrLoadEntry(targetKey, targetFullPath);
+                        }, cancellationToken);
+
+                        string key = BuildLinkKey(sourceRel, link.SourceColumnIndex,
+                            fl.TargetFile, fl.TargetColumnIndex, link, fl.FieldIndex);
+
+                        var lookup = await Task.Run(() =>
+                            BuildLinkLookupFromMaster(entry.MasterFileData,
+                                fl.TargetColumnIndex, fl), cancellationToken);
+
+                        lock (_linkLock)
+                        {
+                            if (!_disposed && !_linkLookups.ContainsKey(key))
+                                _linkLookups[key] = lookup;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                lock (_linkLock) { _buildingLinkLookups.Remove(sourceRel); }
+            }
+        }
+
+        // ============ 释放 ============
+
+        /// <summary>
+        /// 释放本实例缓存：清空所有字典，让缓存的 DataTable / FileTableData / LinkLookup 被回收。
+        /// 只断引用、不 DataTable.Dispose()——可能还有后台线程正在读同一份引用，
+        /// 提前 Dispose 会让它抛 ObjectDisposedException；断引用后 GC 自然回收。
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            _entries.Clear();
+            _fileLocks.Clear();
+            lock (_linkLock)
+            {
+                _linkLookups.Clear();
+                _buildingLinkLookups.Clear();
+            }
+        }
+
+        // ============ 内部实现 ============
+
+        /// <summary>
+        /// 获取或加载条目（并发安全）。
+        /// 快速路径：缓存命中且文件未变 → 直接返回（无锁）。
+        /// 慢路径：获取该文件独立锁 → double-check → 加载解析。
+        /// 已释放的实例：每次现场解析一份临时条目，不进字典，不留数据。
+        /// </summary>
+        private CacheEntry GetOrLoadEntry(string key, string fullPath)
+        {
+            if (_disposed)
+            {
+                var (tempDt, tempFd) = ParseFile(fullPath);
+                return new CacheEntry { MasterDataTable = tempDt, MasterFileData = tempFd };
+            }
+
+            // 1. 快速路径：缓存已存在，直接返回（ConcurrentDictionary.TryGetValue 无锁）
+            if (_entries.TryGetValue(key, out var entry))
+            {
+                var fi = new FileInfo(fullPath);
+                if (fi.Exists &&
+                    (fi.LastWriteTimeUtc != entry.LastWriteTime || fi.Length != entry.FileSize))
+                {
+                    // 文件被外部修改，需失效重建 → 进入慢路径
+                }
+                else
+                {
+                    return entry;
+                }
+            }
+
+            // 2. 慢路径：获取该文件的独立锁，保证同一文件的 load 不重入
+            var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
+            lock (fileLock)
+            {
+                // double-check：在等待锁期间，其他线程可能已加载该文件
+                if (_entries.TryGetValue(key, out entry))
+                {
+                    var fi2 = new FileInfo(fullPath);
+                    if (fi2.Exists &&
+                        (fi2.LastWriteTimeUtc != entry.LastWriteTime || fi2.Length != entry.FileSize))
+                    {
+                        // 文件仍已变更，需重建
+                        _entries.TryRemove(key, out _);
+                        ClearLinkLookupsForFile(key);
+                    }
+                    else
+                    {
+                        return entry;
+                    }
+                }
+
+                // 确实需要加载
+                entry = LoadAndParseFile(key, fullPath);
+                _entries[key] = entry;
+                return entry;
+            }
+        }
+
+        /// <summary>解析文件并构建 CacheEntry</summary>
+        private static CacheEntry LoadAndParseFile(string key, string fullPath)
+        {
+            var (dt, fd) = ParseFile(fullPath);
+            var fi = new FileInfo(fullPath);
+            return new CacheEntry
+            {
+                MasterDataTable = dt,
+                MasterFileData = fd,
+                LastWriteTime = fi.LastWriteTimeUtc,
+                FileSize = fi.Length
+            };
+        }
+
+        // ============ 无状态：读取 / 解析 ============
 
         /// <summary>读取文件（不走缓存）。自动判断 CSV/Excel。返回深拷贝副本。</summary>
         public static (DataTable, FileTableData) LoadFileDirect(string filePath)
@@ -119,52 +328,134 @@ namespace wxd.files.winforms
             return ParseFile(filePath);
         }
 
-        // ============ 公共 API：写入 ============
-
-        /// <summary>写入文件（走缓存：写入后自动更新内存缓存）。自动判断 CSV/Excel。</summary>
-        public static bool SaveFile(string filePath, DataTable dataTable, char delimiter = ',')
-        {
-            return SaveFileInternal(filePath, dataTable, delimiter, updateCache: true);
-        }
-
-        /// <summary>写入文件（不走缓存）。自动判断 CSV/Excel。</summary>
-        public static bool SaveFileDirect(string filePath, DataTable dataTable, char delimiter = ',')
-        {
-            return SaveFileInternal(filePath, dataTable, delimiter, updateCache: false);
-        }
-
-        /// <summary>统一写入逻辑</summary>
-        private static bool SaveFileInternal(string fullPath, DataTable dataTable, char delimiter, bool updateCache)
+        /// <summary>统一的文件解析（不涉及缓存），根据扩展名自动路由</summary>
+        private static (DataTable, FileTableData) ParseFile(string fullPath)
         {
             var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-            bool success;
             if (ext == ".csv")
-                success = WriteCsvToDisk(fullPath, dataTable, delimiter);
+                return ParseCsvFile(fullPath);
             else
-                success = WriteExcelToDisk(fullPath, dataTable);
-
-            if (success && updateCache)
-            {
-                var key = NormalizePath(fullPath);
-                var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
-                lock (fileLock)
-                {
-                    var fi = new FileInfo(fullPath);
-                    var fileData = BuildFileDataFromDataTable(dataTable, fullPath);
-                    _entries[key] = new CacheEntry
-                    {
-                        MasterDataTable = dataTable.Copy(),
-                        MasterFileData = fileData,
-                        LastWriteTime = fi.Exists ? fi.LastWriteTimeUtc : DateTime.UtcNow,
-                        FileSize = fi.Exists ? fi.Length : 0,
-                        LastAccessTime = DateTime.UtcNow
-                    };
-                    // 清除该文件相关的旧 linkLookup（下次访问时懒重建）
-                    ClearLinkLookupsForFile(key, Path.GetDirectoryName(fullPath)!);
-                }
-            }
-            return success;
+                return ParseExcelFile(fullPath);
         }
+
+        /// <summary>统一的 CSV 解析（不涉及缓存）</summary>
+        internal static (DataTable, FileTableData) ParseCsvFile(string fullPath)
+        {
+            string content;
+            using (var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var sr = new StreamReader(fs, Encoding.UTF8, true))
+            {
+                content = sr.ReadToEnd();
+            }
+
+            var delimiter = DetectDelimiter(content);
+            var records = SplitCsvRecords(content);
+            var dataTable = new DataTable();
+            var fileData = new FileTableData
+            {
+                FilePath = fullPath,
+                Type = TableFileType.Csv,
+                Delimiter = delimiter
+            };
+
+            if (records.Count == 0)
+                return (dataTable, fileData);
+
+            var headers = ParseCsvLine(records[0].Text, delimiter);
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var header in headers)
+            {
+                var columnName = header;
+                int suffix = 1;
+                while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }
+                usedNames.Add(columnName);
+                dataTable.Columns.Add(columnName, typeof(string));
+            }
+
+            // ★ ColumnNames 只需赋值一次（修复循环内 5 万次重复赋值的 bug）
+            fileData.ColumnNames = new List<string>(headers);
+
+            for (int i = 0; i < records.Count; i++)
+            {
+                var values = ParseCsvLine(records[i].Text, delimiter);
+                var row = dataTable.NewRow();
+                for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
+                    row[j] = values[j];
+                dataTable.Rows.Add(row);
+
+                var tableRow = new TableRow
+                {
+                    Cells = new List<string>(values),
+                    OriginalRowIndex = i,
+                    PhysicalStartLine = records[i].StartLine,
+                    PhysicalEndLine = records[i].EndLine
+                };
+                fileData.Rows.Add(tableRow);
+            }
+
+            return (dataTable, fileData);
+        }
+
+        /// <summary>统一的 Excel 解析（不涉及缓存），UseHeaderRow=false</summary>
+        internal static (DataTable, FileTableData) ParseExcelFile(string fullPath)
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = ExcelReaderFactory.CreateReader(fs);
+            var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
+            {
+                ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
+            });
+
+            var dataTable = new DataTable();
+            var fileData = new FileTableData
+            {
+                FilePath = fullPath,
+                Type = TableFileType.Excel
+            };
+
+            if (dataSet.Tables.Count == 0)
+                return (dataTable, fileData);
+
+            var sheet = dataSet.Tables[0];
+            int maxCols = sheet.Columns.Count;
+
+            for (int i = 0; i < maxCols; i++)
+            {
+                var colName = GetExcelColumnName(i);
+                dataTable.Columns.Add(colName, typeof(string));
+                // 版本对比/冲突解决按 ColumnNames.Count 克隆冻结行，留空会让表头行/类型行整行变空白
+                fileData.ColumnNames.Add(colName);
+            }
+
+            for (int r = 0; r < sheet.Rows.Count; r++)
+            {
+                var newRow = dataTable.NewRow();
+                var cells = new List<string>();
+                for (int c = 0; c < maxCols; c++)
+                {
+                    var val = sheet.Rows[r][c]?.ToString() ?? "";
+                    newRow[c] = val;
+                    cells.Add(val);
+                }
+                dataTable.Rows.Add(newRow);
+
+                var tableRow = new TableRow
+                {
+                    Cells = cells,
+                    OriginalRowIndex = r,
+                    // ExcelDataReader 不暴露源表行的真实行号，只能给到"数据区第 r+1 行"；
+                    // 配置表数据区基本都从 A1 起，等高于物理行号。
+                    PhysicalStartLine = r + 1,
+                    PhysicalEndLine = r + 1
+                };
+                fileData.Rows.Add(tableRow);
+            }
+
+            return (dataTable, fileData);
+        }
+
+        // ============ 无状态：写盘 ============
 
         /// <summary>写入 CSV 到磁盘（不写列名，有重试）</summary>
         private static bool WriteCsvToDisk(string fullPath, DataTable dataTable, char delimiter)
@@ -240,402 +531,13 @@ namespace wxd.files.winforms
             return false;
         }
 
-        // ============ 缓存管理 ============
-
-        /// <summary>清除指定文件的缓存</summary>
-        public static void InvalidateFile(string filePath)
-        {
-            var key = NormalizePath(filePath);
-            _entries.TryRemove(key, out _);
-            _fileLocks.TryRemove(key, out _);
-            ClearLinkLookupsForFile(key, Path.GetDirectoryName(filePath)!);
-        }
-
-        /// <summary>清除所有缓存</summary>
-        public static void ClearAll()
-        {
-            _entries.Clear();
-            _fileLocks.Clear();
-            lock (_linkLock)
-            {
-                _linkLookups.Clear();
-                _buildingLinkLookups.Clear();
-            }
-        }
-
-        // ============ 关联查找（LinkLookup，key 保持相对路径格式） ============
-
-        /// <summary>获取关联查找条目（只读，懒构建），按字段索引查找</summary>
-        public static LinkLookupEntry? GetLinkLookup(
-            string rootDir, string sourceRel, int sourceColIndex,
-            string targetRel, int targetColIndex,
-            FieldLinkConfig? fieldLink, int fieldIndex)
-        {
-            string key = BuildLinkKey(sourceRel, sourceColIndex, targetRel, targetColIndex, null, fieldIndex);
-
-            LinkLookupEntry? lookup;
-            lock (_linkLock)
-            {
-                if (_linkLookups.TryGetValue(key, out lookup))
-                    return lookup;
-            }
-
-            var targetFullPath = Path.Combine(rootDir, targetRel);
-            var targetKey = NormalizePath(targetFullPath);
-            var entry = GetOrLoadEntry(targetKey, targetFullPath);
-            lookup = BuildLinkLookupFromMaster(entry.MasterFileData,
-                targetColIndex, fieldLink);
-            lock (_linkLock)
-            {
-                _linkLookups[key] = lookup;
-            }
-            return lookup;
-        }
-
-        /// <summary>获取所有已缓存的关联查找条目</summary>
-        public static Dictionary<string, LinkLookupEntry> GetLookups()
-        {
-            lock (_linkLock)
-            {
-                return new Dictionary<string, LinkLookupEntry>(_linkLookups, StringComparer.OrdinalIgnoreCase);
-            }
-        }
-
-        /// <summary>检查指定源文件的关联 lookup 是否正在后台构建中</summary>
-        public static bool IsLinkLookupBuilding(string sourceRel)
-        {
-            lock (_linkLock) { return _buildingLinkLookups.Contains(sourceRel); }
-        }
-
-        /// <summary>异步构建所有关联配置的 lookup</summary>
-        public static async Task BuildLinkLookupsAsync(
-            string rootDir, List<ColumnLinkConfig> columnLinks, string sourceFilePath,
-            CancellationToken cancellationToken = default)
-        {
-            string sourceRel = GetRelativePath(sourceFilePath, rootDir);
-
-            // ★ 防重入检查
-            lock (_linkLock)
-            {
-                if (_buildingLinkLookups.Contains(sourceRel))
-                    return;
-
-                _buildingLinkLookups.Add(sourceRel);
-
-                string prefix = sourceRel + "|";
-                var keysToRemove = _linkLookups.Keys
-                    .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                foreach (var k in keysToRemove)
-                    _linkLookups.Remove(k);
-            }
-
-            try
-            {
-                var relevantLinks = columnLinks
-                    .Where(l => l.SourceFile.EndsWith(Path.GetFileName(sourceFilePath),
-                        StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                foreach (var link in relevantLinks)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    if (link.FieldLinks == null || link.FieldLinks.Count == 0)
-                        continue;
-
-                    foreach (var fl in link.FieldLinks)
-                    {
-                        if (string.IsNullOrEmpty(fl.TargetFile) || fl.TargetColumnIndex < 0)
-                            continue;
-
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        string targetFullPath = Path.Combine(rootDir, fl.TargetFile);
-                        if (!File.Exists(targetFullPath)) continue;
-
-                        var targetKey = NormalizePath(targetFullPath);
-                        CacheEntry entry = await Task.Run(() =>
-                        {
-                            return GetOrLoadEntry(targetKey, targetFullPath);
-                        }, cancellationToken);
-
-                        string key = BuildLinkKey(sourceRel, link.SourceColumnIndex,
-                            fl.TargetFile, fl.TargetColumnIndex, link, fl.FieldIndex);
-
-                        var lookup = await Task.Run(() =>
-                            BuildLinkLookupFromMaster(entry.MasterFileData,
-                                fl.TargetColumnIndex, fl), cancellationToken);
-
-                        lock (_linkLock)
-                        {
-                            if (!_linkLookups.ContainsKey(key))
-                                _linkLookups[key] = lookup;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                lock (_linkLock) { _buildingLinkLookups.Remove(sourceRel); }
-            }
-        }
-
-        // ============ 内部实现 ============
-
-        /// <summary>
-        /// 获取或加载条目（并发安全）。
-        /// 快速路径：缓存命中且文件未变 → 直接返回（无锁）。
-        /// 慢路径：获取该文件独立锁 → double-check → 加载解析。
-        /// </summary>
-        private static CacheEntry GetOrLoadEntry(string key, string fullPath)
-        {
-            // 1. 快速路径：缓存已存在，直接返回（ConcurrentDictionary.TryGetValue 无锁）
-            if (_entries.TryGetValue(key, out var entry))
-            {
-                var fi = new FileInfo(fullPath);
-                if (fi.Exists &&
-                    (fi.LastWriteTimeUtc != entry.LastWriteTime || fi.Length != entry.FileSize))
-                {
-                    // 文件被外部修改，需失效重建 → 进入慢路径
-                }
-                else
-                {
-                    return entry;
-                }
-            }
-
-            // 2. 慢路径：获取该文件的独立锁，保证同一文件的 load 不重入
-            var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
-            lock (fileLock)
-            {
-                // double-check：在等待锁期间，其他线程可能已加载该文件
-                if (_entries.TryGetValue(key, out entry))
-                {
-                    var fi2 = new FileInfo(fullPath);
-                    if (fi2.Exists &&
-                        (fi2.LastWriteTimeUtc != entry.LastWriteTime || fi2.Length != entry.FileSize))
-                    {
-                        // 文件仍已变更，需重建
-                        _entries.TryRemove(key, out _);
-                        ClearLinkLookupsForFile(key, Path.GetDirectoryName(fullPath)!);
-                    }
-                    else
-                    {
-                        return entry;
-                    }
-                }
-
-                // 确实需要加载
-                entry = LoadAndParseFile(key, fullPath);
-                _entries[key] = entry;
-                return entry;
-            }
-        }
-
-        /// <summary>解析文件并构建 CacheEntry</summary>
-        private static CacheEntry LoadAndParseFile(string key, string fullPath)
-        {
-            var (dt, fd) = ParseFile(fullPath);
-            var fi = new FileInfo(fullPath);
-            return new CacheEntry
-            {
-                MasterDataTable = dt,
-                MasterFileData = fd,
-                LastWriteTime = fi.LastWriteTimeUtc,
-                FileSize = fi.Length,
-                LastAccessTime = DateTime.UtcNow
-            };
-        }
-
-        /// <summary>统一的文件解析（不涉及缓存），根据扩展名自动路由</summary>
-        private static (DataTable, FileTableData) ParseFile(string fullPath)
-        {
-            var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-            if (ext == ".csv")
-                return ParseCsvFile(fullPath);
-            else
-                return ParseExcelFile(fullPath);
-        }
-
-        /// <summary>统一的 CSV 解析（不涉及缓存）</summary>
-        internal static (DataTable, FileTableData) ParseCsvFile(string fullPath)
-        {
-            string content;
-            using (var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var sr = new StreamReader(fs, Encoding.UTF8, true))
-            {
-                content = sr.ReadToEnd();
-            }
-
-            var delimiter = DetectDelimiter(content);
-            var lines = SplitCsvLines(content);
-            var dataTable = new DataTable();
-            var fileData = new FileTableData
-            {
-                FilePath = fullPath,
-                Type = TableFileType.Csv,
-                Delimiter = delimiter
-            };
-
-            if (lines.Count == 0)
-                return (dataTable, fileData);
-
-            var headers = ParseCsvLine(lines[0], delimiter);
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var header in headers)
-            {
-                var columnName = header;
-                int suffix = 1;
-                while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }
-                usedNames.Add(columnName);
-                dataTable.Columns.Add(columnName, typeof(string));
-            }
-
-            // ★ ColumnNames 只需赋值一次（修复循环内 5 万次重复赋值的 bug）
-            fileData.ColumnNames = new List<string>(headers);
-
-            for (int i = 0; i < lines.Count; i++)
-            {
-                var values = ParseCsvLine(lines[i], delimiter);
-                var row = dataTable.NewRow();
-                for (int j = 0; j < Math.Min(values.Length, headers.Length); j++)
-                    row[j] = values[j];
-                dataTable.Rows.Add(row);
-
-                var tableRow = new TableRow
-                {
-                    Cells = new List<string>(values),
-                    OriginalRowIndex = i
-                };
-                fileData.Rows.Add(tableRow);
-            }
-
-            return (dataTable, fileData);
-        }
-
-        /// <summary>统一的 Excel 解析（不涉及缓存），UseHeaderRow=false</summary>
-        internal static (DataTable, FileTableData) ParseExcelFile(string fullPath)
-        {
-            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-            using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = ExcelReaderFactory.CreateReader(fs);
-            var dataSet = reader.AsDataSet(new ExcelDataSetConfiguration
-            {
-                ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
-            });
-
-            var dataTable = new DataTable();
-            var fileData = new FileTableData
-            {
-                FilePath = fullPath,
-                Type = TableFileType.Excel
-            };
-
-            if (dataSet.Tables.Count == 0)
-                return (dataTable, fileData);
-
-            var sheet = dataSet.Tables[0];
-            int maxCols = sheet.Columns.Count;
-
-            for (int i = 0; i < maxCols; i++)
-                dataTable.Columns.Add(GetExcelColumnName(i), typeof(string));
-
-            for (int r = 0; r < sheet.Rows.Count; r++)
-            {
-                var newRow = dataTable.NewRow();
-                var cells = new List<string>();
-                for (int c = 0; c < maxCols; c++)
-                {
-                    var val = sheet.Rows[r][c]?.ToString() ?? "";
-                    newRow[c] = val;
-                    cells.Add(val);
-                }
-                dataTable.Rows.Add(newRow);
-
-                var tableRow = new TableRow
-                {
-                    Cells = cells,
-                    OriginalRowIndex = r
-                };
-                fileData.Rows.Add(tableRow);
-            }
-
-            return (dataTable, fileData);
-        }
-
-        /// <summary>从 DataTable 构建 FileTableData</summary>
-        private static FileTableData BuildFileDataFromDataTable(DataTable dataTable, string filePath)
-        {
-            var fileData = new FileTableData
-            {
-                FilePath = filePath,
-                Type = TableFileType.Csv,
-                Delimiter = ','
-            };
-            for (int c = 0; c < dataTable.Columns.Count; c++)
-                fileData.ColumnNames.Add(dataTable.Columns[c].ColumnName);
-            for (int r = 0; r < dataTable.Rows.Count; r++)
-            {
-                var cells = new List<string>();
-                for (int c = 0; c < dataTable.Columns.Count; c++)
-                    cells.Add(dataTable.Rows[r][c]?.ToString() ?? "");
-                fileData.Rows.Add(new TableRow
-                {
-                    Cells = cells,
-                    OriginalRowIndex = r
-                });
-            }
-            return fileData;
-        }
-
-        // ============ 过期/刷新 ============
-
-        /// <summary>后台异步刷新所有已缓存的条目（由外部定时器触发）</summary>
-        internal static void RefreshAllInBackground()
-        {
-            try
-            {
-                var now = DateTime.UtcNow;
-                var expiredKeys = _entries
-                    .Where(kvp => (now - kvp.Value.LastAccessTime) > ExpireDuration)
-                    .Select(kvp => kvp.Key)
-                    .ToList();
-
-                foreach (var key in expiredKeys)
-                {
-                    try
-                    {
-                        var fileLock = _fileLocks.GetOrAdd(key, _ => new object());
-                        lock (fileLock)
-                        {
-                            if (!_entries.TryGetValue(key, out var oldEntry))
-                                continue;
-
-                            var (dt, fd) = ParseFile(key);
-                            _entries[key] = new CacheEntry
-                            {
-                                MasterDataTable = dt,
-                                MasterFileData = fd,
-                                LastWriteTime = oldEntry.LastWriteTime,
-                                FileSize = oldEntry.FileSize,
-                                LastAccessTime = oldEntry.LastAccessTime
-                            };
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-        }
-
         // ============ 辅助方法 ============
 
         private static char DetectDelimiter(string content)
         {
-            var lines = SplitCsvLines(content);
-            if (lines.Count == 0) return ',';
-            var firstLine = lines[0];
+            var records = SplitCsvRecords(content);
+            if (records.Count == 0) return ',';
+            var firstLine = records[0].Text;
             var counts = new Dictionary<char, int>
             {
                 { ',', firstLine.Count(c => c == ',') },
@@ -646,11 +548,13 @@ namespace wxd.files.winforms
             return counts.OrderByDescending(kv => kv.Value).First().Key;
         }
 
-        private static List<string> SplitCsvLines(string content)
+        internal static List<(string Text, int StartLine, int EndLine)> SplitCsvRecords(string content)
         {
-            var lines = new List<string>();
+            var records = new List<(string Text, int StartLine, int EndLine)>();
             var sb = new StringBuilder();
             bool inQuotes = false;
+            int lineNo = 1;       // 正在扫描的物理行号（1-based）
+            int recordStart = 1;  // 当前记录的起始物理行号
             for (int i = 0; i < content.Length; i++)
             {
                 char c = content[i];
@@ -668,13 +572,24 @@ namespace wxd.files.winforms
                 else if (!inQuotes && (c == GlobalConst.LfChar || c == GlobalConst.CrChar))
                 {
                     if (c == GlobalConst.CrChar && i + 1 < content.Length && content[i + 1] == GlobalConst.LfChar) i++;
-                    lines.Add(sb.ToString());
+                    records.Add((sb.ToString(), recordStart, lineNo));
                     sb.Clear();
+                    lineNo++;
+                    recordStart = lineNo;
                 }
-                else { sb.Append(c); }
+                else
+                {
+                    sb.Append(c);
+                    // 引号内的换行属于字段内容，不做分割，但它是真实存在的一行物理文本
+                    if (inQuotes && (c == GlobalConst.LfChar ||
+                        (c == GlobalConst.CrChar && (i + 1 >= content.Length || content[i + 1] != GlobalConst.LfChar))))
+                    {
+                        lineNo++;
+                    }
+                }
             }
-            if (sb.Length > 0) lines.Add(sb.ToString());
-            return lines;
+            if (sb.Length > 0) records.Add((sb.ToString(), recordStart, lineNo));
+            return records;
         }
 
         private static string[] ParseCsvLine(string line, char delimiter)
@@ -801,17 +716,19 @@ namespace wxd.files.winforms
             return key;
         }
 
-        private static void ClearLinkLookupsForFile(string fileKey, string dirPath)
+        private void ClearLinkLookupsForFile(string fileKey)
         {
             var fileName = Path.GetFileName(fileKey);
+            string marker = "->" + fileName + ":";
             var keysToRemove = _linkLookups.Keys
-                .Where(k => k.IndexOf("->" + fileName + ":", StringComparison.OrdinalIgnoreCase) >= 0)
+                .Where(k => k.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0)
                 .ToList();
             foreach (var k in keysToRemove)
                 _linkLookups.Remove(k);
         }
 
-        private static FileTableData CloneFileData(FileTableData source)
+        /// <summary>深拷贝 FileTableData（版本对比用：交给视图前克隆，避免差异标记写回污染缓存）</summary>
+        internal static FileTableData CloneFileData(FileTableData source)
         {
             var clone = new FileTableData
             {
@@ -826,6 +743,8 @@ namespace wxd.files.winforms
                 {
                     Cells = new List<string>(row.Cells),
                     OriginalRowIndex = row.OriginalRowIndex,
+                    PhysicalStartLine = row.PhysicalStartLine,
+                    PhysicalEndLine = row.PhysicalEndLine,
                     IsDiffRow = row.IsDiffRow,
                     DiffColumns = row.DiffColumns != null ? new HashSet<int>(row.DiffColumns) : null,
                     DiffType = row.DiffType,
@@ -843,10 +762,6 @@ namespace wxd.files.winforms
             public FileTableData MasterFileData { get; set; } = null!;
             public DateTime LastWriteTime { get; set; }
             public long FileSize { get; set; }
-            public DateTime LastAccessTime { get; set; }
-
-            public bool IsExpired => (DateTime.UtcNow - LastAccessTime) > ExpireDuration;
-            internal void Touch() => LastAccessTime = DateTime.UtcNow;
         }
     }
 }

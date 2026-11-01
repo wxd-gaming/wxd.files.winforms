@@ -178,7 +178,7 @@ namespace wxd.files.winforms
                 var rowNums = d.RowIndices
                     .Take(20)
                     .Select(idx => idx < _fileData.Rows.Count
-                        ? (_fileData.Rows[idx].OriginalRowIndex + 1).ToString()
+                        ? (_fileData.Rows[idx].DisplayLineNumber ?? idx + 1).ToString()
                         : (idx + 1).ToString());
                 var rowsStr = string.Join(", ", rowNums);
                 if (d.RowIndices.Count > 20)
@@ -236,7 +236,7 @@ namespace wxd.files.winforms
             {
                 var rowNums = string.Join(", ", d.RowIndices.Take(50).Select(idx =>
                     idx < _fileData.Rows.Count
-                        ? (_fileData.Rows[idx].OriginalRowIndex + 1).ToString()
+                        ? (_fileData.Rows[idx].DisplayLineNumber ?? idx + 1).ToString()
                         : (idx + 1).ToString()));
                 if (d.RowIndices.Count > 50)
                     rowNums += $" ... 还有 {d.RowIndices.Count - 50} 行";

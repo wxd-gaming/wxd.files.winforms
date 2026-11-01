@@ -47,6 +47,13 @@ namespace wxd.files.winforms
         /// <summary>true=跳过构造函数中的自动加载（由外部通过 SetDataTable 注入数据）</summary>
         public bool SkipAutoLoad { get; set; } = false;
 
+        /// <summary>
+        /// 表格数据缓存归属者。传宿主（阅读器窗口/版本对比/冲突解决）的实例，
+        /// 同一目录的多个标签页共用一份缓存、随宿主窗口一起释放；
+        /// 留 null 时控件自建一份私有缓存，随控件 Dispose 释放。
+        /// </summary>
+        public FileDataCache? Cache { get; set; }
+
         public TableBrowserOptions(string filePath)
         {
             FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));

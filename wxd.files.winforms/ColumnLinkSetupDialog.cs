@@ -596,7 +596,9 @@ namespace wxd.files.winforms
                 DataTable readOnlyData;
                 if (ext == ".csv")
                 {
-                    readOnlyData = FileDataCache.GetDataTableReadOnly(fullPath);
+                    // 只做列选择预览，取前几列即可：直接解析、不进阅读器窗口的缓存，
+                    // 否则配置向导扫过的每个目标表都会常驻一份完整 DataTable。
+                    readOnlyData = FileDataCache.LoadFileDirect(fullPath).Item1;
                 }
                 else
                 {

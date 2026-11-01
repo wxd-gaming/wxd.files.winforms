@@ -44,7 +44,8 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查指定值在目标表中是否存在（检查所有有关联的字段）</summary>
-        public static bool IsLinkValueValid(string filePath, string rootDir, int originalColumnIndex,
+        /// <param name="cache">关联 lookup 所在的缓存实例（由调用方的阅读器窗口持有）</param>
+        public static bool IsLinkValueValid(FileDataCache cache, string filePath, string rootDir, int originalColumnIndex,
             string cellValue, List<ColumnLinkConfig>? columnLinks = null)
         {
             if (string.IsNullOrEmpty(cellValue) || string.IsNullOrEmpty(rootDir)) return false;
@@ -61,7 +62,7 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
 
-            var lookups = FileDataCache.GetLookups();
+            var lookups = cache.GetLookups();
 
             foreach (var fl in linkConfig.FieldLinks)
             {
@@ -86,7 +87,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>获取关联字段无效的提示信息</summary>
-        public static string? GetInvalidLinkToolTip(string filePath, string rootDir,
+        public static string? GetInvalidLinkToolTip(FileDataCache cache, string filePath, string rootDir,
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
             List<ColumnLinkConfig>? columnLinks = null,
             Dictionary<string, string>? fileRemarks = null)
@@ -116,7 +117,7 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
 
-            var lookups = FileDataCache.GetLookups();
+            var lookups = cache.GetLookups();
 
             foreach (var fl in linkConfig.FieldLinks)
             {
@@ -156,7 +157,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>获取关联字段的显示提示信息</summary>
-        public static string? GetLinkInfoToolTip(string filePath, string rootDir,
+        public static string? GetLinkInfoToolTip(FileDataCache cache, string filePath, string rootDir,
             List<int> visibleColumnIndices, DataGridView dataGrid, int rowIndex, int columnIndex,
             List<ColumnLinkConfig>? columnLinks = null,
             Dictionary<string, string>? fileRemarks = null)
@@ -186,7 +187,7 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
 
-            var lookups = FileDataCache.GetLookups();
+            var lookups = cache.GetLookups();
 
             var allFieldLines = new List<string>();
             int totalMatchable = 0;
@@ -246,7 +247,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查单元格颜色（检查所有有关联的字段）</summary>
-        public static void CheckCellColor(DataGridViewCellFormattingEventArgs e,
+        public static void CheckCellColor(FileDataCache cache, DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir,
             List<ColumnLinkConfig>? columnLinks = null)
         {
@@ -275,7 +276,7 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
 
-            var lookups = FileDataCache.GetLookups();
+            var lookups = cache.GetLookups();
 
             bool hasMissing = false;
 

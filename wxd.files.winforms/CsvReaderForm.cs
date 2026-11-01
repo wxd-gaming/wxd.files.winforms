@@ -44,6 +44,8 @@ namespace wxd.files.winforms
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
+        /// <summary>本窗口的表格数据缓存：随窗口关闭释放，与其它目录的阅读器窗口互不干扰</summary>
+        private readonly FileDataCache _cache = new();
         private List<FileInfo> _allFiles = new();
         private CancellationTokenSource? _loadingCts;
         private readonly object _lockObj = new();
@@ -1122,7 +1124,11 @@ namespace wxd.files.winforms
     ├ 支持 || 运算符（或）
     └ 支持 && 运算符（与）
 
-  · 【行号列】—— 左侧显示数据行号，方便定位
+  · 【行号】—— 最左侧行号区显示该行在源文件中的物理行号（CSV/Excel 的真实行），
+    它不是数据列；描述类字段里有换行时，同一条记录只占一个行号（取起始行）
+    ├ 左键点行号：标记该行（Ctrl 可多选），状态栏显示行号区间
+    ├ 右键点行号：复制行号 / 只看该行号 / 跳转到行号 / 清除标记
+    └ 高级过滤可用 @line 虚拟列：@line=128、@line>=100 and @line<=200
 
   · 【列选择】—— 点击列选择按钮勾选要显示/隐藏的列
     └ 列显隐状态自动保存到目录级配置中
@@ -1309,7 +1315,7 @@ namespace wxd.files.winforms
             try
             {
                 // 加载本地版本
-                var localData = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(filePath));
+                var (localData, localFileData) = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(filePath));
                 if (localData == null)
                 {
                     AlertForm.Show(this, $"无法读取文件: {filePath}", "错误", AlertType.Error);
@@ -1327,18 +1333,23 @@ namespace wxd.files.winforms
                     remoteRevision = "BASE";
 
                 DataTable? remoteData = null;
+                FileTableData? remoteFileData = null;
                 if (!string.IsNullOrEmpty(remoteRevision))
                 {
                     var exportResult = await VersionControlHelper.ExportRevisionAsync(
                         filePath, _currentVcsType, remoteRevision, tempDir);
                     if (exportResult.Success && exportResult.TempFile != null && File.Exists(exportResult.TempFile))
                     {
-                        remoteData = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(exportResult.TempFile));
+                        (remoteData, remoteFileData) = await Task.Run(() => ConflictResolveControl.LoadDataTableFromFile(exportResult.TempFile));
                     }
                 }
 
                 if (remoteData == null)
+                {
+                    // 拿不到远程版本就用本地兜底，行号同源所以本地解析结果可直接复用
                     remoteData = localData.Copy();
+                    remoteFileData = localFileData;
+                }
 
                 // 创建冲突解决控件
                 var control = new ConflictResolveControl(filePath, _currentVcsType,
@@ -1346,7 +1357,10 @@ namespace wxd.files.winforms
                     frozenRows, headerRowIndex,
                     rootDir: _currentDir,
                     uniqueColumnIndex: uniqueColumnIndex,
-                    mappingRowIndex: mappingRowIndex)
+                    mappingRowIndex: mappingRowIndex,
+                    remoteFileData: remoteFileData,
+                    localFileData: localFileData,
+                    cache: _cache)
                 {
                     Dock = DockStyle.Fill
                 };
@@ -1982,7 +1996,8 @@ namespace wxd.files.winforms
                 var columnVisibility = CsvSettings.GetColumnVisibility(_currentDir, relPath);
                 var form = new VersionCompareForm(fullPath, vcsType, frozenRows, headerRowIndex,
                     rootDir: _currentDir, columnVisibility: columnVisibility,
-                    uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex);
+                    uniqueColumnIndex: uniqueColumnIndex, mappingRowIndex: mappingRowIndex,
+                    cache: _cache);
                 form.Show();
             };
 
@@ -2038,6 +2053,7 @@ namespace wxd.files.winforms
                 PaneIndex = _paneIndex,
                 RootDir = _currentDir,
                 InitialContentFilter = _lastContentSearchKeyword,
+                Cache = _cache,   // ★ 本窗口所有标签页共用一份表格数据缓存
             };
             Control viewer = new TableBrowserControl(options) { Dock = DockStyle.Fill };
 
@@ -2076,7 +2092,7 @@ namespace wxd.files.winforms
 
                 // 在新独立窗口中打开关联文件，标题栏也使用备注名显示
                 var displayName = GetFileDisplayText(linkedPath);
-                var linkOptions = new TableBrowserOptions(linkedPath) { RootDir = _currentDir };
+                var linkOptions = new TableBrowserOptions(linkedPath) { RootDir = _currentDir, Cache = _cache };
                 var standaloneForm = new CsvReaderStandaloneForm(linkOptions, new LinkOpenOptions { DisplayName = displayName });
                 standaloneForm.Show(this);
             }
@@ -2408,6 +2424,13 @@ namespace wxd.files.winforms
             base.OnFormClosing(e);
         }
 
+        /// <summary>窗口真正关闭：释放本窗口的表格数据缓存（缓存的 DataTable/FileTableData/关联 lookup 一起回收）</summary>
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _cache.Dispose();
+            base.OnFormClosed(e);
+        }
+
         // ==================== 高级内容搜索 ====================
 
         /// <summary>点击搜索按钮 — 异步遍历所有文件内容查找关键词</summary>
@@ -2615,7 +2638,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>判断文件内容是否包含关键词（简化版，不依赖 CancellationToken）</summary>
-        private static bool FileContainsTextSimple(string filePath, FileType fileType, string keyword)
+        private bool FileContainsTextSimple(string filePath, FileType fileType, string keyword)
         {
             try
             {
@@ -2635,13 +2658,13 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>逐行搜索CSV文件内容（简化版，优先使用缓存）</summary>
-        private static bool SearchCsvContentSimple(string filePath, string keyword)
+        /// <summary>逐行搜索CSV文件内容（简化版，优先使用本窗口的缓存）</summary>
+        private bool SearchCsvContentSimple(string filePath, string keyword)
         {
             // ★ 优先尝试从缓存读取
             try
             {
-                var readOnlyData = FileDataCache.GetDataTableReadOnly(filePath);
+                var readOnlyData = _cache.GetDataTableReadOnly(filePath);
 
                 if (readOnlyData != null)
                 {
@@ -2680,13 +2703,13 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>搜索Excel文件内容（优先使用缓存）</summary>
-        private static bool SearchExcelContent(string filePath, string keyword)
+        /// <summary>搜索Excel文件内容（优先使用本窗口的缓存）</summary>
+        private bool SearchExcelContent(string filePath, string keyword)
         {
             // ★ 优先尝试从缓存读取
             try
             {
-                var readOnlyData = FileDataCache.GetDataTableReadOnly(filePath);
+                var readOnlyData = _cache.GetDataTableReadOnly(filePath);
 
                 if (readOnlyData != null)
                 {

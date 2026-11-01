@@ -51,7 +51,7 @@
 | 文件 | 核心类 | 职责 |
 |------|--------|------|
 | `FileBrowserPanel.cs` | `FileBrowserPanel : UserControl` | 单窗格控件：文件列表、导航、过滤、右键菜单、F2重命名、视图模式 |
-| `FileDataCache.cs` | `FileDataCache` | 文件数据缓存（目录文件列表+图标缓存，支持 VCS 状态） |
+| `FileDataCache.cs` | `FileDataCache`（实例级，`IDisposable`） | 表格数据缓存 + 关联 lookup 缓存：每个目录阅读器窗口一份，窗口关闭即释放；解析/写盘/克隆为静态无状态方法 |
 | `VcsStatusCache.cs` | `VcsStatusCache` | VCS（SVN/Git）状态缓存，异步获取文件状态 |
 
 #### CSV/Excel 阅读器
@@ -75,6 +75,7 @@
 | `ColumnManagerDialog.cs` | `ColumnManagerDialog : Form` | 列管理对话框（列显隐 + 顺序调整） |
 | `LinkTableSelectorDialog.cs` | `LinkTableSelectorDialog : Form` | 关联表选择对话框 |
 | `TargetColumnSelectDialog.cs` | `TargetColumnSelectDialog : Form` | 目标列选择对话框 |
+| `LineNumberJumpDialog.cs` | `LineNumberJumpDialog : Form` | 行号跳转输入框（行号区右键菜单调用） |
 
 #### 版本对比系统
 | 文件 | 核心类 | 职责 |
@@ -468,9 +469,9 @@ CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地
 | 子系统 | 关键数据结构 | 最容易出错 |
 |--------|-------------|-----------|
 | 列显隐 | `_columnCheckStates` → `_visibleColumnIndices` | 状态与投影的索引映射、持久化格式兼容 |
-| 列关联 | `ColumnLinkConfig` → `ColumnLinkChecker._linkLookups` | 缓存 Key 格式、值提取多值拆分顺序 |
+| 列关联 | `ColumnLinkConfig` → `FileDataCache._linkLookups`（实例级，随窗口释放） | 缓存 Key 格式、值提取多值拆分顺序 |
 | 冻结行 | `_dataGridHeader` + `_dataGrid` 双 DataGridView | 两个表格的投影必须同步 |
-| 行过滤 | 内容过滤 + 高级过滤 | `||`/`&&` 运算符解析、过滤后 Tag 映射 |
+| 行过滤 | 内容过滤 + 高级过滤（`@line` 是虚拟列，比 `TableRow.DisplayLineNumber`） | `||`/`&&` 运算符解析、过滤后 Tag 映射、行号口径与 RowHeader 同源 |
 | 版本对比 | `_leftDiffRows` + `_leftRowToOriginalIndex` + `_leftColToOriginalIndex` | 三层索引映射（原始→投影→DGV）、列显隐重建、差异编码 `(row<<16)\|col` |
 
 **修改任何相关代码前，务必先阅读 [skills/CsvReader.md](skills/CsvReader.md)！**
@@ -481,7 +482,7 @@ CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地
 
 > ⚠️ **所有涉及 CSV/Excel 数据的操作都必须遵循本规范！**
 >
-> 本规范描述基于 `FileDataCache`（全局缓存+磁盘IO）和 `FileTableData/TableRow`（数据模型+差异标记）的完整数据流。
+> 本规范描述基于 `FileDataCache`（实例级缓存+磁盘IO）和 `FileTableData/TableRow`（数据模型+差异标记）的完整数据流。
 
 ### 12.1 核心数据模型
 
@@ -507,11 +508,14 @@ public class FileTableData
 public class TableRow
 {
     public List<string> Cells { get; set; } = new();          // 单元格值列表
-    public int OriginalRowIndex { get; set; }                  // 原始行号（0-based，排序/筛选后不变）
+    public int OriginalRowIndex { get; set; }                  // 记录序号（0-based，排序/筛选后不变）
+    public int PhysicalStartLine { get; set; } = -1;           // 源文件物理起始行号（1-based，-1=来源不是文件）
+    public int PhysicalEndLine { get; set; } = -1;             // 源文件物理结束行号（引号内换行会跨行）
     public bool IsDiffRow { get; set; }                        // 是否为差异行
     public HashSet<int>? DiffColumns { get; set; }             // 差异列索引集合（null=无差异）
     public DiffRowType DiffType { get; set; } = DiffRowType.None; // None/Modified/Added/Deleted
     public bool IsBlankRow { get; set; } = false;              // 空白占位行（版本对齐时插入）
+    public int? DisplayLineNumber { get; }                     // 行号唯一取值口径：物理行号优先→记录序号+1→占位行 null(画 —)
 }
 ```
 
@@ -535,7 +539,8 @@ public enum DiffRowType
 | **OriginalRowIndex 不变** | 排序/筛选/列显隐投影后，`OriginalRowIndex` 始终指向原始 DataTable 的行索引，用于回溯定位 |
 | **差异编码 `(row<<16)|col`** | 单元格差异用 `int` 编码存储在 `HashSet<int>` 中，行号占高16位、列号占低16位 |
 | **深拷贝副本** | `LoadFile()` 返回 `DataTable.Copy()` + `CloneFileData()`，调用方可安全修改不影响缓存 |
-| **只读引用** | `GetDataTableReadOnly()` / `GetFileDataReadOnly()` 返回缓存引用，调用方不应修改 |
+| **只读引用** | `GetDataTableReadOnly()` 返回缓存引用，调用方不应修改 |
+| **缓存实例级归属** | `FileDataCache` 不是静态类：一个目录阅读器窗口（`CsvReaderForm`）持有一个实例，窗口关闭即 `Dispose()` 释放；A/B 目录窗口互不干扰 |
 
 ### 12.2 读取流程（FileDataCache → 视图）
 
@@ -543,31 +548,38 @@ public enum DiffRowType
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│  调用场景                    │  API                              │
+│  调用场景                    │  API（实例=某窗口的 FileDataCache） │
 ├──────────────────────────────┼───────────────────────────────────┤
-│  CSV/Excel 阅读器正常加载     │  FileDataCache.LoadFile(path)     │
+│  CSV/Excel 阅读器正常加载     │  _cache.LoadFile(path)             │
+│  内容搜索取只读表             │  _cache.GetDataTableReadOnly(path)  │
+│  列关联 lookup 构建/读取      │  _cache.BuildLinkLookupsAsync()     │
+│                             │  _cache.GetLookups()               │
+│  预加载（不阻塞UI）           │  _cache.EnsureLoaded(path)         │
 │  版本对比加载历史版本文件      │  FileDataCache.LoadFileDirect(path)│
-│  列关联查找目标文件           │  FileDataCache.GetFileDataReadOnly │
 │  冲突解决加载远端/本地文件     │  FileDataCache.LoadFileDirect(path)│
-│  预加载（不阻塞UI）           │  FileDataCache.EnsureLoaded(path) │
+│  关联配置向导列预览           │  FileDataCache.LoadFileDirect(path)│
 └──────────────────────────────┴───────────────────────────────────┘
 ```
 
 **关键区别**：
-- `LoadFile()` — **走缓存**，返回深拷贝副本，自动过期刷新（30分钟），文件被外部修改时自动失效重建
-- `LoadFileDirect()` — **不走缓存**，直接解析文件，用于版本对比加载临时文件、冲突解决加载远端/本地版本
+- `LoadFile()` / `GetDataTableReadOnly()` / `BuildLinkLookupsAsync()` / `GetLookups()` / `EnsureLoaded()` / `SaveFile()` — **实例方法**，走调用方所属窗口的缓存；窗口 `Dispose()` 后不抛异常，读请求退化为"现场解析、不进字典"，写请求只落盘
+- `LoadFileDirect()` / `SaveFileDirect()` / `CloneFileData()` / `ParseCsvFile()` / `ParseExcelFile()` — **静态无状态**，不碰任何缓存，用于版本对比临时文件、冲突解决的远端/本地版本、向导列预览
+- 缓存条目**没有超时过期**：失效只靠 `LastWriteTime + FileSize` 校验（每次访问都比），别的窗口写了磁盘，本窗口下次读就自动重建
 
 #### 12.2.2 CSV 解析流程（ParseCsvFile）
 
 ```
 FileStream(FileShare.ReadWrite) → StreamReader(UTF8+BOM自动检测)
     → 全文读取 → DetectDelimiter(逗号/制表符/分号/管道符按首行频率)
-    → SplitCsvLines(处理引号内的换行) → ParseCsvLine(处理引号嵌套+转义)
+    → SplitCsvRecords(按引号外的换行切记录，同时产出每条记录的物理起止行号)
+    → ParseCsvLine(处理引号嵌套+转义)
     → DataTable + FileTableData（首行作为列名，重复列名自动加 _1/_2 后缀）
 ```
 
 **关键细节**：
-- `SplitCsvLines()`：逐字符扫描，引号内 `\n` 不分割行，`""` 转义为单个 `"`
+- `SplitCsvRecords()`：返回 `(Text, StartLine, EndLine)` 列表。逐字符扫描，引号内 `\n`/`\r\n`/`\r` **不分割记录**，但仍然计数物理行号，所以一条记录可以 L2–L3 这样跨行；`""` 转义为单个 `"`；空行仍产出一条空记录（保持与旧 `SplitCsvLines` 完全一致的行集合）
+- `ParseCsvFile()`：把 `StartLine/EndLine` 写入 `TableRow.PhysicalStartLine/PhysicalEndLine`，这是行号显示的唯一数据来源
+- `ParseExcelFile()`：ExcelDataReader 不暴露源表行号，赋 `r+1`（配置表数据区基本从 A1 起）
 - `ParseCsvLine()`：引号内分隔符不分割字段，`Trim()` 每个字段值
 - 列名重复处理：`while (usedNames.Contains(columnName)) { columnName = $"{header}_{suffix}"; suffix++; }`
 
@@ -586,25 +598,30 @@ FileStream(FileShare.ReadWrite) → ExcelDataReader(UseHeaderRow=false)
 #### 12.2.4 缓存自动失效机制
 
 ```csharp
-// GetOrLoadEntry 内部逻辑（调用方持有 _lock）
+// GetOrLoadEntry 内部逻辑（同一文件用 _fileLocks 里的独立锁 + double-check）
+if (_disposed)                       // 窗口已关闭：现场解析一份，不进字典，不留内存
+    return 临时条目(ParseFile(fullPath));
+
 if (_entries.TryGetValue(key, out var entry))
 {
     var fi = new FileInfo(fullPath);
     // ★ 文件被外部修改（LastWriteTime 或 FileSize 变化）→ 自动失效重建
     if (fi.Exists && (fi.LastWriteTimeUtc != entry.LastWriteTime || fi.Length != entry.FileSize))
     {
-        _entries.Remove(key);
-        ClearLinkLookupsForFile(key, dirPath); // 同时清除关联查找缓存
+        _entries.TryRemove(key, out _);
+        ClearLinkLookupsForFile(key);        // 同时清除关联查找缓存
         entry = LoadAndParseFile(key, fullPath); // 重新解析
     }
 }
 ```
 
+失效判据只有"文件变了"，**没有超时过期**：缓存跟着窗口生死，不需要 TTL。
+
 #### 12.2.5 TableBrowserControl 加载流程
 
 ```
 LoadCsvFile() / LoadExcelFile()
-    → FileDataCache.LoadFile(_filePath)            // 走缓存，返回深拷贝
+    → _cache.LoadFile(_filePath)                  // 走本窗口缓存，返回深拷贝
     → var (dataTable, fileData) = ...
     → _delimiter = fileData.Delimiter               // 保存分隔符（CSV写入时需要）
     → Invoke(() => OnDataLoaded(dataTable, dataTable.Clone(), infoText))
@@ -664,14 +681,15 @@ DataTable → BuildCsvContent(dataTable, delimiter)
 用户编辑单元格 → _hasUnsavedChanges = true → _unsavedRowIndices.Add(row)
     → ScheduleAutoSave(): _retrySaveTimer.Stop() + _retrySaveTimer.Start()
     → 3秒后 TryFlushToDisk():
-        → FileDataCache.SaveFile(_filePath, _dataTable, _delimiter)
-        → 成功: _hasUnsavedChanges=false, HideDirtyIndicator()
+        → _cache.SaveFile(_filePath, _dataTable, _delimiter)   // 落盘 + 重建本窗口缓存条目
+        → 成功: _hasUnsavedChanges=false, HideDirtyIndicator(), RefreshGridLayout()
         → 失败: _retrySaveTimer.Start() 继续重试（显示⚠提示）
     → 关闭前: ForceFlushBeforeClose() → 仍失败则弹窗询问是否丢弃
 ```
 
 **关键细节**：
 - `SaveDebounceMs = 3000`（3秒防抖，避免频繁写磁盘）
+- `SaveFile()` 更新缓存时**重新解析磁盘文件**，不从 DataTable 反推 —— 只有磁盘解析能拿到每条记录的物理起止行号，保存后重新打开该文件行号才不会退化成记录序号
 - `_unsavedRowIndices` 记录未保存行（橙色背景标记）
 - 失败时不弹窗打断用户，而是后台持续重试 + 状态栏提示
 
@@ -929,7 +947,7 @@ FileTableData.ColumnNames = 同 DataTable.Columns
 FileTableData.Rows[r].Cells[c] = 同 DataTable.Rows[r][c]
 FileTableData.Rows[r].OriginalRowIndex = r (0-based)
 
-// BuildFileDataFromDataTable — 从DataTable重建FileTableData
+// SaveFile() 更新缓存 = 重新解析磁盘文件（保留物理行号），不再有 DataTable→FileTableData 的反推
 // BuildDataTableFromFileData — 从FileTableData重建DataTable（版本对比/冲突解决用）
 
 // CloneFileData — 深拷贝（复制所有字段包括 DiffColumns HashSet）
@@ -939,8 +957,9 @@ FileTableData.Rows[r].OriginalRowIndex = r (0-based)
 
 | ❌ 禁止 | ✅ 正确 |
 |---------|---------|
-| 直接修改 `GetDataTableReadOnly()` 返回的 DataTable | 使用 `LoadFile()` 获取副本后修改 |
-| 修改 `GetFileDataReadOnly()` 返回的 FileTableData | 使用 `GetFileDataCopy()` 获取副本 |
+| 直接修改 `GetDataTableReadOnly()` 返回的 DataTable | 使用 `_cache.LoadFile()` 获取副本后修改 |
+| 把表格数据缓存声明回 `static`（跨窗口共享、关窗不释放） | 缓存实例由窗口持有：`CsvReaderForm._cache` → `TableBrowserOptions.Cache` 往下传，`OnFormClosed` 里 `Dispose()` |
+| 在已 `Dispose()` 的缓存上假设它会抛异常 | 释放后的缓存读请求退化为"现场解析、不进字典"，写请求只落盘，照常调用即可 |
 | 版本对比时忽略 `_frozenRows` 偏移 | `BuildRowIndexMap()` 跳过前 `_frozenRows` 行 |
 | 冲突解决时用 `SaveFile()` 而非 `SaveFileDirect()` | 用 `SaveFileDirect()` 不走缓存 |
 | 编辑后不设 `_hasUnsavedChanges=true` | 每次编辑后必须标记并调度防抖保存 |
@@ -955,19 +974,20 @@ FileTableData.Rows[r].OriginalRowIndex = r (0-based)
                     └────────┬────────┘
                              │
             ┌────────────────┼────────────────┐
-            │  FileDataCache (全局缓存)          │
-            │                                │
-            │  ParseCsvFile / ParseExcelFile  │
-            │  → (DataTable, FileTableData)   │
-            │                                │
-            │  LoadFile() ───深拷贝副本────→ TableBrowserControl（阅读器）
-            │  LoadFileDirect() ─直接解析─→ VersionCompareForm（版本对比）
-            │  LoadFileDirect() ─直接解析─→ ConflictResolveControl（冲突解决）
-            │  GetFileDataReadOnly() ───→ ColumnLinkChecker（列关联查找）
-            │                                │
-            │  SaveFile() ←──防抖保存──← TableBrowserControl（阅读器编辑）
+            │  FileDataCache（每个阅读器窗口一份，窗口关闭即 Dispose）│
+            │                                                            │
+            │  ParseCsvFile / ParseExcelFile  （静态，不碰缓存）          │
+            │  → (DataTable, FileTableData)                             │
+            │                                                            │
+            │  _cache.LoadFile() ──深拷贝副本──→ TableBrowserControl（阅读器）
+            │  _cache.GetLookups() ──────────→ ColumnLinkChecker（列关联）
+            │  LoadFileDirect() ──直接解析──→ VersionCompareForm（版本对比）
+            │  LoadFileDirect() ──直接解析──→ ConflictResolveControl（冲突解决）
+            │  LoadFileDirect() ──直接解析──→ ColumnLinkSetupDialog（列预览）
+            │                                                            │
+            │  _cache.SaveFile() ←──防抖保存──← TableBrowserControl（编辑）
             │  SaveFileDirect() ←─直接保存─← ConflictResolveControl（冲突合并）
-            │                                │
+            │                                                            │
             │  InvalidateFile() ←──外部修改──← FileSystemWatcher / 用户操作
             │  ClearLinkLookups ←──缓存失效──← SaveFile / InvalidateFile
             └────────────────┬────────────────┘
@@ -982,7 +1002,8 @@ FileTableData.Rows[r].OriginalRowIndex = r (0-based)
 
 | 参数 | 值 | 来源 |
 |------|----|------|
-| 缓存过期时间 | 30分钟 | `FileDataCache.ExpireDuration` |
+| 缓存归属 | 一个 `CsvReaderForm`（目录阅读器窗口）一个 `FileDataCache` 实例，`OnFormClosed` 释放 | `CsvReaderForm._cache` |
+| 缓存失效判据 | `LastWriteTime` + `FileSize` 不符（无超时过期） | `GetOrLoadEntry()` |
 | 缓存Key格式 | `Path.GetFullPath(path).ToLowerInvariant()` | `NormalizePath()` |
 | 写入重试次数 | 3次 | `WriteCsvToDisk` / `WriteExcelToDisk` |
 | 写入重试间隔 | 300ms | `Thread.Sleep(300)` |

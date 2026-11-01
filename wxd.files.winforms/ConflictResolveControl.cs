@@ -26,6 +26,8 @@ namespace wxd.files.winforms
         // ==================== 对比视图 ====================
         private TableBrowserControl? _remoteView;
         private TableBrowserControl? _localView;
+        /// <summary>宿主阅读器窗口的表格数据缓存；为 null 时三个视图各自持有私有缓存</summary>
+        private readonly FileDataCache? _ownerCache;
         private Label _lblRemoteHeader;
         private Label _lblLocalHeader;
 
@@ -39,6 +41,9 @@ namespace wxd.files.winforms
         private VcsType _vcsType;
         private DataTable _remoteData;
         private DataTable _localData;
+        // ★ 远程/本地文件的原始解析结果：带源文件物理行号，行号显示要靠它
+        private FileTableData? _remoteFileData;
+        private FileTableData? _localFileData;
         private string _tempDir;
         private int _frozenRows;
         private int _headerRowIndex;
@@ -105,12 +110,18 @@ namespace wxd.files.winforms
             int frozenRows, int headerRowIndex,
             string? rootDir = null,
             int uniqueColumnIndex = -1,
-            int mappingRowIndex = -1)
+            int mappingRowIndex = -1,
+            FileTableData? remoteFileData = null,
+            FileTableData? localFileData = null,
+            FileDataCache? cache = null)
         {
             _filePath = filePath;
             _vcsType = vcsType;
+            _ownerCache = cache;
             _remoteData = remoteData;
             _localData = localData;
+            _remoteFileData = remoteFileData;
+            _localFileData = localFileData;
             _frozenRows = frozenRows;
             _headerRowIndex = headerRowIndex;
             _uniqueColumnIndex = uniqueColumnIndex;
@@ -299,6 +310,7 @@ namespace wxd.files.winforms
                 ContextMenuMode = ContextMenuMode.None,  // 统一冲突解决模式右键菜单
                 SkipAutoLoad = true,
                 ShowMinimalUI = true,
+                Cache = _ownerCache,
             };
             _mergedView = new TableBrowserControl(mergedOptions) { Dock = DockStyle.Fill };
             _mergedView.GetDataGridView().CellFormatting += OnMergedCellFormatting;
@@ -366,8 +378,8 @@ namespace wxd.files.winforms
                 var remoteDt = BuildDataTableFromFileData(alignedRemoteFd);
                 var localDt = BuildDataTableFromFileData(alignedLocalFd);
 
-                _remoteView!.SetDataTable(remoteDt, $"远程版本 | 行数: {remoteDt.Rows.Count}");
-                _localView!.SetDataTable(localDt, $"本地版本 | 行数: {localDt.Rows.Count}");
+                _remoteView!.SetDataTable(remoteDt, $"远程版本 | 行数: {remoteDt.Rows.Count}", alignedRemoteFd);
+                _localView!.SetDataTable(localDt, $"本地版本 | 行数: {localDt.Rows.Count}", alignedLocalFd);
 
                 // ★ 阶段4：构建行/列索引映射（跳过前 _frozenRows 行，确保 rowProps.Count == DGV 行数）
                 _remoteRowToOriginal = BuildRowIndexMap(alignedRemoteFd, out _remoteRowProps);
@@ -411,6 +423,7 @@ namespace wxd.files.winforms
                     ContextMenuMode = ContextMenuMode.Conflict,  // 统一冲突解决模式右键菜单
                     ShowMinimalUI = true,
                     SkipAutoLoad = true,                     // 跳过构造函数自动加载，由外部 SetDataTable 注入数据
+                    Cache = _ownerCache,
                 };
                 _remoteView = new TableBrowserControl(options) { Dock = DockStyle.Fill };
                 remotePanel.Controls.Add(_remoteView, 0, 1);
@@ -428,6 +441,7 @@ namespace wxd.files.winforms
                     ContextMenuMode = ContextMenuMode.Conflict,  // 统一冲突解决模式右键菜单
                     ShowMinimalUI = true,
                     SkipAutoLoad = true,                     // 跳过构造函数自动加载，由外部 SetDataTable 注入数据
+                    Cache = _ownerCache,
                 };
                 _localView = new TableBrowserControl(options) { Dock = DockStyle.Fill };
                 localPanel.Controls.Add(_localView, 0, 1);
@@ -590,9 +604,9 @@ namespace wxd.files.winforms
             int dataStartRow = _frozenRows;
             int idCol = _idColumnIndex;
 
-            // ★ 从 DataTable 构建临时 FileTableData（行索引 = OriginalRowIndex）
-            var tempRemoteFd = BuildTempFileDataFromDataTable(_remoteData);
-            var tempLocalFd = BuildTempFileDataFromDataTable(_localData);
+            // ★ 优先用文件解析出来的 FileTableData（带源文件物理行号），拿不到才按行索引临时构建
+            var tempRemoteFd = ResolveVersionFileData(_remoteData, _remoteFileData);
+            var tempLocalFd = ResolveVersionFileData(_localData, _localFileData);
 
             // 构建 ID → FileTableData 行索引 的映射
             var remoteIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -707,7 +721,11 @@ namespace wxd.files.winforms
             return list.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        /// <summary>从 DataTable 构建临时 FileTableData（行索引作为 OriginalRowIndex）</summary>
+        /// <summary>取某版本的 FileTableData：文件解析结果可用就用它（保留物理行号），否则按 DataTable 行索引临时构建</summary>
+        private static FileTableData ResolveVersionFileData(DataTable dt, FileTableData? fileData)
+            => fileData != null && fileData.Rows.Count == dt.Rows.Count ? fileData : BuildTempFileDataFromDataTable(dt);
+
+        /// <summary>从 DataTable 构建临时 FileTableData（行索引作为 OriginalRowIndex，无物理行号）</summary>
         private static FileTableData BuildTempFileDataFromDataTable(DataTable dt)
         {
             var fd = new FileTableData();
@@ -729,6 +747,8 @@ namespace wxd.files.winforms
             var row = new TableRow
             {
                 OriginalRowIndex = src.OriginalRowIndex,
+                PhysicalStartLine = src.PhysicalStartLine,
+                PhysicalEndLine = src.PhysicalEndLine,
                 IsDiffRow = src.IsDiffRow,
                 DiffType = src.DiffType,
                 IsBlankRow = src.IsBlankRow,
@@ -1545,8 +1565,74 @@ namespace wxd.files.winforms
 
         private void RefreshMergedView()
         {
-            _mergedView.SetDataTable(_mergedTable, $"合并结果 | 行数: {_mergedTable.Rows.Count}");
+            _mergedView.SetDataTable(_mergedTable, $"合并结果 | 行数: {_mergedTable.Rows.Count}", BuildMergedFileData());
             _mergedView.SetEmbeddedMode(false);
+        }
+
+        /// <summary>
+        /// 为合并表构建带源文件物理行号的 FileTableData。
+        /// 合并表会被追加/排序打乱行序，所以按 ID 回查本地版本拿行号：
+        /// 本地存在的行显示本地物理行号，远程独有的行没有本地行号（画 "—"）。
+        /// 两个版本都没有文件解析结果时返回 null，退回视图自身的序号口径。
+        /// </summary>
+        private FileTableData? BuildMergedFileData()
+        {
+            if (_mergedTable == null) return null;
+            if (_localFileData == null && _remoteFileData == null) return null;
+
+            // ID → 本地物理行号
+            var localLineById = new Dictionary<string, (int Start, int End)>(StringComparer.OrdinalIgnoreCase);
+            int idCol = _idColumnIndex;
+            if (_localFileData != null && idCol >= 0)
+            {
+                for (int i = _frozenRows; i < _localFileData.Rows.Count; i++)
+                {
+                    var src = _localFileData.Rows[i];
+                    if (src.PhysicalStartLine <= 0) continue;
+                    string? id = idCol < src.Cells.Count ? src.Cells[idCol]?.Trim() : null;
+                    if (!string.IsNullOrEmpty(id) && !localLineById.ContainsKey(id))
+                        localLineById[id] = (src.PhysicalStartLine, src.PhysicalEndLine);
+                }
+            }
+
+            // 固定行（表头/描述行）不参与对齐，两个版本里都排在文件开头，按索引取行号即可
+            var frozenSource = _localFileData ?? _remoteFileData;
+
+            var fd = new FileTableData();
+            foreach (DataColumn col in _mergedTable.Columns)
+                fd.ColumnNames.Add(col.ColumnName);
+
+            for (int r = 0; r < _mergedTable.Rows.Count; r++)
+            {
+                var row = new TableRow { OriginalRowIndex = r };
+                for (int c = 0; c < _mergedTable.Columns.Count; c++)
+                    row.Cells.Add(_mergedTable.Rows[r][c]?.ToString() ?? "");
+
+                if (r < _frozenRows)
+                {
+                    if (frozenSource != null && r < frozenSource.Rows.Count)
+                    {
+                        row.PhysicalStartLine = frozenSource.Rows[r].PhysicalStartLine;
+                        row.PhysicalEndLine = frozenSource.Rows[r].PhysicalEndLine;
+                    }
+                }
+                else if (localLineById.Count > 0)
+                {
+                    string id = _mergedTable.Rows[r][idCol]?.ToString()?.Trim() ?? "";
+                    if (localLineById.TryGetValue(id, out var line))
+                    {
+                        row.PhysicalStartLine = line.Start;
+                        row.PhysicalEndLine = line.End;
+                    }
+                    else
+                    {
+                        // 远程独有行：本地没有对应行号，标记成占位行让行号列画 "—"
+                        row.IsBlankRow = true;
+                    }
+                }
+                fd.Rows.Add(row);
+            }
+            return fd;
         }
 
         // ==================== 合并结果表格初始化（包含所有行） ====================
@@ -1842,16 +1928,17 @@ namespace wxd.files.winforms
             }
         }
 
-        public static DataTable? LoadDataTableFromFile(string filePath)
+        /// <summary>加载配置文件，同时返回带源文件物理行号的解析结果（冲突解决入口用）</summary>
+        public static (DataTable? Data, FileTableData? FullData) LoadDataTableFromFile(string filePath)
         {
-            if (!File.Exists(filePath)) return null;
+            if (!File.Exists(filePath)) return (null, null);
 
             try
             {
-                var (dataTable, _) = FileDataCache.LoadFileDirect(filePath);
-                return dataTable;
+                var (dataTable, fileData) = FileDataCache.LoadFileDirect(filePath);
+                return (dataTable, fileData);
             }
-            catch { return null; }
+            catch { return (null, null); }
         }
     }
 }

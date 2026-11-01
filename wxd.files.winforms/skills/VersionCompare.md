@@ -478,7 +478,8 @@ if (diffOnly && !srcRow.IsDiffRow && !isFrozenRow && !isBlankRow) continue;
 
 ## 11. 缓存机制
 
-- `_dataCache: Dictionary<string, DataTable>` — 最多缓存 10 个版本的 DataTable
+- `_dataCache: Dictionary<string, CachedVersionData>` — 最多缓存 10 个版本，每项是 `(DataTable Table, FileTableData Data)`；`Data` 是解析出来的源文件物理行号载体，行号显示靠它
+- 命中缓存时 `FileTableData` 要先 `FileDataCache.CloneFileData()` 再交给视图：对比过程会把差异标记写回 `_leftFullFileData`，不复制就会污染缓存（`DataTable` 可以共享，嵌入模式禁止编辑）
 - Key 格式：
   - 历史版本：SVN revision 号或 Git 完整 SHA
   - 当前文件：`"__CURRENT_FILE__"`
@@ -578,7 +579,7 @@ public void AttachGridToParent()
 
 | API | 用途 | 注意事项 |
 |-----|------|----------|
-| `SetDataTable(DataTable, string)` | 注入数据 | 会重置 `_columnCheckStates`，需配合 `_savedLeftColStates` |
+| `SetDataTable(DataTable, string, FileTableData?)` | 注入数据 | 第三个参数传入解析结果才能保留源文件物理行号；行数不匹配时视图自动退回按行索引重建。会重置 `_columnCheckStates`，需配合 `_savedLeftColStates` |
 | `GetDataGridView()` | 获取内部 DGV | 用于绑定 Scroll/CellFormatting 事件 |
 | `GetFileData()` | 获取 FileTableData | 保存为 `_leftFullFileData` / `_rightFullFileData` |
 | `GetColumnCheckStates()` | 获取列显隐状态 | 投影后列数，需配合 `_savedLeftColStates` |
@@ -627,6 +628,8 @@ if (_externalColumnStates != null && _externalColumnStates.Length == _dataTable.
 13. **`BuildAlignedTables` 中归并算法不能改变遍历顺序** — 以右表ID顺序为主，左表指针跟随
 14. **空白行 `OriginalRowIndex = -1` 的设计不能修改** — 高亮渲染依赖此判断空白行
 15. **`_externalColumnStates` 的一次性消费机制不能改变** — 在 `SetDataTable` 中消费后必须清空
+16. **交给视图的 `FileTableData` 必须是 `CloneFileData()` 副本** — 差异标记会写回 `_leftFullFileData`，直接共用缓存项会让下次对比带着上次的差异
+17. **空白占位行不要伪造行号** — `CreateBlankRow` 保持 `PhysicalStartLine = -1` + `IsBlankRow = true`，`DisplayLineNumber` 返回 `null`，行号区画 `—`；填 `OriginalRowIndex` 会让它显示成记录序号，看起来像真实行号
 
 ---
 
@@ -638,6 +641,7 @@ if (_externalColumnStates != null && _externalColumnStates.Length == _dataTable.
 | "仅显示差异行"勾选后数据变少 | `BuildProjectedFileData` 未正确判断 `IsDiffRow` | 确保差异信息已回写到 `TableRow.IsDiffRow` |
 | 切换版本后列显隐状态丢失 | `SetDataTable()` 重置了 `_columnCheckStates` | 使用 `_savedLeftColStates` 独立保存 |
 | 滚动不同步 | `_syncingScroll` 未正确设置 | 确保 `finally { _syncingScroll = false; }` |
+| 对比视图行号全是记录序号 | `SetDataTable` 没传 `FileTableData`，视图只能按行索引重建 | 把解析出的 `FileTableData`（克隆件）作为第三个参数注入 |
 | 多次绑定事件导致颜色叠加 | `OnExternalCellFormatting` 重复绑定 | 每次绑定前先 `-=` 解绑 |
 | 加载时界面卡死 | 主线程阻塞 + LoadingForm 在同一线程 | LoadingForm 在独立 STA 线程运行 |
 | ID对齐后行数不一致 | 空白行在 `diffOnly=true` 时被过滤 | `BuildProjectedFileData` 中 `IsBlankRow` 始终保留 |

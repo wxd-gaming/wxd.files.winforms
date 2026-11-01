@@ -2,6 +2,8 @@
 
 一款功能丰富的 Windows 文件管理工具，支持多窗格浏览、CSV/Excel 阅读、超大文件查看、自定义命令执行等多种功能。
 
+主要用途：游戏开发策划的**配置表查阅**——表格视图左侧行号列显示的是**源文件物理行号**，可直接和文本编辑器、Excel、版本库里的行号对上。
+
 ## 预览截图
 
 ### 多窗格文件管理器主界面
@@ -10,6 +12,25 @@
 ### CSV/Excel 阅读器
 ![CSV/Excel 阅读器](./ScreenShot_2026-06-08_202055_187.png)
 
+### 行号定位：物理行号 + 标记 + 跳转
+左侧行号列即源文件物理行号：冻结区是 `1/2/3`（三行表头元信息），数据区从 `4` 开始并在 `L6 → L9`、`L14 → L18` 处跳号——那是引号内换行的跨行记录。点击行号 `11` 后整行描橙红边，状态栏回显"已标记 1 行（源文件 L11–L11）"。
+
+![阅读器整窗：冻结行、物理行号与标记行](./reader-overview.png)
+
+### 行号右键菜单
+
+![行号右键菜单](./reader-linenum-menu.png)
+
+### 跳转到行号
+
+![跳转到行号对话框](./reader-linenum-jump.png)
+
+### `@line` 行号表达式过滤
+
+高级过滤框输入 `@line>=30 and @line<=48` 后只剩 15 行，行号 `30,31,32,33,36,37,…,45,46,47,48`。缺掉的 `34/35`、`43/44` 不是丢数据，而是 `L33`、`L42` 这两条跨行记录的续行——它们不单独成行，整条记录按起始行号归类。
+
+![按物理行号过滤](./reader-linenum-filter.png)
+
 ### 大文件阅读器
 ![大文件阅读器](./ScreenShot_2026-06-08_202308_473.png)
 
@@ -17,6 +38,10 @@
 ![VCS 版本对比](./vcs-1.png)
 
 ![VCS 版本对比](./vcs-2.png)
+
+版本对比左右两栏的行号同样是源文件物理行号，与阅读器口径一致：
+
+![版本对比双栏行号](./vcs-3.png)
 
 ## 功能特性
 
@@ -61,9 +86,20 @@
 - **第0列锁定**：行号列始终显示，不可取消
 - **显隐状态持久化**：按文件相对路径存储到 `.wxd-work/config.json`
 
+##### 行号定位（源文件物理行号）⭐
+- **行号口径**：左侧行号列显示的是**源文件物理行号**，与文本编辑器 / Excel 的行号、`git diff` 的行号一一对应
+- **跨行记录**：CSV 引号内换行会让一条记录占多个物理行，行号按**起始行**显示并自然跳号（如 `L6` 之后直接 `L9`）
+- **四处同源**：冻结行区、主体区、过滤结果、版本对比左右两栏都走同一个取值函数，不会出现某一处行号错位
+- **占位行**：新增行等无源行的位置显示 `—`，不冒充行号
+- **点击标记**：点击行号列标记整行（橙红描边），状态栏回显"已标记 N 行（源文件 L11–L14）"
+- **行号右键菜单**：复制行号 / 只看该行号（自动填 `@line=11`）/ 跳转到行号… / 清除标记
+- **跳转到行号**：输入目标行号直达，对话框显示"有效行号：1–55"
+- **术语统一**：界面文案区分"行号"（源文件物理行）与"列"，不再混用"序号/索引"
+
 ##### 行过滤
 - **内容过滤**：关键词匹配任意可见列的单元格值，支持 `||` 和 `&&` 运算符
 - **高级过滤**：列表达式过滤，如 `Col0>100`、`id=123`、`name like test`
+- **行号表达式** `@line`：把物理行号当作虚拟列参与过滤，如 `@line>=30 and @line<=48`、`@line=128`，用于"只看这一段配置"
 - **Escape 键**：快速清除过滤条件
 
 ##### 列关联（跨文件）⭐
@@ -91,6 +127,12 @@
 - **自动保存**：编辑后自动写回 CSV 文件（UTF-8 编码）
 - **Excel 只读**：Excel 文件不支持编辑
 
+#### 缓存与交互稳定性
+- **窗口级数据缓存**：表格数据缓存挂在阅读器窗口（`CsvReaderForm`）实例上，本窗口所有标签页共用一份；**关闭窗体即释放**，不再常驻进程
+- **左右目录互不干扰**：A、B 两个目录阅读器各持一份缓存，互不共享、互不失效
+- **拖列宽不跳位**：横向滚动到右侧后拖动列宽，只同步受影响列的宽度，表格不再整表重绘跳回最左
+- **加载遮罩收口**：遮罩移除后会连同被遮住的冻结行区一起重绘，不会出现表头残留白底
+
 #### 内容搜索
 - **异步遍历**：遍历目录内所有 CSV/Excel 文件，匹配关键词
 - **进度条**：显示搜索进度，可随时取消
@@ -108,6 +150,7 @@
   - 无差异行：正常白色背景
   - 冻结行始终显示且参与差异比较
 - **仅显示差异行**：勾选后隐藏无差异的行（冻结行始终保留）
+- **行号同源**：左右两栏行号列同样是源文件物理行号，也可用 `@line` 表达式只看某一段
 - **同步滚动**：左右表格垂直/水平同步滚动
 - **列显隐联动**：继承原表的列显隐配置，可在对比中独立切换列显隐
 - **数据缓存**：已加载的版本自动缓存（最多10个），切换版本即时显示，无需重新导出
@@ -166,9 +209,11 @@
 - **NuGet 依赖**：
   - `ExcelDataReader` 3.7.0
   - `ExcelDataReader.DataSet` 3.7.0
+  - `MiniExcel` 1.37.0
+- **外部命令行工具**：`svn.exe` / `git.exe`（仅历史对比功能需要）
 - **目标平台**：Windows（WinForms）
 - **编码**：UTF-8
-- **版本**：1.0.0.4
+- **版本**：源码默认 `1.0.0.0`，发布时由 `release.ps1` 通过 `-p:Version=` 注入，当前发布版本见 `md5.txt`
 
 ## 项目结构
 
@@ -176,26 +221,57 @@
 wxd.files.winforms/
 ├── Program.cs                        # 应用程序入口
 ├── Form1.cs                          # 主窗体 - 多窗格文件管理器
-├── Form1.Designer.cs                 # 主窗体设计器代码
 ├── FileBrowserPanel.cs               # 单个窗格文件夹管理器控件
-├── CsvReaderForm.cs                  # CSV/Excel 阅读器窗体
-├── CsvReaderStandaloneForm.cs        # 独立表格查看窗体（关联打开用）
-├── CsvSettings.cs                    # 全局设置管理类
+├── TabbedFileBrowserPanel.cs         # 带标签页的窗格容器
+├── CsvReaderForm.cs                  # CSV/Excel 阅读器窗体（持有本窗口的表格数据缓存）
+├── TableBrowserControl.cs            # 表格浏览核心控件（冻结行 / 行号 / 过滤 / 编辑）
+├── TableBrowserOptions.cs            # 表格控件构造选项（根目录 / 缓存 / 轻量模式…）
+├── FileDataCache.cs                  # 表格数据缓存（窗口实例级，关窗即释放）
+├── FileTableData.cs                  # 行模型 TableRow：携带源文件物理起止行号
+├── LineNumberJumpDialog.cs           # 跳转到行号对话框
+├── CsvSettings.cs                    # 全局设置 + 目录级配置读写
+├── DirectoryFrozenConfig.cs          # 目录冻结行配置数据模型
+├── ColumnLinkConfig.cs               # 列关联配置数据模型
+├── ColumnLinkChecker.cs              # 列关联校验与着色
+├── DataGridLinkToolTip.cs            # 单元格悬停浮窗（关联表信息）
+├── VersionCompareForm.cs             # 历史版本对比窗体
+├── ConflictResolveControl.cs         # 冲突解决三栏视图
+├── VersionControlHelper.cs           # svn / git 命令行封装
+├── VersionHistoryEntry.cs            # 版本历史记录模型
+├── VcsStatusCache.cs                 # 目录 VCS 状态缓存
 ├── LargeFileViewer.cs                # 大文件阅读器窗体
-├── LargeFileReaderControl.cs         # 大文件阅读器核心控件（可嵌入TabPage）
+├── LargeFileReaderControl.cs         # 大文件阅读器核心控件（可嵌入 TabPage）
+├── LineListView.cs                   # 虚拟滚动行列表（大文件浏览）
+├── FileSplitter.cs                   # 大文件分块读取
 ├── WindowsShellContextMenu.cs        # Windows 系统右键菜单集成
 ├── SimpleShellContextMenu.cs         # 简化的系统右键菜单
 ├── CustomCommandManagerForm.cs       # 自定义命令管理面板
 ├── CustomCommandItem.cs              # 自定义命令数据模型
-├── DirectoryFrozenConfig.cs          # 目录冻结行配置数据模型
-├── ColumnLinkConfig.cs               # 列关联配置数据模型
-├── ColumnLinkChecker.cs              # 列关联颜色检查器
-├── App.config                        # 应用程序配置文件
-├── app.ico                           # 应用程序图标
+├── NoteForm.cs / NoteStore.cs        # 便签功能
+├── AppStateStore.cs                  # 状态记忆（窗格 / 主题 / 最近路径）
+├── AlertForm.cs                      # 统一提示框（模态）
+├── GlobalConst.cs                    # 全局常量（含 LfChar/CrChar/TabChar 换行常量）
+├── skills/                           # 模块级设计文档（见下）
 ├── 需求.txt                          # 原始需求文档
 ├── 大文件阅读需求.txt                 # 大文件阅读需求文档
+├── App.config                        # 应用程序配置文件
+├── app.ico                           # 应用程序图标
 └── wxd.files.winforms.csproj         # 项目文件
 ```
+
+> 主题（深色 / 浅色）没有独立窗体，由各窗体在 `ApplyTheme` 中统一取色，详见 `skills/ThemeSystem.md`。
+
+### 模块设计文档（`wxd.files.winforms/skills/`）
+
+| 文档 | 内容 |
+| --- | --- |
+| `CsvReader.md` | 阅读器表格控件：冻结行双表格架构、行号口径、过滤链、已知坑 |
+| `VersionCompare.md` | 历史对比：差异编码、缓存 Key 约定、克隆约束 |
+| `ConfigPersistence.md` | `.wxd-work/config.json` 目录级配置持久化 |
+| `FileBrowserPanel.md` | 多窗格文件浏览 |
+| `LargeFileViewer.md` | 大文件流式读取与虚拟滚动 |
+| `ThemeSystem.md` | 深色 / 浅色主题体系 |
+| `CustomCommand.md` | 自定义命令 |
 
 ## 快速开始
 
@@ -237,6 +313,8 @@ dotnet run --project wxd.files.winforms/wxd.files.winforms.csproj
 2. 选择包含 CSV/Excel 文件的目录
 3. 左侧文件树选择文件，右侧标签页打开
 4. 表格支持排序、行过滤、列关联高亮
+5. 查某一行配置：看左侧行号（= 源文件物理行号）→ 点行号标记 → 右键可"只看该行号 / 跳转到行号"
+6. 查一段配置：高级过滤框输入 `@line>=30 and @line<=48` 回车
 
 ### 大文件阅读器
 1. 点击主界面"大文件阅读"按钮
