@@ -17,16 +17,19 @@ namespace wxd.files.winforms
         /// <param name="fileLength">原始文件大小（字节）</param>
         /// <param name="linesPerFile">每个切割文件的行数</param>
         /// <param name="progressCallback">进度回调：(当前文件索引, 总文件数, 当前进度百分比)</param>
+        /// <param name="headerLineCount">每个分片需要重复的顶部行数（CSV/TSV 表头传 1；0 表示不重复）</param>
         /// <returns>切割后的文件路径列表</returns>
         public static List<string> Split(string filePath, long[] lineOffsets, long fileLength,
-            long linesPerFile, Action<int, int, int>? progressCallback = null)
+            long linesPerFile, Action<int, int, int>? progressCallback = null, int headerLineCount = 0)
         {
             var result = new List<string>();
+            if (linesPerFile <= 0 || lineOffsets.Length == 0) return result;
             string dir = Path.GetDirectoryName(filePath) ?? ".";
             string baseName = Path.GetFileNameWithoutExtension(filePath);
             string ext = Path.GetExtension(filePath);
             long totalLines = lineOffsets.Length;
             int fileCount = GetFileCount(totalLines, linesPerFile);
+            int headerLines = Math.Max(0, Math.Min(headerLineCount, (int)Math.Min(totalLines, linesPerFile)));
 
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.SequentialScan);
 
@@ -45,8 +48,13 @@ namespace wxd.files.winforms
                     ? lineOffsets[endLine]
                     : fileLength;
 
-                // 流式拷贝，64KB 缓冲区
-                WriteFileChunk(fs, partPath, byteStart, byteEnd);
+                // 第 1 个分片自带表头，其余分片在顶部补一份，保证单独打开时表头可用
+                using (var dest = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536, FileOptions.SequentialScan))
+                {
+                    if (part > 0 && headerLines > 0)
+                        CopyRange(fs, dest, lineOffsets[0], lineOffsets[headerLines]);
+                    CopyRange(fs, dest, byteStart, byteEnd);
+                }
 
                 progressCallback?.Invoke(part + 1, fileCount, (int)((part + 1) * 100 / fileCount));
             }
@@ -57,19 +65,18 @@ namespace wxd.files.winforms
         /// <summary>计算切割后的文件数量</summary>
         public static int GetFileCount(long totalLines, long linesPerFile)
         {
+            if (linesPerFile <= 0) return 0;
             return (int)((totalLines + linesPerFile - 1) / linesPerFile);
         }
 
-        /// <summary>流式拷贝文件的一个字节区间到新文件</summary>
-        private static void WriteFileChunk(FileStream source, string destPath, long byteStart, long byteEnd)
+        /// <summary>流式拷贝文件的一个字节区间到目标流</summary>
+        private static void CopyRange(FileStream source, FileStream dest, long byteStart, long byteEnd)
         {
             const int bufSize = 64 * 1024;
             byte[] buf = new byte[bufSize];
             long remaining = byteEnd - byteStart;
 
             source.Seek(byteStart, SeekOrigin.Begin);
-
-            using var dest = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, bufSize, FileOptions.SequentialScan);
 
             while (remaining > 0)
             {

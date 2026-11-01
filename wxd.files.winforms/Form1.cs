@@ -1127,8 +1127,12 @@ namespace wxd.files.winforms
             var cmd = item.Command;
             if (string.IsNullOrWhiteSpace(cmd)) return;
 
-            var lines = cmd.Split(new[] { GlobalConst.CrLf, GlobalConst.Cr, GlobalConst.Lf }, StringSplitOptions.None);
-            var fullCmd = string.Join(" & ", lines);
+            // 多行命令按顺序执行；空行不能变成 " & " 里的空语句
+            var fullCmd = string.Join(" & ",
+                cmd.Split(new[] { GlobalConst.CrLf, GlobalConst.Cr, GlobalConst.Lf }, StringSplitOptions.None)
+                   .Select(line => line.Trim())
+                   .Where(line => line.Length > 0));
+            if (fullCmd.Length == 0) return;
 
             try
             {
@@ -1136,7 +1140,9 @@ namespace wxd.files.winforms
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "cmd.exe",
-                    Arguments = "/c " + fullCmd,
+                    // /d 跳过注册表 AutoRun；/s 保证整条命令按原样交给 cmd 解析，
+                    // 命令自身带引号时不会被外层引号吃掉
+                    Arguments = "/d /s /c \"" + fullCmd + "\"",
                     UseShellExecute = false,
                     CreateNoWindow = !showWindow
                 };

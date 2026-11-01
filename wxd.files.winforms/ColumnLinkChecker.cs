@@ -53,7 +53,7 @@ namespace wxd.files.winforms
             string currentRel = GetRelativePath(filePath, rootDir);
 
             var linkConfig = columnLinks?.FirstOrDefault(l =>
-                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(filePath)) &&
                 l.SourceColumnIndex == originalColumnIndex);
 
             if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
@@ -62,24 +62,19 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
 
-            var lookups = cache.GetLookups();
-
             foreach (var fl in linkConfig.FieldLinks)
             {
                 if (string.IsNullOrEmpty(fl.TargetFile)) continue;
 
                 string fieldPrefix = $"{currentRel}|{originalColumnIndex}->field{fl.FieldIndex}->";
-                foreach (var kvp in lookups)
+                foreach (var entry in cache.GetLookupsByPrefix(fieldPrefix))
                 {
-                    if (kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase))
+                    // 检查每行该字段的值是否在 lookup 中存在
+                    foreach (var fieldValues in fieldRows)
                     {
-                        // 检查每行该字段的值是否在 lookup 中存在
-                        foreach (var fieldValues in fieldRows)
-                        {
-                            string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
-                            if (!string.IsNullOrEmpty(fieldVal) && kvp.Value.Values.Contains(fieldVal))
-                                return true;
-                        }
+                        string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
+                        if (!string.IsNullOrEmpty(fieldVal) && entry.Values.Contains(fieldVal))
+                            return true;
                     }
                 }
             }
@@ -108,7 +103,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(cellVal)) return null;
 
             var linkConfig = columnLinks?.FirstOrDefault(l =>
-                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(filePath)) &&
                 l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
@@ -117,24 +112,20 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
 
-            var lookups = cache.GetLookups();
-
             foreach (var fl in linkConfig.FieldLinks)
             {
                 if (string.IsNullOrEmpty(fl.TargetFile)) continue;
 
                 string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
-                foreach (var kvp in lookups)
+                foreach (var entry in cache.GetLookupsByPrefix(fieldPrefix))
                 {
-                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
-
                     bool allFound = true;
                     var notFoundValues = new List<string>();
 
                     foreach (var fieldValues in fieldRows)
                     {
                         string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
-                        if (!string.IsNullOrEmpty(fieldVal) && !kvp.Value.Values.Contains(fieldVal))
+                        if (!string.IsNullOrEmpty(fieldVal) && !entry.Values.Contains(fieldVal))
                         {
                             allFound = false;
                             notFoundValues.Add(fieldVal);
@@ -178,7 +169,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(cellVal)) return null;
 
             var linkConfig = columnLinks?.FirstOrDefault(l =>
-                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(filePath)) &&
                 l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
@@ -186,8 +177,6 @@ namespace wxd.files.winforms
 
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellVal);
-
-            var lookups = cache.GetLookups();
 
             var allFieldLines = new List<string>();
             int totalMatchable = 0;
@@ -198,16 +187,14 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(fl.TargetFile)) continue;
 
                 string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
-                foreach (var kvp in lookups)
+                foreach (var entry in cache.GetLookupsByPrefix(fieldPrefix))
                 {
-                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    string targetFileName = Path.GetFileName(kvp.Value.TargetFile);
+                    string targetFileName = Path.GetFileName(entry.TargetFile);
                     string displayTableName = targetFileName;
-                    if (fileRemarks != null && fileRemarks.TryGetValue(kvp.Value.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
+                    if (fileRemarks != null && fileRemarks.TryGetValue(entry.TargetFile, out var remark) && !string.IsNullOrEmpty(remark))
                         displayTableName = $"{remark} ({targetFileName})";
-                    else if (!string.IsNullOrEmpty(kvp.Value.TargetColumnName))
-                        displayTableName = $"{targetFileName} [{kvp.Value.TargetColumnName}]";
+                    else if (!string.IsNullOrEmpty(entry.TargetColumnName))
+                        displayTableName = $"{targetFileName} [{entry.TargetColumnName}]";
 
                     allFieldLines.Add($"--- 第{fl.FieldIndex}段: {displayTableName} ---");
 
@@ -217,10 +204,10 @@ namespace wxd.files.winforms
                         if (string.IsNullOrEmpty(fieldVal)) continue;
 
                         totalMatchable++;
-                        if (kvp.Value.Values.Contains(fieldVal))
+                        if (entry.Values.Contains(fieldVal))
                         {
                             totalMatched++;
-                            if (kvp.Value.DisplayNames.TryGetValue(fieldVal, out var displayName) && !string.IsNullOrEmpty(displayName))
+                            if (entry.DisplayNames.TryGetValue(fieldVal, out var displayName) && !string.IsNullOrEmpty(displayName))
                                 allFieldLines.Add($"  {fieldVal}: {displayName}");
                             else
                                 allFieldLines.Add($"  {fieldVal}: (无显示名)");
@@ -264,7 +251,7 @@ namespace wxd.files.winforms
             }
 
             var linkConfig = columnLinks?.FirstOrDefault(l =>
-                l.SourceFile.EndsWith(Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(filePath)) &&
                 l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
@@ -276,8 +263,6 @@ namespace wxd.files.winforms
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
 
-            var lookups = cache.GetLookups();
-
             bool hasMissing = false;
 
             foreach (var fl in linkConfig.FieldLinks)
@@ -285,14 +270,12 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(fl.TargetFile)) continue;
 
                 string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->";
-                foreach (var kvp in lookups)
+                foreach (var entry in cache.GetLookupsByPrefix(fieldPrefix))
                 {
-                    if (!kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase)) continue;
-
                     foreach (var fieldValues in fieldRows)
                     {
                         string fieldVal = fl.FieldIndex < fieldValues.Count ? fieldValues[fl.FieldIndex] : "";
-                        if (!string.IsNullOrEmpty(fieldVal) && !kvp.Value.Values.Contains(fieldVal))
+                        if (!string.IsNullOrEmpty(fieldVal) && !entry.Values.Contains(fieldVal))
                         {
                             hasMissing = true;
                             break;

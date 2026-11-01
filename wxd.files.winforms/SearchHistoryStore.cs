@@ -106,7 +106,7 @@ namespace wxd.files.winforms
                 List<SearchHistoryItem> snap;
                 lock (_lock) snap = new List<SearchHistoryItem>(_history);
                 var json = JsonSerializer.Serialize(snap);
-                File.WriteAllText(SavePath, json);
+                AtomicFileWriter.TryWriteAllText(SavePath, json);
             }
             catch { /* 忽略写入失败，不重要数据 */ }
         }

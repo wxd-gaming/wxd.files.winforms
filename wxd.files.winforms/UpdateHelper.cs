@@ -140,89 +140,155 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
                 throw new Exception("无法定位当前程序文件。");
 
+            // 必须带 MD5：没有校验值就无法确认下载内容，宁可放弃更新
+            if (!IsValidMd5(expectedMd5))
+                throw new Exception("更新包缺少有效的 MD5 校验值，已取消更新。");
+
             // 从 Release API 获取附件下载地址
             var downloadUrl = await GetLatestReleaseDownloadUrlAsync().ConfigureAwait(false);
             if (string.IsNullOrEmpty(downloadUrl))
                 throw new Exception("无法获取更新文件的下载地址。");
 
-            var tempPath = currentExePath + ".tmp";
+            // 临时文件必须与目标 exe 同卷，替换时才能用移动而不是复制
+            var exeDir = Path.GetDirectoryName(currentExePath) ?? ".";
+            var tempPath = Path.Combine(exeDir,
+                $"{Path.GetFileName(currentExePath)}.{Guid.NewGuid():N}.tmp");
 
-            // 下载（所有 await 使用 ConfigureAwait(false)，不回到调用线程）
-            using (var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+            try
             {
-                response.EnsureSuccessStatusCode();
-                var totalBytes = response.Content.Headers.ContentLength ?? -1;
-                using var contentStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                using var fileStream = File.Create(tempPath);
-
-                if (totalBytes > 0 && onProgress != null)
+                // 下载（所有 await 使用 ConfigureAwait(false)，不回到调用线程）
+                using (var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
                 {
-                    var buffer = new byte[8192];
-                    long readBytes = 0;
-                    int bytesRead;
-                    while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                    response.EnsureSuccessStatusCode();
+                    var totalBytes = response.Content.Headers.ContentLength ?? -1;
+                    using var contentStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                    using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+
+                    if (totalBytes > 0 && onProgress != null)
                     {
-                        await fileStream.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
-                        readBytes += bytesRead;
-                        onProgress((int)(readBytes * 100 / totalBytes));
+                        var buffer = new byte[8192];
+                        long readBytes = 0;
+                        int bytesRead;
+                        while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                        {
+                            await fileStream.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
+                            readBytes += bytesRead;
+                            onProgress((int)(readBytes * 100 / totalBytes));
+                        }
+                    }
+                    else
+                    {
+                        await contentStream.CopyToAsync(fileStream).ConfigureAwait(false);
+                        onProgress?.Invoke(100);
                     }
                 }
-                else
-                {
-                    await contentStream.CopyToAsync(fileStream).ConfigureAwait(false);
-                    onProgress?.Invoke(100);
-                }
-            }
 
-            // 校验 MD5
-            if (!string.IsNullOrEmpty(expectedMd5))
-            {
+                var downloaded = new FileInfo(tempPath);
+                if (!downloaded.Exists || downloaded.Length == 0)
+                    throw new Exception("下载的文件为空，已取消更新。");
+
+                // 校验 MD5（强制）
                 var downloadedMd5 = await ComputeFileMd5Async(tempPath).ConfigureAwait(false);
                 if (!string.Equals(downloadedMd5, expectedMd5, StringComparison.OrdinalIgnoreCase))
+                    throw new Exception("下载文件校验失败，文件可能已损坏或与发布版本不一致。");
+
+                // 下载并校验成功，更新版本号
+                if (!string.IsNullOrEmpty(remoteVersion))
                 {
-                    File.Delete(tempPath);
-                    throw new Exception("下载文件校验失败，文件可能已损坏。");
+                    SetCurrentVersion(remoteVersion);
                 }
-            }
 
-            // 下载并校验成功，更新版本号
-            if (!string.IsNullOrEmpty(remoteVersion))
+                // 执行更新（批处理替换 + 重启）
+                ExecuteUpdate(currentExePath, tempPath);
+            }
+            catch
             {
-                SetCurrentVersion(remoteVersion);
+                TryDeleteFile(tempPath);
+                throw;
             }
-
-            // 执行更新（批处理替换 + 重启）
-            ExecuteUpdate(currentExePath, tempPath);
         }
+
+        private static bool IsValidMd5(string? md5)
+        {
+            if (string.IsNullOrEmpty(md5) || md5.Length != 32)
+                return false;
+            foreach (var ch in md5)
+            {
+                if (!Uri.IsHexDigit(ch))
+                    return false;
+            }
+            return true;
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch { }
+        }
+
+        /// <summary>批处理字面量转义：% 会被 cmd 当作变量展开</summary>
+        private static string EscapeBatLiteral(string value) => value.Replace("%", "%%");
 
         /// <summary>执行更新：生成批处理脚本 → 退出当前程序 → 脚本替换 → 重启</summary>
         private static void ExecuteUpdate(string currentExePath, string newExePath)
         {
+            if (!File.Exists(newExePath) || new FileInfo(newExePath).Length == 0)
+                throw new Exception("更新包不存在或为空，已取消更新。");
+
+            var backupPath = currentExePath + ".bak";
+
+            // 先备份旧 exe；删除旧文件有重试上限，失败则回滚备份后重启，
+            // 避免旧版本被删掉、新文件又没换上导致程序彻底消失
             var batContent = new StringBuilder();
             batContent.AppendLine("@echo off");
             batContent.AppendLine("chcp 65001 > nul");
             batContent.AppendLine("title 正在更新 wxd.files.winforms...");
             batContent.AppendLine("echo 正在更新软件，请稍候...");
-            batContent.AppendLine($"ping 127.0.0.1 -n 3 > nul");
-            batContent.AppendLine("");
+            batContent.AppendLine("ping 127.0.0.1 -n 3 > nul");
+            batContent.AppendLine($"set \"TARGET={EscapeBatLiteral(currentExePath)}\"");
+            batContent.AppendLine($"set \"NEWFILE={EscapeBatLiteral(newExePath)}\"");
+            batContent.AppendLine($"set \"BAK={EscapeBatLiteral(backupPath)}\"");
+            batContent.AppendLine("copy /y \"%TARGET%\" \"%BAK%\" > nul 2>&1");
+            batContent.AppendLine("set RETRY=0");
             batContent.AppendLine(":retry");
-            batContent.AppendLine($"del /f /q \"{currentExePath}\"");
-            batContent.AppendLine($"if exist \"{currentExePath}\" goto retry");
-            batContent.AppendLine($"move /y \"{newExePath}\" \"{currentExePath}\"");
-            batContent.AppendLine($"start \"\" \"{currentExePath}\"");
-            batContent.AppendLine($"del /f /q \"%~f0\"");
+            batContent.AppendLine("del /f /q \"%TARGET%\" > nul 2>&1");
+            batContent.AppendLine("if not exist \"%TARGET%\" goto replace");
+            batContent.AppendLine("set /a RETRY+=1");
+            batContent.AppendLine("if %RETRY% GEQ 30 goto rollback");
+            batContent.AppendLine("ping 127.0.0.1 -n 2 > nul");
+            batContent.AppendLine("goto retry");
+            batContent.AppendLine(":replace");
+            batContent.AppendLine("move /y \"%NEWFILE%\" \"%TARGET%\" > nul 2>&1");
+            batContent.AppendLine("if exist \"%TARGET%\" goto restart");
+            batContent.AppendLine(":rollback");
+            batContent.AppendLine("if exist \"%BAK%\" copy /y \"%BAK%\" \"%TARGET%\" > nul 2>&1");
+            batContent.AppendLine(":restart");
+            batContent.AppendLine("if exist \"%TARGET%\" start \"\" \"%TARGET%\"");
+            batContent.AppendLine("del /f /q \"%~f0\" > nul 2>&1");
 
             var batPath = Path.Combine(
                 Path.GetTempPath(),
                 $"wxd_update_{Guid.NewGuid():N}.bat");
             File.WriteAllText(batPath, batContent.ToString(), Encoding.UTF8);
 
-            Process.Start(new ProcessStartInfo
+            try
             {
-                FileName = batPath,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = batPath,
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+            }
+            catch
+            {
+                TryDeleteFile(batPath);
+                throw;
+            }
 
             Environment.Exit(0);
         }

@@ -137,6 +137,19 @@ namespace wxd.files.winforms
             return WriteExcelToDisk(fullPath, dataTable);
         }
 
+        /// <summary>
+        /// 本实例内某个文件保存到磁盘后触发（参数为保存的绝对路径）。
+        /// 同窗口/同缓存的其他页签据此重算关联着色与 ToolTip。
+        /// </summary>
+        public event Action<string>? FileSaved;
+
+        /// <summary>由写盘方通知：指定文件已保存（事件回调异常不影响保存流程）</summary>
+        public void NotifyFileSaved(string filePath)
+        {
+            if (_disposed) return;
+            try { FileSaved?.Invoke(filePath); } catch { }
+        }
+
         // ============ 关联查找（LinkLookup，key 保持相对路径格式） ============
 
         /// <summary>获取所有已缓存的关联查找条目（本实例）</summary>
@@ -146,6 +159,26 @@ namespace wxd.files.winforms
             {
                 return new Dictionary<string, LinkLookupEntry>(_linkLookups, StringComparer.OrdinalIgnoreCase);
             }
+        }
+
+        /// <summary>
+        /// 按 Key 前缀取关联条目（不复制整个字典）。
+        /// CellFormatting / ToolTip 是逐单元格高频调用，不能每次都复制全量 lookup。
+        /// 返回的条目对象在构建后不再修改，可以在锁外安全使用。
+        /// </summary>
+        public List<LinkLookupEntry> GetLookupsByPrefix(string prefix)
+        {
+            var list = new List<LinkLookupEntry>();
+            if (string.IsNullOrEmpty(prefix)) return list;
+            lock (_linkLock)
+            {
+                foreach (var kvp in _linkLookups)
+                {
+                    if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        list.Add(kvp.Value);
+                }
+            }
+            return list;
         }
 
         /// <summary>异步构建所有关联配置的 lookup</summary>
@@ -176,8 +209,8 @@ namespace wxd.files.winforms
             try
             {
                 var relevantLinks = columnLinks
-                    .Where(l => l.SourceFile.EndsWith(Path.GetFileName(sourceFilePath),
-                        StringComparison.OrdinalIgnoreCase))
+                    .Where(l => LinkSourceMatcher.Matches(l.SourceFile, sourceRel,
+                        Path.GetFileName(sourceFilePath)))
                     .ToList();
 
                 foreach (var link in relevantLinks)
@@ -719,9 +752,22 @@ namespace wxd.files.winforms
         private void ClearLinkLookupsForFile(string fileKey)
         {
             var fileName = Path.GetFileName(fileKey);
-            string marker = "->" + fileName + ":";
+            if (string.IsNullOrEmpty(fileName)) return;
+
+            // key 形如 "源相对路径|列->fieldN->目标相对路径:列"，
+            // 取最后一个 -> 之后、: 之前的部分作为目标相对路径，
+            // 这样 In\cfg.xlsx 这类子目录目标也能被正确清除
             var keysToRemove = _linkLookups.Keys
-                .Where(k => k.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0)
+                .Where(k =>
+                {
+                    int arrow = k.LastIndexOf("->", StringComparison.Ordinal);
+                    if (arrow < 0) return false;
+                    string rest = k[(arrow + 2)..];
+                    int colon = rest.IndexOf(':');
+                    string targetRel = colon >= 0 ? rest[..colon] : rest;
+                    return string.Equals(Path.GetFileName(targetRel), fileName,
+                        StringComparison.OrdinalIgnoreCase);
+                })
                 .ToList();
             foreach (var k in keysToRemove)
                 _linkLookups.Remove(k);

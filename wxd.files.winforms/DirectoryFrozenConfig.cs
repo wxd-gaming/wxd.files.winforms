@@ -69,6 +69,9 @@ public class FileConfig
     /// <summary>隐藏的列索引集合（null 或空 = 全部显示）。只记录被取消勾选的列</summary>
     public HashSet<int>? HiddenColumns { get; set; }
 
+    /// <summary>冻结列数（显示列口径，冻结最左侧 N 列；null 或 0 = 不冻结）</summary>
+    public int? FrozenColumnCount { get; set; }
+
     /// <summary>列关联配置列表（按 SourceFile 分组存储）</summary>
     public List<ColumnLinkConfig>? ColumnLinks { get; set; }
 
@@ -76,5 +79,6 @@ public class FileConfig
     public bool IsEmpty =>
         Remark == null && UniqueColumnIndex == null &&
         (HiddenColumns == null || HiddenColumns.Count == 0) &&
+        (FrozenColumnCount == null || FrozenColumnCount <= 0) &&
         (ColumnLinks == null || ColumnLinks.Count == 0);
 }

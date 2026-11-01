@@ -1150,7 +1150,12 @@ namespace wxd.files.winforms
 
             await Task.Run(() =>
             {
-                if (useIdAlign && _idColumnIndex >= 0)
+                // 唯一列索引必须真实存在于两侧表中，否则退回按行号对齐
+                bool idAlignUsable = useIdAlign && _idColumnIndex >= 0 &&
+                    _idColumnIndex < leftData.Columns.Count &&
+                    _idColumnIndex < rightData.Columns.Count;
+
+                if (idAlignUsable)
                 {
                     int idCol = _idColumnIndex;
 
@@ -1609,7 +1614,14 @@ namespace wxd.files.winforms
 
             if (!diffRows.Contains(originalRow)) return;
 
-            int cellKey = (originalRow << 16) | e.ColumnIndex;
+            // ★ _leftDiffCells/_rightDiffCells 里存的是"原始列索引"，
+            //   列被隐藏后 DGV 列号与原始列号不再一致，必须走列映射，否则差异单元格会错位
+            var colMap = isLeft ? _leftColToOriginalIndex : _rightColToOriginalIndex;
+            int originalCol = e.ColumnIndex;
+            if (e.ColumnIndex >= 0 && e.ColumnIndex < colMap.Count)
+                originalCol = colMap[e.ColumnIndex];
+
+            int cellKey = (originalRow << 16) | originalCol;
             bool isDiffCell = diffCells.Contains(cellKey);
 
             if (isDiffCell)

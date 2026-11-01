@@ -2245,7 +2245,7 @@ namespace wxd.files.winforms
                 ? $"确定要删除 \"{Path.GetFileName(paths[0])}\" 吗？"
                 : $"确定要删除选中的 {paths.Count} 个项目吗？";
 
-            var result = AlertForm.Show(this.FindForm(), msg, "确认删除", AlertType.Warning);
+            var result = AlertForm.ShowConfirm(this.FindForm(), msg, "确认删除", AlertType.Warning);
             if (result != DialogResult.Yes) return;
 
             try

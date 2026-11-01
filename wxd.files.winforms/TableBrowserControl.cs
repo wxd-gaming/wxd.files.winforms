@@ -57,6 +57,8 @@ namespace wxd.files.winforms
         private List<ColumnLinkConfig> _columnLinks = new();
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<int> _visibleColumnIndices = new();
+        /// <summary>冻结列数（显示列口径，冻结最左侧 N 列；0 = 不冻结），按文件持久化</summary>
+        private int _frozenColumnCount = 0;
         private bool _editingFromFrozen = false;
         private DataGridLinkToolTip? _linkToolTip;
         private FlowLayoutPanel? _flowTop;
@@ -194,6 +196,8 @@ namespace wxd.files.winforms
             // ★ 缓存归属：宿主给就用宿主的（同目录多标签共享、随宿主窗口释放），没给就自持一份
             _ownsCache = options.Cache == null;
             _cache = options.Cache ?? new FileDataCache();
+            // ★ 目标表保存后（本窗口或共享缓存的其它窗口），重算关联着色
+            _cache.FileSaved += OnCacheFileSaved;
             _lightweight = options.Lightweight;
             _contextMenuMode = options.ContextMenuMode;
             // ★ 先确定文件类型，后续配置读取需要用到
@@ -244,6 +248,7 @@ namespace wxd.files.winforms
             if (!string.IsNullOrEmpty(dir))
             {
                 _fileRemarks = CsvSettings.GetFileRemarksByDirectory(dir);
+                _frozenColumnCount = CsvSettings.GetFileFrozenColumnCount(dir, GetCurrentRelativePath());
             }
 
             InitializeComponent();
@@ -809,6 +814,12 @@ namespace wxd.files.winforms
             _dataGridHeader.TabStop = false;
             _dataGridHeader.CellMouseDown += (s, e) =>
             {
+                // 列头右键：冻结到此列 / 取消冻结
+                if (e.Button == MouseButtons.Right && e.RowIndex == -1 && e.ColumnIndex >= 0)
+                {
+                    ShowColumnFreezeMenu(e.ColumnIndex);
+                    return;
+                }
                 ClearRowSelection();
                 if (e.RowIndex >= 0 && _dataGridHeader.FirstDisplayedScrollingRowIndex > 0)
                     _dataGridHeader.FirstDisplayedScrollingRowIndex = 0;
@@ -861,7 +872,7 @@ namespace wxd.files.winforms
                 _preferredHorizontalOffset = _dataGrid.HorizontalScrollingOffset;
             };
             _dataGridHeader.CellDoubleClick += OnFrozenCellDoubleClick;
-            _dataGridHeader.CellClick += OnCellClick;
+            // CellClick 已由 CreateDataGridView 统一挂接 OnCellClick，此处不再重复绑定
 
             _dataGrid = CreateDataGridView();
             _dataGrid.Dock = DockStyle.Fill;
@@ -1115,6 +1126,92 @@ namespace wxd.files.winforms
                 _dataGrid.HorizontalScrollingOffset = offset; // 触发 grid.Scroll，记账并带回固定行网格
             if (_dataGridHeader.HorizontalScrollingOffset != _dataGrid.HorizontalScrollingOffset)
                 _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset;
+        }
+
+        // ==================== 冻结列 ====================
+
+        /// <summary>列头右键菜单：冻结到此列 / 取消冻结（Excel 式冻结最左侧若干列）</summary>
+        private void ShowColumnFreezeMenu(int displayColumnIndex)
+        {
+            if (_columnManagementDisabled || _dataGrid.Columns.Count <= 1) return;
+            var ctx = new ContextMenuStrip();
+            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            AppendFrozenColumnMenuItems(ctx, displayColumnIndex, addSeparator: false);
+            _linkToolTip?.Hide();
+            ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
+        }
+
+        /// <summary>把冻结列菜单项追加到已有右键菜单（列头菜单和单元格菜单共用）</summary>
+        private void AppendFrozenColumnMenuItems(ContextMenuStrip ctx, int displayColumnIndex, bool addSeparator)
+        {
+            if (_columnManagementDisabled || _dataGrid.Columns.Count <= 1) return;
+            if (addSeparator) ctx.Items.Add(new ToolStripSeparator());
+
+            int desired = displayColumnIndex + 1;
+            // 冻结全部列没有意义（也不留可滚动区域），最多冻结到倒数第二列
+            if (desired < _dataGrid.Columns.Count)
+            {
+                var freezeItem = new ToolStripMenuItem($"冻结到此列（前 {desired} 列）")
+                {
+                    Checked = _frozenColumnCount == desired
+                };
+                freezeItem.Click += (s, e) => SetFrozenColumnCount(desired);
+                ctx.Items.Add(freezeItem);
+            }
+            var unfreezeItem = new ToolStripMenuItem("取消冻结列")
+            {
+                Enabled = _frozenColumnCount > 0
+            };
+            unfreezeItem.Click += (s, e) => SetFrozenColumnCount(0);
+            ctx.Items.Add(unfreezeItem);
+        }
+
+        private void SetFrozenColumnCount(int count)
+        {
+            count = Math.Max(0, count);
+            if (count == _frozenColumnCount) return;
+            _frozenColumnCount = count;
+            if (!_isEmbeddedMode && !_columnManagementDisabled && !string.IsNullOrEmpty(FrozenDir))
+                CsvSettings.SetFileFrozenColumnCount(FrozenDir, GetCurrentRelativePath(), count);
+            ApplyFrozenColumns();
+        }
+
+        /// <summary>把 _frozenColumnCount 应用到两个网格。列数变化（隐藏列/刷新）后需重新调用</summary>
+        private void ApplyFrozenColumns()
+        {
+            int desired = Math.Clamp(_frozenColumnCount, 0, Math.Max(0, _dataGrid.Columns.Count - 1));
+            ApplyFrozenColumnsToGrid(_dataGrid, desired);
+            ApplyFrozenColumnsToGrid(_dataGridHeader, desired);
+
+            // 冻结会缩小可滚动宽度，按用户滚动意图重新定位，并保持两侧一致
+            int offset = _preferredHorizontalOffset;
+            if (_dataGrid.HorizontalScrollingOffset != offset)
+                _dataGrid.HorizontalScrollingOffset = offset;
+            if (_dataGridHeader.HorizontalScrollingOffset != _dataGrid.HorizontalScrollingOffset)
+                _dataGridHeader.HorizontalScrollingOffset = _dataGrid.HorizontalScrollingOffset;
+        }
+
+        private static void ApplyFrozenColumnsToGrid(DataGridView dgv, int count)
+        {
+            if (dgv.Columns.Count == 0) return;
+            count = Math.Clamp(count, 0, Math.Max(0, dgv.Columns.Count - 1));
+            var ordered = dgv.Columns.Cast<DataGridViewColumn>().OrderBy(c => c.DisplayIndex).ToList();
+            bool matched = true;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                if (ordered[i].Frozen != (i < count)) { matched = false; break; }
+            }
+            if (matched) return;
+            // 先解冻范围外的列（从右往左），避免冻结区中间出现空洞导致 DGV 重排列；
+            // 再按显示顺序冻结最左侧 count 列。
+            for (int i = ordered.Count - 1; i >= count; i--)
+            {
+                if (ordered[i].Frozen) ordered[i].Frozen = false;
+            }
+            for (int i = 0; i < count; i++)
+            {
+                if (!ordered[i].Frozen) ordered[i].Frozen = true;
+            }
         }
 
         /// <summary>DataGridView 的 DoubleBuffered 是 protected，只能靠派生类打开；不开时宽表逐格直绘，52 列下逐行滚动 91ms→12ms</summary>
@@ -1453,6 +1550,11 @@ namespace wxd.files.winforms
 
             // 计算真实行号：_dataGrid 的行索引从 _frozenRows 开始
             int realRowIndex = isHeader ? rowIndex : rowIndex + _frozenRows;
+            // 行号统一取 DisplayLineNumber：过滤/排序后显示的仍是源表行号
+            int? displayLine = isHeader
+                ? GetFrozenDisplayLineNumber(rowIndex)
+                : GetDisplayLineNumber(rowIndex);
+            int lineLabel = displayLine ?? realRowIndex + 1;
 
             // 固定行直接显示单元格内容，不走关联关系逻辑
             if (isHeader)
@@ -1475,7 +1577,7 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
-                string cellTitle = $"{headerName}  --  第{realRowIndex + 1}行";
+                string cellTitle = $"{headerName}  --  第{lineLabel}行";
                 var cellLines = new List<DataGridLinkToolTip.TipLine>
                 {
                     new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
@@ -1488,7 +1590,7 @@ namespace wxd.files.winforms
 
             // 查找关联配置
             var linkConfig = _columnLinks.FirstOrDefault(l =>
-                l.SourceFile.EndsWith(Path.GetFileName(_filePath), StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(_filePath)) &&
                 l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null)
@@ -1512,7 +1614,7 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(headerName))
                     headerName = GetExcelColumnName(originalColIndex);
 
-                string cellTitle = $"{headerName}  --  第{realRowIndex + 1}行";
+                string cellTitle = $"{headerName}  --  第{lineLabel}行";
                 var cellLines = new List<DataGridLinkToolTip.TipLine>
                 {
                     new DataGridLinkToolTip.TipLine { Text = cellVal, IsWarning = false }
@@ -1531,17 +1633,17 @@ namespace wxd.files.winforms
             bool hasFieldLinks = linkConfig.FieldLinks != null && linkConfig.FieldLinks.Any(f => !string.IsNullOrEmpty(f.TargetFile));
             if (!hasFieldLinks)
             {
-                return BuildFormatOnlyToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex);
+                return BuildFormatOnlyToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex, lineLabel);
             }
 
             // ★ 有关联配置：对每个匹配值的每个字段，分别查询关联数据
-            return BuildFieldLinkedToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex, currentRel);
+            return BuildFieldLinkedToolTipContent(linkConfig, cellVal, realRowIndex, originalColIndex, currentRel, lineLabel);
         }
 
         /// <summary>构建多字段关联的 tooltip 内容（每个匹配值的每个字段分别查关联）</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText, List<string>? tableHeaders)
             BuildFieldLinkedToolTipContent(ColumnLinkConfig linkConfig, string cellVal,
-                int realRowIndex, int originalColIndex, string currentRel)
+                int realRowIndex, int originalColIndex, string currentRel, int lineLabel)
         {
             // ★ 获取表头配置
             List<string>? headers = null;
@@ -1585,11 +1687,10 @@ namespace wxd.files.winforms
                 }
             }
             string linkTitlePart = string.Join(", ", linkDescs);
-            string title = $"关联: {linkTitlePart}\n来自: {colHeaderName} — 第{realRowIndex + 1}行";
+            string title = $"关联: {linkTitlePart}{GlobalConst.LfChar}来自: {colHeaderName} — 第{lineLabel}行";
 
             // ★ 对每个匹配值，查询所有字段的关联
             var lines = new List<DataGridLinkToolTip.TipLine>();
-            var lookups = _cache.GetLookups();
 
             // ★ 使用 ExtractRows 按行列语义展开（前 N-1 步行，最后一步列）
             var rows = linkConfig.ExtractRows(cellVal);
@@ -1618,15 +1719,8 @@ namespace wxd.files.winforms
                     }
 
                     string fieldPrefix = $"{currentRel}|{originalColIndex}->field{fl.FieldIndex}->{fl.TargetFile}:{fl.TargetColumnIndex}";
-                    LinkLookupEntry? fieldLookup = null;
-                    foreach (var kvp in lookups)
-                    {
-                        if (kvp.Key.StartsWith(fieldPrefix, StringComparison.OrdinalIgnoreCase))
-                        {
-                            fieldLookup = kvp.Value;
-                            break;
-                        }
-                    }
+                    var fieldLookups = _cache.GetLookupsByPrefix(fieldPrefix);
+                    LinkLookupEntry? fieldLookup = fieldLookups.Count > 0 ? fieldLookups[0] : null;
 
                     if (fieldLookup != null && fieldLookup.Values.Contains(fieldVal))
                     {
@@ -1677,7 +1771,7 @@ namespace wxd.files.winforms
 
         /// <summary>构建格式模式（无关联目标）的 tooltip 内容，直接用列自身数据切割后以表格显示</summary>
         private (string? title, List<DataGridLinkToolTip.TipLine> lines, string? rawText, List<string>? tableHeaders)
-            BuildFormatOnlyToolTipContent(ColumnLinkConfig linkConfig, string cellVal, int realRowIndex, int originalColIndex)
+            BuildFormatOnlyToolTipContent(ColumnLinkConfig linkConfig, string cellVal, int realRowIndex, int originalColIndex, int lineLabel)
         {
             // ★ 获取表头配置
             List<string>? headers = null;
@@ -1707,7 +1801,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(colHeaderName))
                 colHeaderName = GetExcelColumnName(originalColIndex);
 
-            string title = $"{colHeaderName}  --  第{realRowIndex + 1}行";
+            string title = $"{colHeaderName}  --  第{lineLabel}行";
 
             // ★ 使用 ExtractRows 按行列语义展开（前 N-1 步行，最后一步列）
             var rows = linkConfig.ExtractRows(cellVal);
@@ -2098,9 +2192,11 @@ namespace wxd.files.winforms
             _contentSearchMatchCells.Clear();
             _advFilterMatchCells.Clear();
 
+            // 列可见性在刷新时统一重算，避免无冻结行路径沿用旧映射
+            _visibleColumnIndices = GetVisibleColumnIndices();
+
             if (_frozenRows > 0 && _dataTable.Rows.Count > 0)
             {
-                _visibleColumnIndices = GetVisibleColumnIndices();
                 _headerTable = new DataTable();
                 foreach (var colIndex in _visibleColumnIndices)
                 {
@@ -2159,6 +2255,9 @@ namespace wxd.files.winforms
                     visibleRowIndices = Enumerable.Range(_frozenRows, _fileData.Rows.Count - _frozenRows).ToList();
                 }
 
+                // ★ 排序只改变视图行顺序（先过滤后排序）
+                visibleRowIndices = ApplySortToRowIndices(visibleRowIndices);
+
                 // ★ 合并内容搜索 + 高级过滤的匹配单元格（原始行列索引）
                 _advFilterMatchCells = advMatchCells;
                 // ★ 转换匹配单元格：原始行列索引 → 显示行列索引（_dataGrid 内容区）
@@ -2201,6 +2300,35 @@ namespace wxd.files.winforms
             else
             {
                 _pnlGridContainer.Panel1Collapsed = true;
+
+                _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
+                var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
+                _advFilterMatchCells = advMatchCellsNoFreeze;
+                _filterMatchCells.Clear();
+                var mergedNoFreeze = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
+
+                if (_sortColumnIndex >= 0)
+                {
+                    // ★ 排序视图：只重排显示表，_dataTable 保持原始行序
+                    var sortedRows = ApplySortToRowIndices(Enumerable.Range(0, _dataTable.Rows.Count).ToList());
+                    foreach (var (origRow, origCols) in mergedNoFreeze)
+                    {
+                        int displayRow = sortedRows.IndexOf(origRow);
+                        if (displayRow < 0) continue;
+                        var displayCols = new HashSet<int>();
+                        foreach (var origCol in origCols)
+                        {
+                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                            if (displayCol >= 0) displayCols.Add(displayCol);
+                        }
+                        if (displayCols.Count > 0)
+                            _filterMatchCells[displayRow] = displayCols;
+                    }
+                    RefreshFilteredDisplay(sortedRows);
+                    ApplyFrozenColumns();
+                    return;
+                }
+
                 _dataGrid.DataSource = _dataTable;
                 for (int i = 0; i < _dataGrid.Columns.Count; i++)
                 {
@@ -2222,24 +2350,21 @@ namespace wxd.files.winforms
                 SetRowTags();
 
                 // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
-                _filterMatchCells.Clear();
-                _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
-                var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
-                _advFilterMatchCells = advMatchCellsNoFreeze;
-                var mergedNoFreeze = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
                 foreach (var (origRow, origCols) in mergedNoFreeze)
                 {
                     if (origRow < 0 || origRow >= _dataGrid.Rows.Count) continue;
                     var displayCols = new HashSet<int>();
                     foreach (var origCol in origCols)
                     {
-                        if (origCol >= 0 && origCol < _visibleColumnIndices.Count)
-                            displayCols.Add(origCol);
+                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                        if (displayCol >= 0) displayCols.Add(displayCol);
                     }
                     if (displayCols.Count > 0)
                         _filterMatchCells[origRow] = displayCols;
                 }
             }
+
+            ApplyFrozenColumns();
         }
 
         /// <summary>将 _fileData.Rows 挂到 _dataGrid 每行的 Tag 上</summary>
@@ -2395,18 +2520,14 @@ namespace wxd.files.winforms
 
             for (int i = 0; i < _dataGrid.Rows.Count; i++)
             {
-                var row = _dataGrid.Rows[i];
-                if (row.DataBoundItem is DataRowView drv)
+                // 行号以外的绑定表可能只是排序/过滤视图，必须用 Tag 里的原始行索引
+                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == dataTableRowIndex)
                 {
-                    var dtRow = _dataTable.Rows.IndexOf(drv.Row);
-                    if (dtRow == dataTableRowIndex)
-                    {
-                        _dataGrid.ClearSelection();
-                        _dataGrid.Rows[i].Selected = true;
-                        _dataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, i - 5);
-                        _dataGrid.CurrentCell = _dataGrid.Rows[i].Cells[Math.Min(1, _dataGrid.Columns.Count - 1)];
-                        return;
-                    }
+                    _dataGrid.ClearSelection();
+                    _dataGrid.Rows[i].Selected = true;
+                    _dataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, i - 5);
+                    _dataGrid.CurrentCell = _dataGrid.Rows[i].Cells[Math.Min(1, _dataGrid.Columns.Count - 1)];
+                    return;
                 }
             }
         }
@@ -2604,17 +2725,21 @@ namespace wxd.files.winforms
                 var advFilterText = _txtAdvancedFilter.Text.Trim();
                 var filterKeepAll = _filterKeepAllRows;
                 var frozenRows = _frozenRows;
-                var visibleColIndices = _visibleColumnIndices.ToList();
+                var visibleColIndices = _visibleColumnIndices.Count > 0
+                    ? _visibleColumnIndices.ToList()
+                    : GetVisibleColumnIndices();
                 var dataTableRef = _dataTable;
                 var fileDataRef = _fileData;
                 var headerRowIndex = _headerRowIndex;
+                var sortSourceColumn = _sortColumnIndex >= 0 ? GetSourceColumnIndex(_sortColumnIndex) : -1;
+                var sortOrder = _sortOrder;
 
                 // ===== 阶段2：后台线程执行耗时计算 =====
                 var result = await Task.Run(() =>
                     BuildFilterResultInBackground(
                         contentFilter, advFilterText, filterKeepAll,
                         frozenRows, visibleColIndices, dataTableRef, fileDataRef,
-                        headerRowIndex, version));
+                        headerRowIndex, sortSourceColumn, sortOrder, version));
 
                 // ===== 阶段3：UI 线程检查版本 + 绑定 =====
                 if (version != _filterVersion) return; // 已过期，丢弃
@@ -2641,7 +2766,7 @@ namespace wxd.files.winforms
             string contentFilter, string advFilterText, bool filterKeepAll,
             int frozenRows, List<int> visibleColIndices,
             DataTable dataTable, FileTableData fileData,
-            int headerRowIndex, int version)
+            int headerRowIndex, int sortSourceColumn, SortOrder sortOrder, int version)
         {
             void CheckVersion()
             {
@@ -2659,6 +2784,10 @@ namespace wxd.files.winforms
             // 高级过滤
             var (visibleRowIndices, advMatches) = GetAdvVisibleRowIndicesBackground(
                 fileData, advFilterText, filterKeepAll, frozenRows, version);
+            CheckVersion();
+
+            // ★ 排序只改变视图顺序（先过滤后排序）
+            visibleRowIndices = SortRowIndices(dataTable, visibleRowIndices, sortSourceColumn, sortOrder);
             CheckVersion();
 
             // 构建 filteredTable
@@ -3539,6 +3668,7 @@ namespace wxd.files.winforms
                 _lblInfo.Text = _duplicateWarningText;
             }
 
+            ApplyFrozenColumns();
             UpdateLoadingProgress(100, "完成");
         }
 
@@ -3674,6 +3804,7 @@ namespace wxd.files.winforms
         // ==================== 排序 ====================
         private void OnColumnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            if (e.Button != MouseButtons.Left) return;  // 右键列头用于冻结列菜单，不触发排序
             if (e.ColumnIndex < 0 || e.ColumnIndex >= _dataGrid.Columns.Count) return;
 
             // ==================== 行编辑模式：排序前退出编辑 ====================
@@ -3683,15 +3814,42 @@ namespace wxd.files.winforms
             if (_sortColumnIndex == e.ColumnIndex)
                 _sortOrder = _sortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
             else { _sortColumnIndex = e.ColumnIndex; _sortOrder = SortOrder.Ascending; }
-            var columnName = _dataGrid.Columns[e.ColumnIndex].DataPropertyName;
-            var frozenRows = _dataTable.AsEnumerable().Take(_frozenRows).ToList();
-            var dataRows = _dataTable.AsEnumerable().Skip(_frozenRows).ToList();
-            var sortedDataRows = dataRows.OrderBy(row => row.Field<string>(columnName), new NaturalStringComparer(_sortOrder)).ToList();
-            _dataTable = frozenRows.Concat(sortedDataRows).ToArray().CopyToDataTable();
-            // ★ 排序后同步重建 FileTableData（继承旧差异信息，按 OriginalRowIndex 匹配）
-            _fileData = BuildFileData(_dataTable, _fileData);
+
+            // ★ 排序只作用于视图：不重排 _dataTable，也不重建 _fileData，
+            //   行号区/物理行号始终跟随原始行，保存时写回的行序不会被排序影响。
             RefreshGridLayout();
             UpdateColumnHeaderSortGlyph();
+        }
+
+        /// <summary>显示列索引 → 源表列索引</summary>
+        private int GetSourceColumnIndex(int displayColumnIndex)
+        {
+            if (_visibleColumnIndices.Count > 0 &&
+                displayColumnIndex >= 0 && displayColumnIndex < _visibleColumnIndices.Count)
+                return _visibleColumnIndices[displayColumnIndex];
+            return displayColumnIndex;
+        }
+
+        /// <summary>对原始行索引列表应用当前排序（仅生成视图顺序，不修改数据）</summary>
+        private List<int> ApplySortToRowIndices(List<int> rowIndices)
+        {
+            if (_sortColumnIndex < 0 || _sortOrder == SortOrder.None || rowIndices.Count == 0)
+                return rowIndices;
+            return SortRowIndices(_dataTable, rowIndices, GetSourceColumnIndex(_sortColumnIndex), _sortOrder);
+        }
+
+        /// <summary>按指定源列排序原始行索引（后台线程安全：只读传入的 DataTable）</summary>
+        private static List<int> SortRowIndices(DataTable sourceTable, List<int> rowIndices, int sourceColumnIndex, SortOrder sortOrder)
+        {
+            if (sourceColumnIndex < 0 || sourceColumnIndex >= sourceTable.Columns.Count || rowIndices.Count == 0)
+                return rowIndices;
+
+            var comparer = new NaturalStringComparer(sortOrder);
+            return rowIndices
+                .OrderBy(i => i >= 0 && i < sourceTable.Rows.Count
+                    ? sourceTable.Rows[i][sourceColumnIndex]?.ToString() ?? ""
+                    : "", comparer)
+                .ToList();
         }
 
         private void UpdateColumnHeaderSortGlyph()
@@ -3709,31 +3867,65 @@ namespace wxd.files.winforms
         private void OnCellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
-            // 点击其他行内容单元格取消行选中
-            if (_selectedRows.Count > 0 && !_selectedRows.Contains(e.RowIndex))
-            {
-                var oldSelected = _selectedRows.ToList();
-                _selectedRows.Clear();
-                foreach (var r in oldSelected)
-                {
-                    if (r >= 0 && r < _dataGrid.Rows.Count)
-                    {
-                        _dataGrid.InvalidateRow(r);
-                        // 刷新下一行，擦除选中边框可能溢出到下一行顶部的残留
-                        if (r + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(r + 1);
-                    }
-                }
-            }
             var dgv = (DataGridView)sender!;
+
+            // ★ 内容区点击任意单元格 = 点击行号：整行标记（橙红边框）。
+            //   标记随行绘制，横向/纵向滚动后仍能看清当前行。
+            if (dgv == _dataGrid)
+            {
+                bool ctrlHeld = (Control.ModifierKeys & Keys.Control) == Keys.Control;
+                if (ctrlHeld) ToggleRowSelection(e.RowIndex);
+                else ReplaceRowSelection(e.RowIndex);
+            }
+            else if (_selectedRows.Count > 0)
+            {
+                // 冻结行区域点击：沿用旧行为，清除内容区标记
+                ClearRowSelection();
+            }
+
             int colIdx = e.ColumnIndex;
             string colName = colIdx >= 0 && colIdx < 26 ? ((char)('A' + colIdx)).ToString() : $"Col{colIdx}";
             // 状态栏行号与 RowHeader 同口径：源文件物理行号，跨行记录显示区间
             _lblCellPos.Text = $"行号 {FormatLineRange(GetRowOf(dgv, e.RowIndex))}  列 {colName}({colIdx})";
+        }
+
+        /// <summary>把整行标记替换为指定行（Ctrl 之外的单元格/行号点击）</summary>
+        private void ReplaceRowSelection(int displayRow)
+        {
+            if (_selectedRows.Count == 1 && _selectedRows.Contains(displayRow))
+            {
+                UpdateSelectedRowsLabel();
+                return;
+            }
+            var oldSelected = _selectedRows.ToList();
+            _selectedRows.Clear();
+            _selectedRows.Add(displayRow);
+            foreach (var r in oldSelected) InvalidateMarkedRow(r);
+            InvalidateMarkedRow(displayRow);
             UpdateSelectedRowsLabel();
+        }
+
+        /// <summary>Ctrl+点击：追加/取消整行标记</summary>
+        private void ToggleRowSelection(int displayRow)
+        {
+            if (_selectedRows.Contains(displayRow)) _selectedRows.Remove(displayRow);
+            else _selectedRows.Add(displayRow);
+            InvalidateMarkedRow(displayRow);
+            UpdateSelectedRowsLabel();
+        }
+
+        /// <summary>重绘标记行，并多刷下一行以擦除边框溢出到下一行顶部的残留</summary>
+        private void InvalidateMarkedRow(int displayRow)
+        {
+            if (displayRow < 0 || displayRow >= _dataGrid.Rows.Count) return;
+            _dataGrid.InvalidateRow(displayRow);
+            if (displayRow + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(displayRow + 1);
         }
 
         private void OnRowHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            // 行号标记只对应内容区行；冻结行区域的行号不支持标记
+            if (!ReferenceEquals(sender, _dataGrid)) return;
             if (e.Button != MouseButtons.Left || e.RowIndex < 0) return;
             int displayRow = e.RowIndex;
             bool ctrlHeld = (Control.ModifierKeys & Keys.Control) == Keys.Control;
@@ -3743,42 +3935,23 @@ namespace wxd.files.winforms
                 var oldSelected = _selectedRows.ToList();
                 _selectedRows.Clear();
                 if (willSelect) _selectedRows.Add(displayRow);
-                foreach (var r in oldSelected)
-                {
-                    if (r >= 0 && r < _dataGrid.Rows.Count)
-                    {
-                        _dataGrid.InvalidateRow(r);
-                        if (r + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(r + 1);
-                    }
-                }
-                if (willSelect) _dataGrid.InvalidateRow(displayRow);
+                foreach (var r in oldSelected) InvalidateMarkedRow(r);
+                InvalidateMarkedRow(displayRow);
+                UpdateSelectedRowsLabel();
             }
             else
             {
-                if (_selectedRows.Contains(displayRow)) _selectedRows.Remove(displayRow);
-                else _selectedRows.Add(displayRow);
-                _dataGrid.InvalidateRow(displayRow);
-                if (displayRow + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(displayRow + 1);
+                ToggleRowSelection(displayRow);
             }
-            UpdateSelectedRowsLabel();
         }
 
         private void ClearRowSelection()
         {
-            if (_selectedRows.Count > 0)
-            {
-                var oldSelected = _selectedRows.ToList();
-                _selectedRows.Clear();
-                foreach (var r in oldSelected)
-                {
-                    if (r >= 0 && r < _dataGrid.Rows.Count)
-                    {
-                        _dataGrid.InvalidateRow(r);
-                        if (r + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(r + 1);
-                    }
-                }
-                UpdateSelectedRowsLabel();
-            }
+            if (_selectedRows.Count == 0) return;
+            var oldSelected = _selectedRows.ToList();
+            _selectedRows.Clear();
+            foreach (var r in oldSelected) InvalidateMarkedRow(r);
+            UpdateSelectedRowsLabel();
         }
 
         private void EditCell(DataGridViewCell cell, DataGridView dgv)
@@ -4115,6 +4288,9 @@ namespace wxd.files.winforms
 
             // ★ 保存后重新检测唯一列重复
             CheckUniqueColumnDuplicates();
+            // ★ 本路径直接写盘，需手动让缓存失效并通知同缓存页签重算关联
+            _cache.InvalidateFile(_filePath);
+            _cache.NotifyFileSaved(_filePath);
             return true;
         }
 
@@ -4175,6 +4351,9 @@ namespace wxd.files.winforms
 
             // ★ 保存后重新检测唯一列重复
             CheckUniqueColumnDuplicates();
+            // ★ 本路径直接写盘，需手动让缓存失效并通知同缓存页签重算关联
+            _cache.InvalidateFile(_filePath);
+            _cache.NotifyFileSaved(_filePath);
             return true;
         }
 
@@ -4302,7 +4481,7 @@ namespace wxd.files.winforms
 
             string currentRel = GetCurrentRelativePath();
             var link = _columnLinks.FirstOrDefault(l =>
-                l.SourceFile.Equals(currentRel, StringComparison.OrdinalIgnoreCase) &&
+                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(_filePath)) &&
                 l.SourceColumnIndex == origCol);
 
             var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
@@ -4507,6 +4686,9 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(deleteItem);
 
+            // 冻结列（冻结行数=0 时没有列头可用，这里同样提供入口）
+            AppendFrozenColumnMenuItems(ctx, e.ColumnIndex, addSeparator: true);
+
             // ★ 显示右键菜单前主动隐藏 ToolTip，防止 ToolTip 遮挡右键菜单
             _linkToolTip?.Hide();
             ctx.Show(_dataGrid, _dataGrid.PointToClient(Cursor.Position));
@@ -4530,7 +4712,11 @@ namespace wxd.files.winforms
                     await _cache.BuildLinkLookupsAsync(rootDir, columnLinks, filePath);
                     // 构建完成后，通知 UI 刷新（让 tooltip 能获取到最新数据）
                     if (this.IsHandleCreated)
-                        this.BeginInvoke(() => _dataGrid?.Invalidate());
+                        this.BeginInvoke(() =>
+                        {
+                            _dataGrid?.Invalidate();
+                            _dataGridHeader?.Invalidate();
+                        });
                 }
                 catch (Exception ex)
                 {
@@ -4538,6 +4724,45 @@ namespace wxd.files.winforms
                         $"BuildLinkLookupsAsync failed: {ex.Message}");
                 }
             });
+        }
+
+        /// <summary>
+        /// 缓存通知：某个文件已保存。若保存的是本文件，或本文件的关联配置引用了它，
+        /// 则重建关联 lookup 并重绘（否则红色"未找到"提示会停留在旧数据上）。
+        /// </summary>
+        private void OnCacheFileSaved(string savedPath)
+        {
+            if (IsDisposed || Disposing) return;
+
+            if (InvokeRequired)
+            {
+                try { BeginInvoke(new Action<string>(OnCacheFileSaved), savedPath); }
+                catch (InvalidOperationException) { }
+                return;
+            }
+
+            if (string.IsNullOrEmpty(_rootDir) || string.IsNullOrEmpty(_filePath)) return;
+            if (_columnLinks.Count == 0 || string.IsNullOrEmpty(savedPath)) return;
+
+            bool ownSaved = string.Equals(savedPath, _filePath, StringComparison.OrdinalIgnoreCase);
+            bool affected = ownSaved;
+            if (!affected)
+            {
+                var savedName = Path.GetFileName(savedPath);
+                var ownName = Path.GetFileName(_filePath);
+                var currentRel = GetCurrentRelativePath();
+                affected = _columnLinks.Any(l =>
+                    LinkSourceMatcher.Matches(l.SourceFile, currentRel, ownName) &&
+                    l.FieldLinks != null &&
+                    l.FieldLinks.Any(fl => !string.IsNullOrEmpty(fl.TargetFile) &&
+                        string.Equals(Path.GetFileName(fl.TargetFile), savedName,
+                            StringComparison.OrdinalIgnoreCase)));
+            }
+            if (!affected) return;
+
+            FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
+            _dataGrid.Invalidate();
+            _dataGridHeader.Invalidate();
         }
 
         /// <summary>获取状态栏显示文件名（优先使用备注名）</summary>
@@ -5199,6 +5424,9 @@ namespace wxd.files.winforms
                 }
             }
 
+            // 外部注入数据的路径不走 RefreshGridLayout，这里同样套用冻结列设置
+            ApplyFrozenColumns();
+
             // ★ 数据表变更后刷新唯一列下拉选项
             RefreshUniqueColumnCombo();
             // ★ 更新列管理按钮文本（显示"列管理(x/y)"，有隐藏列时红色显示）
@@ -5397,8 +5625,8 @@ namespace wxd.files.winforms
 
                     if (hasChanges || wasNewRow)
                     {
-                        // 重建 _fileData
-                        _fileData = BuildFileData(_dataTable, inheritFrom: null);
+                        // 重建 _fileData；行数未变时按索引继承物理行号（编辑不应让行号区退化）
+                        _fileData = BuildFileData(_dataTable, inheritFrom: _fileData);
 
                         // 重建关联缓存
                         if (_columnLinks.Count > 0)
@@ -5532,7 +5760,7 @@ namespace wxd.files.winforms
             // 如果有排序，先取消排序
             if (_sortColumnIndex >= 0)
             {
-                var result = AlertForm.Show(this,
+                var result = AlertForm.ShowConfirm(this,
                     "当前处于排序状态，插入行前需要先取消排序。是否继续？",
                     "提示", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
@@ -5615,7 +5843,7 @@ namespace wxd.files.winforms
             // 如果有排序，先取消排序
             if (_sortColumnIndex >= 0)
             {
-                var result = AlertForm.Show(this,
+                var result = AlertForm.ShowConfirm(this,
                     "当前处于排序状态，复制行前需要先取消排序。是否继续？",
                     "提示", AlertType.Warning);
                 if (result != DialogResult.Yes) return;
@@ -5772,6 +6000,9 @@ namespace wxd.files.winforms
                 _unsavedRowIndices.Clear();
                 HideDirtyIndicator();
                 RefreshGridLayout();
+                // SaveFile 已同步缓存条目并清掉指向本文件的 lookup，
+                // 这里再通知同缓存页签重算关联着色
+                _cache.NotifyFileSaved(_filePath);
             }
             else
             {
@@ -5789,7 +6020,7 @@ namespace wxd.files.winforms
             if (!_hasUnsavedChanges) return true;
 
             // 仍失败 → 弹窗让用户决定
-            var result = AlertForm.Show(null,
+            var result = AlertForm.ShowConfirm(null,
                 $"文件被占用无法保存，{_unsavedRowIndices.Count} 行修改仅保留在内存中。" + GlobalConst.NewLine + "关闭后修改将丢失，是否继续？",
                 "保存失败", AlertType.Warning);
             return result == DialogResult.Yes;
@@ -5851,6 +6082,10 @@ namespace wxd.files.winforms
         {
             if (disposing)
             {
+                _cache.FileSaved -= OnCacheFileSaved;
+                _retrySaveTimer?.Stop();
+                _retrySaveTimer?.Dispose();
+                _retrySaveTimer = null;
                 _linkToolTip?.Dispose();
                 _linkToolTip = null;
                 _btnHistory?.Dispose();

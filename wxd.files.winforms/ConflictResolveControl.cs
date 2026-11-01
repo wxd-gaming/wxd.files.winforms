@@ -1792,7 +1792,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 保存 ====================
-        private async void SaveMergedResult()
+        private void SaveMergedResult()
         {
             try
             {
@@ -1802,75 +1802,34 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                // 备份到 %temp%/wxd-bak/ 目录，带版本号
-                string backupPath = "";
+                bool targetExists = File.Exists(_filePath);
+
+                // 备份目录放在配置文件所在目录的 .wxd-work/backup（已被 .gitignore 忽略），
+                // 避免 %temp% 被系统清理后失去回滚副本
+                string backupPath = targetExists ? GetConflictBackupPath(_filePath) : "";
+
+                // 先写同目录临时文件（保留原扩展名，保证 CSV/Excel 走正确的写入逻辑），
+                // 成功后再原子替换；失败时原文件保持不变
+                var ext = Path.GetExtension(_filePath);
+                var dir = Path.GetDirectoryName(_filePath) ?? ".";
+                var tempPath = Path.Combine(dir,
+                    $"{Path.GetFileNameWithoutExtension(_filePath)}.{Guid.NewGuid():N}.tmp{ext}");
                 try
                 {
-                    if (File.Exists(_filePath))
-                    {
-                        var bakDir = Path.Combine(Path.GetTempPath(), "wxd-bak");
-                        Directory.CreateDirectory(bakDir);
-                        var fileName = Path.GetFileNameWithoutExtension(_filePath);
-                        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                    if (!FileDataCache.SaveFileDirect(tempPath, _mergedTable))
+                        throw new IOException("写入临时文件失败");
 
-                        // 获取 SVN/Git 版本号
-                        string vcsRevision = "";
-                        try
-                        {
-                            var rootDir = Path.GetDirectoryName(_filePath) ?? "";
-                            if (_vcsType == VcsType.Svn)
-                            {
-                                var psi = new ProcessStartInfo
-                                {
-                                    FileName = "svn",
-                                    Arguments = $"info --show-item revision \"{rootDir}\"",
-                                    RedirectStandardOutput = true,
-                                    RedirectStandardError = true,
-                                    UseShellExecute = false,
-                                    CreateNoWindow = true
-                                };
-                                using var proc = Process.Start(psi);
-                                if (proc != null)
-                                {
-                                    vcsRevision = (await proc.StandardOutput.ReadToEndAsync()).Trim();
-                                    await proc.WaitForExitAsync();
-                                }
-                            }
-                            else if (_vcsType == VcsType.Git)
-                            {
-                                var psi = new ProcessStartInfo
-                                {
-                                    FileName = "git",
-                                    Arguments = $"rev-parse --short HEAD",
-                                    WorkingDirectory = rootDir,
-                                    RedirectStandardOutput = true,
-                                    RedirectStandardError = true,
-                                    UseShellExecute = false,
-                                    CreateNoWindow = true
-                                };
-                                using var proc = Process.Start(psi);
-                                if (proc != null)
-                                {
-                                    vcsRevision = (await proc.StandardOutput.ReadToEndAsync()).Trim();
-                                    await proc.WaitForExitAsync();
-                                }
-                            }
-                        }
-                        catch { }
+                    if (!File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
+                        throw new IOException("写入的临时文件为空");
 
-                        var revisionTag = string.IsNullOrEmpty(vcsRevision) ? "" : $"_{vcsRevision}";
-
-                        backupPath = Path.Combine(bakDir, $"{fileName}_backup{revisionTag}_{timestamp}.bak");
-                        File.Copy(_filePath, backupPath, true);
-                    }
+                    ReplaceFileSafely(tempPath, _filePath,
+                        string.IsNullOrEmpty(backupPath) ? null : backupPath);
                 }
-                catch { }
-
-                // 删除原文件（备份已完成），确保新文件可以覆盖写入
-                try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { }
-
-                // 根据文件扩展名选择保存格式
-                FileDataCache.SaveFileDirect(_filePath, _mergedTable);
+                catch
+                {
+                    TryDeleteFile(tempPath);
+                    throw;
+                }
 
                 // 清除 VCS 冲突标记
                 try
@@ -1879,17 +1838,74 @@ namespace wxd.files.winforms
                 }
                 catch { }
 
-                var backupInfo = string.IsNullOrEmpty(backupPath) ? "" : $" (备份: {Path.GetFileName(backupPath)})";
-                _lblInfo.Text = $"已保存到 {Path.GetFileName(_filePath)}{backupInfo}";
-                AlertForm.Show(ParentForm, "合并结果已保存。" + GlobalConst.NewLine + "原文件已备份到 wxd-bak 临时文件夹。", "保存成功", AlertType.Information);
+                // 让同缓存的其它页签重算关联着色（合并后目标/源数据都变了）
+                _ownerCache?.InvalidateFile(_filePath);
+                _ownerCache?.NotifyFileSaved(_filePath);
+
+                var backupInfo = string.IsNullOrEmpty(backupPath) ? "无备份" : $"备份: {backupPath}";
+                _lblInfo.Text = $"已保存到 {Path.GetFileName(_filePath)} ({backupInfo})";
+                AlertForm.Show(ParentForm, "合并结果已保存。" + GlobalConst.NewLine + backupInfo,
+                    "保存成功", AlertType.Information);
 
                 // 触发保存完成事件
                 SaveCompleted?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
             {
-                AlertForm.Show(ParentForm, $"保存失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                AlertForm.Show(ParentForm,
+                    $"保存失败，原文件未改动：" + GlobalConst.NewLine + ex.Message,
+                    "错误", AlertType.Error, exception: ex);
             }
+        }
+
+        /// <summary>冲突合并备份路径：配置目录\.wxd-work\backup\原文件名_时间戳.bak</summary>
+        private static string GetConflictBackupPath(string filePath)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(filePath) ?? ".";
+                var bakDir = Path.Combine(dir, ".wxd-work", "backup");
+                Directory.CreateDirectory(bakDir);
+                var name = Path.GetFileNameWithoutExtension(filePath);
+                var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                return Path.Combine(bakDir, $"{name}_{stamp}{Path.GetExtension(filePath)}.bak");
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        /// <summary>用临时文件原子替换目标文件；备份失败时退化为复制后覆盖</summary>
+        private static void ReplaceFileSafely(string tempPath, string targetPath, string? backupPath)
+        {
+            if (!File.Exists(targetPath))
+            {
+                File.Move(tempPath, targetPath);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(backupPath))
+            {
+                try
+                {
+                    File.Replace(tempPath, targetPath, backupPath, ignoreMetadataErrors: true);
+                    return;
+                }
+                catch (PlatformNotSupportedException) { }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+
+                // File.Replace 不可用（非 NTFS/权限）→ 手动备份后覆盖
+                File.Copy(targetPath, backupPath, overwrite: true);
+            }
+
+            File.Move(tempPath, targetPath, overwrite: true);
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
         private void SaveMergedResultAs()

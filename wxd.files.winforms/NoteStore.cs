@@ -108,7 +108,7 @@ namespace wxd.files.winforms
                 List<NoteItem> snap;
                 lock (_lock) snap = new List<NoteItem>(_notes);
                 var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-                File.WriteAllText(SavePath, json);
+                AtomicFileWriter.TryWriteAllText(SavePath, json);
             }
             catch
             {

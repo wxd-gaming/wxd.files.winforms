@@ -140,7 +140,8 @@ namespace wxd.files.winforms
                     LinkTemplates = cfg.LinkTemplates,
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(fileCfg, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(configPath, json);
+                // 原子写：配置丢失会导致冻结行/表头行/关联模板整批回退
+                AtomicFileWriter.TryWriteAllText(configPath, json);
             }
             catch (Exception ex)
             {
@@ -511,6 +512,28 @@ namespace wxd.files.winforms
             {
                 var fc = GetOrCreateFileConfig(cfg, relativePath);
                 fc.UniqueColumnIndex = columnIndex;
+                CleanupFileConfig(cfg, relativePath);
+            });
+        }
+
+        /// <summary>获取指定文件的冻结列数（显示列口径，0 = 不冻结）</summary>
+        public static int GetFileFrozenColumnCount(string directoryPath, string relativePath)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return 0;
+            var cfg = TryGetDirConfig(directoryPath);
+            if (cfg == null || !cfg.FileSettings.TryGetValue(relativePath, out var fileCfg))
+                return 0;
+            return fileCfg.FrozenColumnCount is > 0 ? fileCfg.FrozenColumnCount.Value : 0;
+        }
+
+        /// <summary>设置指定文件的冻结列数（0 表示取消冻结）</summary>
+        public static void SetFileFrozenColumnCount(string directoryPath, string relativePath, int columnCount)
+        {
+            if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return;
+            SaveDirConfig(directoryPath, cfg =>
+            {
+                var fc = GetOrCreateFileConfig(cfg, relativePath);
+                fc.FrozenColumnCount = columnCount > 0 ? columnCount : null;
                 CleanupFileConfig(cfg, relativePath);
             });
         }

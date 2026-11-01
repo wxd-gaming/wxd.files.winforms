@@ -22,6 +22,8 @@ namespace wxd.files.winforms
         private int _lastRow = -1, _lastCol = -1;
         private bool _disposed;
         private int _dropDownWidth;
+        /// <summary>由本实例创建、尚未关闭的固定 Tips 窗口（随 Dispose 一起关闭，避免残留孤儿窗口）</summary>
+        private readonly List<PinnedTipWindow> _pinnedWindows = new();
 
         private static readonly Font _titleFont = new("Microsoft YaHei UI", 10f, FontStyle.Bold);
         private static readonly Font _textFont = new("Microsoft YaHei UI", 9f);
@@ -232,7 +234,11 @@ namespace wxd.files.winforms
         {
             if (string.IsNullOrEmpty(title) && lines.Count == 0 && string.IsNullOrEmpty(rawText))
                 return null;
-            return new PinnedTipWindow(title, lines, rawText, screenPos, tableHeaders);
+            // 顺手清理用户已关闭的窗口引用
+            _pinnedWindows.RemoveAll(p => p.IsDisposed);
+            var pinned = new PinnedTipWindow(title, lines, rawText, screenPos, tableHeaders);
+            _pinnedWindows.Add(pinned);
+            return pinned;
         }
 
         public void Dispose()
@@ -242,6 +248,12 @@ namespace wxd.files.winforms
             _hoverTimer?.Dispose();
             _dropDown.Dispose();
             _panel.Dispose();
+            // 宿主控件关闭时一并关闭固定 Tips，否则 AutoClose=false 的窗口会残留
+            foreach (var pinned in _pinnedWindows.ToList())
+            {
+                try { pinned.Close(); } catch { }
+            }
+            _pinnedWindows.Clear();
             // 注意：_titleFont/_textFont/_hintFont 是 static 字段，生命周期应持续到 AppDomain 卸载，
             // 不能在这里 Dispose，否则后续新创建的实例会使用已释放的字体导致 tooltip 文字无法绘制。
         }
@@ -897,6 +909,9 @@ namespace wxd.files.winforms
             private readonly ToolStripDropDown _dropDown;
             private readonly PinnedTipPanel _panel;
             private bool _disposed;
+
+            /// <summary>是否已关闭（供创建方清理引用）</summary>
+            public bool IsDisposed => _disposed;
 
             // 关闭按钮
             private const int CloseBtnSize = 20;

@@ -442,7 +442,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var result = AlertForm.Show(null,
+            var result = AlertForm.ShowConfirm(null,
                 $"当前版本 v{_lastCheckResult.CurrentVersion}，确定要强制重装吗？" + GlobalConst.NewLine +
                 "将重新下载并覆盖当前程序文件。",
                 "强制重装", AlertType.Information);

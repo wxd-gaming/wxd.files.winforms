@@ -3145,6 +3145,18 @@ namespace wxd.files.winforms
 
             if (result != DialogResult.OK) return;
 
+            // CSV/TSV 切割后在第 2 个及以后的分片顶部补一份表头，避免单独打开时丢失列名
+            int headerLineCount = 0;
+            string extLower = Path.GetExtension(_filePath).ToLowerInvariant();
+            if (extLower is ".csv" or ".tsv")
+            {
+                var keepHeader = AlertForm.ShowConfirm(ParentForm!,
+                    "是否在每个分片文件顶部保留首行作为表头？\n\n" +
+                    "选择“确定”保留（推荐），选择“取消”不保留。",
+                    "文件切割", AlertType.Information);
+                if (keepHeader == DialogResult.Yes) headerLineCount = 1;
+            }
+
             Status("正在切割文件...");
             _lblFileLines.Text = "行数：切割中...";
 
@@ -3162,7 +3174,8 @@ namespace wxd.files.winforms
                                 Status($"正在切割文件... ({current}/{total}, {percent}%)");
                                 _lblFileLines.Text = $"行数：切割中 {percent}%";
                             });
-                        });
+                        },
+                        headerLineCount);
 
                     // 切割完成后在 UI 线程提示
                     BeginInvoke(() =>

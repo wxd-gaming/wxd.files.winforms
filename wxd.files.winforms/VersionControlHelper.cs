@@ -90,7 +90,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查 SVN 命令行是否可用（运行 svn --version 验证）</summary>
-        private static string? CheckSvnAvailable()
+        private static async Task<string?> CheckSvnAvailableAsync()
         {
             var svnExe = FindSvnExe();
             if (svnExe == null)
@@ -98,30 +98,18 @@ namespace wxd.files.winforms
 
             try
             {
-                var psi = new ProcessStartInfo
+                var run = await RunProcessAsync(svnExe, "--version", timeoutMs: 10_000).ConfigureAwait(false);
+                if (!run.Started)
                 {
-                    FileName = svnExe,
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var process = Process.Start(psi);
-                if (process == null)
-                    return $"无法启动 SVN 命令行工具（{svnExe}）。请检查安装是否正确。";
-                process.WaitForExit(5000);
-                if (process.ExitCode != 0)
-                {
-                    var err = process.StandardError.ReadToEnd();
-                    return $"SVN 命令行工具异常（{svnExe}）：{err}";
+                    return run.ToolMissing
+                        ? "本功能需要安装 SVN 命令行工具。请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。"
+                        : $"无法启动 SVN 命令行工具（{svnExe}）：{run.Error}";
                 }
+                if (run.TimedOut)
+                    return $"SVN 命令行工具响应超时（{svnExe}）。";
+                if (run.ExitCode != 0)
+                    return $"SVN 命令行工具异常（{svnExe}）：{run.Error.Trim()}";
                 return null; // 可用
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // svn 命令不在 PATH 中（"系统找不到指定的文件"）
-                return "本功能需要安装 SVN 命令行工具。请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
             }
             catch (DirectoryNotFoundException)
             {
@@ -134,34 +122,22 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查 Git 命令行是否可用（运行 git --version 验证）</summary>
-        private static string? CheckGitAvailable()
+        private static async Task<string?> CheckGitAvailableAsync()
         {
             try
             {
-                var psi = new ProcessStartInfo
+                var run = await RunProcessAsync("git", "--version", timeoutMs: 10_000).ConfigureAwait(false);
+                if (!run.Started)
                 {
-                    FileName = "git",
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var process = Process.Start(psi);
-                if (process == null)
-                    return "无法启动 Git 命令行工具（git）。请确认 Git 是否已正确安装。";
-                process.WaitForExit(5000);
-                if (process.ExitCode != 0)
-                {
-                    var err = process.StandardError.ReadToEnd();
-                    return $"Git 命令行工具异常：{err}";
+                    return run.ToolMissing
+                        ? "本功能需要安装 Git 命令行工具。请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。"
+                        : $"无法启动 Git 命令行工具（git）：{run.Error}";
                 }
+                if (run.TimedOut)
+                    return "Git 命令行工具响应超时（git）。";
+                if (run.ExitCode != 0)
+                    return $"Git 命令行工具异常：{run.Error.Trim()}";
                 return null; // 可用
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // git 命令不在 PATH 中（"系统找不到指定的文件"）
-                return "本功能需要安装 Git 命令行工具。请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
             }
             catch (DirectoryNotFoundException)
             {
@@ -180,7 +156,7 @@ namespace wxd.files.winforms
             var result = new VersionHistoryResult();
 
             // 先检查 SVN 命令行是否可用
-            var svnError = CheckSvnAvailable();
+            var svnError = await CheckSvnAvailableAsync().ConfigureAwait(false);
             if (svnError != null)
             {
                 result.ErrorMessage = svnError;
@@ -192,39 +168,35 @@ namespace wxd.files.winforms
 
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = svnExe,
-                    Arguments = $"log --xml -l {maxCount} \"{filePath}\"",
-                    WorkingDirectory = root,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8
-                };
+                var run = await RunProcessAsync(
+                    svnExe,
+                    $"log --xml -l {maxCount} --non-interactive \"{filePath}\"",
+                    workingDirectory: root,
+                    outputEncoding: Encoding.UTF8,
+                    timeoutMs: 60_000,
+                    disableInteractivePrompts: true).ConfigureAwait(false);
 
-                using var process = Process.Start(psi);
-                if (process == null)
+                if (!run.Started)
                 {
-                    result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）。";
+                    result.ErrorMessage = run.ToolMissing
+                        ? "本功能需要安装 SVN 命令行工具。请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。"
+                        : $"无法启动 SVN 进程（{svnExe}）：{run.Error}";
                     return result;
                 }
 
-                // 同时读取 stdout 和 stderr，避免死锁
-                var outputTask = process.StandardOutput.ReadToEndAsync();
-                var stderrTask = process.StandardError.ReadToEndAsync();
-
-                var output = await outputTask;
-                var stderr = await stderrTask;
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode != 0)
+                if (run.TimedOut)
                 {
-                    result.ErrorMessage = $"SVN log 命令执行失败 (exit={process.ExitCode})：{stderr}";
+                    result.ErrorMessage = "SVN log 命令超时（60 秒），已终止。请检查网络或凭据配置。";
                     return result;
                 }
 
+                if (run.ExitCode != 0)
+                {
+                    result.ErrorMessage = $"SVN log 命令执行失败 (exit={run.ExitCode})：{run.Error}";
+                    return result;
+                }
+
+                var output = run.Output;
                 result.Entries = ParseSvnLogXml(output);
 
                 // 诊断：解析结果为空但 stdout 有内容，说明 XML 解析失败
@@ -323,7 +295,7 @@ namespace wxd.files.winforms
             var result = new VersionHistoryResult();
 
             // 先检查 Git 命令行是否可用
-            var gitError = CheckGitAvailable();
+            var gitError = await CheckGitAvailableAsync().ConfigureAwait(false);
             if (gitError != null)
             {
                 result.ErrorMessage = gitError;
@@ -336,34 +308,35 @@ namespace wxd.files.winforms
             try
             {
                 // Git log: 格式为 完整SHA|短SHA|日期|作者|提交信息
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    Arguments = $"log --follow --pretty=format:%H|%h|%ai|%an|%s -{maxCount} -- \"{relativePath}\"",
-                    WorkingDirectory = root,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8
-                };
+                var run = await RunProcessAsync(
+                    "git",
+                    $"log --follow --pretty=format:%H|%h|%ai|%an|%s -{maxCount} -- \"{relativePath}\"",
+                    workingDirectory: root,
+                    outputEncoding: Encoding.UTF8,
+                    timeoutMs: 60_000,
+                    disableInteractivePrompts: true).ConfigureAwait(false);
 
-                using var process = Process.Start(psi);
-                if (process == null)
+                if (!run.Started)
                 {
-                    result.ErrorMessage = "无法启动 Git 进程。";
+                    result.ErrorMessage = run.ToolMissing
+                        ? "本功能需要安装 Git 命令行工具。请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。"
+                        : $"无法启动 Git 进程：{run.Error}";
                     return result;
                 }
 
-                var output = await process.StandardOutput.ReadToEndAsync();
-                var stderr = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode != 0)
+                if (run.TimedOut)
                 {
-                    result.ErrorMessage = $"Git log 命令执行失败 (exit={process.ExitCode})：{stderr}";
+                    result.ErrorMessage = "Git log 命令超时（60 秒），已终止。";
                     return result;
                 }
+
+                if (run.ExitCode != 0)
+                {
+                    result.ErrorMessage = $"Git log 命令执行失败 (exit={run.ExitCode})：{run.Error}";
+                    return result;
+                }
+
+                var output = run.Output;
 
                 var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                 int index = 0;
@@ -414,7 +387,7 @@ namespace wxd.files.winforms
             // 检查命令行工具是否可用
             if (vcs == VcsType.Svn)
             {
-                var svnError = CheckSvnAvailable();
+                var svnError = await CheckSvnAvailableAsync().ConfigureAwait(false);
                 if (svnError != null)
                 {
                     result.ErrorMessage = svnError;
@@ -423,7 +396,7 @@ namespace wxd.files.winforms
             }
             else
             {
-                var gitError = CheckGitAvailable();
+                var gitError = await CheckGitAvailableAsync().ConfigureAwait(false);
                 if (gitError != null)
                 {
                     result.ErrorMessage = gitError;
@@ -441,7 +414,7 @@ namespace wxd.files.winforms
                 string arguments;
                 if (vcs == VcsType.Svn)
                 {
-                    arguments = $"cat -r {revision} \"{filePath}\"";
+                    arguments = $"cat -r {revision} --non-interactive \"{filePath}\"";
                 }
                 else
                 {
@@ -450,41 +423,37 @@ namespace wxd.files.winforms
                     arguments = $"show \"{revision}:{relativePath}\"";
                 }
 
-                var psi = new ProcessStartInfo
-                {
-                    FileName = vcs == VcsType.Svn ? FindSvnExe() : "git",
-                    Arguments = arguments,
-                    WorkingDirectory = root,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                var run = await RunProcessToFileAsync(
+                    vcs == VcsType.Svn ? FindSvnExe()! : "git",
+                    arguments,
+                    tempFile,
+                    workingDirectory: root,
+                    timeoutMs: 120_000,
+                    disableInteractivePrompts: true).ConfigureAwait(false);
 
-                using var process = Process.Start(psi);
-                if (process == null)
+                if (!run.Started)
                 {
-                    result.ErrorMessage = $"无法启动 {(vcs == VcsType.Svn ? "SVN" : "Git")} 导出进程。";
+                    var toolName = vcs == VcsType.Svn ? "SVN" : "Git";
+                    result.ErrorMessage = run.ToolMissing
+                        ? $"本功能需要安装 {toolName} 命令行工具。"
+                        : $"无法启动 {toolName} 导出进程：{run.Error}";
+                    try { File.Delete(tempFile); } catch { }
                     return result;
                 }
 
-                // 异步读取 stdout 和 stderr
-                var stdoutTask = Task.Run(async () =>
+                if (run.TimedOut)
                 {
-                    using var fs = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.Read);
-                    await process.StandardOutput.BaseStream.CopyToAsync(fs);
-                });
-                var stderrTask = process.StandardError.ReadToEndAsync();
+                    result.ErrorMessage = $"{(vcs == VcsType.Svn ? "SVN" : "Git")} 导出超时（120 秒），已终止。";
+                    try { File.Delete(tempFile); } catch { }
+                    return result;
+                }
 
-                await Task.WhenAll(stdoutTask, stderrTask);
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode != 0)
+                if (run.ExitCode != 0)
                 {
-                    var err = stderrTask.Result;
-                    result.ErrorMessage = $"{(vcs == VcsType.Svn ? "SVN" : "Git")} 导出失败 (exit={process.ExitCode})：{err}";
+                    var err = run.Error;
+                    result.ErrorMessage = $"{(vcs == VcsType.Svn ? "SVN" : "Git")} 导出失败 (exit={run.ExitCode})：{err}";
                     System.Diagnostics.Debug.WriteLine(
-                        $"Export error (exit={process.ExitCode}): {err}");
+                        $"Export error (exit={run.ExitCode}): {err}");
                     try { File.Delete(tempFile); } catch { }
                     return result;
                 }
@@ -557,6 +526,198 @@ namespace wxd.files.winforms
             public bool Success => ExitCode == 0;
         }
 
+        /// <summary>子进程执行结果（stdout/stderr 并发读取 + 超时）</summary>
+        internal readonly struct ProcessRunResult
+        {
+            public int ExitCode { get; init; }
+            public string Output { get; init; }
+            public string Error { get; init; }
+            public bool TimedOut { get; init; }
+            public bool Started { get; init; }
+            /// <summary>可执行文件不存在（PATH 中找不到）</summary>
+            public bool ToolMissing { get; init; }
+        }
+
+        /// <summary>
+        /// 运行命令行工具：并发读取 stdout/stderr（避免管道互锁），超时后结束整个进程树。
+        /// </summary>
+        internal static async Task<ProcessRunResult> RunProcessAsync(
+            string fileName,
+            string arguments,
+            string? workingDirectory = null,
+            Encoding? outputEncoding = null,
+            int timeoutMs = 30_000,
+            bool disableInteractivePrompts = false)
+        {
+            var encoding = outputEncoding ?? Encoding.UTF8;
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = encoding,
+                StandardErrorEncoding = encoding
+            };
+            if (!string.IsNullOrEmpty(workingDirectory))
+                psi.WorkingDirectory = workingDirectory;
+            if (disableInteractivePrompts)
+            {
+                // 凭据/编辑器交互会让命令停在一个看不见的窗口上，直接禁用
+                psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+                psi.Environment["GCM_INTERACTIVE"] = "Never";
+                psi.Environment["GIT_EDITOR"] = "true";
+            }
+
+            using var process = new Process { StartInfo = psi };
+            try
+            {
+                if (!process.Start())
+                    return new ProcessRunResult { ExitCode = -1, Output = "", Error = "无法启动进程。", Started = false };
+            }
+            catch (Exception ex)
+            {
+                return new ProcessRunResult
+                {
+                    ExitCode = -1,
+                    Output = "",
+                    Error = ex.Message,
+                    Started = false,
+                    ToolMissing = ex is System.ComponentModel.Win32Exception
+                };
+            }
+
+            // 必须并发读取两个流：只读 stdout 时 stderr 写满管道缓冲会让进程卡死
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            bool timedOut = false;
+            try
+            {
+                using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+                await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = true;
+                try { process.Kill(entireProcessTree: true); } catch { }
+            }
+
+            var output = await stdoutTask.ConfigureAwait(false);
+            var error = await stderrTask.ConfigureAwait(false);
+            if (timedOut)
+            {
+                if (error.Length > 0) error += GlobalConst.Lf;
+                error += $"命令超时（{timeoutMs / 1000} 秒），已终止。";
+            }
+
+            return new ProcessRunResult
+            {
+                ExitCode = timedOut ? -1 : process.ExitCode,
+                Output = output,
+                Error = error,
+                TimedOut = timedOut,
+                Started = true
+            };
+        }
+
+        /// <summary>
+        /// 运行命令行工具并把 stdout 原样写入文件（二进制安全，用于导出文件内容）。
+        /// stderr 并发读取，超时后结束整个进程树。
+        /// </summary>
+        internal static async Task<ProcessRunResult> RunProcessToFileAsync(
+            string fileName,
+            string arguments,
+            string outputFile,
+            string? workingDirectory = null,
+            int timeoutMs = 60_000,
+            bool disableInteractivePrompts = false)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                // stdout 走 BaseStream 原样落盘，不能设置 StandardOutputEncoding
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            if (!string.IsNullOrEmpty(workingDirectory))
+                psi.WorkingDirectory = workingDirectory;
+            if (disableInteractivePrompts)
+            {
+                psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+                psi.Environment["GCM_INTERACTIVE"] = "Never";
+                psi.Environment["GIT_EDITOR"] = "true";
+            }
+
+            using var process = new Process { StartInfo = psi };
+            try
+            {
+                if (!process.Start())
+                    return new ProcessRunResult { ExitCode = -1, Output = "", Error = "无法启动进程。", Started = false };
+            }
+            catch (Exception ex)
+            {
+                return new ProcessRunResult
+                {
+                    ExitCode = -1,
+                    Output = "",
+                    Error = ex.Message,
+                    Started = false,
+                    ToolMissing = ex is System.ComponentModel.Win32Exception
+                };
+            }
+
+            var copyError = "";
+            var copyTask = Task.Run(async () =>
+            {
+                using var fs = new FileStream(outputFile, FileMode.Create, FileAccess.Write, FileShare.Read);
+                await process.StandardOutput.BaseStream.CopyToAsync(fs).ConfigureAwait(false);
+            });
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            bool timedOut = false;
+            try
+            {
+                using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+                await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = true;
+                try { process.Kill(entireProcessTree: true); } catch { }
+            }
+
+            try { await copyTask.ConfigureAwait(false); }
+            catch (Exception ex) { copyError = ex.Message; }
+
+            var error = await stderrTask.ConfigureAwait(false);
+            if (copyError.Length > 0)
+            {
+                if (error.Length > 0) error += GlobalConst.Lf;
+                error += $"写入导出文件失败：{copyError}";
+            }
+            if (timedOut)
+            {
+                if (error.Length > 0) error += GlobalConst.Lf;
+                error += $"命令超时（{timeoutMs / 1000} 秒），已终止。";
+            }
+
+            return new ProcessRunResult
+            {
+                ExitCode = timedOut ? -1 : process.ExitCode,
+                Output = "",
+                Error = error,
+                TimedOut = timedOut,
+                Started = true
+            };
+        }
+
         /// <summary>执行 VCS 更新操作（SVN update 或 Git pull）</summary>
         /// <param name="directory">要更新的目录路径</param>
         /// <param name="vcs">版本控制类型（Svn 或 Git）</param>
@@ -573,6 +734,7 @@ namespace wxd.files.winforms
 
             try
             {
+                ProcessRunResult run;
                 if (vcs == VcsType.Svn)
                 {
                     var svnExe = FindSvnExe();
@@ -582,64 +744,27 @@ namespace wxd.files.winforms
                         return result;
                     }
 
-                    var psi = new ProcessStartInfo
+                    run = await RunProcessAsync(svnExe, $"update \"{directory}\" --non-interactive",
+                        outputEncoding: Encoding.GetEncoding(936),
+                        timeoutMs: 120_000,
+                        disableInteractivePrompts: true).ConfigureAwait(false);
+                    if (!run.Started)
                     {
-                        FileName = svnExe,
-                        Arguments = $"update \"{directory}\" --non-interactive",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.GetEncoding(936),
-                        StandardErrorEncoding = Encoding.GetEncoding(936)
-                    };
-
-                    using var process = Process.Start(psi);
-                    if (process == null)
-                    {
-                        result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）。";
+                        result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）：{run.Error}";
                         return result;
                     }
-
-                    var output = await process.StandardOutput.ReadToEndAsync();
-                    var error = await process.StandardError.ReadToEndAsync();
-                    await process.WaitForExitAsync();
-
-                    result.Started = true;
-                    result.ExitCode = process.ExitCode;
-                    result.Output = output;
-                    result.Error = error;
                 }
                 else if (vcs == VcsType.Git)
                 {
-                    var psi = new ProcessStartInfo
+                    run = await RunProcessAsync("git", "pull --no-edit",
+                        workingDirectory: directory,
+                        timeoutMs: 180_000,
+                        disableInteractivePrompts: true).ConfigureAwait(false);
+                    if (!run.Started)
                     {
-                        FileName = "git",
-                        Arguments = $"pull",
-                        WorkingDirectory = directory,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8
-                    };
-
-                    using var process = Process.Start(psi);
-                    if (process == null)
-                    {
-                        result.ErrorMessage = "无法启动 Git 进程。";
+                        result.ErrorMessage = $"无法启动 Git 进程：{run.Error}";
                         return result;
                     }
-
-                    var output = await process.StandardOutput.ReadToEndAsync();
-                    var error = await process.StandardError.ReadToEndAsync();
-                    await process.WaitForExitAsync();
-
-                    result.Started = true;
-                    result.ExitCode = process.ExitCode;
-                    result.Output = output;
-                    result.Error = error;
                 }
                 else
                 {
@@ -647,15 +772,25 @@ namespace wxd.files.winforms
                     return result;
                 }
 
-                // 检测冲突
-                if (result.Started)
+                result.Started = true;
+                result.ExitCode = run.ExitCode;
+                result.Output = run.Output;
+                result.Error = run.Error;
+                if (run.TimedOut)
+                    result.ErrorMessage = vcs == VcsType.Svn
+                        ? "SVN 更新超时（120 秒），已终止。请检查网络或凭据配置。"
+                        : "Git 更新超时（180 秒），已终止。请检查网络或凭据配置。";
+
+                // 检测冲突：只认明确的冲突行，避免 "no conflicts" 之类误报
                 {
                     var combined = result.Output + GlobalConst.Lf + result.Error;
                     result.ConflictLines = combined
                         .Split(new[] { GlobalConst.Lf, GlobalConst.Cr }, StringSplitOptions.RemoveEmptyEntries)
-                        .Where(line => line.TrimStart().StartsWith("C ") ||
-                                       line.Contains("Conflict discovered") ||
-                                       line.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+                        .Where(line => line.TrimStart().StartsWith("C ", StringComparison.Ordinal) ||
+                                       line.StartsWith("CONFLICT", StringComparison.OrdinalIgnoreCase) ||
+                                       line.Contains("Conflict discovered", StringComparison.OrdinalIgnoreCase) ||
+                                       line.Contains("Automatic merge failed", StringComparison.OrdinalIgnoreCase) ||
+                                       line.StartsWith("Summary of conflicts", StringComparison.OrdinalIgnoreCase))
                         .ToList();
                 }
             }
@@ -689,40 +824,18 @@ namespace wxd.files.winforms
                     var svnExe = FindSvnExe();
                     if (svnExe != null)
                     {
-                        var psi = new ProcessStartInfo
-                        {
-                            FileName = svnExe,
-                            Arguments = $"resolved \"{filePath}\" --non-interactive",
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true
-                        };
-                        using var process = Process.Start(psi);
-                        if (process != null)
-                        {
-                            process.WaitForExit(5000);
-                        }
+                        RunProcessAsync(svnExe, $"resolved \"{filePath}\" --non-interactive",
+                            timeoutMs: 10_000,
+                            disableInteractivePrompts: true).GetAwaiter().GetResult();
                     }
                 }
                 else if (vcs == VcsType.Git)
                 {
                     var root = GetVcsRoot(filePath, VcsType.Git);
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = "git",
-                        Arguments = $"add \"{filePath}\"",
-                        WorkingDirectory = root,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using var process = Process.Start(psi);
-                    if (process != null)
-                    {
-                        process.WaitForExit(5000);
-                    }
+                    RunProcessAsync("git", $"add \"{filePath}\"",
+                        workingDirectory: root,
+                        timeoutMs: 10_000,
+                        disableInteractivePrompts: true).GetAwaiter().GetResult();
                 }
             }
             catch { }

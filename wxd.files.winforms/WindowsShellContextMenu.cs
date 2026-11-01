@@ -216,18 +216,27 @@ namespace wxd.files.winforms
                     // 安装消息处理程序
                     MenuHostWindow window = new MenuHostWindow(control.Handle, contextMenu2, contextMenu3);
 
-                    // 显示菜单
-                    System.Diagnostics.Debug.WriteLine($"显示菜单在位置: {screenX}, {screenY}");
-                    uint commandId = User32.TrackPopupMenuEx(
-                        hMenu,
-                        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                        screenX,
-                        screenY,
-                        control.Handle,
-                        IntPtr.Zero);
+                    uint commandId;
+                    try
+                    {
+                        // 显示菜单
+                        System.Diagnostics.Debug.WriteLine($"显示菜单在位置: {screenX}, {screenY}");
+                        commandId = User32.TrackPopupMenuEx(
+                            hMenu,
+                            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                            screenX,
+                            screenY,
+                            control.Handle,
+                            IntPtr.Zero);
+                    }
+                    finally
+                    {
+                        // 无论 TrackPopupMenuEx 是否异常，都必须解除子类化，
+                        // 否则控件的窗口过程会一直挂着已失效的 IContextMenu 指针
+                        window.ClearHandlers();
+                    }
 
                     System.Diagnostics.Debug.WriteLine($"TrackPopupMenuEx 返回命令ID: {commandId}");
-                    window.ClearHandlers();
 
                     // 执行选中的命令
                     if (commandId > 0)

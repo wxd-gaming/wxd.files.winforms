@@ -356,32 +356,30 @@ namespace wxd.files.winforms
         {
             var result = new Dictionary<string, FileVcsStatus>(StringComparer.OrdinalIgnoreCase);
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                // 使用 "." 限制范围到当前目录的直接文件（不递归子文件夹）
-                Arguments = "status --porcelain -u .",
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8
-            };
+            // core.quotepath=false：否则中文文件名会被输出成 "\344\270\255..."，永远匹配不上
+            var run = await VersionControlHelper.RunProcessAsync(
+                "git",
+                "-c core.quotepath=false status --porcelain -u .",
+                workingDirectory: workingDirectory,
+                timeoutMs: 30_000,
+                disableInteractivePrompts: true).ConfigureAwait(false);
+            if (!run.Started || run.ExitCode != 0) return result;
 
-            using var process = Process.Start(psi);
-            if (process == null) return result;
-
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0) return result;
+            var output = run.Output;
 
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 if (line.Length < 3) continue;
 
                 var xy = line[..2];
-                var path = line[3..].Trim();
+                var path = line[3..].TrimEnd('\r');
+
+                // 重命名/复制：porcelain 输出为 "R  old -> new"
+                if ((xy[0] == 'R' || xy[0] == 'C'))
+                {
+                    int arrow = path.LastIndexOf(" -> ", StringComparison.Ordinal);
+                    if (arrow >= 0) path = path[(arrow + 4)..];
+                }
 
                 // ★ 只处理当前目录的直接文件（不包含子目录路径）
                 var fileName = Path.GetFileName(path.Replace('/', '\\'));
@@ -404,6 +402,8 @@ namespace wxd.files.winforms
                     status = FileVcsStatus.Added;
                 else if (workingStatus == 'D' || stagedStatus == 'D')
                     status = FileVcsStatus.Deleted;
+                else if (stagedStatus == 'R' || stagedStatus == 'C')
+                    status = FileVcsStatus.Added;   // 重命名/复制：新路径视为新增
                 else
                     status = FileVcsStatus.Unknown;
 
@@ -425,27 +425,17 @@ namespace wxd.files.winforms
 
             var svnExe = FindSvnExe() ?? "svn";
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = svnExe,
-                // --depth=immediates 只扫描当前目录的直接子文件和子文件夹，不递归
-                // ★ 注意：不设置 WorkingDirectory，因为路径包含中文字符时
-                //    Process.Start 可能因 WorkingDirectory 为中文路径而抛出异常。
-                //    SVN 命令参数已使用绝对路径，不需要 WorkingDirectory。
-                Arguments = $"status --depth=immediates \"{directoryPath}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.GetEncoding(936)
-            };
+            // --depth=immediates 只扫描当前目录的直接子文件和子文件夹，不递归
+            // ★ 不设置 WorkingDirectory：绝对路径路径参数已足够，避免中文工作目录的问题
+            var run = await VersionControlHelper.RunProcessAsync(
+                svnExe,
+                $"status --depth=immediates --non-interactive \"{directoryPath}\"",
+                outputEncoding: Encoding.GetEncoding(936),
+                timeoutMs: 30_000,
+                disableInteractivePrompts: true).ConfigureAwait(false);
+            if (!run.Started || run.ExitCode != 0) return result;
 
-            using var process = Process.Start(psi);
-            if (process == null) return result;
-
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0) return result;
+            var output = run.Output;
 
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
