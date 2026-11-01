@@ -30,11 +30,21 @@
         }
 
         public CellEditDialog(string initialValue, int row, int col, string fileName = "", string colName = "",
-            Action<string>? onSave = null, bool readOnly = false, string readOnlyMessage = "")
+            Action<string>? onSave = null, bool readOnly = false, string readOnlyMessage = "",
+            bool closeOnSave = false, string? customTitle = null)
         {
             _onSave = onSave;
-            InitializeComponent(readOnly, readOnlyMessage);
+            InitializeComponent(readOnly, readOnlyMessage, closeOnSave);
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
+
+            // 自定义标题：直接用作窗口标题（模态弹窗场景）
+            if (!string.IsNullOrEmpty(customTitle))
+            {
+                Text = customTitle;
+                if (closeOnSave)
+                    _btnCancel.Text = "取消";
+                return;
+            }
 
             string colDisplay = string.IsNullOrEmpty(colName)
                 ? (col >= 0 && col < 26 ? ((char)('A' + col)).ToString() : $"Col{col}")
@@ -57,7 +67,7 @@
             inactive.FlatAppearance.BorderColor = Color.FromArgb(173, 209, 237);
         }
 
-        private void InitializeComponent(bool readOnly = false, string readOnlyMessage = "")
+        private void InitializeComponent(bool readOnly = false, string readOnlyMessage = "", bool closeOnSave = false)
         {
             SuspendLayout();
 
@@ -151,8 +161,18 @@
             };
             _btnSave.Click += (s, e) =>
             {
-                _lblSaveTime.Text = $"已保存 {DateTime.Now:HH:mm:ss}";
-                _onSave?.Invoke(CellValue);
+                if (closeOnSave)
+                {
+                    // 模态模式：保存后立即关闭，由调用方读取 CellValue
+                    _onSave?.Invoke(CellValue);
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+                else
+                {
+                    _lblSaveTime.Text = $"已保存 {DateTime.Now:HH:mm:ss}";
+                    _onSave?.Invoke(CellValue);
+                }
             };
 
             // 保存时间标签
