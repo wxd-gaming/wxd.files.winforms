@@ -530,6 +530,7 @@ namespace wxd.files.winforms
         public static void SetFileFrozenColumnCount(string directoryPath, string relativePath, int columnCount)
         {
             if (string.IsNullOrEmpty(directoryPath) || string.IsNullOrEmpty(relativePath)) return;
+            columnCount = Math.Max(0, columnCount);  // 上传值只允许非负，越界上限由调用方按实际列数钳制
             SaveDirConfig(directoryPath, cfg =>
             {
                 var fc = GetOrCreateFileConfig(cfg, relativePath);

@@ -112,6 +112,20 @@ public List<int> GetVisibleColumnIndices()
   - 前者按原始列索引（DataTable列数）
   - 后者按可见列顺序排列（过滤后的索引→原始索引映射）
 
+### 4.6 冻结列（显示列口径）
+
+| 项 | 位置 | 说明 |
+|----|------|------|
+| 状态 | `_frozenColumnCount` | 冻结最左侧 N 个**显示列**；`ApplyFrozenColumns()` 按 `Columns.Count - 1` 钳制并回写字段（隐藏列后菜单勾选态不会脱节） |
+| 菜单 | `ShowColumnFreezeMenu()` / `AppendFrozenColumnMenuItems()` | 列头右键、单元格右键、冻结行右键共用；`_columnManagementDisabled` 时不出菜单 |
+| 持久化 | `CsvSettings.GetFileFrozenColumnCount` / `SetFileFrozenColumnCount` | 存 `.wxd-work/config.json` 的 `FileSettings.<相对路径>.FrozenColumnCount`；`_isEmbeddedMode` 不写盘 |
+| 重绑后套用 | `ApplyFrozenColumns()` | 所有 `DataSource` 重绑路径都要调用：`RefreshGridLayout`、`RefreshFilteredDisplay` 调用方、`ApplyFilterResultToUI`、`BindDataTableInBatches`、`RefreshGridLayoutWithProgressAsync`、`SetDataTable` |
+| 列头归属 | `SetFrozenPanelVisible(bool)` | 冻结行面板显示时列头在 `_dataGridHeader`；折叠时 `_dataGrid.ColumnHeadersVisible = true`，由内容区显示列头 |
+
+- 两个网格必须用同一个 `count`：`ApplyFrozenColumnsToGrid` 先自右向左解冻，再按显示顺序冻结前缀，避免冻结区出现空洞
+- 冻结列数变化后要重新对齐横向滚动偏移（`_preferredHorizontalOffset`）
+- **❌ 不要直接写 `_pnlGridContainer.Panel1Collapsed`**：必须走 `SetFrozenPanelVisible()`，否则冻结行=0 时整张表没有列头
+
 ---
 
 ## 5. 列关联系统 ⭐⭐
@@ -195,7 +209,8 @@ public List<int> GetVisibleColumnIndices()
 
 ### 6.2 冻结行 = 0 时
 
-- `Panel1Collapsed = true`（冻结行面板折叠）
+- `SetFrozenPanelVisible(false)` → `Panel1Collapsed = true`
+- 同时 `_dataGrid.ColumnHeadersVisible = true`：列头由内容区显示（否则整张表没有列头，冻结列也无从入口）
 - `_dataGrid.DataSource = _dataTable`（主体直接绑定完整数据）
 - 不需要 `_visibleColumnIndices` 投影
 
@@ -214,14 +229,15 @@ public List<int> GetVisibleColumnIndices()
    a. 构建 _headerTable（冻结行投影到可见列）
    b. _dataGridHeader.DataSource = _headerTable
    c. 设置列标题（_headerRowIndex 对应的行值 或 Excel列名）
-   d. Panel1Collapsed = false
+   d. SetFrozenPanelVisible(true)
    e. SplitterDistance = _frozenRows * 24 + 28
    f. 内容过滤 → GetVisibleRows() → RefreshFilteredDisplay()
 3. 冻结行 = 0:
-   a. Panel1Collapsed = true
+   a. SetFrozenPanelVisible(false)
    b. _dataGrid.DataSource = _dataTable
    c. 设置列标题
    d. SetRowTags()
+4. 末尾 ApplyFrozenColumns() + RebuildSelectedRowIndices()
 ```
 
 ### 6.5 修改禁区
@@ -229,6 +245,7 @@ public List<int> GetVisibleColumnIndices()
 - **❌ 两个 DataGridView 的投影必须同步**（冻结行和主体数据使用相同的 `_visibleColumnIndices`）
 - **❌ `_headerRowIndex` 必须 < `_frozenRows`**
 - **❌ 冻结行修改后需用 `FirstDisplayedScrollingRowIndex` 恢复滚动位置**
+- **❌ 折叠/展开 Panel1 统一走 `SetFrozenPanelVisible()`**：直接改 `Panel1Collapsed` 会让列头跟着消失
 
 ### 6.6 行号显示（RowHeader 自绘）
 
@@ -248,9 +265,13 @@ public List<int> GetVisibleColumnIndices()
 
 | 操作 | 入口 | 说明 |
 |------|------|------|
-| 标记行 | `OnRowHeaderMouseClick`（左键，Ctrl 多选） | 写 `_selectedRows`（显示行索引），`UpdateSelectedRowsLabel()` 在状态栏汇总"源文件 L{min}–L{max}" |
+| 标记行 | `OnCellClick` / `OnRowHeaderMouseClick`（左键，Ctrl 多选）→ `ReplaceRowSelection()` / `ToggleRowSelection()` | 物理行号写 `_markedLineNumbers`（跨刷新稳定），`_selectedRows` 只是当前视图的显示行索引，`OnRowPostPaint` 按它描边；`UpdateSelectedRowsLabel()` 在状态栏汇总"源文件 L{min}–L{max}" |
 | 行号菜单 | `OnGridCellMouseDown` → `ShowRowNumberMenu()`（右键 `e.ColumnIndex < 0`） | 复制行号 / 只看该行号（写入 `@line=N`）/ 跳转到行号 / 清除标记；**不受 `ContextMenuMode` 限制**，阅读器、版本对比、冲突解决三处一致 |
 | 按行号跳转 | `NavigateToPhysicalLine(long)` | 扫 `_dataGrid.Rows[i].Tag` 的 `DisplayLineNumber`；命中冻结区时滚 `_dataGridHeader`；未命中在 `_lblInfo` 区分"被过滤隐藏"和"没有这一行"。输入框为 `LineNumberJumpDialog` |
+
+- **标记按行号记账**：所有重绑路径（`RefreshGridLayout` / `ApplyFilterResultToUI` / `RefreshGridLayoutWithProgressAsync`）末尾都要调用 `RebuildSelectedRowIndices()`；被过滤隐藏的标记保留在 `_markedLineNumbers`，条件清除后自动回到视图
+- **行数变化的操作先清标记**：新增/复制/删除/放弃新增行会重建 `_fileData`（`PhysicalStartLine` 退化为 -1），继续按行号映射会落错行，统一先 `ClearRowSelection()`
+- **行编辑提交与重试保存要保位**：`ExitRowEditMode()` / `TryFlushToDisk()` 刷新前记录 `FirstDisplayedScrollingRowIndex` 与当前单元格，刷新后用 `RestoreScrollAndCurrentCell()` 还原
 
 - **跳转落点靠 `CurrentCell`**：只读网格（版本对比/冲突解决）里 `row.Selected = true` 不生效，`RevealRow()` 必须设置 `CurrentCell` 才有可见反馈
 

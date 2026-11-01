@@ -178,6 +178,9 @@ namespace wxd.files.winforms
         private static readonly Color _colorRowNumBg = Color.FromArgb(224, 236, 248);   // 比数据区更深一档，行号区和数据列一眼能分开
         private static readonly Color _colorRowNumberText = Color.FromArgb(58, 96, 138);
         private static readonly Color _colorRowSelectedBorder = Color.FromArgb(255, 69, 0); // OrangeRed，醒目
+        /// <summary>标记行按源文件物理行号记账：重新绑定/过滤/排序后仍能把标记落到同一行</summary>
+        private readonly HashSet<int> _markedLineNumbers = new();
+        /// <summary>标记行在当前视图中的显示行索引，由 _markedLineNumbers 映射，每次重绑后必须重建</summary>
         private HashSet<int> _selectedRows = new();
 
         private bool _lightweight;
@@ -857,6 +860,8 @@ namespace wxd.files.winforms
                         }
                     };
                     ctx.Items.Add(pinItem2);
+                    // 冻结行区同样提供冻结列入库，入口不随面板布局变化
+                    AppendFrozenColumnMenuItems(ctx, e.ColumnIndex, addSeparator: true);
                     // ★ 显示右键菜单前主动隐藏 ToolTip，防止 ToolTip 遮挡右键菜单
                     _linkToolTip?.Hide();
                     ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
@@ -878,7 +883,6 @@ namespace wxd.files.winforms
             _dataGrid.Dock = DockStyle.Fill;
             _dataGrid.RowHeadersWidth = 50;
             _dataGrid.RowPostPaint += OnRowPostPaint;
-            _dataGrid.ColumnHeadersVisible = false;
             _dataGrid.CellMouseDown += OnGridCellMouseDown;
 
             _dataGrid.Scroll += (s, e) =>
@@ -1138,7 +1142,8 @@ namespace wxd.files.winforms
             ctx.Font = new Font("Microsoft YaHei UI", 9f);
             AppendFrozenColumnMenuItems(ctx, displayColumnIndex, addSeparator: false);
             _linkToolTip?.Hide();
-            ctx.Show(_dataGridHeader, _dataGridHeader.PointToClient(Cursor.Position));
+            // 不绑定 owner：冻结行面板折叠时列头在 _dataGrid 上，菜单跟随鼠标位置显示
+            ctx.Show(Cursor.Position);
         }
 
         /// <summary>把冻结列菜单项追加到已有右键菜单（列头菜单和单元格菜单共用）</summary>
@@ -1168,7 +1173,8 @@ namespace wxd.files.winforms
 
         private void SetFrozenColumnCount(int count)
         {
-            count = Math.Max(0, count);
+            // 至少保留一列可滚动区域，同时保证保存到配置里的值一定是可用的
+            count = Math.Clamp(count, 0, Math.Max(0, _dataGrid.Columns.Count - 1));
             if (count == _frozenColumnCount) return;
             _frozenColumnCount = count;
             if (!_isEmbeddedMode && !_columnManagementDisabled && !string.IsNullOrEmpty(FrozenDir))
@@ -1176,10 +1182,21 @@ namespace wxd.files.winforms
             ApplyFrozenColumns();
         }
 
+        /// <summary>冻结行面板显示/隐藏。隐藏时内容区自己显示列头，否则整张表一个列头都没有。</summary>
+        private void SetFrozenPanelVisible(bool visible)
+        {
+            _pnlGridContainer.Panel1Collapsed = !visible;
+            _dataGrid.ColumnHeadersVisible = !visible;
+        }
+
         /// <summary>把 _frozenColumnCount 应用到两个网格。列数变化（隐藏列/刷新）后需重新调用</summary>
         private void ApplyFrozenColumns()
         {
             int desired = Math.Clamp(_frozenColumnCount, 0, Math.Max(0, _dataGrid.Columns.Count - 1));
+            // 隐藏列后原冻结数可能越界，回写到字段，保证菜单勾选态和实际一致。
+            // Columns 为空（尚未绑定）时不回写，避免把已保存的冻结数临时清成 0。
+            if (_dataGrid.Columns.Count > 0)
+                _frozenColumnCount = desired;
             ApplyFrozenColumnsToGrid(_dataGrid, desired);
             ApplyFrozenColumnsToGrid(_dataGridHeader, desired);
 
@@ -1230,6 +1247,7 @@ namespace wxd.files.winforms
                 AllowUserToDeleteRows = false,
                 ReadOnly = true,  // 默认只读（浏览模式），行编辑模式下临时设为false
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
+                MultiSelect = false,  // 整行标记由 _selectedRows 单独绘制，不叠加 DGV 多选
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
@@ -1425,6 +1443,8 @@ namespace wxd.files.winforms
         private async Task OnDataLoadedAsync(DataTable dataTable, DataTable headerTable, FileTableData fileData, string infoText)
         {
             _dataTable = dataTable;
+            // 数据重新加载后旧标记对应的是上一份数据，直接清掉（重新加载/切换文件场景）
+            ClearRowSelection();
             // ★ 直接使用 LoadFile 返回的 FileTableData（首次加载无需 inheritFrom，避免第三次全量遍历）
             //    BuildFileData 仍保留供排序/过滤/版本对比场景调用
             _fileData = fileData;
@@ -2000,6 +2020,7 @@ namespace wxd.files.winforms
                 // 行号列取的是行上的 Tag（TableRow → 源文件物理行号），这条路径不挂 Tag 的话
                 // 首屏行号会退化成连续记录号，带引号换行的 CSV 就和源文件行号对不上
                 SetRowTags();
+                ApplyFrozenColumns();
                 return;
             }
 
@@ -2044,6 +2065,8 @@ namespace wxd.files.winforms
             // ★ 阶段4：统一引用，保证后续编辑/排序基于同一份数据
             _dataTable = displayTable;
             SetRowTags();
+            // 这条路径不走 RefreshGridLayout，持久化的冻结列必须在这里补一次
+            ApplyFrozenColumns();
             UpdateLoadingProgress(100, "完成");
         }
 
@@ -2182,6 +2205,8 @@ namespace wxd.files.winforms
         {
             if (_dataTable.Columns.Count == 0) return;
 
+            // 重绑会重建所有行：先丢掉旧的显示行索引（重绑后按行号重建），
+            // 但 _markedLineNumbers 保留，标记不会因为过滤/排序/编辑刷新而丢
             _selectedRows.Clear();
             UpdateSelectedRowsLabel();
             UpdateRowHeadersWidth();
@@ -2213,7 +2238,7 @@ namespace wxd.files.winforms
                     _headerTable.Rows.Add(targetRow);
                 }
 
-                _pnlGridContainer.Panel1Collapsed = false;
+                SetFrozenPanelVisible(true);
                 _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
                 _dataGridHeader.DataSource = _headerTable;
 
@@ -2299,7 +2324,7 @@ namespace wxd.files.winforms
             }
             else
             {
-                _pnlGridContainer.Panel1Collapsed = true;
+                SetFrozenPanelVisible(false);
 
                 _contentSearchMatchCells = GetContentMatchCells(_txtContentFilter.Text.Trim());
                 var (_, advMatchCellsNoFreeze) = GetAdvVisibleRowIndices();
@@ -2326,6 +2351,7 @@ namespace wxd.files.winforms
                     }
                     RefreshFilteredDisplay(sortedRows);
                     ApplyFrozenColumns();
+                    RebuildSelectedRowIndices();
                     return;
                 }
 
@@ -2365,6 +2391,7 @@ namespace wxd.files.winforms
             }
 
             ApplyFrozenColumns();
+            RebuildSelectedRowIndices();
         }
 
         /// <summary>将 _fileData.Rows 挂到 _dataGrid 每行的 Tag 上</summary>
@@ -2992,7 +3019,7 @@ namespace wxd.files.winforms
                     _headerTable.Rows.Add(targetRow);
                 }
 
-                _pnlGridContainer.Panel1Collapsed = false;
+                SetFrozenPanelVisible(true);
                 _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
                 _dataGridHeader.DataSource = _headerTable;
 
@@ -3058,7 +3085,7 @@ namespace wxd.files.winforms
             else
             {
                 // 无冻结行场景
-                _pnlGridContainer.Panel1Collapsed = true;
+                SetFrozenPanelVisible(false);
                 _dataGrid.DataSource = result.FilteredTable;
 
                 // 设置 Tag
@@ -3109,6 +3136,10 @@ namespace wxd.files.winforms
                 _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
                 _lblInfo.Text = _duplicateWarningText;
             }
+
+            // 后台过滤是独立的重绑路径：冻结列要补套，标记要按行号映射到新的显示行索引
+            ApplyFrozenColumns();
+            RebuildSelectedRowIndices();
         }
 
         /// <summary>后台过滤结果数据容器</summary>
@@ -3523,7 +3554,7 @@ namespace wxd.files.winforms
                     targetRow[j] = sourceRow[_visibleColumnIndices[j]];
                 _headerTable.Rows.Add(targetRow);
             }
-            _pnlGridContainer.Panel1Collapsed = false;
+            SetFrozenPanelVisible(true);
             _pnlGridContainer.SplitterDistance = _frozenRows * 24 + 28;
             _dataGridHeader.DataSource = _headerTable;
             for (int i = 0; i < _dataGridHeader.Columns.Count; i++)
@@ -3669,6 +3700,7 @@ namespace wxd.files.winforms
             }
 
             ApplyFrozenColumns();
+            RebuildSelectedRowIndices();
             UpdateLoadingProgress(100, "完成");
         }
 
@@ -3877,7 +3909,7 @@ namespace wxd.files.winforms
                 if (ctrlHeld) ToggleRowSelection(e.RowIndex);
                 else ReplaceRowSelection(e.RowIndex);
             }
-            else if (_selectedRows.Count > 0)
+            else if (_markedLineNumbers.Count > 0)
             {
                 // 冻结行区域点击：沿用旧行为，清除内容区标记
                 ClearRowSelection();
@@ -3892,12 +3924,16 @@ namespace wxd.files.winforms
         /// <summary>把整行标记替换为指定行（Ctrl 之外的单元格/行号点击）</summary>
         private void ReplaceRowSelection(int displayRow)
         {
-            if (_selectedRows.Count == 1 && _selectedRows.Contains(displayRow))
+            var line = GetMarkableLineNumber(displayRow);
+            if (line == null) return;  // 占位行没有源文件行号，不参与标记
+            if (_markedLineNumbers.Count == 1 && _markedLineNumbers.Contains(line.Value))
             {
                 UpdateSelectedRowsLabel();
                 return;
             }
             var oldSelected = _selectedRows.ToList();
+            _markedLineNumbers.Clear();
+            _markedLineNumbers.Add(line.Value);
             _selectedRows.Clear();
             _selectedRows.Add(displayRow);
             foreach (var r in oldSelected) InvalidateMarkedRow(r);
@@ -3908,9 +3944,46 @@ namespace wxd.files.winforms
         /// <summary>Ctrl+点击：追加/取消整行标记</summary>
         private void ToggleRowSelection(int displayRow)
         {
-            if (_selectedRows.Contains(displayRow)) _selectedRows.Remove(displayRow);
-            else _selectedRows.Add(displayRow);
+            var line = GetMarkableLineNumber(displayRow);
+            if (line == null) return;
+            if (_selectedRows.Contains(displayRow))
+            {
+                _markedLineNumbers.Remove(line.Value);
+                _selectedRows.Remove(displayRow);
+            }
+            else
+            {
+                _markedLineNumbers.Add(line.Value);
+                _selectedRows.Add(displayRow);
+            }
             InvalidateMarkedRow(displayRow);
+            UpdateSelectedRowsLabel();
+        }
+
+        /// <summary>取显示行可标记的源文件物理行号（占位行返回 null）</summary>
+        private int? GetMarkableLineNumber(int displayRow)
+        {
+            if (displayRow < 0 || displayRow >= _dataGrid.Rows.Count) return null;
+            return (_dataGrid.Rows[displayRow].Tag as TableRow)?.DisplayLineNumber;
+        }
+
+        /// <summary>重绑 DataGridView 后按 _markedLineNumbers 重算显示行索引。
+        /// 被过滤隐藏的标记行保留在 _markedLineNumbers 中，过滤条件去掉后自动回到视图。</summary>
+        private void RebuildSelectedRowIndices()
+        {
+            _selectedRows.Clear();
+            if (_markedLineNumbers.Count > 0)
+            {
+                for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                {
+                    if (_dataGrid.Rows[i].Tag is TableRow tr
+                        && tr.DisplayLineNumber is int line
+                        && _markedLineNumbers.Contains(line))
+                    {
+                        _selectedRows.Add(i);
+                    }
+                }
+            }
             UpdateSelectedRowsLabel();
         }
 
@@ -3922,33 +3995,31 @@ namespace wxd.files.winforms
             if (displayRow + 1 < _dataGrid.Rows.Count) _dataGrid.InvalidateRow(displayRow + 1);
         }
 
+        /// <summary>RefreshGridLayout 重建行后恢复滚动位置与当前单元格（行数不变时按显示索引恢复）</summary>
+        private void RestoreScrollAndCurrentCell(int scrollRow, int currentRow, int currentCol)
+        {
+            if (scrollRow >= 0 && scrollRow < _dataGrid.Rows.Count)
+                _dataGrid.FirstDisplayedScrollingRowIndex = scrollRow;
+            if (currentRow >= 0 && currentRow < _dataGrid.Rows.Count
+                && currentCol >= 0 && currentCol < _dataGrid.Rows[currentRow].Cells.Count)
+                _dataGrid.CurrentCell = _dataGrid.Rows[currentRow].Cells[currentCol];
+        }
+
         private void OnRowHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
         {
             // 行号标记只对应内容区行；冻结行区域的行号不支持标记
             if (!ReferenceEquals(sender, _dataGrid)) return;
             if (e.Button != MouseButtons.Left || e.RowIndex < 0) return;
-            int displayRow = e.RowIndex;
             bool ctrlHeld = (Control.ModifierKeys & Keys.Control) == Keys.Control;
-            if (!ctrlHeld)
-            {
-                bool willSelect = !_selectedRows.Contains(displayRow);
-                var oldSelected = _selectedRows.ToList();
-                _selectedRows.Clear();
-                if (willSelect) _selectedRows.Add(displayRow);
-                foreach (var r in oldSelected) InvalidateMarkedRow(r);
-                InvalidateMarkedRow(displayRow);
-                UpdateSelectedRowsLabel();
-            }
-            else
-            {
-                ToggleRowSelection(displayRow);
-            }
+            if (ctrlHeld) ToggleRowSelection(e.RowIndex);
+            else ReplaceRowSelection(e.RowIndex);
         }
 
         private void ClearRowSelection()
         {
-            if (_selectedRows.Count == 0) return;
+            if (_markedLineNumbers.Count == 0 && _selectedRows.Count == 0) return;
             var oldSelected = _selectedRows.ToList();
+            _markedLineNumbers.Clear();
             _selectedRows.Clear();
             foreach (var r in oldSelected) InvalidateMarkedRow(r);
             UpdateSelectedRowsLabel();
@@ -4455,6 +4526,12 @@ namespace wxd.files.winforms
 
         private void OnGridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
         {
+            // 内容区列头右键：无冻结行时列头由 _dataGrid 自己显示，冻结列入口要和固定行网格一致
+            if (e.Button == MouseButtons.Right && e.RowIndex == -1)
+            {
+                if (e.ColumnIndex >= 0) ShowColumnFreezeMenu(e.ColumnIndex);
+                return;
+            }
             if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
 
             // ★ 行号区（RowHeader）右键：行号操作不受 ContextMenuMode 限制，阅读器/版本对比/冲突解决三处一致
@@ -4686,6 +4763,14 @@ namespace wxd.files.winforms
             }
             ctx.Items.Add(deleteItem);
 
+            // 清除标记：和行号右键菜单保持同一入口
+            if (_markedLineNumbers.Count > 0)
+            {
+                var clearMarksItem = new ToolStripMenuItem($"清除标记（{_markedLineNumbers.Count} 行）");
+                clearMarksItem.Click += (s, args) => ClearRowSelection();
+                ctx.Items.Add(clearMarksItem);
+            }
+
             // 冻结列（冻结行数=0 时没有列头可用，这里同样提供入口）
             AppendFrozenColumnMenuItems(ctx, e.ColumnIndex, addSeparator: true);
 
@@ -4846,7 +4931,7 @@ namespace wxd.files.winforms
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
         {
             // 画选中行整行边框（1px，橙红色，醒目）
-            // 注意：e.RowBounds 是屏幕坐标（已含滚动偏移），第一行 Top=0（ColumnHeadersVisible=false）
+            // 注意：e.RowBounds 是屏幕坐标（已含滚动偏移），直接按它画即可；
             // 右边界只画到可见列总宽，不画到右侧空白区域
             if (_selectedRows.Contains(e.RowIndex))
             {
@@ -4932,9 +5017,9 @@ namespace wxd.files.winforms
             };
             ctx.Items.Add(jumpItem);
 
-            if (_selectedRows.Count > 0)
+            if (_markedLineNumbers.Count > 0)
             {
-                var clearItem = new ToolStripMenuItem($"清除标记（{_selectedRows.Count} 行）");
+                var clearItem = new ToolStripMenuItem($"清除标记（{_markedLineNumbers.Count} 行）");
                 clearItem.Click += (s, args) => ClearRowSelection();
                 ctx.Items.Add(clearItem);
             }
@@ -4978,26 +5063,14 @@ namespace wxd.files.winforms
         /// <summary>底部状态栏的选中标记摘要（行号区间 + 行数）</summary>
         private void UpdateSelectedRowsLabel()
         {
-            if (_selectedRows.Count == 0)
+            if (_markedLineNumbers.Count == 0)
             {
                 _lblRowNumber.Text = "";
                 return;
             }
-            int? min = null, max = null;
-            foreach (int displayRow in _selectedRows)
-            {
-                if (displayRow < 0 || displayRow >= _dataGrid.Rows.Count) continue;
-                var line = (_dataGrid.Rows[displayRow].Tag as TableRow)?.DisplayLineNumber;
-                if (line == null) continue;
-                if (min == null || line < min) min = line;
-                if (max == null || line > max) max = line;
-            }
-            if (min == null || max == null)
-            {
-                _lblRowNumber.Text = $"已标记 {_selectedRows.Count} 行";
-                return;
-            }
-            _lblRowNumber.Text = $"已标记 {_selectedRows.Count} 行（源文件 L{min}–L{max}）";
+            int min = _markedLineNumbers.Min();
+            int max = _markedLineNumbers.Max();
+            _lblRowNumber.Text = $"已标记 {_markedLineNumbers.Count} 行（源文件 L{min}–L{max}）";
         }
 
         private void OnFrozenRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
@@ -5335,6 +5408,8 @@ namespace wxd.files.winforms
             // ★ 彻底清理旧绑定，避免多次切换后事件/引用累积导致卡顿
             _dataGrid.DataSource = null;
             _dataGridHeader.DataSource = null;
+            // 换表后旧的标记行不再属于当前数据，清掉避免残留标记
+            ClearRowSelection();
             // 清理可能由外部附加的 CellFormatting 事件（如版本对比的差异高亮）
             _dataGrid.CellFormatting -= OnExternalCellFormatting;
             // 清理高亮状态
@@ -5383,7 +5458,7 @@ namespace wxd.files.winforms
                 RefreshGridLayout();
             else
             {
-                _pnlGridContainer.Panel1Collapsed = true;
+                SetFrozenPanelVisible(false);
                 _dataGrid.DataSource = _dataTable;
                 for (int i = 0; i < _dataGrid.Columns.Count; i++)
                 {
@@ -5649,7 +5724,11 @@ namespace wxd.files.winforms
                         }
 
                         // 刷新显示（重建 Grid 以反映 _dataTable 的变更）
+                        int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+                        int currentRow = _dataGrid.CurrentRow?.Index ?? -1;
+                        int currentCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
                         RefreshGridLayout();
+                        RestoreScrollAndCurrentCell(scrollRow, currentRow, currentCol);
 
                         // 如果保存失败，刷新后需要恢复状态栏提示（RefreshGridLayout 会清空 _lblInfo.Text）
                         if (!saved && _unsavedRowIndices.Count > 0)
@@ -5717,7 +5796,13 @@ namespace wxd.files.winforms
                     if (_columnLinks.Count > 0)
                         FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
+                    // 行数变化后按行号映射不可靠，显式清标记；滚动位置尽量保持
+                    int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+                    int currentRow = _dataGrid.CurrentRow?.Index ?? -1;
+                    int currentCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
+                    ClearRowSelection();
                     RefreshGridLayout();
+                    RestoreScrollAndCurrentCell(scrollRow, currentRow, currentCol);
                 }
                 else if (snapShot != null && editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
                 {
@@ -5792,6 +5877,9 @@ namespace wxd.files.winforms
             // 重建关联缓存
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
+
+            // 行数变化后物理行号口径会变化，按行号映射的标记无法可靠还原，显式清掉
+            ClearRowSelection();
 
             // 刷新显示
             RefreshGridLayout();
@@ -5871,6 +5959,9 @@ namespace wxd.files.winforms
             // 重建关联缓存
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
+
+            // 行数变化后物理行号口径会变化，按行号映射的标记无法可靠还原，显式清掉
+            ClearRowSelection();
 
             // 刷新显示
             RefreshGridLayout();
@@ -5953,6 +6044,9 @@ namespace wxd.files.winforms
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
 
+            // 行数变化后物理行号口径会变化，按行号映射的标记无法可靠还原，显式清掉
+            ClearRowSelection();
+
             // 刷新显示
             RefreshGridLayout();
 
@@ -5999,7 +6093,11 @@ namespace wxd.files.winforms
                 _hasUnsavedChanges = false;
                 _unsavedRowIndices.Clear();
                 HideDirtyIndicator();
+                int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+                int currentRow = _dataGrid.CurrentRow?.Index ?? -1;
+                int currentCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
                 RefreshGridLayout();
+                RestoreScrollAndCurrentCell(scrollRow, currentRow, currentCol);
                 // SaveFile 已同步缓存条目并清掉指向本文件的 lookup，
                 // 这里再通知同缓存页签重算关联着色
                 _cache.NotifyFileSaved(_filePath);

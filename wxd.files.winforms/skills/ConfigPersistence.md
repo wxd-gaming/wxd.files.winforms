@@ -36,9 +36,15 @@
 ├── ExcelFrozenRows         — Excel冻结行数
 ├── CsvHeaderRowIndex       — CSV表头行索引
 ├── ExcelHeaderRowIndex     — Excel表头行索引
+├── CsvMappingRowIndex      — CSV映射行索引
+├── ExcelMappingRowIndex    — Excel映射行索引
+├── CsvUniqueColumnIndex    — CSV唯一列索引
+├── ExcelUniqueColumnIndex  — Excel唯一列索引
 ├── ColumnLinks             — 列关联配置列表
 ├── FileRemarks             — 文件备注映射
-└── ColumnVisibility        — 列显隐配置
+├── ColumnVisibility        — 列显隐配置
+├── LinkTemplates           — 关联配置模板列表
+└── FileSettings            — 文件级配置（备注/唯一列/隐藏列/冻结列/列关联，key=相对路径）
 ```
 
 ---
@@ -71,6 +77,8 @@
 | `SetFileRemark(dir, relPath, remark)` | 设置单个文件备注 |
 | `GetColumnVisibility(dir, relPath)` | 获取文件列显隐状态 |
 | `SetColumnVisibility(dir, relPath, states)` | 设置文件列显隐状态 |
+| `GetFileFrozenColumnCount(dir, relPath)` | 获取文件冻结列数（显示列口径，0=不冻结） |
+| `SetFileFrozenColumnCount(dir, relPath, count)` | 设置文件冻结列数（`<=0` 存 null，值为负时钳到 0） |
 
 ---
 
@@ -86,8 +94,19 @@
 | `LastModified` | `DateTime` | 最后修改时间 |
 | `LastAccessed` | `DateTime` | 最后访问时间（用于LRU淘汰） |
 | `ColumnLinks` | `List<ColumnLinkConfig>` | 列关联配置列表 |
-| `FileRemarks` | `Dictionary<string, string>` | 文件备注映射 |
-| `ColumnVisibility` | `Dictionary<string, string>` | 列显隐配置（逗号分隔的bool字符串） |
+| `FileRemarks` | `Dictionary<string, string>` | 文件备注映射（已废弃，迁移到 `FileSettings.Remark`） |
+| `ColumnVisibility` | `Dictionary<string, string>` | 列显隐配置（已废弃，迁移到 `FileSettings.HiddenColumns`） |
+| `FileSettings` | `Dictionary<string, FileConfig>` | 文件级配置，key=文件相对路径 |
+
+**FileConfig（FileSettings 的值）**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `Remark` | `string?` | 备注名（null=无备注） |
+| `UniqueColumnIndex` | `int?` | 唯一列索引（null=用目录级默认） |
+| `HiddenColumns` | `HashSet<int>?` | 被取消勾选的列（null/空=全部显示） |
+| `FrozenColumnCount` | `int?` | 冻结列数（**显示列口径**，冻结最左侧 N 列；null/0=不冻结） |
+| `ColumnLinks` | `List<ColumnLinkConfig>?` | 该文件的列关联配置 |
 
 ---
 

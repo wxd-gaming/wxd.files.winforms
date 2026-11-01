@@ -470,7 +470,8 @@ CSV/Excel 阅读器是**最复杂的模块**，以下是最容易出问题的地
 |--------|-------------|-----------|
 | 列显隐 | `_columnCheckStates` → `_visibleColumnIndices` | 状态与投影的索引映射、持久化格式兼容 |
 | 列关联 | `ColumnLinkConfig` → `FileDataCache._linkLookups`（实例级，随窗口释放） | 缓存 Key 格式、值提取多值拆分顺序 |
-| 冻结行 | `_dataGridHeader` + `_dataGrid` 双 DataGridView | 两个表格的投影必须同步 |
+| 冻结行 | `_dataGridHeader` + `_dataGrid` 双 DataGridView | 两个表格的投影必须同步；Panel1 折叠/展开统一走 `SetFrozenPanelVisible()`，否则列头消失 |
+| 冻结列 / 行标记 | `_frozenColumnCount`；`_markedLineNumbers` → `_selectedRows` | 所有 `DataSource` 重绑路径都要 `ApplyFrozenColumns()` + `RebuildSelectedRowIndices()`；行数变化的操作先 `ClearRowSelection()` |
 | 行过滤 | 内容过滤 + 高级过滤（`@line` 是虚拟列，比 `TableRow.DisplayLineNumber`） | `||`/`&&` 运算符解析、过滤后 Tag 映射、行号口径与 RowHeader 同源 |
 | 版本对比 | `_leftDiffRows` + `_leftRowToOriginalIndex` + `_leftColToOriginalIndex` | 三层索引映射（原始→投影→DGV）、列显隐重建、差异编码 `(row<<16)\|col` |
 
