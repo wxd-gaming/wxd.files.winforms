@@ -61,7 +61,7 @@ namespace wxd.files.winforms
         // ==================== UI 构建 ====================
         private void BuildUi()
         {
-            Text = "📝 笔记";
+            Text = "笔记";
             ClientSize = new Size(900, 580);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
