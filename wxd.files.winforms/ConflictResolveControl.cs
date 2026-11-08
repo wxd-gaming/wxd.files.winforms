@@ -82,23 +82,42 @@ namespace wxd.files.winforms
         private bool _syncingScroll = false;
 
         // ==================== 配色 ====================
-        private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
-        private static readonly Color _colorPrimaryDark = Color.FromArgb(30, 136, 229);
-        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
-        private static readonly Color _colorDiffCellBg = Color.FromArgb(255, 200, 200);
-        private static readonly Color _colorDiffRowBg = Color.FromArgb(255, 253, 220);
-        private static readonly Color _colorAddedRowBg = Color.FromArgb(213, 245, 227);
-        private static readonly Color _colorDeletedRowBg = Color.FromArgb(250, 219, 216);
-        private static readonly Color _colorConflictBg = Color.FromArgb(255, 180, 180);
-        private static readonly Color _colorSelectedRemoteBg = Color.FromArgb(180, 210, 255);
-        private static readonly Color _colorSelectedLocalBg = Color.FromArgb(180, 255, 200);
-        private static readonly Color _colorBlankRowForAdded = Color.FromArgb(232, 250, 240);
-        private static readonly Color _colorBlankRowForDeleted = Color.FromArgb(253, 235, 233);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
+        // 全部走当前皮肤令牌：结构性颜色直接取令牌，增/删/冲突这类语义色是淡底，
+        // 深色皮肤下用 CellTint 压暗，否则三块彩色行会把深色界面顶成白板。
+        private static Color _colorSurface => Theme.P.Surface;
+        private static Color _colorBorder => Theme.P.Border;
+        private static Color _colorLightText => Theme.P.Text;
+        private static Color _colorLightTextSecondary => Theme.P.Muted;
+        private static Color _colorPrimary => Theme.P.Accent;
+        private static Color _colorPrimaryDark => Theme.P.Accent;
+        private static Color _colorHoverBg => Theme.P.Hover;
+        private static Color _colorDiffCellBg => Theme.CellTint(Color.FromArgb(255, 200, 200));
+        private static Color _colorDiffRowBg => Theme.CellTint(Color.FromArgb(255, 253, 220));
+        private static Color _colorAddedRowBg => Theme.CellTint(Color.FromArgb(213, 245, 227));
+        private static Color _colorDeletedRowBg => Theme.CellTint(Color.FromArgb(250, 219, 216));
+        private static Color _colorConflictBg => Theme.CellTint(Color.FromArgb(255, 180, 180));
+        private static Color _colorSelectedRemoteBg => Theme.CellTint(Color.FromArgb(180, 210, 255));
+        private static Color _colorSelectedLocalBg => Theme.CellTint(Color.FromArgb(180, 255, 200));
+        private static Color _colorBlankRowForAdded => Theme.CellTint(Color.FromArgb(232, 250, 240));
+        private static Color _colorBlankRowForDeleted => Theme.CellTint(Color.FromArgb(253, 235, 233));
+        // 选中态比未选中态再深一档，仍然走 CellTint，深色皮肤里才不会糊成白块
+        private static Color _colorDiffCellSel => Theme.CellTint(Color.FromArgb(255, 170, 170));
+        private static Color _colorConflictSel => Theme.CellTint(Color.FromArgb(255, 140, 140));
+        private static Color _colorDiffRowSel => Theme.CellTint(Color.FromArgb(240, 230, 180));
+        private static Color _colorAddedSel => Theme.CellTint(Color.FromArgb(190, 230, 200));
+        private static Color _colorDeletedSel => Theme.CellTint(Color.FromArgb(240, 200, 190));
+        private static Color _colorBlankAddedSel => Theme.CellTint(Color.FromArgb(210, 240, 225));
+        private static Color _colorBlankDeletedSel => Theme.CellTint(Color.FromArgb(245, 225, 220));
+        private static Color _colorMergedDiffCellBg => Theme.CellTint(Color.FromArgb(255, 240, 200));
+        private static Color _colorMergedDiffCellSel => Theme.CellTint(Color.FromArgb(255, 220, 180));
+        private static Color _colorMergedDiffRowBg => Theme.CellTint(Color.FromArgb(255, 250, 235));
+        private static Color _colorHeaderBg => Theme.P.Header;
+
+        /// <summary>远程侧标题：偏红的警示色，深色下自动提亮</summary>
+        private static Color _remoteHeaderFg => Theme.Signal(Color.FromArgb(200, 50, 50));
+
+        /// <summary>本地侧标题：偏绿的可用色</summary>
+        private static Color _localHeaderFg => Theme.Signal(Color.FromArgb(50, 160, 50));
 
         // ==================== 事件 ====================
         /// <summary>保存完成事件（保存成功后触发）</summary>
@@ -131,13 +150,38 @@ namespace wxd.files.winforms
             Directory.CreateDirectory(_tempDir);
 
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+        }
+
+        /// <summary>
+        /// 容器自身的配色：工具栏/页眉走 Chrome，分割条走 Window，
+        /// 表格内部由 TableBrowserControl 自己按皮肤画，这里不插手。
+        /// </summary>
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            BackColor = p.Window;
+            Font = Theme.Body;
+            _pnlToolbar.BackColor = p.Chrome;
+            _splitMain.BackColor = p.Window;
+            _splitCompare.BackColor = p.Window;
+            _pnlMergedHeader.BackColor = p.Chrome;
+            // 合并结果标题是局部控件，创建时把 Accent 钉在了 ForeColor 上，靠通用平移跟上皮肤
+            ThemeRecolor.Apply(_pnlMergedHeader);
+            _lblRemoteHeader.BackColor = Theme.CellTint(Color.FromArgb(255, 245, 245));
+            _lblRemoteHeader.ForeColor = _remoteHeaderFg;
+            _lblLocalHeader.BackColor = Theme.CellTint(Color.FromArgb(245, 255, 245));
+            _lblLocalHeader.ForeColor = _localHeaderFg;
+            _lblInfo.ForeColor = p.Muted;
+            Invalidate(true);
         }
 
         private void InitializeComponent()
         {
             Dock = DockStyle.Fill;
-            BackColor = _colorSurface;
-            Font = new Font("Microsoft YaHei UI", 9f);
+            Font = Theme.Body;
 
             SuspendLayout();
 
@@ -146,8 +190,8 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Top,
                 Height = 48,
-                BackColor = Color.FromArgb(245, 250, 255),
-                Padding = new Padding(8, 6, 8, 4)
+                Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.RowPad,
+                                     ThemeMetrics.Margin, ThemeMetrics.Gap)
             };
 
             var flowToolbar = new FlowLayoutPanel
@@ -161,33 +205,33 @@ namespace wxd.files.winforms
 
             var toolTip = new ToolTip { AutoPopDelay = 5000, InitialDelay = 500, ReshowDelay = 100 };
 
-            var btnUseRemoteRow = CreateFlowButton("← 使用远程此行", _colorPrimary);
+            var btnUseRemoteRow = CreateFlowButton("← 使用远程此行");
             btnUseRemoteRow.Click += (s, e) => UseRemoteSelected();
             toolTip.SetToolTip(btnUseRemoteRow, "将远程版本选中行/单元格复制到合并结果");
 
-            var btnUseLocalRow = CreateFlowButton("使用本地此行 →", Color.FromArgb(52, 168, 83));
+            var btnUseLocalRow = CreateFlowButton("使用本地此行 →");
             btnUseLocalRow.Click += (s, e) => UseLocalSelected();
             toolTip.SetToolTip(btnUseLocalRow, "将本地版本选中行/单元格复制到合并结果");
 
-            var btnSave = CreateFlowButton("💾 保存", _colorPrimaryDark);
+            var btnSave = CreateFlowButton("保存", primary: true);
             btnSave.Click += (s, e) => SaveMergedResult();
 
-            var btnSaveAs = CreateFlowButton("另存为...", Color.FromArgb(120, 144, 156));
+            var btnSaveAs = CreateFlowButton("另存为...");
             btnSaveAs.Click += (s, e) => SaveMergedResultAs();
 
-            var btnUseAllRemote = CreateFlowButton("全部使用远程", Color.FromArgb(90, 140, 210));
+            var btnUseAllRemote = CreateFlowButton("全部使用远程");
             btnUseAllRemote.Click += (s, e) => UseAllRemote();
             toolTip.SetToolTip(btnUseAllRemote, "将远程版本所有差异行复制到合并结果");
 
-            var btnUseAllLocal = CreateFlowButton("全部使用本地", Color.FromArgb(90, 190, 110));
+            var btnUseAllLocal = CreateFlowButton("全部使用本地");
             btnUseAllLocal.Click += (s, e) => UseAllLocal();
             toolTip.SetToolTip(btnUseAllLocal, "将本地版本所有差异行复制到合并结果");
 
-            var btnSelectAllRemote = CreateFlowButton("全选远程", Color.FromArgb(100, 150, 220));
+            var btnSelectAllRemote = CreateFlowButton("全选远程");
             btnSelectAllRemote.Click += (s, e) => SelectAllRemoteRows();
             toolTip.SetToolTip(btnSelectAllRemote, "选中远程版本所有差异行");
 
-            var btnSelectAllLocal = CreateFlowButton("全选本地", Color.FromArgb(100, 200, 120));
+            var btnSelectAllLocal = CreateFlowButton("全选本地");
             btnSelectAllLocal.Click += (s, e) => SelectAllLocalRows();
             toolTip.SetToolTip(btnSelectAllLocal, "选中本地版本所有差异行");
 
@@ -196,7 +240,7 @@ namespace wxd.files.winforms
                 AutoSize = true,
                 Margin = new Padding(8, 6, 0, 0),
                 ForeColor = _colorLightTextSecondary,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
@@ -218,7 +262,6 @@ namespace wxd.files.winforms
                 SplitterDistance = 300,
                 Panel1MinSize = 150,
                 Panel2MinSize = 150,
-                BackColor = Color.FromArgb(200, 225, 245),
                 SplitterWidth = 3
             };
 
@@ -228,7 +271,6 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
                 SplitterDistance = 50,
-                BackColor = Color.FromArgb(200, 225, 245),
                 SplitterWidth = 3
             };
 
@@ -238,9 +280,8 @@ namespace wxd.files.winforms
                 Text = "远程版本 (服务器)",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(255, 245, 245),
-                ForeColor = Color.FromArgb(200, 50, 50),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                ForeColor = _remoteHeaderFg,
+                Font = Theme.Head,
                 BorderStyle = BorderStyle.FixedSingle
             };
             var remotePanel = new TableLayoutPanel
@@ -262,9 +303,8 @@ namespace wxd.files.winforms
                 Text = "本地版本 (工作区)",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(245, 255, 245),
-                ForeColor = Color.FromArgb(50, 160, 50),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                ForeColor = _localHeaderFg,
+                Font = Theme.Head,
                 BorderStyle = BorderStyle.FixedSingle
             };
             var localPanel = new TableLayoutPanel
@@ -286,16 +326,15 @@ namespace wxd.files.winforms
             _pnlMergedHeader = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 30,
-                BackColor = Color.FromArgb(245, 250, 255)
+                Height = 30
             };
             var lblMergeHeader = new Label
             {
                 Text = "合并结果 (可编辑)",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = _colorPrimaryDark,
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                ForeColor = Theme.P.Accent,
+                Font = Theme.Head,
                 BorderStyle = BorderStyle.FixedSingle
             };
             _pnlMergedHeader.Controls.Add(lblMergeHeader);
@@ -336,21 +375,18 @@ namespace wxd.files.winforms
             ResumeLayout(false);
         }
 
-        private Button CreateFlowButton(string text, Color backColor)
+        private ThemeButton CreateFlowButton(string text, bool primary = false)
         {
-            var btn = new Button
+            return new ThemeButton
             {
                 Text = text,
+                Primary = primary,
                 AutoSize = true,
                 Margin = new Padding(2, 4, 2, 0),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = backColor,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) }
+                Font = Theme.Body,
+                BackColor = Theme.P.Chrome,
+                Cursor = Cursors.Hand
             };
-            return btn;
         }
 
         // ==================== 新增/删除/修改行处理映射 ====================
@@ -1045,7 +1081,7 @@ namespace wxd.files.winforms
         {
             var cellValue = dgv.Rows[rowIndex].Cells[colIndex].Value?.ToString() ?? "";
             var cms = new ContextMenuStrip();
-            cms.Font = new Font("Microsoft YaHei UI", 9f);
+            cms.Font = Theme.Body;
 
             var copyItem = new ToolStripMenuItem("复制");
             copyItem.Click += (s, ev) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
@@ -1062,7 +1098,7 @@ namespace wxd.files.winforms
             cms.Items.Add(new ToolStripSeparator());
 
             var deleteRowItem = new ToolStripMenuItem("删除行");
-            deleteRowItem.ForeColor = Color.FromArgb(200, 50, 50);
+            deleteRowItem.ForeColor = Theme.P.Danger;
             deleteRowItem.Click += (s, ev) =>
             {
                 if (rowIndex >= 0 && rowIndex < _mergedTable.Rows.Count)
@@ -1080,7 +1116,7 @@ namespace wxd.files.winforms
         private void ShowConflictContextMenu(DataGridView dgv, bool isRemote, int originalRow, int colIndex)
         {
             var cms = new ContextMenuStrip();
-            cms.Font = new Font("Microsoft YaHei UI", 9f);
+            cms.Font = Theme.Body;
 
             var useCellItem = new ToolStripMenuItem("使用此单元格");
             useCellItem.Click += (s, ev) =>
@@ -1123,7 +1159,7 @@ namespace wxd.files.winforms
             cms.Items.Add(new ToolStripSeparator());
 
             var deleteRowItem = new ToolStripMenuItem("删除此行");
-            deleteRowItem.ForeColor = Color.FromArgb(200, 50, 50);
+            deleteRowItem.ForeColor = Theme.P.Danger;
             deleteRowItem.Click += (s, ev) =>
             {
                 DeleteMergedRow(originalRow, isRemote);
@@ -1180,18 +1216,18 @@ namespace wxd.files.winforms
                 {
                     // 本地空白行（对面远程是新增行）
                     e.CellStyle.BackColor = _colorBlankRowForAdded;
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(210, 240, 225);
+                    e.CellStyle.SelectionBackColor = _colorBlankAddedSel;
                 }
                 else if (diffType == DiffRowType.Deleted)
                 {
                     // 远程空白行（对面本地是删除行）
                     e.CellStyle.BackColor = _colorBlankRowForDeleted;
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(245, 225, 220);
+                    e.CellStyle.SelectionBackColor = _colorBlankDeletedSel;
                 }
                 else
                 {
-                    e.CellStyle.BackColor = Color.FromArgb(245, 245, 245);
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(230, 230, 230);
+                    e.CellStyle.BackColor = Theme.P.Surface;
+                    e.CellStyle.SelectionBackColor = Theme.P.Hover;
                 }
                 e.FormattingApplied = true;
                 return;
@@ -1201,7 +1237,7 @@ namespace wxd.files.winforms
             if (diffType == DiffRowType.Added)
             {
                 e.CellStyle.BackColor = _colorAddedRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(190, 230, 200);
+                e.CellStyle.SelectionBackColor = _colorAddedSel;
                 e.FormattingApplied = true;
                 return;
             }
@@ -1210,7 +1246,7 @@ namespace wxd.files.winforms
             if (diffType == DiffRowType.Deleted)
             {
                 e.CellStyle.BackColor = _colorDeletedRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 200, 190);
+                e.CellStyle.SelectionBackColor = _colorDeletedSel;
                 e.FormattingApplied = true;
                 return;
             }
@@ -1230,17 +1266,17 @@ namespace wxd.files.winforms
             if (isConflict)
             {
                 e.CellStyle.BackColor = _colorConflictBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
+                e.CellStyle.SelectionBackColor = _colorConflictSel;
             }
             else if (isDiffCell)
             {
                 e.CellStyle.BackColor = _colorDiffCellBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 170, 170);
+                e.CellStyle.SelectionBackColor = _colorDiffCellSel;
             }
             else
             {
                 e.CellStyle.BackColor = _colorDiffRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(240, 230, 180);
+                e.CellStyle.SelectionBackColor = _colorDiffRowSel;
             }
 
             e.FormattingApplied = true;
@@ -1747,7 +1783,7 @@ namespace wxd.files.winforms
             if (_conflictCells.Contains(cellKey))
             {
                 e.CellStyle.BackColor = _colorConflictBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
+                e.CellStyle.SelectionBackColor = _colorConflictSel;
                 e.FormattingApplied = true;
                 return;
             }
@@ -1760,12 +1796,12 @@ namespace wxd.files.winforms
                 bool isDiffCell = _remoteDiffCells.Contains(cellKey) || _localDiffCells.Contains(cellKey);
                 if (isDiffCell)
                 {
-                    e.CellStyle.BackColor = Color.FromArgb(255, 240, 200);
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(255, 220, 180);
+                    e.CellStyle.BackColor = _colorMergedDiffCellBg;
+                    e.CellStyle.SelectionBackColor = _colorMergedDiffCellSel;
                 }
                 else
                 {
-                    e.CellStyle.BackColor = Color.FromArgb(255, 250, 235);
+                    e.CellStyle.BackColor = _colorMergedDiffRowBg;
                 }
                 e.FormattingApplied = true;
             }

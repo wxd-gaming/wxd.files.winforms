@@ -17,9 +17,9 @@ namespace wxd.files.winforms
     {
         // ==================== 控件 ====================
         private DataGridView _dgvHistory;
-        private CheckBox _chkDiffOnly;
-        private CheckBox _chkAlwaysLatest;
-        private CheckBox _chkIdAlign;
+        private ThemeCheckBox _chkDiffOnly;
+        private ThemeCheckBox _chkAlwaysLatest;
+        private ThemeCheckBox _chkIdAlign;
         private Label _lblInfo;
         private SplitContainer _splitMain;
         private SplitContainer _splitCompare;
@@ -98,18 +98,30 @@ namespace wxd.files.winforms
         private HashSet<int> _leftDeletedRows = new();        // 左表删除行集合（右表无对应 ID）
         private HashSet<int> _rightAddedRows = new();         // 右表新增行集合（左表无对应 ID）
 
-        // 配色
-        private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorDiffCellBg = Color.FromArgb(255, 200, 200);   // 差异单元格：红色背景
-        private static readonly Color _colorDiffRowBg = Color.FromArgb(255, 253, 220);    // 差异行：浅黄色背景
-        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
-        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
-        private static readonly Color _colorAddedRowBg = Color.FromArgb(213, 245, 227);    // 新增行：浅绿色
-        private static readonly Color _colorDeletedRowBg = Color.FromArgb(250, 219, 216);  // 删除行：浅橙色
-        private static readonly Color _colorBlankRowForAdded = Color.FromArgb(232, 250, 240);   // 空白行（对面为新增行）：更浅绿
-        private static readonly Color _colorBlankRowForDeleted = Color.FromArgb(253, 235, 233);  // 空白行（对面为删除行）：更浅橙
+        // 配色：底噪走主题令牌，差异色只在浅色皮肤里是原样，深色皮肤里向 Surface 压暗
+        private static Color _colorDiffCellBg => Theme.CellTint(Color.FromArgb(255, 200, 200));   // 差异单元格
+        private static Color _colorDiffRowBg => Theme.CellTint(Color.FromArgb(255, 253, 220));    // 差异行
+        private static Color _colorLightText => Theme.P.Text;
+        private static Color _colorLightTextSecondary => Theme.P.Muted;
+        private static Color _colorAddedRowBg => Theme.CellTint(Color.FromArgb(213, 245, 227));    // 新增行
+        private static Color _colorDeletedRowBg => Theme.CellTint(Color.FromArgb(250, 219, 216));  // 删除行
+        private static Color _colorBlankRowForAdded => Theme.CellTint(Color.FromArgb(232, 250, 240));   // 空白行（对面为新增行）
+        private static Color _colorBlankRowForDeleted => Theme.CellTint(Color.FromArgb(253, 235, 233));  // 空白行（对面为删除行）
+        private static Color _colorDiffCellSel => Theme.CellTint(Color.FromArgb(255, 170, 170));
+        // 选中态比未选中态深一档，否则差异行选中后看不出选中；仍然走 CellTint，深色下才不会发白
+        private static Color _colorDiffRowSel => Theme.CellTint(Color.FromArgb(250, 245, 190));
+        private static Color _colorAddedSel => Theme.CellTint(Color.FromArgb(190, 235, 210));
+        private static Color _colorDeletedSel => Theme.CellTint(Color.FromArgb(246, 195, 190));
+        private static Color _colorBlankRowForAddedSel => Theme.CellTint(Color.FromArgb(215, 240, 228));
+        private static Color _colorBlankRowForDeletedSel => Theme.CellTint(Color.FromArgb(250, 200, 196));
+        private static Color _colorNeutralBg => Theme.P.Surface;
+        private static Color _colorNeutralSel => Theme.P.Hover;
+
+        /// <summary>旧版本侧标题：偏红的警示色，深色下自动提亮</summary>
+        private static Color _oldHeaderFg => Theme.Signal(Color.FromArgb(200, 50, 50));
+
+        /// <summary>新版本侧标题：偏绿的可用色</summary>
+        private static Color _newHeaderFg => Theme.Signal(Color.FromArgb(50, 160, 50));
 
         // ==================== 构造函数 ====================
         public VersionCompareForm(string filePath, VcsType vcsType,
@@ -149,9 +161,33 @@ namespace wxd.files.winforms
             Directory.CreateDirectory(_tempDir);
 
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             // LoadHistoryAsync 移到 Shown 事件中延迟执行，确保窗体先显示
 
             FormClosed += (s, e) => CleanupTempFiles();
+        }
+
+        /// <summary>
+        /// 容器自身的配色：顶栏走 Chrome，分割条走 Window，
+        /// 历史表格按令牌重画，对比表格由 TableBrowserControl 自己管。
+        /// </summary>
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            BackColor = p.Window;
+            Font = Theme.Body;
+            _pnlTop.BackColor = p.Chrome;
+            _splitMain.BackColor = p.Window;
+            _splitCompare.BackColor = p.Window;
+            _lblLeftHeader.BackColor = Theme.CellTint(Color.FromArgb(255, 245, 245));
+            _lblLeftHeader.ForeColor = _oldHeaderFg;
+            _lblRightHeader.BackColor = Theme.CellTint(Color.FromArgb(245, 255, 245));
+            _lblRightHeader.ForeColor = _newHeaderFg;
+            _lblInfo.ForeColor = p.Muted;
+            StyleHistoryGrid();
+            Invalidate(true);
         }
 
         private void InitializeComponent()
@@ -161,8 +197,7 @@ namespace wxd.files.winforms
             ClientSize = new Size(1400, 900);
             WindowState = FormWindowState.Maximized;
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = _colorSurface;
+            Font = Theme.Body;
             KeyPreview = true;
             KeyDown += (s, e) =>
             {
@@ -174,40 +209,42 @@ namespace wxd.files.winforms
             _pnlTop = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 40,
-                BackColor = Color.FromArgb(245, 250, 255),
-                Padding = new Padding(8, 6, 8, 4)
+                Height = ThemeMetrics.BarHeight,
+                Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.RowPad,
+                                     ThemeMetrics.Margin, ThemeMetrics.Gap)
             };
 
-            _chkDiffOnly = new CheckBox
+            var flowTop = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                BackColor = Color.Transparent
+            };
+
+            _chkDiffOnly = new ThemeCheckBox
             {
                 Text = "仅显示差异行",
                 AutoSize = true,
-                Location = new Point(8, 8),
-                ForeColor = _colorLightText,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                Margin = new Padding(0, 4, ThemeMetrics.Group, 0)
             };
             _chkDiffOnly.CheckedChanged += (s, e) => RefreshDiffView();
 
-            _chkAlwaysLatest = new CheckBox
+            _chkAlwaysLatest = new ThemeCheckBox
             {
                 Text = "右侧永远显示最新版本",
                 AutoSize = true,
-                Location = new Point(140, 8),
-                ForeColor = _colorLightText,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                Margin = new Padding(0, 4, ThemeMetrics.Group, 0)
             };
             _chkAlwaysLatest.CheckedChanged += async (s, e) =>
                 await LoadComparisonAsync(_selectedIndex);
 
-            _chkIdAlign = new CheckBox
+            _chkIdAlign = new ThemeCheckBox
             {
                 Text = "ID对齐匹配",
                 AutoSize = true,
-                Location = new Point(310, 8),
                 Checked = true,
-                ForeColor = _colorLightText,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                Margin = new Padding(0, 4, ThemeMetrics.Group, 0)
             };
             _chkIdAlign.CheckedChanged += async (s, e) =>
                 await LoadComparisonAsync(_selectedIndex);
@@ -215,13 +252,15 @@ namespace wxd.files.winforms
             _lblInfo = new Label
             {
                 AutoSize = true,
-                Location = new Point(440, 10),
+                Margin = new Padding(0, 5, 0, 0),
                 ForeColor = _colorLightTextSecondary,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                Font = Theme.Body,
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
-            _pnlTop.Controls.AddRange(new Control[] {
+            flowTop.Controls.AddRange(new Control[] {
                 _chkDiffOnly, _chkAlwaysLatest, _chkIdAlign, _lblInfo });
+            _pnlTop.Controls.Add(flowTop);
 
             // === 上下分割: 历史表格 / 对比区域 ===
             _splitMain = new SplitContainer
@@ -231,7 +270,6 @@ namespace wxd.files.winforms
                 SplitterDistance = 160,
                 Panel1MinSize = 120,
                 FixedPanel = FixedPanel.Panel1,
-                BackColor = Color.FromArgb(200, 225, 245),
                 SplitterWidth = 2
             };
 
@@ -244,7 +282,6 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
                 SplitterDistance = 50,
-                BackColor = Color.FromArgb(200, 225, 245),
                 SplitterWidth = 3
             };
 
@@ -254,9 +291,7 @@ namespace wxd.files.winforms
                 Text = "旧版本",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(255, 245, 245),
-                ForeColor = Color.FromArgb(200, 50, 50),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                Font = Theme.Head,
                 BorderStyle = BorderStyle.FixedSingle
             };
             var leftPanel = new TableLayoutPanel
@@ -278,9 +313,7 @@ namespace wxd.files.winforms
                 Text = "新版本",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(245, 255, 245),
-                ForeColor = Color.FromArgb(50, 160, 50),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                Font = Theme.Head,
                 BorderStyle = BorderStyle.FixedSingle
             };
             var rightPanel = new TableLayoutPanel
@@ -328,31 +361,19 @@ namespace wxd.files.winforms
                 AllowUserToDeleteRows = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 MultiSelect = false,
-                BackgroundColor = _colorSurface,
                 BorderStyle = BorderStyle.None,
                 RowHeadersVisible = false,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                ColumnHeadersHeight = 30,
-                RowTemplate = new DataGridViewRow { Height = 24 },
-                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
-                {
-                    BackColor = _colorHeaderBg,
-                    ForeColor = _colorLightText,
-                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold)
-                },
-                DefaultCellStyle = new DataGridViewCellStyle
-                {
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    ForeColor = _colorLightText,
-                    SelectionBackColor = _colorSelectedBg,
-                    SelectionForeColor = _colorLightText
-                }
+                // 绑 DataTable 时不自动生成列，否则手工列和自动列会并排出现两套表头
+                AutoGenerateColumns = false,
             };
 
             dgv.Columns.Add("Revision", "版本号");
             dgv.Columns.Add("Date", "提交时间");
             dgv.Columns.Add("Author", "提交人");
             dgv.Columns.Add("Message", "提交信息");
+            foreach (var col in dgv.Columns.Cast<DataGridViewColumn>())
+                col.DataPropertyName = col.Name;
 
             dgv.Columns["Revision"].FillWeight = 15;
             dgv.Columns["Date"].FillWeight = 25;
@@ -360,9 +381,13 @@ namespace wxd.files.winforms
             dgv.Columns["Message"].FillWeight = 45;
 
             dgv.SelectionChanged += OnHistorySelectionChanged;
+            ThemeGrid.Apply(dgv);
 
             return dgv;
         }
+
+        /// <summary>历史表格只吃令牌，行列样式交给 ThemeGrid</summary>
+        private void StyleHistoryGrid() => ThemeGrid.Apply(_dgvHistory);
 
         // ==================== Loading 对话框 ====================
         private Thread? _loadingThread;
@@ -438,7 +463,7 @@ namespace wxd.files.winforms
                 StartPosition = FormStartPosition.Manual;
                 ShowInTaskbar = false;
                 Size = new Size(340, 160);
-                BackColor = Color.White;
+                BackColor = Theme.P.Surface;
                 TopMost = true;
 
                 // 双缓冲减少闪烁
@@ -456,8 +481,8 @@ namespace wxd.files.winforms
                     Size = new Size(300, 28),
                     Location = new Point(20, 95),
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
-                    ForeColor = Color.FromArgb(30, 136, 229)
+                    Font = Theme.TitleBold,
+                    ForeColor = Theme.P.Accent
                 };
 
                 // 详细信息（版本号等，可动态更新）
@@ -468,8 +493,8 @@ namespace wxd.files.winforms
                     Size = new Size(300, 20),
                     Location = new Point(20, 125),
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    ForeColor = Color.FromArgb(120, 160, 200)
+                    Font = Theme.Body,
+                    ForeColor = Theme.P.Muted
                 };
 
                 Controls.Add(_lblTitle);
@@ -528,7 +553,7 @@ namespace wxd.files.winforms
 
                 // 圆角矩形边框
                 var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-                using var pen = new Pen(Color.FromArgb(200, 210, 225), 1f);
+                using var pen = new Pen(Theme.P.Border, 1f);
                 using var path = GetRoundedRectPath(rect, 8);
                 e.Graphics.DrawPath(pen, path);
 
@@ -542,11 +567,11 @@ namespace wxd.files.winforms
                 float penWidth = 3.5f;
 
                 // 背景圆环
-                using var bgPen = new Pen(Color.FromArgb(230, 235, 240), penWidth);
+                using var bgPen = new Pen(Theme.P.Divider, penWidth);
                 g.DrawEllipse(bgPen, cx - radius, cy - radius, radius * 2, radius * 2);
 
                 // 旋转蓝色弧线
-                using var arcPen = new Pen(Color.FromArgb(30, 136, 229), penWidth)
+                using var arcPen = new Pen(Theme.P.Accent, penWidth)
                 {
                     StartCap = System.Drawing.Drawing2D.LineCap.Round,
                     EndCap = System.Drawing.Drawing2D.LineCap.Round
@@ -571,11 +596,10 @@ namespace wxd.files.winforms
         }
 
         // ==================== 错误提示 ====================
-        /// <summary>显示错误信息：红色背景标签 + MessageBox 弹窗</summary>
+        /// <summary>显示错误信息：顶栏提示走警示色 + AlertForm 弹窗</summary>
         private void ShowError(string message)
         {
-            _lblInfo.BackColor = Color.FromArgb(200, 50, 50);
-            _lblInfo.ForeColor = Color.White;
+            _lblInfo.ForeColor = Theme.P.Danger;
             _lblInfo.Text = message;
 
             // ★ 延迟弹出 MessageBox，确保差异化窗口先显示
@@ -588,7 +612,6 @@ namespace wxd.files.winforms
         /// <summary>恢复 _lblInfo 为正常样式</summary>
         private void ResetInfoStyle()
         {
-            _lblInfo.BackColor = Color.Transparent;
             _lblInfo.ForeColor = _colorLightTextSecondary;
         }
 
@@ -1571,18 +1594,18 @@ namespace wxd.files.winforms
                 {
                     // 左侧数据行删除 → 右侧空白行（更浅橙）
                     e.CellStyle.BackColor = _colorBlankRowForDeleted;
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(253, 235, 233);
+                    e.CellStyle.SelectionBackColor = _colorBlankRowForDeletedSel;
                 }
                 else if (diffType == DiffRowType.Added)
                 {
                     // 右侧数据行新增 → 左侧空白行（更浅绿）
                     e.CellStyle.BackColor = _colorBlankRowForAdded;
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(232, 250, 240);
+                    e.CellStyle.SelectionBackColor = _colorBlankRowForAddedSel;
                 }
                 else
                 {
-                    e.CellStyle.BackColor = Color.FromArgb(245, 245, 245);
-                    e.CellStyle.SelectionBackColor = Color.FromArgb(230, 230, 230);
+                    e.CellStyle.BackColor = _colorNeutralBg;
+                    e.CellStyle.SelectionBackColor = _colorNeutralSel;
                 }
                 e.FormattingApplied = true;
                 return;
@@ -1592,7 +1615,7 @@ namespace wxd.files.winforms
             if (diffType == DiffRowType.Deleted)
             {
                 e.CellStyle.BackColor = _colorDeletedRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(250, 219, 216);
+                e.CellStyle.SelectionBackColor = _colorDeletedSel;
                 e.FormattingApplied = true;
                 return;
             }
@@ -1601,7 +1624,7 @@ namespace wxd.files.winforms
             if (diffType == DiffRowType.Added)
             {
                 e.CellStyle.BackColor = _colorAddedRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(213, 245, 227);
+                e.CellStyle.SelectionBackColor = _colorAddedSel;
                 e.FormattingApplied = true;
                 return;
             }
@@ -1627,12 +1650,12 @@ namespace wxd.files.winforms
             if (isDiffCell)
             {
                 e.CellStyle.BackColor = _colorDiffCellBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 170, 170);
+                e.CellStyle.SelectionBackColor = _colorDiffCellSel;
             }
             else
             {
                 e.CellStyle.BackColor = _colorDiffRowBg;
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 253, 220);
+                e.CellStyle.SelectionBackColor = _colorDiffRowSel;
             }
 
             e.FormattingApplied = true;

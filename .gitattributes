@@ -1,0 +1,3 @@
+# core.autocrlf=true checks out CRLF, but the acceptance scripts run in Git Bash:
+# a .sh checked out with CRLF leaves a hidden carriage return in every variable (paths, gridshot args).
+*.sh text eol=lf

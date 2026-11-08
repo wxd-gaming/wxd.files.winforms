@@ -23,25 +23,24 @@ namespace wxd.files.winforms
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
-        private ComboBox? _cboCount;
-        private Label? _lblCount;
-        private ComboBox? _cboLayout;
-        private Label? _lblLayout;
-        private ComboBox? _cboTheme;
-        private Label? _lblTheme;
+        private ThemeSegmented? _segSettings;                 // 窗格 / 布局 / 主题 分段入口
+        private ContextMenuStrip? _menuPane;                  // 窗格菜单
+        private ContextMenuStrip? _menuLayout;                // 布局菜单
+        private ContextMenuStrip? _menuTheme;                 // 主题与皮肤菜单
         private Button? _btnOpenCsvReader;
         private Button? _btnNotes;                          // 笔记按钮
         private NoteForm? _noteForm;                        // 笔记窗体（单例）
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
+        private Panel? _pnlTopRight;                        // 顶栏右侧固定区
         private Button? _btnCmdManager;                      // 命令管理按钮
-        private Button? _btnSettings;                         // ≡ 设置按钮
-        private CheckBox? _chkShowHidden;                     // 显示隐藏文件夹复选框
         private Button? _btnSaveState;                        // 保存状态按钮
         private FlowLayoutPanel? _flowPanel;                  // 顶部流式布局面板
-        private bool _showSettings = false;                   // 是否显示设置界面
         private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
+
+        private int _paneCount = 7;                           // 当前窗格数量
+        private int _layoutIndex = 2;                         // 当前布局方式序号
 
         // ==================== 启动Loading相关（独立STA线程方案） ====================
         private StartupLoadingForm? _startupLoadingForm;      // 独立线程运行的Loading窗体
@@ -50,21 +49,6 @@ namespace wxd.files.winforms
         private enum LayoutMode { Horizontal, Vertical, Flow }
         private enum ThemeMode { Dark, Light }
 
-        // ==================== 浅色天蓝配色 ====================
-        private static readonly Color _colorLightTopBg = Color.FromArgb(235, 245, 255);
-        private static readonly Color _colorLightTopBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightTitleFg = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightLabelFg = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorLightFormBg = Color.FromArgb(235, 248, 255);
-
-        // ==================== 深色配色 (VS风格) ====================
-        private static readonly Color _colorDarkTopBg = Color.FromArgb(37, 37, 38);      // VS顶部栏
-        private static readonly Color _colorDarkTopBorder = Color.FromArgb(62, 62, 66);      // VS边框
-        private static readonly Color _colorDarkTitleFg = Color.FromArgb(241, 241, 241);   // VS白色文字
-        private static readonly Color _colorDarkLabelFg = Color.FromArgb(200, 200, 200);   // VS灰色文字
-        private static readonly Color _colorDarkFormBg = Color.FromArgb(30, 30, 30);      // VS深色背景
-
-        private static readonly int GAP = 6; // 窗格间距
         private ThemeMode _currentTheme = ThemeMode.Light;
 
         public Form1()
@@ -74,17 +58,15 @@ namespace wxd.files.winforms
             var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             if (ver != null)
                 Text = $"{Text} v{ver}";
+
+            // 先按存档恢复窗格数量/布局/明暗，再激活令牌，后面控件创建期取色和菜单勾选才是最终值
+            _paneCount = Math.Clamp(CsvSettings.PaneCount, 1, 10);
+            _layoutIndex = Math.Clamp(CsvSettings.LayoutIndex, 0, 2);
+            _currentTheme = (ThemeMode)CsvSettings.ThemeMode;
+            Theme.Set((UiSkin)CsvSettings.ThemeSkin, _currentTheme == ThemeMode.Dark);
+
             CreateTopBar();
             InitControlPanel();
-
-            // 恢复全局状态（窗格数量、布局方式、主题）
-            var panelCount = CsvSettings.PaneCount;
-            var layoutIndex = CsvSettings.LayoutIndex;
-            var themeIndex = CsvSettings.ThemeMode;
-            _currentTheme = (ThemeMode)themeIndex;
-            _cboCount!.SelectedIndex = Math.Min(panelCount - 1, _cboCount.Items.Count - 1);
-            _cboLayout!.SelectedIndex = Math.Min(layoutIndex, _cboLayout.Items.Count - 1);
-            _cboTheme!.SelectedIndex = Math.Min(themeIndex, _cboTheme.Items.Count - 1);
 
             // 应用主题（面板创建后再应用到面板）
             ApplyTheme();
@@ -112,7 +94,6 @@ namespace wxd.files.winforms
         {
             if (_startupLoadingForm != null || _loadingThread != null) return;
 
-            var isDark = _currentTheme == ThemeMode.Dark;
             var ownerHandle = this.Handle;
             var ownerLocation = this.Location;
             var ownerSize = this.Size;
@@ -122,7 +103,7 @@ namespace wxd.files.winforms
 
             _loadingThread = new Thread(() =>
             {
-                _startupLoadingForm = new StartupLoadingForm(isDark);
+                _startupLoadingForm = new StartupLoadingForm();
                 _startupLoadingForm.Load += (s, e) =>
                 {
                     _startupLoadingForm.Location = new Point(
@@ -207,7 +188,7 @@ namespace wxd.files.winforms
             // ★ 启动时加载 AppStateStore
             AppStateStore.Load();
 
-            int panelCount = _cboCount!.SelectedIndex + 1;
+            int panelCount = _paneCount;
 
             try
             {
@@ -276,7 +257,7 @@ namespace wxd.files.winforms
             // Form1
             // 
             ClientSize = new Size(1300, 750);
-            Font = new Font("Microsoft YaHei UI", 9F);
+            Font = Theme.Body;
             Icon = (Icon)resources.GetObject("$this.Icon");
             MinimumSize = new Size(600, 450);
             Name = "Form1";
@@ -290,21 +271,18 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
 
-            // 顶部工具栏面板
+            // 顶部工具栏面板：高度与内边距跟其它工具条同源，皮肤切换时由 LayoutTopBar 重算
             _pnlTopBar = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 48,
-                Padding = new Padding(12, 6, 12, 6),
-                BackColor = _colorLightTopBg
+                Height = ThemeMetrics.BarHeight,
+                Padding = new Padding(ThemeMetrics.Margin, 0, ThemeMetrics.Margin, 0),
+                BackColor = Theme.P.Chrome
             };
-
-            var sep = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = _colorLightTopBorder };
-            _pnlTopBar.Controls.Add(sep);
 
             // 容器面板
             _pnlContainer.Dock = DockStyle.Fill;
-            _pnlContainer.Padding = new Padding(GAP);
+            _pnlContainer.Padding = new Padding(ThemeMetrics.Gap);
             _pnlContainer.BackColor = BackColor;
 
             Controls.Add(_pnlContainer);
@@ -317,19 +295,15 @@ namespace wxd.files.winforms
         {
             if (_pnlTopBar == null) return;
 
-            float fontSize = 9f;
-            var labelFont = new Font("Microsoft YaHei UI", fontSize);
-            var comboFont = new Font("Microsoft YaHei UI", fontSize);
-            int ctrlHeight = 26;
-
-            // 流式布局面板（自动排列控件，收起/展开时自动流动）
+            // 流式布局面板：左侧按「标题 → 设置入口 → 主操作」从左到右排开
+            // 顶栏高度固定，控件不再靠容器内边距下移，而是各自的 Margin.Top 居中
             _flowPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 AutoSize = false,
-                Padding = new Padding(12, 4, 12, 0),
+                Padding = new Padding(0),
                 BackColor = Color.Transparent
             };
 
@@ -337,219 +311,150 @@ namespace wxd.files.winforms
             {
                 Text = "多窗格文件管理",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
-                ForeColor = _colorLightTitleFg,
-                Margin = new Padding(0, 6, 16, 0)
+                Font = Theme.Title,
+                ForeColor = Theme.P.Text,
+                Tag = "title",
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
 
-            // ≡ 设置按钮（点击显示/隐藏配置项，与标题保持足够间距）
-            _btnSettings = new Button
+            // 窗格 / 布局 / 主题：三个低频入口合成一颗分段按钮，各点各的菜单
+            _segSettings = new ThemeSegmented
             {
-                Text = "≡",
-                Size = new Size(32, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(144, 180, 210),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(120, 160, 200) },
-                Margin = new Padding(0, 3, 4, 0)
+                Items = new[] { "窗格", "布局", "主题" },
+                ActiveIndex = 0,
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
-            _btnSettings.Click += OnSettingsClick;
+            _segSettings.SegmentClicked += OnSegmentClicked;
 
-            // 显示隐藏文件夹复选框（在设置按钮前面，始终可见）
-            _chkShowHidden = new CheckBox
-            {
-                Text = "显示隐藏",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightLabelFg,
-                Margin = new Padding(4, 6, 4, 0),
-                Checked = CsvSettings.ShowHiddenFiles
-            };
-            _chkShowHidden.CheckedChanged += (s, e) =>
-            {
-                CsvSettings.ShowHiddenFiles = _chkShowHidden.Checked;
-                // 通知所有面板刷新
-                foreach (var panel in _panels)
-                {
-                    if (!panel.IsDisposed)
-                        panel.RefreshCurrentDirectory();
-                }
-            };
-
-            _lblCount = new Label
-            {
-                Text = "窗格数量",
-                AutoSize = true,
-                Font = labelFont,
-                ForeColor = _colorLightLabelFg,
-                Margin = new Padding(6, 6, 2, 0)
-            };
-
-            _cboCount = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Size = new Size(55, ctrlHeight),
-                Font = comboFont,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            for (int i = 1; i <= 10; i++) _cboCount.Items.Add(i.ToString());
-            _cboCount.SelectedIndex = 6;  // 默认7个窗格
-            _cboCount.SelectedIndexChanged += OnCountChanged;
-
-            _lblLayout = new Label
-            {
-                Text = "布局方式",
-                AutoSize = true,
-                Font = labelFont,
-                ForeColor = _colorLightLabelFg,
-                Margin = new Padding(6, 6, 2, 0)
-            };
-
-            _cboLayout = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Size = new Size(120, ctrlHeight),
-                Font = comboFont,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            _cboLayout.Items.Add("横向布局");
-            _cboLayout.Items.Add("纵向布局");
-            _cboLayout.Items.Add("纵横交错流式布局");
-            _cboLayout.SelectedIndex = 2;
-            _cboLayout.SelectedIndexChanged += OnLayoutChanged;
-
-            _lblTheme = new Label
-            {
-                Text = "主题",
-                AutoSize = true,
-                Font = labelFont,
-                ForeColor = _colorLightLabelFg,
-                Margin = new Padding(6, 6, 2, 0)
-            };
-
-            _cboTheme = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Size = new Size(80, ctrlHeight),
-                Font = comboFont,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            _cboTheme.Items.Add("深色");
-            _cboTheme.Items.Add("浅色");
-            _cboTheme.SelectedIndex = 1; // 默认浅色
-            _cboTheme.SelectedIndexChanged += OnThemeChanged;
-
-            // 保存状态按钮
-            _btnSaveState = new Button
-            {
-                Text = "保存状态",
-                Size = new Size(70, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(76, 175, 80),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(56, 142, 60) },
-                Margin = new Padding(4, 2, 2, 0)
-            };
-            _btnSaveState.Click += (s, e) => SaveAllState();
-
-            // --- 命令管理按钮 ---
-            _btnCmdManager = new Button
-            {
-                Text = "命令管理",
-                Size = new Size(75, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(38, 166, 154),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(26, 130, 120) },
-                Margin = new Padding(2, 2, 4, 0)
-            };
-            _btnCmdManager.Click += OnCmdManagerClick;
+            _menuPane = BuildPaneMenu();
+            _menuLayout = BuildLayoutMenu();
+            _menuTheme = BuildThemeMenu();
 
             // 打开CSV阅读器按钮
-            _btnOpenCsvReader = new Button
+            _btnOpenCsvReader = new ThemeButton
             {
                 Text = "阅读器",
-                Size = new Size(80, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Margin = new Padding(4, 2, 2, 0)
+                Font = Theme.Body,
+                Primary = true,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
 
             // 打开大文件阅读器按钮
-            var btnLargeFileViewer = new Button
+            var btnLargeFileViewer = new ThemeButton
             {
                 Text = "日志分析",
-                Size = new Size(80, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(171, 71, 188),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(123, 31, 162) },
-                Margin = new Padding(2, 2, 4, 0)
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
             // 笔记按钮
-            _btnNotes = new Button
+            _btnNotes = new ThemeButton
             {
-                Text = "📝 笔记",
-                Size = new Size(75, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(255, 152, 0),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(245, 124, 0) },
-                Margin = new Padding(2, 2, 2, 0)
+                Text = "笔记",
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             _btnNotes.Click += OnOpenNotesClick;
 
-            // 关于 / 更新按钮
-            var btnHelp = new Button
+            _flowPanel.Controls.AddRange(new Control[]
+            {
+                lblTitle, _segSettings, _btnOpenCsvReader, btnLargeFileViewer, _btnNotes
+            });
+
+            // 右侧固定区：管理入口 + 关于，从右往左排，宽度随内容自适应
+            _pnlTopRight = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(0),
+                BackColor = Color.Transparent
+            };
+
+            var btnHelp = new ThemeButton
             {
                 Text = "关于",
-                Size = new Size(75, ctrlHeight),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(120, 144, 156),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(96, 125, 139) },
-                Margin = new Padding(2, 2, 4, 0)
+                Font = Theme.Body,
+                Ghost = true,
+                Margin = new Padding(ThemeMetrics.Gap, 0, 0, 0)
             };
             btnHelp.Click += OnHelpClick;
 
-            // 按顺序添加到流式布局面板：
-            // 标题 → 显示隐藏复选框 → ≡按钮 → 配置项(默认隐藏) → 保存状态 → 命令管理(默认隐藏) → 阅读器 → 大文件阅读 → 使用说明
-            _flowPanel.Controls.AddRange(new Control[] {
-                lblTitle, _chkShowHidden, _btnSettings,
-                _lblCount, _cboCount, _lblLayout, _cboLayout, _lblTheme, _cboTheme,
-                _btnSaveState, _btnCmdManager,
-                _btnOpenCsvReader, btnLargeFileViewer, _btnNotes, btnHelp
+            _btnCmdManager = new ThemeButton
+            {
+                Text = "命令管理",
+                Font = Theme.Body,
+                Ghost = true,
+                Margin = new Padding(ThemeMetrics.Gap, 0, 0, 0)
+            };
+            _btnCmdManager.Click += OnCmdManagerClick;
+
+            _btnSaveState = new ThemeButton
+            {
+                Text = "保存状态",
+                Font = Theme.Body,
+                Ghost = true,
+                Margin = new Padding(ThemeMetrics.Gap, 0, 0, 0)
+            };
+            _btnSaveState.Click += (s, e) => SaveAllState();
+
+            _pnlTopRight.Controls.AddRange(new Control[] { btnHelp, _btnCmdManager, _btnSaveState });
+
+            // 停靠顺序：后加入的先停靠，所以底部分隔线要最后加才能横跨整条顶栏
+            _pnlTopBar.Controls.Add(_flowPanel);
+            _pnlTopBar.Controls.Add(_pnlTopRight);
+            _pnlTopBar.Controls.Add(new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 1,
+                BackColor = Theme.P.Border
             });
 
-            _pnlTopBar.Controls.Add(_flowPanel);
-
-            // 设置配置项控件默认隐藏
-            UpdateSettingsVisibility();
-
-            // 重建动态命令按钮
+            // 重建动态命令按钮（内部会顺带做一次顶栏居中）
             RebuildCmdActionButtons();
+        }
+
+        /// <summary>
+        /// 顶栏的尺寸全部从 ThemeMetrics 推导：皮肤切换会改行高，
+        /// 所以按钮按文字量宽、控件按顶栏高度垂直居中，都要能建一次也能重算。
+        /// </summary>
+        private void LayoutTopBar()
+        {
+            if (_pnlTopBar == null) return;
+
+            int barH = ThemeMetrics.BarHeight;
+            _pnlTopBar.Height = barH;
+
+            if (_flowPanel != null) LayoutTopBarChildren(_flowPanel, ThemeMetrics.RowH, barH);
+            if (_pnlTopRight != null) LayoutTopBarChildren(_pnlTopRight, ThemeMetrics.RowH, barH);
+        }
+
+        private static void LayoutTopBarChildren(Control host, int rowH, int barH)
+        {
+            foreach (Control c in host.Controls)
+            {
+                int h = c switch
+                {
+                    ThemeSegmented => rowH + 4,
+                    Label { AutoSize: true } => c.GetPreferredSize(Size.Empty).Height,
+                    _ => rowH
+                };
+
+                if (c is Button btn)
+                    btn.Size = new Size(ThemeButton.FitWidth(btn.Text), h);
+                else if (c is ThemeSegmented)
+                    c.Size = c.GetPreferredSize(Size.Empty);
+                else if (c is not Label)
+                    c.Height = h;
+
+                // 流式面板只按上边距对齐，所以每个控件自己补居中偏移
+                var m = c.Margin;
+                c.Margin = new Padding(m.Left, Math.Max(0, (barH - c.Height) / 2), m.Right, 0);
+            }
         }
 
         // ==================== 打开CSV阅读器（先选目录） ====================
@@ -606,8 +511,7 @@ namespace wxd.files.winforms
                 return;
             }
 
-            var isDark = _currentTheme == ThemeMode.Dark;
-            _noteForm = new NoteForm(isDark);
+            _noteForm = new NoteForm();
             _noteForm.Owner = null;
             _noteForm.FormClosed += (s, e2) => _noteForm = null;
             _noteForm.Show();
@@ -616,36 +520,142 @@ namespace wxd.files.winforms
         // ==================== 关于 / 更新 ====================
         private void OnHelpClick(object? sender, EventArgs e)
         {
-            var isDark = _currentTheme == ThemeMode.Dark;
-            UpdateForm.ShowUpdateForm(this, isDark);
+            UpdateForm.ShowUpdateForm(this);
+        }
+
+        // ==================== 分段入口：弹出对应菜单 ====================
+        private void OnSegmentClicked(int index)
+        {
+            if (_segSettings == null) return;
+            _segSettings.ActiveIndex = index;
+
+            var menu = index switch { 0 => _menuPane, 1 => _menuLayout, _ => _menuTheme };
+            if (menu == null) return;
+
+            var rect = _segSettings.SegmentRect(index);
+            menu.Show(_segSettings, new Point(rect.Left, rect.Bottom + 2));
+        }
+
+        private static ContextMenuStrip NewMenu() => new()
+        {
+            Font = Theme.List,
+            ShowImageMargin = false,
+            ShowCheckMargin = true
+        };
+
+        /// <summary>往菜单里加一项，Tag 记下它属于哪一组、代表什么值，勾选时按组比对</summary>
+        private static ToolStripMenuItem AddMenuEntry(ContextMenuStrip menu, string text,
+            string group, object value, Action onPick)
+        {
+            var item = new ToolStripMenuItem(text) { Tag = ValueTuple.Create(group, value) };
+            item.Click += (s, e) => onPick();
+            menu.Items.Add(item);
+            return item;
+        }
+
+        /// <summary>同一组里只勾当前值，其余取消；别的组不受影响</summary>
+        private static void CheckGroup(ContextMenuStrip menu, string group, object value)
+        {
+            foreach (ToolStripItem it in menu.Items)
+            {
+                if (it is not ToolStripMenuItem mi) continue;
+                if (mi.Tag is not ValueTuple<string, object> tag || tag.Item1 != group) continue;
+                mi.Checked = Equals(tag.Item2, value);
+            }
+        }
+
+        private ContextMenuStrip BuildPaneMenu()
+        {
+            var menu = NewMenu();
+            for (int i = 1; i <= 10; i++)
+            {
+                int count = i;
+                AddMenuEntry(menu, $"{count} 个窗格", "pane", count, () => SetPaneCount(count));
+            }
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuEntry(menu, "显示隐藏文件", "hidden", true, () => SetShowHidden(!CsvSettings.ShowHiddenFiles));
+            CheckGroup(menu, "pane", _paneCount);
+            CheckGroup(menu, "hidden", CsvSettings.ShowHiddenFiles);
+            return menu;
+        }
+
+        private ContextMenuStrip BuildLayoutMenu()
+        {
+            var menu = NewMenu();
+            AddMenuEntry(menu, "横向布局", "layout", 0, () => SetLayoutIndex(0));
+            AddMenuEntry(menu, "纵向布局", "layout", 1, () => SetLayoutIndex(1));
+            AddMenuEntry(menu, "纵横交错流式布局", "layout", 2, () => SetLayoutIndex(2));
+            CheckGroup(menu, "layout", _layoutIndex);
+            return menu;
+        }
+
+        private ContextMenuStrip BuildThemeMenu()
+        {
+            var menu = NewMenu();
+            AddMenuEntry(menu, "深色", "mode", 0, () => SetThemeMode(ThemeMode.Dark));
+            AddMenuEntry(menu, "浅色", "mode", 1, () => SetThemeMode(ThemeMode.Light));
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuEntry(menu, "天蓝提质", "skin", 0, () => SetSkin(0));
+            AddMenuEntry(menu, "密集工具", "skin", 1, () => SetSkin(1));
+            CheckGroup(menu, "mode", (int)_currentTheme);
+            CheckGroup(menu, "skin", CsvSettings.ThemeSkin);
+            return menu;
         }
 
         // ==================== 窗格数量变更 ====================
-        private void OnCountChanged(object? sender, EventArgs e)
+        private void SetPaneCount(int count)
         {
-            if (_cboCount?.SelectedItem == null) return;
-            CreatePanels(_cboCount.SelectedIndex + 1);
+            _paneCount = count;
+            CheckGroup(_menuPane!, "pane", count);
+            CreatePanels(count);
             ApplyLayout(GetCurrentLayout());
             SaveGlobalState();
         }
 
         // ==================== 布局方式变更 ====================
-        private void OnLayoutChanged(object? sender, EventArgs e)
+        private void SetLayoutIndex(int index)
         {
-            if (_cboLayout?.SelectedItem == null) return;
+            _layoutIndex = index;
+            CheckGroup(_menuLayout!, "layout", index);
             ApplyLayout(GetCurrentLayout());
             SaveGlobalState();
+        }
+
+        // ==================== 明暗切换 ====================
+        private void SetThemeMode(ThemeMode mode)
+        {
+            _currentTheme = mode;
+            CheckGroup(_menuTheme!, "mode", (int)mode);
+            ApplyTheme();
+            SaveGlobalState();
+        }
+
+        // ==================== 皮肤切换 ====================
+        private void SetSkin(int skin)
+        {
+            CsvSettings.ThemeSkin = skin;
+            CheckGroup(_menuTheme!, "skin", skin);
+            ApplyTheme();
+        }
+
+        // ==================== 显示隐藏文件 ====================
+        private void SetShowHidden(bool show)
+        {
+            CsvSettings.ShowHiddenFiles = show;
+            CheckGroup(_menuPane!, "hidden", show);
+            foreach (var panel in _panels)
+            {
+                if (!panel.IsDisposed)
+                    panel.RefreshCurrentDirectory();
+            }
         }
 
         /// <summary>实时保存全局状态（窗格数量+布局模式+主题）</summary>
         private void SaveGlobalState()
         {
-            if (_cboCount != null && _cboLayout != null && _cboTheme != null)
-            {
-                CsvSettings.PaneCount = _panels.Length;
-                CsvSettings.LayoutIndex = _cboLayout.SelectedIndex;
-                CsvSettings.ThemeMode = _cboTheme.SelectedIndex;
-            }
+            CsvSettings.PaneCount = _panels.Length;
+            CsvSettings.LayoutIndex = _layoutIndex;
+            CsvSettings.ThemeMode = (int)_currentTheme;
         }
 
         /// <summary>保存所有状态（包含每个面板的页签状态）</summary>
@@ -664,75 +674,63 @@ namespace wxd.files.winforms
             SaveGlobalState();
         }
 
-        // ==================== 主题切换 ====================
-        private void OnThemeChanged(object? sender, EventArgs e)
-        {
-            if (_cboTheme?.SelectedItem == null) return;
-            _currentTheme = (ThemeMode)_cboTheme.SelectedIndex;
-            ApplyTheme();
-            SaveGlobalState();
-        }
-
-        // ==================== ≡ 设置按钮点击：显示/隐藏配置项 ====================
-        private void OnSettingsClick(object? sender, EventArgs e)
-        {
-            _showSettings = !_showSettings;
-            UpdateSettingsVisibility();
-        }
-
-        /// <summary>根据 _showSettings 显示或隐藏配置项控件</summary>
-        private void UpdateSettingsVisibility()
-        {
-            bool visible = _showSettings;
-
-            if (_lblCount != null) _lblCount.Visible = visible;
-            if (_cboCount != null) _cboCount.Visible = visible;
-            if (_lblLayout != null) _lblLayout.Visible = visible;
-            if (_cboLayout != null) _cboLayout.Visible = visible;
-            if (_lblTheme != null) _lblTheme.Visible = visible;
-            if (_cboTheme != null) _cboTheme.Visible = visible;
-            if (_btnSaveState != null) _btnSaveState.Visible = visible;
-            if (_btnCmdManager != null) _btnCmdManager.Visible = visible;
-        }
 
         /// <summary>应用主题到整个窗体</summary>
         private void ApplyTheme()
         {
             var isDark = _currentTheme == ThemeMode.Dark;
 
+            // 先刷新全局令牌，后面所有控件的取色都走 Theme.P
+            Theme.Set((UiSkin)CsvSettings.ThemeSkin, isDark);
+
             // 窗体背景
-            BackColor = isDark ? _colorDarkFormBg : _colorLightFormBg;
+            Font = Theme.Body;
+            BackColor = Theme.P.Window;
             _pnlContainer.BackColor = BackColor;
 
             // 顶部工具栏
             if (_pnlTopBar != null)
             {
-                _pnlTopBar.BackColor = isDark ? _colorDarkTopBg : _colorLightTopBg;
+                _pnlTopBar.BackColor = Theme.P.Chrome;
                 // 更新分隔线颜色
                 foreach (Control c in _pnlTopBar.Controls)
                 {
                     if (c is Panel p && p.Height == 1)
-                        p.BackColor = isDark ? _colorDarkTopBorder : _colorLightTopBorder;
+                        p.BackColor = Theme.P.Border;
                 }
             }
 
             // 标签文字颜色 - 遍历_flowPanel中的控件
-            var labelFg = isDark ? _colorDarkLabelFg : _colorLightLabelFg;
-            var titleFg = isDark ? _colorDarkTitleFg : _colorLightTitleFg;
+            var labelFg = Theme.P.Muted;
+            var titleFg = Theme.P.Text;
 
-            if (_flowPanel != null)
+            // 顶栏控件重新取色
+            _segSettings?.RefreshTheme();
+            foreach (Control c in _flowPanel.Controls)
             {
-                foreach (Control c in _flowPanel.Controls)
+                if (c is Label lbl)
                 {
-                    if (c is Label lbl)
-                    {
-                        if (lbl.Font.Size > 10) // 标题
-                            lbl.ForeColor = titleFg;
-                        else
-                            lbl.ForeColor = labelFg;
-                    }
+                    // 标题靠 Tag 认出，别用字号猜：皮肤改了字号就会误判成普通标签
+                    bool isTitle = Equals(lbl.Tag, "title");
+                    lbl.Font = isTitle ? Theme.Title : Theme.Body;
+                    lbl.ForeColor = isTitle ? titleFg : labelFg;
+                }
+                else if (c is ThemeButton tb)
+                {
+                    tb.Invalidate();
                 }
             }
+
+            if (_pnlTopRight != null)
+            {
+                foreach (Control c in _pnlTopRight.Controls)
+                {
+                    if (c is ThemeButton rb) rb.Invalidate();
+                }
+            }
+
+            // 顶栏尺寸放到最后重算：标题字体刚换过，量出来的高度才是最终值
+            LayoutTopBar();
 
             // 应用到所有子窗格
             foreach (var panel in _panels)
@@ -747,10 +745,10 @@ namespace wxd.files.winforms
             panel.ApplyTheme(isDark);
         }
 
-        private LayoutMode GetCurrentLayout() => _cboLayout?.SelectedItem switch
+        private LayoutMode GetCurrentLayout() => _layoutIndex switch
         {
-            "纵向布局" => LayoutMode.Vertical,
-            "纵横交错流式布局" => LayoutMode.Flow,
+            1 => LayoutMode.Vertical,
+            2 => LayoutMode.Flow,
             _ => LayoutMode.Horizontal
         };
 
@@ -768,8 +766,8 @@ namespace wxd.files.winforms
                 _panels[i] = new TabbedFileBrowserPanel(i)
                 {
                     Dock = DockStyle.None,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Padding = new Padding(0)
+                    // 圆角卡片由面板自绘，方形边框会盖住圆弧
+                    BorderStyle = BorderStyle.None
                 };
                 // 恢复页签配置（不跳过自动导航）
                 _panels[i].RestoreTabs(skipAutoNavigate: false);
@@ -792,8 +790,7 @@ namespace wxd.files.winforms
                 _panels[i] = new TabbedFileBrowserPanel(i)
                 {
                     Dock = DockStyle.None,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Padding = new Padding(0),
+                    BorderStyle = BorderStyle.None,
                     Visible = false  // 初始隐藏，避免空白闪烁
                 };
                 // 恢复页签配置（跳过自动导航，后续由 InitializeDeferredAsync 加载）
@@ -810,7 +807,7 @@ namespace wxd.files.winforms
             int count = _panels.Length;
             if (count == 0) return;
 
-            // 容器可用区域（已减去 Padding/GAP）
+            // 容器可用区域（已减去 Padding）
             int availW = _pnlContainer.ClientRectangle.Width - _pnlContainer.Padding.Horizontal;
             int availH = _pnlContainer.ClientRectangle.Height - _pnlContainer.Padding.Top - _pnlContainer.Padding.Bottom;
 
@@ -953,7 +950,7 @@ namespace wxd.files.winforms
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            if (_panels.Length > 0 && _cboLayout != null && _pnlContainer.ClientRectangle.Width > 10)
+            if (_panels.Length > 0 && _pnlContainer.ClientRectangle.Width > 10)
             {
                 ApplyLayout(GetCurrentLayout());
             }
@@ -973,8 +970,12 @@ namespace wxd.files.winforms
             AppStateStore.Save();
 
             CsvSettings.PaneCount = _panels.Length;
-            CsvSettings.LayoutIndex = _cboLayout?.SelectedIndex ?? 2;
-            CsvSettings.ThemeMode = _cboTheme?.SelectedIndex ?? 1;
+            CsvSettings.LayoutIndex = _layoutIndex;
+            CsvSettings.ThemeMode = (int)_currentTheme;
+
+            _menuPane?.Dispose();
+            _menuLayout?.Dispose();
+            _menuTheme?.Dispose();
             base.OnFormClosing(e);
         }
 
@@ -1000,7 +1001,11 @@ namespace wxd.files.winforms
 
             // 从配置读取命令列表
             var commands = CsvSettings.GetCustomCommands();
-            if (commands.Count == 0 || _flowPanel == null) return;
+            if (commands.Count == 0 || _flowPanel == null)
+            {
+                LayoutTopBar();
+                return;
+            }
 
             // 按分组归类：独立按钮 + 分组按钮
             var standalone = commands.Where(c => string.IsNullOrWhiteSpace(c.GroupName)).ToList();
@@ -1013,19 +1018,15 @@ namespace wxd.files.winforms
             {
                 Color btnColor;
                 try { btnColor = ColorTranslator.FromHtml(cmd.ButtonColor); }
-                catch { btnColor = Color.FromArgb(123, 31, 162); }
+                catch { btnColor = Theme.P.Accent; }
 
-                var btn = new Button
+                var btn = new ThemeButton
                 {
                     Text = cmd.Name,
-                    Size = new Size(85, 26),
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    Cursor = Cursors.Hand,
-                    BackColor = btnColor,
-                    ForeColor = Color.White,
-                    FlatStyle = FlatStyle.Flat,
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(100, 30, 140) },
-                    Margin = new Padding(2, 2, 2, 0),
+                    Size = new Size(ThemeButton.FitWidth(cmd.Name), ThemeMetrics.RowH),
+                    Font = Theme.Body,
+                    FillOverride = btnColor,
+                    Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
                     Tag = cmd
                 };
 
@@ -1042,19 +1043,16 @@ namespace wxd.files.winforms
                 var firstCmd = group.First();
                 Color groupColor;
                 try { groupColor = ColorTranslator.FromHtml(firstCmd.ButtonColor); }
-                catch { groupColor = Color.FromArgb(123, 31, 162); }
+                catch { groupColor = Theme.P.Accent; }
 
-                var groupBtn = new Button
+                var groupText = group.Key + " ▾";
+                var groupBtn = new ThemeButton
                 {
-                    Text = group.Key + " ▾",
-                    Size = new Size(95, 26),
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    Cursor = Cursors.Hand,
-                    BackColor = groupColor,
-                    ForeColor = Color.White,
-                    FlatStyle = FlatStyle.Flat,
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(100, 30, 140) },
-                    Margin = new Padding(2, 2, 2, 0),
+                    Text = groupText,
+                    Size = new Size(ThemeButton.FitWidth(groupText), ThemeMetrics.RowH),
+                    Font = Theme.Body,
+                    FillOverride = groupColor,
+                    Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
                     Tag = group.ToList()
                 };
 
@@ -1067,6 +1065,9 @@ namespace wxd.files.winforms
                 _cmdActionButtons.Add(groupBtn);
                 _flowPanel.Controls.Add(groupBtn);
             }
+
+            // 新建的按钮只带左右间距，垂直居中要靠顶栏统一重算，否则会比固定按钮高一截
+            LayoutTopBar();
         }
 
         // ==================== 分组按钮点击：弹出下拉菜单 ====================
@@ -1075,12 +1076,11 @@ namespace wxd.files.winforms
             if (sender is not Button btn || btn.Tag is not List<CustomCommandItem> groupCommands)
                 return;
 
-            var isDark = _currentTheme == ThemeMode.Dark;
             var menu = new ContextMenuStrip
             {
-                BackColor = isDark ? Color.FromArgb(45, 45, 48) : Color.White,
-                ForeColor = isDark ? Color.White : Color.FromArgb(30, 30, 30),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
+                Font = Theme.Body,
                 ShowImageMargin = false
             };
 
@@ -1089,9 +1089,9 @@ namespace wxd.files.winforms
                 var menuItem = new ToolStripMenuItem(cmd.Name)
                 {
                     Tag = cmd,
-                    ForeColor = isDark ? Color.White : Color.FromArgb(30, 30, 30),
+                    ForeColor = Theme.P.Text,
                     BackColor = Color.Transparent,
-                    Font = new Font("Microsoft YaHei UI", 9f)
+                    Font = Theme.Body
                 };
                 var tipParts = new List<string>();
                 if (!string.IsNullOrWhiteSpace(cmd.Command))
@@ -1185,17 +1185,18 @@ namespace wxd.files.winforms
             private int _angle;
             private readonly Label _lblTitle;
             private readonly Label _lblDetail;
-            private readonly ProgressBar _progressBar;
+            private readonly ThemeProgressBar _progressBar;
             private readonly Panel _pnlDots;
             private readonly Label[] _dotLabels;
 
-            public StartupLoadingForm(bool isDark)
+            public StartupLoadingForm()
             {
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.Manual;
                 ShowInTaskbar = false;
                 Size = new Size(420, 200);
-                BackColor = isDark ? Color.FromArgb(45, 45, 48) : Color.White;
+                // 令牌在主窗构造时就 Set 过了，这里取到的是用户存档的皮肤色
+                BackColor = Theme.P.Surface;
                 TopMost = true;
 
                 SetStyle(ControlStyles.AllPaintingInWmPaint |
@@ -1212,19 +1213,16 @@ namespace wxd.files.winforms
                     Size = new Size(380, 28),
                     Location = new Point(20, 15),
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
-                    ForeColor = isDark ? Color.FromArgb(241, 241, 241) : Color.FromArgb(30, 136, 229),
+                    Font = Theme.TitleBold,
+                    ForeColor = Theme.P.Accent,
                     BackColor = Color.Transparent
                 };
 
                 // 进度条
-                _progressBar = new ProgressBar
+                _progressBar = new ThemeProgressBar
                 {
                     Size = new Size(380, 8),
                     Location = new Point(20, 55),
-                    Style = ProgressBarStyle.Continuous,
-                    Minimum = 0,
-                    Maximum = 100,
                     Value = 0
                 };
 
@@ -1236,8 +1234,8 @@ namespace wxd.files.winforms
                     Size = new Size(380, 20),
                     Location = new Point(20, 72),
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    ForeColor = isDark ? Color.FromArgb(180, 180, 180) : Color.FromArgb(120, 160, 200),
+                    Font = Theme.Body,
+                    ForeColor = Theme.P.Muted,
                     BackColor = Color.Transparent
                 };
 
@@ -1255,8 +1253,8 @@ namespace wxd.files.winforms
                     {
                         Text = "●",
                         AutoSize = true,
-                        Font = new Font("Segoe UI", 10f),
-                        ForeColor = Color.FromArgb(66, 165, 245),
+                        Font = new Font("Segoe UI", Theme.Body.Size + 1f),
+                        ForeColor = Theme.P.Accent,
                         Location = new Point(150 + d * 28, 0),
                         BackColor = Color.Transparent
                     };
@@ -1280,8 +1278,8 @@ namespace wxd.files.winforms
                     int step = (_angle / 10) % 4;
                     for (int d = 0; d < 3; d++)
                         _dotLabels[d].ForeColor = (d == step % 3)
-                            ? Color.FromArgb(100, 181, 246)
-                            : Color.FromArgb(180, 200, 220);
+                            ? Theme.P.Accent
+                            : Theme.P.Border;
                     Invalidate(new Rectangle(20, 130, 72, 72)); // 只刷新圆弧区域
                 };
             }
@@ -1328,8 +1326,8 @@ namespace wxd.files.winforms
 
                 // 圆角矩形边框
                 var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-                using var pen = new Pen(Color.FromArgb(200, 210, 225), 1f);
-                using var path = GetRoundedRectPath(rect, 8);
+                using var pen = new Pen(Theme.P.Border, 1f);
+                using var path = ThemeButton.RoundRect(rect, 8);
                 e.Graphics.DrawPath(pen, path);
 
                 // 旋转圆弧动画
@@ -1342,11 +1340,11 @@ namespace wxd.files.winforms
                 float penWidth = 3f;
 
                 // 背景圆环
-                using var bgPen = new Pen(Color.FromArgb(230, 235, 240), penWidth);
+                using var bgPen = new Pen(Theme.P.Divider, penWidth);
                 g.DrawEllipse(bgPen, cx - radius, cy - radius, radius * 2, radius * 2);
 
-                // 旋转蓝色弧线
-                using var arcPen = new Pen(Color.FromArgb(30, 136, 229), penWidth)
+                // 旋转强调色弧线
+                using var arcPen = new Pen(Theme.P.Accent, penWidth)
                 {
                     StartCap = System.Drawing.Drawing2D.LineCap.Round,
                     EndCap = System.Drawing.Drawing2D.LineCap.Round
@@ -1354,19 +1352,6 @@ namespace wxd.files.winforms
                 g.DrawArc(arcPen,
                     cx - radius, cy - radius, radius * 2, radius * 2,
                     _angle, 270);
-            }
-
-            private static System.Drawing.Drawing2D.GraphicsPath GetRoundedRectPath(
-                Rectangle rect, int radius)
-            {
-                var path = new System.Drawing.Drawing2D.GraphicsPath();
-                int d = radius * 2;
-                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-                path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-                path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-                path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-                path.CloseFigure();
-                return path;
             }
         }
     }

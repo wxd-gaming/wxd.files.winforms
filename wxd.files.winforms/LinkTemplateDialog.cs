@@ -11,14 +11,19 @@ namespace wxd.files.winforms
     public class LinkTemplateDialog : Form
     {
         private ListBox _lstTemplates = new();
-        private TextBox _txtName = new();
-        private Button _btnNew = new();
-        private Button _btnSave = new();
-        private Button _btnDelete = new();
-        private Button _btnEditConfig = new();
-        private Button _btnClose = new();
-        private Button? _btnSelect = null;
+        private ThemeField _fldName = new();
+        private TextBox _txtName;
+        private ThemeButton _btnNew = new();
+        private ThemeButton _btnSave = new();
+        private ThemeButton _btnDelete = new();
+        private ThemeButton _btnEditConfig = new();
+        private ThemeButton _btnClose = new();
+        private ThemeButton? _btnSelect = null;
         private Label _lblPreview = new();
+        private Label _lblList = new();
+        private Label _lblName = new();
+        private Label _lblPrev = new();
+        private Panel _bar = new();
 
         private string _directoryPath = "";
         private List<LinkTemplate> _templates = new();
@@ -52,6 +57,9 @@ namespace wxd.files.winforms
             _headerRowIndex = headerRowIndex;
             ReloadTemplates();
             InitializeComponent(mode);
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             RefreshTemplateList();
         }
 
@@ -67,200 +75,139 @@ namespace wxd.files.winforms
             Text = selectMode ? "选择关联配置模板" : "管理关联配置模板";
             ClientSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false;
             MaximizeBox = false;
 
             // 左侧：模板列表
-            var lblList = new Label
-            {
-                Text = "模板列表：",
-                Location = new Point(10, 10),
-                Size = new Size(200, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            Controls.Add(lblList);
+            _lblList = new Label { Text = "模板列表：", AutoSize = true };
 
             _lstTemplates = new ListBox
             {
-                Location = new Point(10, 30),
-                Size = new Size(220, 280),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                BorderStyle = BorderStyle.FixedSingle,
-                IntegralHeight = false,
-                BackColor = Color.FromArgb(250, 252, 255)
+                Font = Theme.Caption,
+                BorderStyle = BorderStyle.None,
+                IntegralHeight = false
             };
             _lstTemplates.SelectedIndexChanged += OnTemplateSelected;
-            Controls.Add(_lstTemplates);
 
             // 右侧：编辑区
-            var lblName = new Label
-            {
-                Text = "模板名称：",
-                Location = new Point(250, 30),
-                Size = new Size(100, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            Controls.Add(lblName);
+            _lblName = new Label { Text = "模板名称：", AutoSize = true };
+            _fldName = new ThemeField { Placeholder = "输入模板名称..." };
+            _txtName = _fldName.Edit;
 
-            _txtName = new TextBox
-            {
-                Location = new Point(250, 50),
-                Size = new Size(290, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "输入模板名称..."
-            };
-            Controls.Add(_txtName);
-
-            // 预览区
-            var lblPrev = new Label
-            {
-                Text = "配置预览：",
-                Location = new Point(250, 82),
-                Size = new Size(100, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            Controls.Add(lblPrev);
-
+            _lblPrev = new Label { Text = "配置预览：", AutoSize = true };
             _lblPreview = new Label
             {
                 Text = "（选择模板后显示预览）",
-                Location = new Point(250, 102),
-                Size = new Size(290, 120),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(100, 120, 140),
-                BackColor = Color.FromArgb(250, 252, 255),
-                BorderStyle = BorderStyle.FixedSingle,
-                Padding = new Padding(4)
+                Font = Theme.Caption,
+                BorderStyle = BorderStyle.None,
+                Padding = new Padding(4),
+                AutoSize = false
             };
-            Controls.Add(_lblPreview);
 
-            // 管理按钮
-            _btnNew = new Button
-            {
-                Text = "新增",
-                Location = new Point(250, 235),
-                Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand
-            };
-            _btnNew.Click += OnNewClick;
-            Controls.Add(_btnNew);
+            _btnNew = DialogButtonBar.Make("新增", OnNewClick);
+            _btnSave = DialogButtonBar.Make("保存", OnSaveClick);
+            _btnSave.Enabled = false;
+            _btnDelete = DialogButtonBar.Make("删除", OnDeleteClick);
+            _btnDelete.Enabled = false;
+            _btnEditConfig = DialogButtonBar.Make("编辑配置", OnEditConfigClick);
+            _btnEditConfig.Enabled = false;
 
-            _btnSave = new Button
-            {
-                Text = "保存",
-                Location = new Point(340, 235),
-                Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(22, 163, 74),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61) },
-                Cursor = Cursors.Hand,
-                Enabled = false
-            };
-            _btnSave.Click += OnSaveClick;
-            Controls.Add(_btnSave);
-
-            _btnDelete = new Button
-            {
-                Text = "删除",
-                Location = new Point(430, 235),
-                Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(239, 68, 68),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) },
-                Cursor = Cursors.Hand,
-                Enabled = false
-            };
-            _btnDelete.Click += OnDeleteClick;
-            Controls.Add(_btnDelete);
-
-            // 编辑配置按钮
-            _btnEditConfig = new Button
-            {
-                Text = "编辑配置",
-                Location = new Point(250, 270),
-                Size = new Size(130, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand,
-                Enabled = false
-            };
-            _btnEditConfig.Click += OnEditConfigClick;
-            Controls.Add(_btnEditConfig);
-
-            // 底部按钮
-            int y = 340;
-
+            // 底部：选择模式把"引用此模板"当主操作，管理模式只留关闭
+            _bar = DialogButtonBar.Create();
             if (selectMode)
             {
-                _btnSelect = new Button
+                _btnSelect = DialogButtonBar.Make("引用此模板", (s, e) =>
                 {
-                    Text = "引用此模板",
-                    Location = new Point(10, y),
-                    Size = new Size(110, 28),
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(22, 163, 74),
-                    ForeColor = Color.White,
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61) },
-                    Cursor = Cursors.Hand,
-                    Enabled = false
-                };
-                _btnSelect.Click += (s, e) =>
-                {
-                    if (_editingTemplate != null)
-                    {
-                        SelectedTemplateUid = _editingTemplate.Uid;
-                        IsTemplateSelected = true;
-                        DialogResult = DialogResult.OK;
-                        Close();
-                    }
-                };
-                Controls.Add(_btnSelect);
-
-                // 选择模式也允许直接"取消"
-                _btnClose = new Button
-                {
-                    Text = "取消",
-                    Location = new Point(470, y),
-                    Size = new Size(70, 28),
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(235, 248, 255),
-                    ForeColor = Color.FromArgb(20, 60, 100),
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-                };
-                _btnClose.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
-                Controls.Add(_btnClose);
+                    if (_editingTemplate == null) return;
+                    SelectedTemplateUid = _editingTemplate.Uid;
+                    IsTemplateSelected = true;
+                    DialogResult = DialogResult.OK;
+                }, primary: true);
+                _btnSelect.Enabled = false;
+                _btnClose = DialogButtonBar.Make("取消");
             }
             else
             {
-                _btnClose = new Button
-                {
-                    Text = "关闭",
-                    Location = new Point(470, y),
-                    Size = new Size(70, 28),
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(235, 248, 255),
-                    ForeColor = Color.FromArgb(20, 60, 100),
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-                };
-                _btnClose.Click += (s, e) => Close();
-                Controls.Add(_btnClose);
+                _btnClose = DialogButtonBar.Make("关闭");
             }
+            _btnClose.Click += (s, e) => Close();
+            _bar.Controls.Add(_btnClose);
+            if (_btnSelect != null) _bar.Controls.Add(_btnSelect);
+
+            Controls.AddRange(new Control[]
+            {
+                _lblList, new ThemeBordered(_lstTemplates), _lblName, _fldName,
+                _lblPrev, new ThemeBordered(_lblPreview), _btnNew, _btnSave, _btnDelete, _btnEditConfig, _bar
+            });
+            LayoutBody();
+            Resize += (_, _) => LayoutBody();
+            CancelButton = _btnClose;
+            if (_btnSelect != null) AcceptButton = _btnSelect;
 
             ResumeLayout(false);
+        }
+
+        /// <summary>固定尺寸对话框，但按钮宽度和行高跟着皮肤变，所以排版仍要现算。</summary>
+        private void LayoutBody()
+        {
+            int m = ThemeMetrics.Margin, gap = ThemeMetrics.Gap, group = ThemeMetrics.Group;
+            int rowH = ThemeMetrics.RowH;
+            int colW = 220;
+            int rightX = m + colW + group;
+            int rightW = ClientSize.Width - rightX - m;
+            int bottom = ClientSize.Height - _bar.Height - m;
+
+            _lblList.Location = new Point(m, ThemeMetrics.RowPad);
+            var listHost = (Control)_lstTemplates.Parent!;
+            listHost.SetBounds(m, _lblList.Bottom + gap, colW, bottom - _lblList.Bottom - gap);
+
+            _lblName.Location = new Point(rightX, ThemeMetrics.RowPad);
+            _fldName.SetBounds(rightX, _lblName.Bottom + gap, rightW, rowH);
+
+            _lblPrev.Location = new Point(rightX, _fldName.Bottom + group);
+            int prevTop = _lblPrev.Bottom + gap;
+            var prevHost = (Control)_lblPreview.Parent!;
+            prevHost.SetBounds(rightX, prevTop, rightW, 120);
+
+            int y = prevHost.Bottom + group;
+            int x = rightX;
+            foreach (var b in new[] { _btnNew, _btnSave, _btnDelete })
+            {
+                b.SetBounds(x, y, ThemeButton.FitWidth(b.Text), rowH);
+                x += b.Width + gap;
+            }
+            _btnEditConfig.SetBounds(rightX, y + rowH + gap, ThemeButton.FitWidth(_btnEditConfig.Text), rowH);
+
+            if (_btnSelect != null)
+                DialogButtonBar.LayoutRight(_bar, _btnClose, _btnSelect);
+            else
+                DialogButtonBar.LayoutRight(_bar, _btnClose);
+        }
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _bar.BackColor = p.Chrome;
+
+            foreach (var lbl in new[] { _lblList, _lblName, _lblPrev })
+                lbl.ForeColor = p.Muted;
+
+            _lstTemplates.BackColor = p.Surface;
+            _lstTemplates.ForeColor = p.Text;
+
+            // 预览块靠 ThemeBordered 的描边和正文区拉开，底色直接用 Surface；
+            // 套 CellTint 的淡色只适合小格子，摊到大面板上深色皮肤里就成一块脏灰
+            _lblPreview.BackColor = p.Surface;
+            _lblPreview.ForeColor = p.Text;
+
+            _fldName.ApplyTheme();
+            foreach (var b in new[] { _btnNew, _btnSave, _btnDelete, _btnEditConfig, _btnClose, _btnSelect })
+                if (b != null) b.BackColor = p.Chrome;
+
+            LayoutBody();
+            Invalidate(true);
         }
 
         private void RefreshTemplateList()

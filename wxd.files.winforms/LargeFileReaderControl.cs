@@ -19,21 +19,31 @@ namespace wxd.files.winforms
     /// <summary>大文件阅读器控件，可嵌入 TabPage</summary>
     public class LargeFileReaderControl : UserControl
     {
-        private Button _btnOpenFile = null!, _btnGotoLine = null!, _btnClearCache = null!;
+        private ThemeButton _btnOpenFile = null!, _btnGotoLine = null!, _btnClearCache = null!;
+        private ThemeField _fldGoto = null!;
         private TextBox _txtGotoLine = null!;
-        private ComboBox _cboSearch = null!;
-        private CheckBox _chkCaseSensitive = null!, _chkRegex = null!;
-        private Button _btnSearchFirst = null!, _btnSearchPrev = null!, _btnSearchNext = null!, _btnSearchLast = null!, _btnExport = null!, _btnReverseExport = null!;
+        private ThemeComboBox _cboSearch = null!;
+        // 可编辑下拉框在 Flat 下浅色没有边框、深色只有系统灰边，外面套一圈主题描边统一观感
+        private SearchBoxHost _searchHost = null!;
+        private ThemeCheckBox _chkCaseSensitive = null!, _chkRegex = null!;
+        private ThemeButton _btnExport = null!, _btnReverseExport = null!;
+        // 首条/上一个/下一个/末条合成一颗分段按钮，比四颗并排方按钮更像一个整体
+        private ThemeSegmented _segNav = null!;
         private Label _lblStatus = null!;
-        private NumericUpDown _numContextLines = null!;
+        // 原生 NumericUpDown 的灰色微调块不跟随皮肤，改成和其他输入框同款的数字主题框
+        private ThemeField _fldContext = null!;
+        private TextBox _txtContext = null!;
         private Label _lblContextLines = null!;
         // ★ 底部状态栏
-        private FlowLayoutPanel _statusBar = null!;
+        private Panel _statusBar = null!;
+        private Panel _statusDivider = null!;
+        private FlowLayoutPanel _statusFlow = null!;
         private Label _lblFileModify = null!, _lblFileSize = null!, _lblFileLines = null!;
         private Label _lblCacheSize = null!, _lblSearchPos = null!, _lblCurLine = null!;
         private LineListView _lstContent = null!;
         private System.Windows.Forms.Timer _timer = null!, _timerScroll = null!;
-        private TableLayoutPanel _topPanel = null!;
+        private Panel _toolPanel = null!;
+        private Panel _toolDivider = null!;
 
         // 搜索状态
         // ★ 行号统一改为 long，支持超过 21 亿行的超大文件（极端超短行场景）
@@ -41,6 +51,8 @@ namespace wxd.files.winforms
         private long _searchCurrentIndex = -1;
         private long _lastNavigatedMatchLine = -1;
         private CancellationTokenSource? _searchCts;
+        // 导出/反向导出共用：关掉页签或换文件时取消，半截输出会被删掉而不是报「导出成功」
+        private CancellationTokenSource? _exportCts;
         // ★ 当前生效的搜索 key，格式 "keyword|caseSensitive|useRegex"
         private string _lastSearch = "";
         private bool _hasuserNavigated; // 用户在搜索过程中是否已手动跳转过
@@ -117,89 +129,92 @@ namespace wxd.files.winforms
         public LargeFileReaderControl()
         {
             InitializeComponent();
+            ApplyTheme();
+            // 这个控件是独立窗口里的，主窗翻明暗时不会遍历到它，只能自己订阅
+            Theme.Changed += OnThemeChanged;
+            Disposed += (_, _) => Theme.Changed -= OnThemeChanged;
             // ★ 加载全局搜索历史到下拉框
             try { RefreshSearchHistory(); } catch { }
         }
+
+        private void OnThemeChanged() => ApplyTheme();
 
         private void InitializeComponent()
         {
             SuspendLayout();
 
-            _btnOpenFile = new Button { Text = "打开文件", Size = new Size(90, 28), Location = new Point(10, 6), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
-            _btnOpenFile.FlatAppearance.BorderSize = 1;
-            _btnOpenFile.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+            // 一个区域只留一颗实心主按钮，其余动作统一走描边次要样式，别再混幽灵态
+            _btnOpenFile = new ThemeButton { Text = "打开文件", Primary = true };
             _btnOpenFile.Click += OnOpen;
-            _btnClearCache = new Button { Text = "清理缓存", Size = new Size(80, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(200, 210, 220), ForeColor = Color.FromArgb(50, 70, 90) };
-            _btnClearCache.FlatAppearance.BorderSize = 1;
-            _btnClearCache.FlatAppearance.BorderColor = Color.FromArgb(160, 180, 200);
+            _btnClearCache = new ThemeButton { Text = "清理缓存" };
             _btnClearCache.Click += OnClearCache;
-            _btnGotoLine = new Button { Text = "跳转", Size = new Size(55, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
-            _btnGotoLine.FlatAppearance.BorderSize = 1;
-            _btnGotoLine.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
-            _btnGotoLine.Click += OnGoto;
-            _txtGotoLine = new TextBox { Size = new Size(120, 28), PlaceholderText = "行号" };
+            _fldGoto = new ThemeField { Placeholder = "跳转到行号" };
+            _txtGotoLine = _fldGoto.Edit;
             _txtGotoLine.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnGoto(s, e); };
-            _lblStatus = new Label { Text = "请打开一个文本文件", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8.5F) };
-            _lblStatus.Margin = new Padding(3, 7, 0, 0);
+            _btnGotoLine = new ThemeButton { Text = "跳转" };
+            _btnGotoLine.Click += OnGoto;
+            _lblStatus = new Label { Text = "请打开一个文本文件", AutoSize = true };
 
-            _topPanel = new TableLayoutPanel { Dock = DockStyle.Top, Height = 88, ColumnCount = 1, RowCount = 3, BackColor = Color.FromArgb(235, 245, 255) };
-            _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-            _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
-            _topPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+            // 工具区贴在列表下方、状态栏上方，顶部只留给内容
+            _toolPanel = new Panel { Dock = DockStyle.Bottom, Height = 88 };
+            _toolDivider = new Panel { Dock = DockStyle.Top, Height = 1 };
+            _toolPanel.Controls.Add(_toolDivider);
 
-            var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            row1.Controls.AddRange(new Control[] { _btnOpenFile, _btnClearCache, _txtGotoLine, _btnGotoLine });
-
-            var separator = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(173, 209, 237) };
-
-            _cboSearch = new ComboBox { Size = new Size(400, 28), DropDownStyle = ComboBoxStyle.DropDown, AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.ListItems, FlatStyle = FlatStyle.Flat };
+            _cboSearch = new ThemeComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDown,
+                // 原生 Standard 边框自带 2px 白色凹凸线，深色下压不住，换 Flat 让边框走绘制路径
+                FlatStyle = FlatStyle.Flat,
+                AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+                AutoCompleteSource = AutoCompleteSource.ListItems
+            };
+            _searchHost = new SearchBoxHost();
+            _searchHost.Controls.Add(_cboSearch);
+            _searchHost.GotFocus += (s, e) => _cboSearch.Focus();
             _cboSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) OnSearch(); };
             _cboSearch.SelectedIndexChanged += OnSearchHistorySelected;
             // ★ 不监听 TextChanged 清空 _lastSearch：导航按钮会自行比较搜索框 key 与 _lastSearch
-            _chkCaseSensitive = new CheckBox { Text = "Aa", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
-            _chkCaseSensitive.Margin = new Padding(3, 6, 0, 0);
-            _chkRegex = new CheckBox { Text = ".*", AutoSize = true, Checked = false, TextAlign = ContentAlignment.MiddleRight };
-            _chkRegex.Margin = new Padding(3, 6, 0, 0);
-            _btnSearchFirst = new Button { Text = "|<", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
-            _btnSearchFirst.FlatAppearance.BorderSize = 1;
-            _btnSearchFirst.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
-            _btnSearchFirst.Click += OnSearchFirst;
-            _btnSearchPrev = new Button { Text = "上一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
-            _btnSearchPrev.FlatAppearance.BorderSize = 1;
-            _btnSearchPrev.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
-            _btnSearchPrev.Click += OnSearchPrev;
-            _btnSearchNext = new Button { Text = "下一个", Size = new Size(65, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
-            _btnSearchNext.FlatAppearance.BorderSize = 1;
-            _btnSearchNext.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
-            _btnSearchNext.Click += OnSearchNext;
-            _btnSearchLast = new Button { Text = ">|", Size = new Size(35, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(144, 180, 210), ForeColor = Color.White };
-            _btnSearchLast.FlatAppearance.BorderSize = 1;
-            _btnSearchLast.FlatAppearance.BorderColor = Color.FromArgb(120, 160, 200);
-            _btnSearchLast.Click += OnSearchLast;
-
-            var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10, 8, 0, 0) };
-            _btnExport = new Button { Text = "导出结果", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White };
-            _btnExport.FlatAppearance.BorderSize = 1;
-            _btnExport.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+            _chkCaseSensitive = new ThemeCheckBox { Text = "Aa", AutoSize = true };
+            _chkRegex = new ThemeCheckBox { Text = ".*", AutoSize = true };
+            _segNav = new ThemeSegmented { Items = new[] { "|<", "上一个", "下一个", ">|" } };
+            _segNav.SegmentClicked += i =>
+            {
+                switch (i)
+                {
+                    case 0: OnSearchFirst(this, EventArgs.Empty); break;
+                    case 1: OnSearchPrev(this, EventArgs.Empty); break;
+                    case 2: OnSearchNext(this, EventArgs.Empty); break;
+                    case 3: OnSearchLast(this, EventArgs.Empty); break;
+                }
+            };
+            _btnExport = new ThemeButton { Text = "导出结果" };
             _btnExport.Click += OnExport;
-            _btnReverseExport = new Button { Text = "反向导出", Size = new Size(75, 28), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(255, 152, 0), ForeColor = Color.White };
-            _btnReverseExport.FlatAppearance.BorderSize = 1;
-            _btnReverseExport.FlatAppearance.BorderColor = Color.FromArgb(245, 124, 0);
+            _btnReverseExport = new ThemeButton { Text = "反向导出" };
             _btnReverseExport.Click += OnReverseExport;
-            _lblContextLines = new Label { Text = "上下行:", AutoSize = true, ForeColor = Color.FromArgb(90, 130, 170), Font = new Font("Microsoft YaHei UI", 8F), TextAlign = ContentAlignment.MiddleRight };
-            _lblContextLines.Margin = new Padding(8, 7, 0, 0);
-            _numContextLines = new NumericUpDown { Minimum = 0, Maximum = 999, Value = 0, Width = 55 };
-            row2.Controls.AddRange(new Control[] { _cboSearch, _chkCaseSensitive, _chkRegex, _btnSearchFirst, _btnSearchPrev, _btnSearchNext, _btnSearchLast, _lblContextLines, _numContextLines, _btnExport, _btnReverseExport });
+            _lblContextLines = new Label { Text = "上下行", AutoSize = true };
+            _fldContext = new ThemeField();
+            _txtContext = _fldContext.Edit;
+            _txtContext.Text = "0";
+            // 原来的微调按钮没了，用上下键和滚轮补上调值手感
+            _txtContext.KeyPress += OnContextKeyPress;
+            _txtContext.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Up) { StepContextLines(1); e.Handled = true; }
+                else if (e.KeyCode == Keys.Down) { StepContextLines(-1); e.Handled = true; }
+            };
+            _txtContext.MouseWheel += (s, e) => StepContextLines(e.Delta > 0 ? 1 : -1);
 
-            _topPanel.Controls.Add(row1, 0, 0);
-            _topPanel.Controls.Add(separator, 0, 1);
-            _topPanel.Controls.Add(row2, 0, 2);
+            _toolPanel.Controls.AddRange(new Control[]
+            {
+                _btnOpenFile, _btnClearCache, _fldGoto, _btnGotoLine, _lblStatus,
+                _searchHost, _chkCaseSensitive, _chkRegex, _segNav,
+                _lblContextLines, _fldContext, _btnExport, _btnReverseExport
+            });
+            LayoutToolbar();
+            _toolPanel.Resize += (s, e) => LayoutToolbar();
 
             _lstContent = new LineListView();
             _lstContent.Dock = DockStyle.Fill;
-            _lstContent.Font = new Font("Consolas", 10F);
-            _lstContent.BackColor = Color.White;
-            _lstContent.ForeColor = Color.FromArgb(30, 30, 30);
             _lstContent.GetLineText = idx => _cache.TryGetValue((int)idx, out var v) ? v : ReadLine(idx);
             _lstContent.SelectedIndexChanged += (s, e) =>
             {
@@ -217,33 +232,243 @@ namespace wxd.files.winforms
             _lstContent.VScrollChanged += (s, e) => UpdateScrollPos();
             _lstContent.KeyDown += OnListViewKeyDown;
 
-            // ★ 底部状态栏：6 个 Label，流式自动排列
+            // ★ 底部状态栏：一条分隔线 + 6 个流式排列的信息
             _lblFileModify = MakeStatusLabel("最后修改：-");
             _lblFileSize = MakeStatusLabel("大小：-");
             _lblFileLines = MakeStatusLabel("行数：-");
             _lblCacheSize = MakeStatusLabel("缓存：0B");
             _lblSearchPos = MakeStatusLabel("");
             _lblCurLine = MakeStatusLabel("行：1");
-            _statusBar = new FlowLayoutPanel
+            _statusFlow = new FlowLayoutPanel
             {
-                Dock = DockStyle.Bottom,
-                Height = 24,
-                Padding = new Padding(8, 3, 8, 2),
-                BackColor = Color.FromArgb(235, 245, 255),
+                Dock = DockStyle.Fill,
+                Padding = new Padding(8, 2, 8, 0),
                 AutoScroll = false,
                 WrapContents = false
             };
-            _statusBar.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblCacheSize, _lblCurLine, _lblFileLines, _lblSearchPos });
+            _statusBar = new Panel { Dock = DockStyle.Bottom, Height = Theme.P.RowHeight };
+            _statusDivider = new Panel { Dock = DockStyle.Top, Height = 1 };
+            _statusBar.Controls.Add(_statusFlow);
+            _statusBar.Controls.Add(_statusDivider);
+            _statusFlow.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblCacheSize, _lblCurLine, _lblFileLines, _lblSearchPos });
 
+            // 同一条边上后加入的靠外：状态栏要在最底，所以它排在工具区后面
             Controls.Add(_lstContent);
+            Controls.Add(_toolPanel);
             Controls.Add(_statusBar);
-            Controls.Add(_topPanel);
             ResumeLayout(false);
 
             _timer = new System.Windows.Forms.Timer { Interval = 200 };
             _timer.Tick += (_, _) => Tick();
             _timerScroll = new System.Windows.Forms.Timer { Interval = 300 };
             _timerScroll.Tick += (_, _) => UpdateScrollPos();
+        }
+
+        /// <summary>
+        /// 顶部工具区逐行算坐标：第一行左组管文件和跳转、右组管上下文和导出，中间的空档给进度文字；
+        /// 第二行整条给搜索与导航。窗口窄到两组放不下时，导出组退回第二行尾部，再挤就折第三行，
+        /// 而不是像流式布局那样把搜索框挤没。
+        /// </summary>
+        private void LayoutToolbar()
+        {
+            // 边距/间距与左侧文件区工具条同一套常量，按钮宽度按文字量，不再写死
+            int margin = ThemeMetrics.Margin, gap = ThemeMetrics.Gap, group = ThemeMetrics.Group;
+            const int searchMin = 220;
+            // 进度文字至少留这么多才值得挤进第一行，否则宁可交给底部状态栏
+            const int statusMin = 140;
+            // 两行工具区是叠起来的，按单行的 RowPad=8 走会翻成两倍高；折到 4px，和表格阅读器过滤条一致
+            const int rowPad = 4;
+            int rowH = ThemeMetrics.RowH;
+            int w = Math.Max(360, _toolPanel.Width - margin * 2);
+            int y1 = rowPad;
+
+            int wOpen = ThemeButton.FitWidth(_btnOpenFile.Text);
+            int wClear = ThemeButton.FitWidth(_btnClearCache.Text);
+            int wGoto = ThemeButton.FitWidth(_btnGotoLine.Text);
+            int wCtx = 64;
+            int wExport = ThemeButton.FitWidth(_btnExport.Text);
+            int wReverse = ThemeButton.FitWidth(_btnReverseExport.Text);
+
+            int flagsW = _chkCaseSensitive.Width + 2 + _chkRegex.Width;
+            int ctxW = _lblContextLines.Width + 4 + wCtx;
+            int expW = wExport + gap + wReverse;
+            int leftRow1 = wOpen + gap + wClear + group + 130 + gap + wGoto;
+            int rightRow1 = ctxW + group + expW;
+
+            int x = margin;
+            _btnOpenFile.SetBounds(x, y1, wOpen, rowH); x += wOpen + gap;
+            _btnClearCache.SetBounds(x, y1, wClear, rowH); x += wClear + group;
+            _fldGoto.SetBounds(x, y1, 130, rowH); x += 130 + gap;
+            _btnGotoLine.SetBounds(x, y1, wGoto, rowH);
+
+            // 上下文/导出这一组靠右对齐；两组之间留不出放进度文字的位子时，把这组退回第二行尾部
+            bool splitRight = w - leftRow1 - rightRow1 >= group * 2 + statusMin;
+            // 进度/结果文字跟在文件组后面（说的就是这个文件），空档留在两组之间；
+            // 右组退回第二行时才贴到行尾，免得在空档里飘着
+            int statusW = _lblStatus.Width;
+            int statusX = splitRight ? _btnGotoLine.Right + group : margin + w - statusW;
+            int statusLimit = splitRight ? margin + w - rightRow1 - group : margin + w;
+            bool showStatus = statusX + statusW <= statusLimit;
+            _lblStatus.Visible = showStatus;
+            if (showStatus)
+                _lblStatus.Location = new Point(statusX, y1 + (rowH - _lblStatus.Height) / 2);
+
+            // 第二行搜索框右侧的固定占位：搜索框吃掉剩下的全部宽度，整行刚好收在右边界
+            int navTailW = gap + flagsW + group + _segNav.Width;
+            int fullTailW = navTailW + group + ctxW + group + expW;
+            int y2 = y1 + rowH + gap;
+            int y = y2;
+
+            x = margin;
+            bool fold = !splitRight && w < searchMin + fullTailW;
+            // 窄到连「搜索框 + Aa/.* + 导航」都不同行时，让搜索框独占一行、导航组另起一行。
+            // 不这样做的话下面 Math.Max 的下限会把导航组顶到面板右边界之外，四个按钮一个都点不到。
+            bool navFold = w < searchMin + navTailW;
+            int searchW = navFold ? w : Math.Max(searchMin, w - (fold || splitRight ? navTailW : fullTailW));
+            int navRowY = navFold ? y2 + rowH + gap : y2;
+            // 独立成行时右对齐收边，和搜索框那一行的右端保持一条线
+            int navX = navFold ? margin + w - (flagsW + group + _segNav.Width) : margin + searchW + gap;
+            _searchHost.SetBounds(x, y2, searchW, rowH);
+            // 内缩 2px：让下拉框自带的 1px 边和容器描边并成一条，别看成框中框
+            _cboSearch.SetBounds(2, (rowH - _cboSearch.Height) / 2, searchW - 4, _cboSearch.Height);
+            x = navX;
+            _chkCaseSensitive.Location = new Point(x, navRowY + (rowH - _chkCaseSensitive.Height) / 2);
+            x += _chkCaseSensitive.Width + 2;
+            _chkRegex.Location = new Point(x, navRowY + (rowH - _chkRegex.Height) / 2);
+            x = _chkRegex.Right + group;
+            _segNav.SetBounds(x, navRowY + (rowH - _segNav.Height) / 2, _segNav.Width, _segNav.Height);
+
+            if (splitRight)
+            {
+                // 上下文和导出挂在第一行右端，导出按钮的右边缘就是内容区右边界
+                int ex = margin + w - expW;
+                _btnExport.SetBounds(ex, y1, wExport, rowH);
+                _btnReverseExport.SetBounds(ex + wExport + gap, y1, wReverse, rowH);
+                int cx = ex - group - ctxW;
+                _lblContextLines.Location = new Point(cx, y1 + (rowH - _lblContextLines.Height) / 2);
+                _fldContext.SetBounds(cx + _lblContextLines.Width + 4, y1, wCtx, rowH);
+            }
+            else
+            {
+                if (fold || navFold)
+                {
+                    y = _segNav.Bottom + gap;
+                    x = margin;
+                }
+                else x = _segNav.Right + group;
+
+                _lblContextLines.Location = new Point(x, y + (rowH - _lblContextLines.Height) / 2);
+                x += _lblContextLines.Width + 4;
+                _fldContext.SetBounds(x, y, wCtx, rowH);
+                int ex = margin + w - expW;
+                _btnExport.SetBounds(ex, y, wExport, rowH);
+                _btnReverseExport.SetBounds(ex + wExport + gap, y, wReverse, rowH);
+            }
+
+            int h = Math.Max(Math.Max(_searchHost.Bottom, _segNav.Bottom), _btnReverseExport.Bottom) + rowPad;
+            if (_toolPanel.Height == h) return;
+            // Bottom 停靠改 Height 时不会把 Top 一起抬上去：折成三行会盖住状态栏，收回两行又在中间留一条缝。
+            // 高度落定后直接按状态栏顶边把面板摆回去，停靠宽度和列表占位都由停靠自己维护。
+            _toolPanel.Height = h;
+            // 构造期第一次排版时状态栏还没建，跳过摆位（那时面板尚未停靠，位置由停靠接管）
+            if (_statusBar != null)
+                _toolPanel.Location = new Point(0, _statusBar.Top - h);
+        }
+
+        /// <summary>数字框只收数字，粘贴和退路键照常放行。</summary>
+        private void OnContextKeyPress(object? s, KeyPressEventArgs e)
+        {
+            if (char.IsControl(e.KeyChar) || char.IsDigit(e.KeyChar)) return;
+            e.Handled = true;
+        }
+
+        private void StepContextLines(int delta)
+        {
+            int v = ContextLines + delta;
+            _txtContext.Text = Math.Clamp(v, 0, 999).ToString();
+        }
+
+        /// <summary>上下文行数，非法输入按 0 处理。</summary>
+        private int ContextLines => int.TryParse(_txtContext.Text, out var v) ? Math.Clamp(v, 0, 999) : 0;
+
+        /// <summary>只画一圈主题描边的容器，给去掉原生边框的可编辑下拉框补外形和聚焦环。</summary>
+        private sealed class SearchBoxHost : Panel
+        {
+            public SearchBoxHost()
+            {
+                SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var p = Theme.P;
+                if (Width <= p.Radius * 2 || Height <= p.Radius * 2) return;
+
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                bool focused = ContainsFocus;
+                float stroke = focused ? 2f : 1f;
+                var rect = new RectangleF(stroke / 2f, stroke / 2f, Width - stroke, Height - stroke);
+                using var path = ThemeButton.RoundRect(rect, p.Radius);
+                using (var fill = new SolidBrush(p.Surface)) g.FillPath(fill, path);
+                using var pen = new Pen(focused ? p.Accent : p.Border, stroke);
+                g.DrawPath(pen, path);
+            }
+        }
+
+        /// <summary>取色全部走当前皮肤令牌；主窗翻明暗或换皮肤后也会重新走一遍。</summary>
+        public void ApplyTheme()
+        {
+            var p = Theme.P;
+            BackColor = p.Surface;
+            _toolPanel.BackColor = p.Chrome;
+            _statusBar.BackColor = p.Chrome;
+            _statusBar.Height = p.RowHeight;
+            _statusFlow.BackColor = p.Chrome;
+            _statusDivider.BackColor = p.Divider;
+            _toolDivider.BackColor = p.Divider;
+
+            foreach (var b in new[] { _btnOpenFile, _btnClearCache, _btnGotoLine, _btnExport, _btnReverseExport })
+            {
+                b.Font = Theme.Body;
+                b.BackColor = p.Chrome;
+                b.Invalidate();
+            }
+
+            _fldGoto.ApplyTheme();
+            _fldContext.ApplyTheme();
+            _searchHost.BackColor = p.Chrome;
+            _searchHost.Invalidate();
+            _cboSearch.Font = Theme.Body;
+            _cboSearch.BackColor = p.Surface;
+            _cboSearch.ForeColor = p.Text;
+            _cboSearch.Invalidate();
+
+            foreach (var c in new[] { _chkCaseSensitive, _chkRegex })
+            {
+                c.Font = Theme.Body;
+                c.BackColor = p.Chrome;
+                c.ForeColor = p.Text;
+            }
+
+            _segNav.RefreshTheme();
+
+            _lblStatus.Font = Theme.Caption;
+            _lblStatus.ForeColor = p.Muted;
+            _lblStatus.BackColor = p.Chrome;
+            _lblContextLines.Font = Theme.Caption;
+            _lblContextLines.ForeColor = p.Muted;
+            _lblContextLines.BackColor = p.Chrome;
+            foreach (var lbl in new[] { _lblFileModify, _lblFileSize, _lblFileLines, _lblCacheSize, _lblSearchPos, _lblCurLine })
+            {
+                lbl.Font = Theme.Caption;
+                lbl.ForeColor = p.Muted;
+                lbl.BackColor = p.Chrome;
+            }
+
+            _lstContent.ApplyTheme();
+            LayoutToolbar();
         }
 
         private void OnOpen(object? s, EventArgs e)
@@ -649,7 +874,9 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                Status($"{FormatSize(_fileLength)} | {_idxCount:N0} 行");
+                // 索引建完就把"正在构建索引"这条过程消息收掉：大小和行数底部状态栏已经有，
+                // 在这里再写一遍会让工具条中间出现一段和按钮对不上号的重复信息
+                Status("");
                 // ★ 底部状态栏：行数 + 当前缓存大小
                 _lblFileLines.Text = $"行数：{_idxCount:N0}";
                 RefreshCacheSizeStatus();
@@ -803,6 +1030,47 @@ namespace wxd.files.winforms
             catch { return ""; }
         }
 
+        /// <summary>
+        /// 导出用的行读取：只认调用方在任务开始时快照的偏移表和自己打开的流，不碰 <see cref="_lineOffsets"/> / <see cref="_readStream"/>。
+        /// 关掉页签会走 <see cref="Cleanup"/>，那两个字段被置空后 <see cref="ReadLine"/> 静默返回空串，
+        /// 剩下的行会以空行写满整个文件还报成功；这里读不到就返回 null，由调用方中止并删掉残缺输出。
+        /// </summary>
+        private static string? ReadLineForExport(FileStream fs, long[] offsets, long fileLength, long idx)
+        {
+            if ((ulong)idx >= (ulong)offsets.Length) return null;
+            long s = offsets[idx];
+            long e = idx + 1 < offsets.Length ? offsets[idx + 1] : fileLength;
+            int lineLen = (int)Math.Min(e - s, FULL_LINE_LIMIT);
+            if (lineLen <= 0) return "";
+            try
+            {
+                fs.Seek(s, SeekOrigin.Begin);
+                var buf = new byte[lineLen];
+                int got = 0;
+                while (got < lineLen)
+                {
+                    int r = fs.Read(buf, got, lineLen - got);
+                    if (r <= 0) break;
+                    got += r;
+                }
+                return got > 0
+                    ? Encoding.UTF8.GetString(buf, 0, got).TrimEnd(GlobalConst.CrChar, GlobalConst.LfChar)
+                    : "";
+            }
+            catch { return null; }
+        }
+
+        /// <summary>后台导出任务回 UI 线程：页签可能已经关掉，控件销毁时 BeginInvoke 会抛，这里统一吞掉。</summary>
+        private void ExportUi(Action action)
+        {
+            try
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(action);
+            }
+            catch { }
+        }
+
         /// <summary>读取行的完整内容（无截断），上限 64MB</summary>
         /// <param name="idx">行号</param>
         /// <param name="truncated">是否因超过 64MB 被截断</param>
@@ -840,7 +1108,20 @@ namespace wxd.files.winforms
 
 
 
-        private void Status(string s) { if (_lblStatus != null) try { BeginInvoke(() => _lblStatus.Text = s); } catch { } }
+        private void Status(string s)
+        {
+            if (_lblStatus == null) return;
+            try
+            {
+                BeginInvoke(() =>
+                {
+                    _lblStatus.Text = s;
+                    // 第一行放不放得下这句进度是按宽度算的，文字换了不重排就会照上一句的宽度摆，长消息压到按钮上
+                    LayoutToolbar();
+                });
+            }
+            catch { }
+        }
         static string FormatSize(long b) { string[] u = ["B", "KB", "MB", "GB", "TB"]; double v = b; int o = 0; while (v >= 1024 && o < 4) { o++; v /= 1024; } return $"{v:0.##}{u[o]}"; }
 
         /// <summary>创建底部状态栏的 Label</summary>
@@ -851,8 +1132,6 @@ namespace wxd.files.winforms
                 Text = text,
                 AutoSize = true,
                 Margin = new Padding(0, 2, 16, 0),
-                ForeColor = Color.FromArgb(90, 130, 170),
-                Font = new Font("Microsoft YaHei UI", 8F),
                 TextAlign = ContentAlignment.MiddleLeft
             };
         }
@@ -922,7 +1201,8 @@ namespace wxd.files.winforms
                 MinimizeBox = true,
                 MaximizeBox = true,
                 ShowIcon = false,
-                ShowInTaskbar = false
+                ShowInTaskbar = false,
+                BackColor = Theme.P.Window
             };
 
             // 如果超过 64MB，弹出警告
@@ -931,40 +1211,36 @@ namespace wxd.files.winforms
                 MessageBox.Show("该行内容超过 64MB，已截断显示前 64MB。" + GlobalConst.NewLine + $"行号：{idx + 1}", "内容过大", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
 
-            // 顶部工具栏
-            var topPanel = new Panel { Height = 44, Dock = DockStyle.Top, BackColor = Color.FromArgb(235, 245, 255) };
-            var btnFormat = new Button { Text = "格式化", Size = new Size(90, 30), Location = new Point(10, 7), FlatStyle = FlatStyle.Flat };
-            var btnRaw = new Button { Text = "原始", Size = new Size(90, 30), Location = new Point(110, 7), FlatStyle = FlatStyle.Flat };
-
-            void SetActive(Button active, Button inactive)
-            {
-                active.BackColor = Color.FromArgb(66, 165, 245);
-                active.ForeColor = Color.White;
-                active.FlatAppearance.BorderSize = 1;
-                active.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
-                inactive.BackColor = Color.FromArgb(200, 220, 240);
-                inactive.ForeColor = Color.FromArgb(50, 80, 120);
-                inactive.FlatAppearance.BorderSize = 1;
-                inactive.FlatAppearance.BorderColor = Color.FromArgb(160, 190, 220);
-            }
-            SetActive(btnFormat, btnRaw);
+            // 顶部工具栏：格式化 / 原始 做成一颗分段切换，省得两个按钮互相抢底色
+            var topPanel = new Panel { Height = Theme.P.ButtonHeight + 12, Dock = DockStyle.Top, BackColor = Theme.P.Chrome };
+            var segView = new ThemeSegmented { Items = new[] { "格式化", "原始" }, ActiveIndex = 0 };
+            segView.Location = new Point(10, (topPanel.Height - segView.Height) / 2);
 
             var rtb = new RichTextBox
             {
                 Multiline = true,
                 ReadOnly = true,
                 Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 10F),
+                BorderStyle = BorderStyle.None,
+                Font = Theme.Code,
                 ScrollBars = RichTextBoxScrollBars.Both,
                 WordWrap = false,
-                BackColor = Color.White,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
                 Text = "正在格式化..."
             };
 
             string formattedText = "";
-            btnFormat.Click += async (_, _) =>
+            segView.SegmentClicked += async i =>
             {
-                SetActive(btnFormat, btnRaw);
+                segView.ActiveIndex = i;
+                if (i == 1)
+                {
+                    rtb.WordWrap = true;
+                    rtb.ScrollBars = RichTextBoxScrollBars.Vertical;
+                    rtb.Text = fullLine;
+                    return;
+                }
                 rtb.Text = "正在构建 RTF...";
                 rtb.WordWrap = false;
                 rtb.ScrollBars = RichTextBoxScrollBars.Both;
@@ -976,17 +1252,12 @@ namespace wxd.files.winforms
                 try { rtb.Rtf = rtf ?? fullLine; }
                 catch { try { rtb.Text = fullLine; } catch { } }
             };
-            btnRaw.Click += (_, _) =>
-            {
-                SetActive(btnRaw, btnFormat);
-                rtb.WordWrap = true;
-                rtb.ScrollBars = RichTextBoxScrollBars.Vertical;
-                rtb.Text = fullLine;
-            };
 
-            topPanel.Controls.Add(btnFormat);
-            topPanel.Controls.Add(btnRaw);
+            topPanel.Controls.Add(segView);
+            // 原生边框是系统灰，深色下刺眼；换成令牌色 1px 分隔条，Chrome 和内容区才分得开
+            var rtDivider = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Theme.P.Border };
             f.Controls.Add(rtb);
+            f.Controls.Add(rtDivider);
             f.Controls.Add(topPanel);
 
             f.Show();
@@ -2803,6 +3074,8 @@ namespace wxd.files.winforms
                     {
                         long idx2 = FindNearestIndex(results, GetCurrentLine());
                         NavigateTo(results, idx2);
+                        // "正在搜索"是过程消息，命中后底部状态栏已经报了几处/第几处，这里收掉别让它常驻
+                        Status("");
                         DoReverseExport(results);
                     }
                     else
@@ -2829,11 +3102,16 @@ namespace wxd.files.winforms
         private void DoReverseExport(List<long> results)
         {
             string? sourcePath = _filePath;
-            if (results.Count == 0) return;
+            if (results.Count == 0 || string.IsNullOrEmpty(sourcePath)) return;
 
             // 快照：避免后台线程读取时被并发修改
             var searchResultsSnapshot = results.ToList();
             var lineOffsets = _lineOffsets!;
+            long fileLength = _fileLength;
+            string exportSource = sourcePath;
+            _exportCts?.Cancel();
+            _exportCts = new CancellationTokenSource();
+            var exportToken = _exportCts.Token;
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
@@ -2860,16 +3138,22 @@ namespace wxd.files.winforms
                 string outName = safeFileName;
                 string outPath = Path.Combine(dir, outName);
 
-                BeginInvoke(() => Status($"正在反向导出 {exportCount} 行到 {outName}..."));
+                ExportUi(() => Status($"正在反向导出 {exportCount} 行到 {outName}..."));
 
+                StreamWriter? sw = null;
+                FileStream? fs = null;
+                int matchIdx = 0;
+                long exported = 0;
+                bool cancelled = false;
+                bool done = false;
                 try
                 {
-                    using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
-                    int matchIdx = 0;
-                    long exported = 0;
+                    fs = new FileStream(exportSource, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
+                    sw = new StreamWriter(outPath, false, Encoding.UTF8);
 
                     for (long lineIdx = 0; lineIdx < totalLines; lineIdx++)
                     {
+                        if (exportToken.IsCancellationRequested) { cancelled = true; break; }
                         // 如果当前行在匹配列表中 → 跳过
                         if (matchIdx < excludedCount && searchResultsSnapshot[matchIdx] == lineIdx)
                         {
@@ -2877,13 +3161,20 @@ namespace wxd.files.winforms
                             continue;
                         }
                         // 不在匹配列表中 → 输出
-                        string lineText = ReadLine(lineIdx);
+                        string? lineText = ReadLineForExport(fs, lineOffsets, fileLength, lineIdx);
+                        if (lineText == null) throw new EndOfStreamException($"源文件第 {lineIdx + 1} 行读取失败");
                         sw.WriteLine(lineText);
                         exported++;
                     }
                     sw.Flush();
+                    if (cancelled)
+                    {
+                        ExportUi(() => Status("反向导出已取消"));
+                        return;
+                    }
+                    done = true;
 
-                    BeginInvoke(() =>
+                    ExportUi(() =>
                     {
                         Status($"已反向导出 {exported} 行 -> {outName}");
                         string msg = "反向导出完成！" + Environment.NewLine +
@@ -2899,11 +3190,17 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    BeginInvoke(() =>
+                    ExportUi(() =>
                     {
                         AlertForm.Show(ParentForm, $"反向导出失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
                         Status("反向导出失败");
                     });
+                }
+                finally
+                {
+                    try { sw?.Dispose(); } catch { }
+                    try { fs?.Dispose(); } catch { }
+                    if (!done) { try { File.Delete(outPath); } catch { } }
                 }
             });
         }
@@ -2985,13 +3282,19 @@ namespace wxd.files.winforms
         private void DoExport(List<long> results)
         {
             string? sourcePath = _filePath;
-            if (results.Count == 0) return;
+            if (results.Count == 0 || string.IsNullOrEmpty(sourcePath)) return;
 
-            int contextLines = (int)_numContextLines.Value;
+            int contextLines = ContextLines;
 
             // 快照：避免后台线程读取时被并发修改
             var searchResultsSnapshot = results.ToList();
             var lineOffsets = _lineOffsets!;
+            long fileLength = _fileLength;
+            string exportSource = sourcePath;
+            // 同一时刻只保留最后一个导出：重开导出会取消上一个，Cleanup 关掉页签时同样取消
+            _exportCts?.Cancel();
+            _exportCts = new CancellationTokenSource();
+            var exportToken = _exportCts.Token;
             string dir = Path.GetDirectoryName(sourcePath)!;
             string fileName = Path.GetFileName(sourcePath);
             string sourceExt = Path.GetExtension(sourcePath);
@@ -3053,22 +3356,37 @@ namespace wxd.files.winforms
                 string outPath = Path.Combine(dir, outName);
 
                 // 更新状态（回 UI 线程）
-                BeginInvoke(() => Status($"正在导出 {totalLines} 行到 {outName}..."));
+                ExportUi(() => Status($"正在导出 {totalLines} 行到 {outName}..."));
 
+                StreamWriter? sw = null;
+                FileStream? fs = null;
+                bool cancelled = false;
+                bool done = false;
                 try
                 {
-                    using var sw = new StreamWriter(outPath, false, Encoding.UTF8);
+                    // 自带流 + 快照偏移：页签中途关掉也不影响这次导出的正确性
+                    fs = new FileStream(exportSource, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
+                    sw = new StreamWriter(outPath, false, Encoding.UTF8);
                     foreach (var (start, end) in mergedRanges)
                     {
                         for (long lineIdx = start; lineIdx <= end; lineIdx++)
                         {
-                            string lineText = ReadLine(lineIdx);
+                            if (exportToken.IsCancellationRequested) { cancelled = true; break; }
+                            string? lineText = ReadLineForExport(fs, lineOffsets, fileLength, lineIdx);
+                            if (lineText == null) throw new EndOfStreamException($"源文件第 {lineIdx + 1} 行读取失败");
                             sw.WriteLine(lineText);
                         }
+                        if (cancelled) break;
                     }
                     sw.Flush();
+                    if (cancelled)
+                    {
+                        ExportUi(() => Status("导出已取消"));
+                        return;
+                    }
+                    done = true;
 
-                    BeginInvoke(() =>
+                    ExportUi(() =>
                     {
                         Status($"已导出 {totalLines} 行 -> {outName}");
                         AlertForm.Show(ParentForm,
@@ -3079,11 +3397,18 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    BeginInvoke(() =>
+                    ExportUi(() =>
                     {
                         AlertForm.Show(ParentForm, $"导出失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
                         Status("导出失败");
                     });
+                }
+                finally
+                {
+                    try { sw?.Dispose(); } catch { }
+                    try { fs?.Dispose(); } catch { }
+                    // 半截文件（被取消或读失败）一律删掉：留着会被当成一次成功的导出
+                    if (!done) { try { File.Delete(outPath); } catch { } }
                 }
             });
         }
@@ -3210,6 +3535,8 @@ namespace wxd.files.winforms
             try { _timerScroll?.Stop(); } catch { }
             // ★ 取消并行索引构建任务
             try { _indexCts?.Cancel(); } catch { }
+            // ★ 取消进行中的导出：源信息马上要失效，让它跑完只会写出半截文件
+            try { _exportCts?.Cancel(); } catch { }
             // ★ 提前保存文件路径，用于卸载内存缓存（_filePath 接下来会被置 null）
             string? oldPath = _filePath;
             // ★ 提前置 null，防止 OnCache/OnRetrieve 在清理过程中访问已释放的资源
@@ -3262,6 +3589,7 @@ namespace wxd.files.winforms
                 _timerScroll?.Dispose();
                 _searchCts?.Dispose();
                 _indexCts?.Dispose();
+                _exportCts?.Dispose();
             }
             base.Dispose(disposing);
         }

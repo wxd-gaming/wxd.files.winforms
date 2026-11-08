@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -25,22 +25,25 @@ namespace wxd.files.winforms
         private SplitContainer _splitContainer = new();
         private TreeView _treeFiles = new();
         private TextBox _txtFileFilter = new();
+        private ThemeField _fieldFileFilter = new();
         private TabControl _tabContent = new();
         private Panel _pnlLeft = new();
         private Panel _pnlLeftTop = new();
         private Panel _pnlLeftBottom = new();   // 底部状态栏
+        private Panel _pnlTreeHeader = new();   // 左侧列表列头（名称 / 大小）
         private Label _lblFilter = new();
         private Button _btnRefresh = new();
+        private ThemeButton _btnHelp = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
         // ==================== 高级内容搜索控件 ====================
         private TextBox _txtContentSearch = new();
+        private ThemeField _fieldContentSearch = new();
         private Button _btnContentSearch = new();
         private Button _btnCancelSearch = new();
         private Label _lblSearchProgress = new();
         private Panel _pnlSearchProgress = new();
-        private RoundedPanel _pnlSearchContainer = new();
 
         // ==================== 状态字段 ====================
         private string _currentDir = "";
@@ -52,6 +55,10 @@ namespace wxd.files.winforms
         private System.Windows.Forms.Timer? _filterDebounceTimer;
         private int _paneIndex = -1;                    // 所属窗格索引（-1表示独立打开，使用全局设置）
         private Dictionary<string, string> _fileRemarks = new(); // 文件备注映射（key: 相对路径）
+        // 左侧列表「大小」列的缓存：首次绘制某行时取一次 FileInfo.Length，之后不再碰磁盘
+        private readonly Dictionary<string, long> _fileSizes = new(StringComparer.OrdinalIgnoreCase);
+        private const int SizeColumnWidth = 72;   // 大小列预留宽度，与列头共用
+        private const int TreeGlyphOffset = 26;   // 自绘展开标记距标签左缘的距离（图标列 + 缩进列）
 
         // ==================== 高级内容搜索状态 ====================
         private CancellationTokenSource? _searchCts;
@@ -67,9 +74,8 @@ namespace wxd.files.winforms
         private bool _showConflictOnly = false;            // 是否只显示冲突文件
 
         // ==================== VCS 操作面板控件 ====================
-        private RoundedPanel _pnlVcsActions = new();
         private Button _btnVcsUpdate = new();
-        private CheckBox _chkShowConflictOnly = new();
+        private ThemeCheckBox _chkShowConflictOnly = new();
 
         // ==================== 数据类 ====================
         private class FileInfo
@@ -86,75 +92,21 @@ namespace wxd.files.winforms
             Excel
         }
 
-        // ==================== 圆角 Panel（用于搜索容器卡片）====================
-        private class RoundedPanel : Panel
-        {
-            private int _radius = 6;
-
-            [DefaultValue(6)]
-            [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-            public int Radius
-            {
-                get => _radius;
-                set { _radius = value; Invalidate(); }
-            }
-
-            public RoundedPanel()
-            {
-                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                         ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer |
-                         ControlStyles.SupportsTransparentBackColor, true);
-                BackColor = Color.FromArgb(227, 242, 253);
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                base.OnPaint(e);
-                var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-                using var path = GetRoundRect(rect, _radius);
-                using var brush = new SolidBrush(BackColor);
-                using var pen = new Pen(Color.FromArgb(173, 209, 237), 1);
-
-                g.FillPath(brush, path);
-                g.DrawPath(pen, path);
-            }
-
-            private static GraphicsPath GetRoundRect(Rectangle rect, int radius)
-            {
-                var path = new GraphicsPath();
-                var r = radius;
-                path.AddArc(rect.X, rect.Y, r, r, 180, 90);
-                path.AddArc(rect.Right - r, rect.Y, r, r, 270, 90);
-                path.AddArc(rect.Right - r, rect.Bottom - r, r, r, 0, 90);
-                path.AddArc(rect.X, rect.Bottom - r, r, r, 90, 90);
-                path.CloseFigure();
-                return path;
-            }
-        }
-
-        // ==================== 配色方案（浅色天蓝色调 · 1px圆角边框）====================
-        private static readonly Color _colorBg = Color.FromArgb(235, 248, 255);
-        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
-        private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorPanelBg = Color.FromArgb(245, 250, 255);
-        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightBorder = Color.FromArgb(200, 225, 245);
-        private static readonly Color _colorDarkBorder = Color.FromArgb(130, 180, 220);
-        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
-        private static readonly Color _colorPrimaryLight = Color.FromArgb(227, 242, 253);
-        private static readonly Color _colorPrimaryDark = Color.FromArgb(30, 136, 229);
-        private static readonly Color _colorSuccess = Color.FromArgb(22, 163, 74);
-        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
-        private static readonly Color _colorAltRow = Color.FromArgb(248, 252, 255);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
-        private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
-        private static readonly Color _colorRowNumBg = Color.FromArgb(240, 246, 252);
+        // ==================== 配色方案：转发到 Theme 令牌 ====================
+        private static Color _colorBg => Theme.P.Window;
+        private static Color _colorLightBg => Theme.P.Window;
+        private static Color _colorSurface => Theme.P.Surface;
+        private static Color _colorPanelBg => Theme.P.Header;
+        private static Color _colorBorder => Theme.P.Border;
+        private static Color _colorLightBorder => Theme.P.Border;
+        private static Color _colorLightText => Theme.P.Text;
+        private static Color _colorLightTextSecondary => Theme.P.Muted;
+        private static Color _colorSuccess => Theme.Signal(Color.FromArgb(22, 163, 74));
+        private static Color _colorHeaderBg => Theme.P.Header;
+        private static Color _colorAltRow => Theme.P.Zebra;
+        private static Color _colorSelectedBg => Theme.P.Selection;
+        private static Color _colorGridLine => Theme.P.GridLine;
+        private static Color _colorRowNumBg => Theme.P.RowHead;
 
         // ==================== Win32 API（系统图标）====================
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -183,6 +135,9 @@ namespace wxd.files.winforms
             InitializeComponent();
             CreateControls();
             ApplyTheme();
+            // 独立窗口不在主窗的传播链里，切皮肤只能靠订阅自己重取令牌
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
 
             // 窗体加载完成后设置splitter距离，并补充 VCS 状态初始化
             this.Shown += async (s, e) =>
@@ -216,7 +171,7 @@ namespace wxd.files.winforms
             MinimumSize = new Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
             WindowState = FormWindowState.Maximized;
-            Font = new Font("Microsoft YaHei UI", 9f);
+            Font = Theme.Body;
             BackColor = _colorBg;
             Padding = new Padding(0);
 
@@ -232,24 +187,16 @@ namespace wxd.files.winforms
             _pnlLeft.BackColor = _colorSurface;
             _pnlLeft.Padding = new Padding(0);
 
-            // 左侧顶部工具栏
-            _pnlLeftTop.Height = 196;
+            // 左侧顶部工具栏：四行紧凑布局，坐标统一由 LayoutLeftTop 计算
             _pnlLeftTop.Dock = DockStyle.Top;
             _pnlLeftTop.BackColor = _colorSurface;
-            _pnlLeftTop.Padding = new Padding(8, 6, 8, 4);
+            _pnlLeftTop.Padding = new Padding(0);
 
             // 刷新按钮
-            _btnRefresh = new Button
+            _btnRefresh = new ThemeButton
             {
                 Text = "刷新目录",
-                Location = new Point(8, 6),
-                Size = new Size(85, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorHoverBg,
-                ForeColor = _colorLightTextSecondary,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = _colorLightBorder, MouseOverBackColor = Color.FromArgb(200, 225, 245) }
+                Font = Theme.Body,
             };
             _btnRefresh.Click += OnRefreshClick;
 
@@ -258,24 +205,17 @@ namespace wxd.files.winforms
             {
                 Text = "共 0 个文件",
                 AutoSize = false,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 ForeColor = _colorLightTextSecondary,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Dock = DockStyle.Fill,
-                Padding = new Padding(8, 0, 0, 0)
+                Padding = new Padding(ThemeMetrics.Gap, 0, 0, 0)
             };
 
-            // 过滤文本框
-            _txtFileFilter = new TextBox
-            {
-                Location = new Point(8, 42),
-                Size = new Size(250, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                PlaceholderText = "支持 || 或 && 运算符",
-                BackColor = Color.FromArgb(242, 249, 255)
-            };
+            // 文件名过滤框
+            _fieldFileFilter.BackColor = _colorSurface;
+            _fieldFileFilter.Placeholder = "文件名过滤，支持 || 和 &&";
+            _txtFileFilter = _fieldFileFilter.Edit;
             // 创建过滤防抖定时器（300ms 延迟）
             _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
             _filterDebounceTimer.Tick += (s, e) =>
@@ -295,54 +235,26 @@ namespace wxd.files.winforms
             };
 
             // 使用说明按钮（放在刷新按钮右侧）
-            var btnHelp = new Button
+            _btnHelp = new ThemeButton
             {
                 Text = "使用说明",
-                Location = new Point(96, 6),
-                Size = new Size(75, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(120, 144, 156),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(96, 125, 139) }
+                Font = Theme.Body,
+                Ghost = true,
+                Cursor = Cursors.Hand
             };
-            btnHelp.Click += OnHelpClick;
+            _btnHelp.Click += OnHelpClick;
 
-            // ==================== 高级内容搜索（第三行） ====================
-            // ==================== 高级内容搜索（第三行 - 圆角容器） ====================
-            _pnlSearchContainer = new RoundedPanel
-            {
-                Location = new Point(8, 72),
-                Size = new Size(260, 70),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            };
+            // ==================== 高级内容搜索 ====================
+            _fieldContentSearch.BackColor = _colorSurface;
+            _fieldContentSearch.Placeholder = "搜索文件内容...";
+            _txtContentSearch = _fieldContentSearch.Edit;
 
-            // 内容搜索输入框
-            _txtContentSearch = new TextBox
+            // 搜索按钮（和内容搜索框同一行，靠右）
+            _btnContentSearch = new ThemeButton
             {
-                Location = new Point(8, 8),
-                Size = new Size(140, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                PlaceholderText = "搜索文件内容...",
-                BackColor = Color.FromArgb(242, 249, 255)
-            };
-
-            // 搜索按钮（靠右排列）
-            _btnContentSearch = new Button
-            {
-                Text = "🔍搜索",
-                Location = new Point(0, 4),
-                Size = new Size(64, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorPrimary,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                FlatAppearance = { BorderSize = 1, BorderColor = _colorPrimaryDark, MouseOverBackColor = _colorPrimaryDark }
+                Text = "搜索",
+                Primary = true,
+                Font = Theme.Body,
             };
             _btnContentSearch.Click += OnContentSearchClick;
 
@@ -363,93 +275,62 @@ namespace wxd.files.winforms
                 }
             };
 
-            // ==================== 搜索进度面板（进度条+取消按钮同一行，初始隐藏） ====================
+            // ==================== 搜索进度行（搜索期间顶掉 VCS 那一行，初始隐藏） ====================
             _pnlSearchProgress = new Panel
             {
-                Location = new Point(8, 38),
-                Size = new Size(260, 28),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Visible = false,
-                BackColor = Color.Transparent
+                BackColor = _colorSurface
             };
 
             _lblSearchProgress = new Label
             {
-                Location = new Point(0, 6),
-                Size = new Size(160, 20),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 ForeColor = _colorLightText,
-                BackColor = Color.Transparent,
+                BackColor = _colorSurface,
                 TextAlign = ContentAlignment.MiddleLeft,
                 AutoSize = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 Visible = false
             };
 
-            // 取消搜索按钮（默认隐藏，放在进度面板内部右侧）
-            _btnCancelSearch = new Button
+            _btnCancelSearch = new ThemeButton
             {
                 Text = "清除",
-                Size = new Size(64, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(239, 68, 68),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                Visible = false,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 38, 38), MouseOverBackColor = Color.FromArgb(220, 38, 38) }
+                Font = Theme.Body,
+                FillOverride = Theme.P.Danger,
+                Visible = false
             };
             _btnCancelSearch.Click += OnCancelSearchClick;
 
             _pnlSearchProgress.Controls.Add(_lblSearchProgress);
             _pnlSearchProgress.Controls.Add(_btnCancelSearch);
 
-            _pnlSearchContainer.Controls.Add(_txtContentSearch);
-            _pnlSearchContainer.Controls.Add(_btnContentSearch);
-            _pnlSearchContainer.Controls.Add(_pnlSearchProgress);
-
-            // ==================== VCS 操作面板（第四行 - 圆角容器，初始隐藏） ====================
-            _pnlVcsActions = new RoundedPanel
+            // ==================== VCS 操作（第四行） ====================
+            _btnVcsUpdate = new ThemeButton
             {
-                Location = new Point(8, 148),
-                Size = new Size(260, 36),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                Visible = true,
-                BackColor = Color.FromArgb(245, 250, 240)
-            };
-
-            _btnVcsUpdate = new Button
-            {
-                Text = "🔄 更新",
-                Location = new Point(8, 4),
-                Size = new Size(100, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(52, 168, 83),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(40, 140, 60), MouseOverBackColor = Color.FromArgb(40, 140, 60) }
+                Text = "Git拉取",
+                Font = Theme.Body,
+                FillOverride = _colorSuccess,
             };
             _btnVcsUpdate.Click += OnVcsUpdateClick;
 
-            _chkShowConflictOnly = new CheckBox
+            _chkShowConflictOnly = new ThemeCheckBox
             {
                 Text = "仅显示冲突",
-                Location = new Point(116, 6),
-                Size = new Size(100, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
+                AutoSize = true,
                 Cursor = Cursors.Hand,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left,
                 Checked = false,
                 AutoCheck = false
             };
             _chkShowConflictOnly.Click += OnShowConflictOnlyClick;
 
-            _pnlVcsActions.Controls.Add(_btnVcsUpdate);
-            _pnlVcsActions.Controls.Add(_chkShowConflictOnly);
-
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnRefresh, _txtFileFilter, btnHelp, _pnlSearchContainer, _pnlVcsActions });
+            _pnlLeftTop.Controls.AddRange(new Control[]
+            {
+                _btnRefresh, _btnHelp, _fieldFileFilter,
+                _fieldContentSearch, _btnContentSearch,
+                _btnVcsUpdate, _chkShowConflictOnly, _pnlSearchProgress
+            });
+            LayoutLeftTop();
 
             // 文件树
             // 初始化图标列表
@@ -473,20 +354,22 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 FullRowSelect = true,
                 HideSelection = false,
                 ImageList = _imgList,
                 BackColor = _colorSurface,
-                ForeColor = Color.FromArgb(30, 30, 30),
-                ShowPlusMinus = true,
-                ShowLines = true,
-                ShowRootLines = true,
-                Indent = 19,
-                ItemHeight = 22,
+                ForeColor = Theme.P.Text,
+                ShowPlusMinus = false,
+                ShowLines = false,
+                ShowRootLines = false,
+                Indent = 10,
+                ItemHeight = Theme.P.RowHeight,
                 PathSeparator = "\\",
                 DrawMode = TreeViewDrawMode.OwnerDrawText
             };
+            // 宽度变化（拖动分隔条、缩放窗口）后必须整行重画，否则大小列会留在旧坐标上叠字
+            _treeFiles.Resize += (s, e) => _treeFiles.Invalidate();
             // 节点展开时动态加载子目录
             _treeFiles.BeforeExpand += OnTreeBeforeExpand;
             _treeFiles.NodeMouseClick += OnTreeViewClick;
@@ -498,8 +381,8 @@ namespace wxd.files.winforms
             _pnlLeftBottom = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 26,
-                BackColor = Color.FromArgb(240, 244, 248),
+                Height = ThemeMetrics.RowH,
+                BackColor = Theme.P.Header,
                 Padding = new Padding(0)
             };
             _pnlLeftBottom.Controls.Add(_lblFileCount);
@@ -509,11 +392,24 @@ namespace wxd.files.winforms
             var treeContainer = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(0, 0, 0, 28),
+                Padding = new Padding(0, 0, 0, ThemeMetrics.RowH),
                 BackColor = _colorSurface
             };
             _treeFiles.Dock = DockStyle.Fill;
             _treeFiles.Parent = treeContainer;
+
+            // 列表列头：和文件面板一样给「名称 / 大小」两列，行内大小右对齐在同一列宽
+            _pnlTreeHeader = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = Theme.P.RowHeight,
+                BackColor = Theme.P.Header
+            };
+            // 宽度变化后整条重画，否则「大小」会留在旧位置
+            _pnlTreeHeader.Resize += (s, e) => _pnlTreeHeader.Invalidate();
+            _pnlTreeHeader.Paint += OnTreeHeaderPaint;
+            // 后加入的控件先参与 Dock 计算，所以列头（Top）必须晚于树（Fill）加入
+            treeContainer.Controls.Add(_pnlTreeHeader);
 
             // 添加控件到左侧面板（注意顺序：Top > Fill > Bottom）
             _pnlLeft.Controls.Add(_pnlLeftBottom);
@@ -524,29 +420,30 @@ namespace wxd.files.winforms
             _tabContent = new TabControl
             {
                 Dock = DockStyle.Fill,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ItemSize = new Size(200, 28),
+                Font = Theme.Body,
+                ItemSize = new Size(200, Theme.P.ButtonHeight + 4),
                 SizeMode = TabSizeMode.Fixed,
                 Multiline = true,
                 BackColor = _colorSurface,
                 Padding = new Point(12, 4)
             };
+            // 没有页签时 TabControl 只会用系统灰铺底，皮肤色盖不住它，直接隐藏让下层面板顶上
+            _tabContent.Visible = false;
+            _tabContent.ControlAdded += (s, e) => _tabContent.Visible = true;
+            _tabContent.ControlRemoved += (s, e) => _tabContent.Visible = _tabContent.TabPages.Count > 0;
 
             // ▼ 下拉按钮（列出所有打开的标签页）
-            var btnTabMenu = new Button
+            var btnTabMenu = new ThemeButton
             {
                 Text = "▼",
-                Size = new Size(24, 24),
-                Location = new Point(0, 2),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _colorSurface,
-                ForeColor = Color.FromArgb(107, 114, 128),
+                Size = new Size(ThemeMetrics.RowH, ThemeMetrics.RowH),
+                Location = new Point(0, ThemeMetrics.Gap),
+                Font = Theme.Caption,
+                Ghost = true,
                 Cursor = Cursors.Hand,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
                 Padding = new Padding(0),
-                Margin = new Padding(0),
-                FlatAppearance = { BorderSize = 0 }
+                Margin = new Padding(0)
             };
             btnTabMenu.Click += (s, e) => ShowTabMenu(btnTabMenu);
 
@@ -558,7 +455,8 @@ namespace wxd.files.winforms
             };
             tabPanel.SizeChanged += (s, e) =>
             {
-                btnTabMenu.Location = new Point(tabPanel.Width - 28, 2);
+                btnTabMenu.Location = new Point(tabPanel.Width - btnTabMenu.Width - ThemeMetrics.Gap,
+                                                ThemeMetrics.Gap);
             };
             tabPanel.Controls.Add(_tabContent);
             tabPanel.Controls.Add(btnTabMenu);
@@ -578,41 +476,76 @@ namespace wxd.files.winforms
             Controls.Add(_splitContainer);
 
             // 调整大小处理
-            _pnlLeftTop.Resize += (s, e) =>
-            {
-                var w = _pnlLeftTop.Width - 16;
-                _txtFileFilter.Width = Math.Max(100, w);
-
-                // 圆角搜索容器自适应宽度
-                _pnlSearchContainer.Width = Math.Max(180, w);
-
-                // 搜索框和按钮在容器内部靠右布局
-                var right = _pnlSearchContainer.Width - 8;
-                _btnContentSearch.Location = new Point(right - 64, 6);
-                _txtContentSearch.Width = Math.Max(60, right - 72 - 8);
-
-                // 进度条面板在容器内部自适应
-                _pnlSearchProgress.Width = Math.Max(160, _pnlSearchContainer.Width - 16);
-                _lblSearchProgress.Width = Math.Max(100, _pnlSearchProgress.Width - 72);
-                _btnCancelSearch.Location = new Point(_pnlSearchProgress.Width - 64, 1);
-
-                // VCS 操作面板自适应宽度
-                _pnlVcsActions.Width = Math.Max(180, w);
-                // 更新按钮和冲突复选框在容器内部靠左布局
-                _btnVcsUpdate.Location = new Point(8, 4);
-                _chkShowConflictOnly.Location = new Point(_btnVcsUpdate.Right + 8, 5);
-            };
+            _pnlLeftTop.Resize += (s, e) => LayoutLeftTop();
 
             ResumeLayout(false);
+        }
+
+        /// <summary>
+        /// 左上图区布局：按钮行 / 文件名过滤 / 内容搜索+搜索按钮 / VCS 行，
+        /// 搜索进行中在搜索行和 VCS 行之间多插一行进度，图区随之长高一行（RowH + gap）。
+        /// </summary>
+        private void LayoutLeftTop()
+        {
+            const int margin = ThemeMetrics.Margin;
+            const int gap = ThemeMetrics.Gap;
+            int rowH = ThemeMetrics.RowH;
+            int w = Math.Max(140, _pnlLeftTop.Width - margin * 2);
+            int y = margin;
+
+            _btnRefresh.SetBounds(margin, y, ThemeButton.FitWidth(_btnRefresh.Text), rowH);
+            _btnHelp.SetBounds(_btnRefresh.Right + gap, y, ThemeButton.FitWidth(_btnHelp.Text), rowH);
+
+            y += rowH + gap;
+            _fieldFileFilter.SetBounds(margin, y, w, rowH);
+
+            y += rowH + gap;
+            int searchBtnW = ThemeButton.FitWidth(_btnContentSearch.Text);
+            _fieldContentSearch.SetBounds(margin, y, w - searchBtnW - gap, rowH);
+            _btnContentSearch.SetBounds(margin + w - searchBtnW, y, searchBtnW, rowH);
+
+            if (_pnlSearchProgress.Visible)
+            {
+                const int cancelBtnW = 52;
+                y += rowH + gap;
+                _pnlSearchProgress.SetBounds(margin, y, w, rowH);
+                _btnCancelSearch.SetBounds(w - cancelBtnW, 0, cancelBtnW, rowH);
+                _lblSearchProgress.SetBounds(0, 0, Math.Max(40, w - cancelBtnW - gap), rowH);
+            }
+
+            y += rowH + gap;
+            _btnVcsUpdate.SetBounds(margin, y, ThemeButton.FitWidth(_btnVcsUpdate.Text), rowH);
+            var chkSize = _chkShowConflictOnly.PreferredSize;
+            _chkShowConflictOnly.SetBounds(_btnVcsUpdate.Right + ThemeMetrics.Group,
+                y + (rowH - chkSize.Height) / 2, chkSize.Width, chkSize.Height);
+
+            _pnlLeftTop.Height = y + rowH + margin;
+        }
+
+        /// <summary>显示/隐藏搜索进度行，并让图区按新的行数重排。</summary>
+        private void SetSearchProgressVisible(bool visible)
+        {
+            _pnlSearchProgress.Visible = visible;
+            _btnCancelSearch.Visible = visible;
+            _lblSearchProgress.Visible = visible;
+            LayoutLeftTop();
         }
 
         private void ApplyTheme()
         {
             BackColor = _colorBg;
             _pnlLeft.BackColor = _colorSurface;
+            _fieldFileFilter.ApplyTheme();
+            _fieldContentSearch.ApplyTheme();
+            LayoutLeftTop();
             _treeFiles.BackColor = _colorSurface;
-            _treeFiles.ForeColor = Color.FromArgb(30, 30, 30);
+            _treeFiles.ForeColor = Theme.P.Text;
+            _pnlTreeHeader.BackColor = Theme.P.Header;
+            _pnlTreeHeader.Invalidate();
+            _treeFiles.Invalidate();
             _tabContent.BackColor = _colorSurface;
+            // 界面上还有一批创建时一次性取色的局部控件，逐个重赋容易漏，统一按旧令牌→新令牌平移一次
+            ThemeRecolor.Apply(this);
         }
 
         // ==================== 目录图标常量 ====================
@@ -883,7 +816,7 @@ namespace wxd.files.winforms
             if (show)
             {
                 // 更新按钮文本
-                _btnVcsUpdate.Text = _currentVcsType == VcsType.Svn ? "🔄 SVN更新" : "🔄 Git拉取";
+                _btnVcsUpdate.Text = _currentVcsType == VcsType.Svn ? "SVN更新" : "Git拉取";
             }
         }
 
@@ -917,7 +850,6 @@ namespace wxd.files.winforms
 
             // 检测是否有冲突文件
             bool hasConflictedFiles = VcsStatusCache.HasAnyConflictedFiles(_currentDir);
-            _chkShowConflictOnly.Visible = true; // 始终可见
 
             // 如果在冲突过滤模式，刷新冲突列表
             if (_showConflictOnly && string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
@@ -1019,22 +951,77 @@ namespace wxd.files.winforms
 
             // 获取 VCS 状态对应的颜色
             var status = VcsStatusCache.GetFileStatus(fullPath);
-            var textColor = VcsStatusCache.GetStatusColor(status);
+            // Normal 的状态色是写死的黑色，深色底上等于隐形，这里回落到主题正文色
+            var textColor = status == FileVcsStatus.Normal ? Theme.P.Text : VcsStatusCache.GetStatusColor(status);
 
-            // 绘制背景
+            // 绘制背景：选中时整行高亮，右侧留出大小列后仍然铺满
+            int rowRight = _treeFiles.ClientSize.Width;
             using var bgBrush = new SolidBrush(backColor);
-            e.Graphics.FillRectangle(bgBrush, e.Bounds);
+            e.Graphics.FillRectangle(bgBrush, new Rectangle(0, e.Bounds.Top, rowRight, e.Bounds.Height));
+
+            // 展开/收起标记：主题化 TreeView 的箭头只在悬停时出现，这里自绘常驻三角
+            if (e.Node.Nodes.Count > 0)
+            {
+                int gx = Math.Max(2, e.Bounds.Left - TreeGlyphOffset);
+                int gy = e.Bounds.Top + (e.Bounds.Height - 8) / 2;
+                using var glyphBrush = new SolidBrush(Theme.P.Muted);
+                Point[] arrow = e.Node.IsExpanded
+                    ? new[] { new Point(gx, gy), new Point(gx + 8, gy), new Point(gx + 4, gy + 7) }
+                    : new[] { new Point(gx, gy), new Point(gx, gy + 8), new Point(gx + 7, gy + 4) };
+                e.Graphics.FillPolygon(glyphBrush, arrow);
+            }
 
             // 绘制文字
             var text = e.Node.Text;
             var textRect = e.Bounds;
             // 缩进图标宽度
             textRect.X += 2;
-            textRect.Width -= 2;
+            textRect.Width = Math.Max(20, rowRight - SizeColumnWidth - textRect.X - 6);
 
             TextRenderer.DrawText(e.Graphics, text, _treeFiles.Font, textRect, textColor,
                 backColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
                 TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
+
+            // 大小列：目录和占位节点取不到长度，自然留空
+            var sizeBytes = GetFileSize(fullPath);
+            if (sizeBytes >= 0)
+            {
+                var sizeRect = new Rectangle(rowRight - SizeColumnWidth - 6, e.Bounds.Top, SizeColumnWidth, e.Bounds.Height);
+                TextRenderer.DrawText(e.Graphics, FileBrowserPanel.FormatFileSize(sizeBytes), _treeFiles.Font, sizeRect,
+                    Theme.P.Muted, backColor,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+                    TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
+            }
+        }
+
+        /// <summary>文件大小：每个路径只 stat 一次，之后走缓存，避免绘制时反复访问磁盘</summary>
+        private long GetFileSize(string path)
+        {
+            if (!_fileSizes.TryGetValue(path, out var len))
+            {
+                try { len = new System.IO.FileInfo(path).Length; }
+                catch { len = -1; }
+                _fileSizes[path] = len;
+            }
+            return len;
+        }
+
+        /// <summary>左侧列表列头：名称 / 大小，与行内右对齐的大小列共用宽度</summary>
+        private void OnTreeHeaderPaint(object? sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var rect = _pnlTreeHeader.ClientRectangle;
+
+            using (var pen = new Pen(Theme.P.Divider, 1))
+                g.DrawLine(pen, 0, rect.Bottom - 1, rect.Right, rect.Bottom - 1);
+
+            var muted = Theme.P.Muted;
+            TextRenderer.DrawText(g, "名称", Theme.Head,
+                new Rectangle(8, 0, Math.Max(20, rect.Width - SizeColumnWidth - 14), rect.Height), muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(g, "大小", Theme.Head,
+                new Rectangle(rect.Right - SizeColumnWidth - 6, 0, SizeColumnWidth, rect.Height), muted,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
 
         private void OnRefreshClick(object? sender, EventArgs e)
@@ -1174,7 +1161,7 @@ namespace wxd.files.winforms
   · 自动存储在目录下的 .wxd-work/config.json 文件中
   · 可随文件夹一起移植到其他位置，保持配置不变";
 
-            HelpForm.ShowHelp(this, "使用说明 - CSV/Excel 阅读器", helpText, CsvSettings.ThemeMode == 0);
+            HelpForm.ShowHelp(this, "使用说明 - CSV/Excel 阅读器", helpText);
         }
 
         // ==================== VCS 操作按钮事件 ====================
@@ -1368,7 +1355,8 @@ namespace wxd.files.winforms
                 var tabPage = new TabPage($"⚠️ 冲突: {Path.GetFileName(filePath)}")
                 {
                     Tag = conflictTag,
-                    ToolTipText = filePath
+                    ToolTipText = filePath,
+                    BackColor = _colorSurface
                 };
                 tabPage.Controls.Add(control);
                 _tabContent.TabPages.Add(tabPage);
@@ -1405,6 +1393,9 @@ namespace wxd.files.winforms
         // ==================== 异步加载文件 ====================
         private async void LoadFilesAsync()
         {
+            // 重新扫描目录，大小缓存作废
+            _fileSizes.Clear();
+
             // 取消之前的加载任务
             _loadingCts?.Cancel();
             _loadingCts = new CancellationTokenSource();
@@ -1789,6 +1780,12 @@ namespace wxd.files.winforms
                     OpenFile(fullPath, fileType);
                 }
             }
+            else if (Directory.Exists(fullPath) && e.X < e.Node.Bounds.Left - 6)
+            {
+                // 点在展开标记（含图标）这一格里：单击直接展开/收起，不必双击
+                e.Node.Toggle();
+                _treeFiles.Invalidate();
+            }
         }
 
         private void OnTreeViewDoubleClick(object? sender, TreeNodeMouseClickEventArgs e)
@@ -1825,7 +1822,7 @@ namespace wxd.files.winforms
             _treeFiles.SelectedNode = node;
 
             var ctx = new ContextMenuStrip();
-            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            ctx.Font = Theme.Body;
 
             // 1. 设置别名（仅文件节点可用）
             var isFile = System.IO.File.Exists(fullPath);
@@ -1839,45 +1836,45 @@ namespace wxd.files.winforms
                 using var inputForm = new Form
                 {
                     Text = "设置别名",
-                    ClientSize = new Size(380, 170),
+                    ClientSize = new Size(380, 120),
                     StartPosition = FormStartPosition.CenterParent,
                     FormBorderStyle = FormBorderStyle.FixedDialog,
                     MaximizeBox = false,
                     MinimizeBox = false,
-                    Font = new Font("Microsoft YaHei UI", 9f)
+                    Font = Theme.Body,
+                    BackColor = Theme.P.Window
                 };
                 var lbl = new Label
                 {
                     Text = "为文件 \"" + Path.GetFileName(fullPath) + "\" 设置别名：（留空则清除别名）",
-                    Location = new Point(12, 12), Size = new Size(356, 36),
-                    AutoSize = false
+                    Location = new Point(ThemeMetrics.Margin, ThemeMetrics.RowPad),
+                    Size = new Size(inputForm.ClientSize.Width - ThemeMetrics.Margin * 2, 32),
+                    AutoSize = false,
+                    ForeColor = Theme.P.Text
                 };
-                var txt = new TextBox
+                var field = new ThemeField
                 {
-                    Text = currentRemark,
-                    Location = new Point(12, 54), Size = new Size(356, 23),
-                    BorderStyle = BorderStyle.FixedSingle
+                    Location = new Point(ThemeMetrics.Margin, 48),
+                    Size = new Size(inputForm.ClientSize.Width - ThemeMetrics.Margin * 2, ThemeMetrics.RowH)
                 };
-                var btnOk = new Button
-                {
-                    Text = "确定", DialogResult = DialogResult.OK,
-                    Location = new Point(190, 95), Size = new Size(80, 25),
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White
-                };
-                var btnCancel = new Button
-                {
-                    Text = "清除", DialogResult = DialogResult.Cancel,
-                    Location = new Point(280, 95), Size = new Size(80, 25),
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100)
-                };
-                inputForm.Controls.AddRange(new Control[] { lbl, txt, btnOk, btnCancel });
+                field.Edit.Text = currentRemark;
+
+                var btnClear = DialogButtonBar.Make("清除");
+                var btnOk = DialogButtonBar.Make("确定", primary: true);
+                btnOk.DialogResult = DialogResult.OK;
+                btnClear.DialogResult = DialogResult.Cancel;
+
+                var btnBar = DialogButtonBar.Create(out _);
+                btnBar.Controls.Add(btnOk);
+                btnBar.Controls.Add(btnClear);
+                DialogButtonBar.LayoutRight(btnBar, btnClear, btnOk);
+
+                inputForm.Controls.AddRange(new Control[] { lbl, field, btnBar });
                 inputForm.AcceptButton = btnOk;
-                inputForm.CancelButton = btnCancel;
+                inputForm.CancelButton = btnClear;
                 if (inputForm.ShowDialog(this) == DialogResult.OK)
                 {
-                    var trimmed = txt.Text.Trim();
+                    var trimmed = field.Edit.Text.Trim();
                     if (trimmed != currentRemark)
                     {
                         CsvSettings.SetFileRemark(_currentDir, relativePath, trimmed);
@@ -2061,7 +2058,8 @@ namespace wxd.files.winforms
             var tabPage = new TabPage(GetFileDisplayText(filePath))
             {
                 Tag = filePath,
-                ToolTipText = filePath
+                ToolTipText = filePath,
+                BackColor = _colorSurface
             };
             tabPage.Controls.Add(viewer);
             _tabContent.TabPages.Add(tabPage);
@@ -2153,13 +2151,13 @@ namespace wxd.files.winforms
                     Color bgColor, borderColor;
                     if (isSelected)
                     {
-                        bgColor = Color.FromArgb(66, 165, 245);
-                        borderColor = Color.FromArgb(30, 136, 229);
+                        bgColor = Theme.P.Accent;
+                        borderColor = Theme.P.Accent;
                     }
                     else
                     {
-                        bgColor = Color.FromArgb(227, 242, 253);
-                        borderColor = Color.FromArgb(173, 209, 237);
+                        bgColor = Theme.P.Selection;
+                        borderColor = Theme.P.Border;
                     }
 
                     using (var path = new GraphicsPath())
@@ -2192,13 +2190,13 @@ namespace wxd.files.winforms
 
                     // 绘制文本
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Color.White : Color.FromArgb(20, 60, 100);
+                    Color textColor = isSelected ? Color.White : Theme.P.Text;
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
                     // 绘制关闭按钮
                     var closeRect = new Rectangle(tabRect.Right - 18, tabRect.Top + 6, 12, 12);
-                    Color closeColor = isSelected ? Color.FromArgb(200, 220, 255) : Color.FromArgb(107, 114, 128);
+                    Color closeColor = isSelected ? Theme.Mix(Theme.P.Accent, Color.White, 0.5f) : Theme.P.Muted;
                     using (var pen = new Pen(closeColor, 1.5f))
                     {
                         e.Graphics.DrawLine(pen, closeRect.Left + 2, closeRect.Top + 2, closeRect.Right - 2, closeRect.Bottom - 2);
@@ -2257,7 +2255,7 @@ namespace wxd.files.winforms
         private void ShowTabMenu(Button btn)
         {
             var menu = new ContextMenuStrip();
-            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            menu.Font = Theme.Body;
             for (int i = 0; i < _tabContent.TabPages.Count; i++)
             {
                 var tp = _tabContent.TabPages[i];
@@ -2267,7 +2265,8 @@ namespace wxd.files.winforms
                     Tag = i,
                     Checked = isCurrent,
                     CheckState = isCurrent ? CheckState.Checked : CheckState.Unchecked,
-                    Font = new Font("Microsoft YaHei UI", 9f, isCurrent ? FontStyle.Bold : FontStyle.Regular)
+                    Font = new Font(Theme.Body.FontFamily, Theme.Body.Size,
+                                    isCurrent ? FontStyle.Bold : FontStyle.Regular)
                 };
                 item.Click += (s, e) =>
                 {
@@ -2283,7 +2282,7 @@ namespace wxd.files.winforms
         private void ShowTabContextMenu(Point screenPoint, int tabIndex)
         {
             var menu = new ContextMenuStrip();
-            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            menu.Font = Theme.Body;
 
             // 获取当前页签的文件路径
             var tabPage = _tabContent.TabPages[tabIndex];
@@ -2491,9 +2490,7 @@ namespace wxd.files.winforms
 
             // 进入搜索模式：禁用搜索按钮，显示进度标签和取消按钮
             _btnContentSearch.Enabled = false;
-            _pnlSearchProgress.Visible = true;
-            _btnCancelSearch.Visible = true;
-            _lblSearchProgress.Visible = true;
+            SetSearchProgressVisible(true);
             _lblSearchProgress.Text = $"{visibleList.Count} / 0 / 0 / 0.0%";
             _lastContentSearchKeyword = keyword;
 
@@ -2570,9 +2567,7 @@ namespace wxd.files.winforms
             {
                 // 取消是预期的，恢复 UI 状态后退出
                 _lblSearchProgress.Text = "";
-                _lblSearchProgress.Visible = false;
-                _btnCancelSearch.Visible = false;
-                _pnlSearchProgress.Visible = false;
+                SetSearchProgressVisible(false);
                 _btnContentSearch.Enabled = true;
                 return;
             }
@@ -2620,7 +2615,7 @@ namespace wxd.files.winforms
             _lastContentSearchKeyword = "";
             // 进度标签归零并隐藏
             _lblSearchProgress.Text = "";
-            _lblSearchProgress.Visible = false;
+            SetSearchProgressVisible(false);
             // 恢复搜索按钮可用
             _btnContentSearch.Enabled = true;
             // 清除内容搜索计数

@@ -6,9 +6,12 @@ namespace wxd.files.winforms
     public class LinkTableSelectorDialog : Form
     {
         private ListView _lstFiles = new();
-        private TextBox _txtFilter = new();
-        private Button _btnOK = new();
-        private Button _btnCancel = new();
+        private ThemeField _fldFilter = new();
+        private ThemeButton _btnOK = new();
+        private ThemeButton _btnClear = new();
+        private Panel _topBar = new();
+        private Panel _topDivider = new();
+        private Panel _bar = new();
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<(string display, string fullPath)> _filteredEntries = new();
 
@@ -18,6 +21,9 @@ namespace wxd.files.winforms
         {
             _fileEntries = fileEntries;
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             PopulateList("");
         }
 
@@ -52,30 +58,23 @@ namespace wxd.files.winforms
             Text = "选择关联表";
             ClientSize = new Size(500, 400);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false;
             MaximizeBox = false;
 
-            // 筛选框
-            _txtFilter = new TextBox
-            {
-                Location = new Point(10, 10),
-                Size = new Size(480, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "输入关键字筛选文件..."
-            };
-            _txtFilter.TextChanged += (s, e) => PopulateList(_txtFilter.Text.Trim());
+            _topBar = new Panel { Dock = DockStyle.Top, Height = ThemeMetrics.BarHeight };
+            _topDivider = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+            _topBar.Controls.Add(_topDivider);
 
-            // 文件列表
+            _fldFilter = new ThemeField { Placeholder = "输入关键字筛选文件..." };
+            _fldFilter.Edit.TextChanged += (s, e) => PopulateList(_fldFilter.Edit.Text.Trim());
+            _topBar.Controls.Add(_fldFilter);
+            LayoutTopBar();
+            _topBar.Resize += (_, _) => LayoutTopBar();
+
             _lstFiles = new ListView
             {
-                Location = new Point(10, 40),
-                Size = new Size(480, 310),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
                 View = View.Details,
                 FullRowSelect = true,
                 HideSelection = false,
@@ -84,57 +83,63 @@ namespace wxd.files.winforms
                 MultiSelect = false
             };
             _lstFiles.Columns.Add("文件", 460);
-            _lstFiles.DoubleClick += (s, e) =>
-            {
-                if (_lstFiles.SelectedItems.Count > 0)
-                {
-                    SelectedFilePath = _lstFiles.SelectedItems[0].Tag as string ?? "";
-                    DialogResult = DialogResult.OK;
-                    Close();
-                }
-            };
+            _lstFiles.DoubleClick += (s, e) => AcceptSelection();
 
-            // OK 按钮
-            _btnOK = new Button
+            _bar = DialogButtonBar.Create();
+            _btnClear = DialogButtonBar.Make("清除", (s, e) =>
             {
-                Text = "确定",
-                Location = new Point(320, 360),
-                Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
-            };
-            _btnOK.Click += (s, e) =>
-            {
-                if (_lstFiles.SelectedItems.Count > 0)
-                {
-                    SelectedFilePath = _lstFiles.SelectedItems[0].Tag as string ?? "";
-                    DialogResult = DialogResult.OK;
-                    Close();
-                }
-            };
+                SelectedFilePath = "";
+                DialogResult = DialogResult.Cancel;
+            });
+            _btnOK = DialogButtonBar.Make("确定", (s, e) => AcceptSelection(), primary: true);
+            _bar.Controls.AddRange(new Control[] { _btnClear, _btnOK });
+            LayoutBar();
+            _bar.Resize += (_, _) => LayoutBar();
 
-            // 取消按钮
-            _btnCancel = new Button
-            {
-                Text = "清除",
-                Location = new Point(408, 360),
-                Size = new Size(70, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-
-            Controls.AddRange(new Control[] { _txtFilter, _lstFiles, _btnOK, _btnCancel });
+            // 停靠顺序：后加入的靠外，所以列表先加、页眉页脚后加
+            Controls.Add(_lstFiles);
+            Controls.Add(_topBar);
+            Controls.Add(_bar);
             AcceptButton = _btnOK;
-            CancelButton = _btnCancel;
+            CancelButton = _btnClear;
 
             ResumeLayout(false);
+        }
+
+        private void AcceptSelection()
+        {
+            if (_lstFiles.SelectedItems.Count == 0) return;
+            SelectedFilePath = _lstFiles.SelectedItems[0].Tag as string ?? "";
+            DialogResult = DialogResult.OK;
+        }
+
+        private void LayoutTopBar()
+            => _fldFilter.SetBounds(ThemeMetrics.Margin, ThemeMetrics.RowPad,
+                _topBar.Width - ThemeMetrics.Margin * 2, ThemeMetrics.RowH);
+
+        private void LayoutBar()
+            => DialogButtonBar.LayoutRight(_bar, _btnClear, _btnOK);
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            _lstFiles.BackColor = p.Surface;
+            _lstFiles.ForeColor = p.Text;
+            _lstFiles.Font = Theme.List;
+
+            _fldFilter.ApplyTheme();
+            _btnClear.BackColor = p.Chrome;
+            _btnOK.BackColor = p.Chrome;
+
+            LayoutTopBar();
+            LayoutBar();
+            Invalidate(true);
         }
     }
 }

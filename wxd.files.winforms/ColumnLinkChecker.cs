@@ -288,8 +288,8 @@ namespace wxd.files.winforms
 
             if (hasMissing)
             {
-                e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
-                e.CellStyle.SelectionBackColor = Color.FromArgb(255, 150, 150);
+                e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 180, 180));
+                e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 150, 150));
             }
             else
             {

@@ -253,9 +253,11 @@ public List<int> GetVisibleColumnIndices()
 
 | 位置 | 方法 | 取值 |
 |------|------|------|
-| 主体区 | `OnRowPostPaint` → `GetDisplayLineNumber(e.RowIndex)` | `_dataGrid.Rows[i].Tag as TableRow` → `DisplayLineNumber` |
-| 冻结区 | `OnFrozenRowPostPaint` → `GetFrozenDisplayLineNumber(e.RowIndex)` | 冻结区没挂 Tag，按 `_fileData.Rows[i]` 取（与 `_dataTable` 前 `_frozenRows` 行一一对应） |
-| 兜底 | `ResolveRowNumber(tagRow==null)` | `displayRowIndex + 1 + frozenRows`（仅刷新中间态，Tag 还没挂上时） |
+| 主体区 | `OnRowPostPaint` → `GetDisplayLineNumber(e.RowIndex)` | 行映射 `_rowTags[i]`（`BuildRowTagMap()` 登记，显示行 → `TableRow`）→ `DisplayLineNumber` |
+| 冻结区 | `OnFrozenRowPostPaint` → `GetFrozenDisplayLineNumber(e.RowIndex)` | 冻结区不在行映射里，按 `_fileData.Rows[i]` 取（与 `_dataTable` 前 `_frozenRows` 行一一对应） |
+| 兜底 | `ResolveRowNumber(tagRow==null)` | `displayRowIndex + 1 + frozenRows`（仅刷新中间态，映射还没登记时） |
+
+- **行映射不写进网格**：以前是逐行 `_dataGrid.Rows[i].Tag = row`，那一步会强制 DataGridView 为每一行建出 Row/Cell 对象，12 万行实测冻结 12.5 秒；现在由控件自己存 `_rowTags` 数组，登记只要几毫秒，网格继续按需建行
 
 - **`TableRow.DisplayLineNumber` 是唯一口径**：物理行号 `PhysicalStartLine` 优先 → 来源不是文件时用 `OriginalRowIndex + 1` → 空白占位行返回 `null`，由 `FormatRowNumber()` 画 `—`
 - 新增/复制/删除行会把 `_fileData` 重建为 `PhysicalStartLine = -1`，退回记录序号；保存后重新解析文件才会恢复真实行号
@@ -267,7 +269,7 @@ public List<int> GetVisibleColumnIndices()
 |------|------|------|
 | 标记行 | `OnCellClick` / `OnRowHeaderMouseClick`（左键，Ctrl 多选）→ `ReplaceRowSelection()` / `ToggleRowSelection()` | 物理行号写 `_markedLineNumbers`（跨刷新稳定），`_selectedRows` 只是当前视图的显示行索引，`OnRowPostPaint` 按它描边；`UpdateSelectedRowsLabel()` 在状态栏汇总"源文件 L{min}–L{max}" |
 | 行号菜单 | `OnGridCellMouseDown` → `ShowRowNumberMenu()`（右键 `e.ColumnIndex < 0`） | 复制行号 / 只看该行号（写入 `@line=N`）/ 跳转到行号 / 清除标记；**不受 `ContextMenuMode` 限制**，阅读器、版本对比、冲突解决三处一致 |
-| 按行号跳转 | `NavigateToPhysicalLine(long)` | 扫 `_dataGrid.Rows[i].Tag` 的 `DisplayLineNumber`；命中冻结区时滚 `_dataGridHeader`；未命中在 `_lblInfo` 区分"被过滤隐藏"和"没有这一行"。输入框为 `LineNumberJumpDialog` |
+| 按行号跳转 | `NavigateToPhysicalLine(long)` | 扫行映射 `_rowTags` 的 `DisplayLineNumber`（`FindDisplayRowByLineNumber`，不碰网格行对象）；命中冻结区时滚 `_dataGridHeader`；未命中在 `_lblInfo` 区分"被过滤隐藏"和"没有这一行"。输入框为 `LineNumberJumpDialog` |
 
 - **标记按行号记账**：所有重绑路径（`RefreshGridLayout` / `ApplyFilterResultToUI` / `RefreshGridLayoutWithProgressAsync`）末尾都要调用 `RebuildSelectedRowIndices()`；被过滤隐藏的标记保留在 `_markedLineNumbers`，条件清除后自动回到视图
 - **行数变化的操作先清标记**：新增/复制/删除/放弃新增行会重建 `_fileData`（`PhysicalStartLine` 退化为 -1），继续按行号映射会落错行，统一先 `ClearRowSelection()`
@@ -361,7 +363,7 @@ public List<int> GetVisibleColumnIndices()
 
 **尚未定位的现象（改动相关代码时留意）**
 
-- 冻结行 > 0 的首屏偶发 `Rows[i].Tag == null`（约 3 次里 1 次），此时 `DataSource` 已经是 `filteredTable`（不是 `_dataTable`），行号退化成连续记录号；手动再调一次 `RefreshGridLayout()` 立刻恢复正常。怀疑与 `UpdateLoadingProgress()` 里的 `Application.DoEvents()` 重入有关（进度条刷新时把别的续套进来，交错执行到"绑完数据源但还没挂 Tag"的窗口里）。**未证实，别照着改**。
+- 冻结行 > 0 的首屏偶发行号退化成连续记录号（约 3 次里 1 次），此时 `DataSource` 已经是 `filteredTable`（不是 `_dataTable`），说明落在了"绑完数据源但还没登记行映射"的窗口里；手动再调一次 `RefreshGridLayout()` 立刻恢复正常。怀疑与 `UpdateLoadingProgress()` 里的 `Application.DoEvents()` 重入有关（进度条刷新时把别的续套进来，交错执行到那个窗口里）。**未证实，别照着改**。
 - 嵌在 `TabPage` 里时，`_dataGridHeader.RectangleToScreen(...)` 和 `SplitContainer.Panel1.RectangleToScreen(...)` 偶发返回 `{X=0,Y=0}`，而主表 `PointToScreen` 正常；此时冻结行区在屏幕截图里是空白。控件属性（`Visible`/`IsHandleCreated`/`Rows.Count`/`Bounds`）全部正常，`Invalidate(true)+Update()` 无效，且**是否出现不稳定**。自动化截图时先确认 `hdrScreen` 不是 `(0,0)` 再裁整窗。
 - `DataGridLinkToolTip.CustomToolTipPanel.MeasureLayout()` 在悬停计时器里偶发抛 GDI+ `ExternalException`；同文件里表头单元格样式 `new Font(_textFont, FontStyle.Bold)` 逐个新建且不释放，疑似 GDI 句柄耗尽的来源。截图脚本会先把光标挪到标题栏规避。
 

@@ -6,13 +6,17 @@ namespace wxd.files.winforms
     public class ColumnManagerDialog : Form
     {
         private ListView _lvColumns = new();
-        private Button _btnSelectAll = new();
-        private Button _btnDeselectAll = new();
-        private Button _btnOK = new();
-        private Button _btnCancel = new();
-        private Button _btnLinkManage = new();
-        private Button _btnTemplateRef = new();
-        private TextBox _txtSearch = new();
+        private ThemeButton _btnSelectAll = new();
+        private ThemeButton _btnDeselectAll = new();
+        private ThemeButton _btnOK = new();
+        private ThemeButton _btnCancel = new();
+        private ThemeButton _btnLinkManage = new();
+        private ThemeButton _btnTemplateRef = new();
+        private ThemeButton _btnTemplateManage = new();
+        private ThemeField _fldSearch = new();
+        private Panel _bar = new();
+        private Panel _topBar = new();
+        private Panel _topDivider = new();
         private int _lockedColumnIndex = -1;
         private bool[] _checkedStates;
         private string _rootDir = "";
@@ -40,6 +44,9 @@ namespace wxd.files.winforms
             _fileEntries = fileEntries ?? new();
             _columnLinks = columnLinks != null ? new List<ColumnLinkConfig>(columnLinks) : new();
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             PopulateList(dataTable, frozenRows);
         }
 
@@ -172,45 +179,34 @@ namespace wxd.files.winforms
             ClientSize = new Size(980, 520);
             MinimumSize = new Size(600, 300);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false;
             MaximizeBox = false;
 
-            _btnSelectAll = new Button
-            {
-                Text = "全选", Location = new Point(10, 8), Size = new Size(70, 26),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
-                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100)
-            };
-            _btnSelectAll.Click += (s, e) => SetAllChecked(true);
+            // ==================== 顶部工具区 ====================
+            _topBar = new Panel { Dock = DockStyle.Top, Height = ThemeMetrics.BarHeight };
+            _topDivider = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+            _topBar.Controls.Add(_topDivider);
 
-            _btnDeselectAll = new Button
-            {
-                Text = "取消全选", Location = new Point(88, 8), Size = new Size(80, 26),
-                FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
-                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100)
-            };
-            _btnDeselectAll.Click += (s, e) => SetAllChecked(false);
+            _btnSelectAll = DialogButtonBar.Make("全选", (s, e) => SetAllChecked(true));
+            _btnDeselectAll = DialogButtonBar.Make("取消全选", (s, e) => SetAllChecked(false));
 
-            _txtSearch = new TextBox
-            {
-                Location = new Point(176, 9), Size = new Size(160, 24),
-                Font = new Font("Microsoft YaHei UI", 9f), BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "搜索列...", ForeColor = Color.FromArgb(20, 60, 100), BackColor = Color.White
-            };
-            _txtSearch.TextChanged += (s, e) => PopulateList(_dataTable, _frozenRows, _txtSearch.Text.Trim());
+            _fldSearch = new ThemeField { Placeholder = "搜索列..." };
+            _fldSearch.Edit.TextChanged += (s, e) => PopulateList(_dataTable, _frozenRows, _fldSearch.Edit.Text.Trim());
+
+            _topBar.Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _fldSearch });
+            LayoutTopBar();
+            _topBar.Resize += (_, _) => LayoutTopBar();
 
             _lvColumns = new ListView
             {
-                Location = new Point(10, 42), Size = new Size(960, 420),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                BorderStyle = BorderStyle.FixedSingle, Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.White, ForeColor = Color.FromArgb(20, 60, 100),
-                View = View.Details, FullRowSelect = true, HideSelection = false,
-                GridLines = true, CheckBoxes = true, HeaderStyle = ColumnHeaderStyle.Nonclickable
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                View = View.Details,
+                FullRowSelect = true,
+                HideSelection = false,
+                GridLines = true,
+                CheckBoxes = true,
+                HeaderStyle = ColumnHeaderStyle.Nonclickable
             };
             _lvColumns.ItemCheck += (s, e) =>
             {
@@ -224,70 +220,88 @@ namespace wxd.files.winforms
                     _checkedStates[colIndex] = e.Item.Checked;
             };
 
-            _btnLinkManage = new Button
+            // ==================== 底部按钮条 ====================
+            // 一个对话框只留一颗实心（确定），其余动作一律描边，别再各涂各的品牌蓝和绿
+            _bar = DialogButtonBar.Create();
+            _btnTemplateManage = DialogButtonBar.Make("管理模板", OnTemplateManageClick);
+            _btnTemplateRef = DialogButtonBar.Make("引用模板", OnTemplateRefClick);
+            _btnLinkManage = DialogButtonBar.Make("关联设置", OnLinkManageClick);
+            _btnCancel = DialogButtonBar.Make("取消");
+            _btnCancel.DialogResult = DialogResult.Cancel;
+            _btnOK = DialogButtonBar.Make("确定", null, primary: true);
+            _btnOK.DialogResult = DialogResult.OK;
+            _bar.Controls.AddRange(new Control[]
             {
-                Text = "关联设置", Location = new Point(600, 468), Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(22, 163, 74), ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61), MouseOverBackColor = Color.FromArgb(21, 128, 61) },
-                Cursor = Cursors.Hand
-            };
-            _btnLinkManage.Click += OnLinkManageClick;
+                _btnTemplateManage, _btnTemplateRef, _btnLinkManage, _btnCancel, _btnOK
+            });
+            LayoutBar();
+            _bar.Resize += (_, _) => LayoutBar();
 
-            _btnTemplateRef = new Button
-            {
-                Text = "引用模板", Location = new Point(510, 468), Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand
-            };
-            _btnTemplateRef.Click += OnTemplateRefClick;
-
-            var btnTemplateManage = new Button
-            {
-                Text = "管理模板", Location = new Point(430, 468), Size = new Size(72, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(235, 245, 255), ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) },
-                Cursor = Cursors.Hand
-            };
-            btnTemplateManage.Click += (s, e) =>
-            {
-                if (string.IsNullOrEmpty(_rootDir))
-                {
-                    AlertForm.Show(this, "未设置目录路径，无法管理模板", "提示", AlertType.Information);
-                    return;
-                }
-                using var dialog = new LinkTemplateDialog(mode: false, _fileEntries, _frozenRows, _headerRowIndex, _rootDir);
-                dialog.ShowDialog(this);
-                // 如果模板有变更，刷新关联列的显示
-                if (dialog.TemplatesChanged)
-                {
-                    UpdateLinkColumnInListView();
-                }
-            };
-
-            _btnOK = new Button
-            {
-                Text = "确定", Location = new Point(690, 468), Size = new Size(80, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.OK, BackColor = Color.FromArgb(66, 165, 245), ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
-            };
-
-            _btnCancel = new Button
-            {
-                Text = "取消", Location = new Point(780, 468), Size = new Size(70, 28),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right, FlatStyle = FlatStyle.Flat,
-                DialogResult = DialogResult.Cancel, BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-
-            Controls.AddRange(new Control[] { _btnSelectAll, _btnDeselectAll, _txtSearch, _lvColumns, btnTemplateManage, _btnLinkManage, _btnTemplateRef, _btnOK, _btnCancel });
+            // 停靠顺序：后加入的靠外，所以列表先加、页眉页脚后加
+            Controls.Add(_lvColumns);
+            Controls.Add(_topBar);
+            Controls.Add(_bar);
             AcceptButton = _btnOK;
             CancelButton = _btnCancel;
             ResumeLayout(false);
+        }
+
+        private void LayoutTopBar()
+        {
+            int y = ThemeMetrics.RowPad, x = ThemeMetrics.Margin;
+            int rowH = ThemeMetrics.RowH;
+
+            _btnSelectAll.SetBounds(x, y, ThemeButton.FitWidth(_btnSelectAll.Text), rowH);
+            x += _btnSelectAll.Width + ThemeMetrics.Gap;
+            _btnDeselectAll.SetBounds(x, y, ThemeButton.FitWidth(_btnDeselectAll.Text), rowH);
+            x += _btnDeselectAll.Width + ThemeMetrics.Group;
+            _fldSearch.SetBounds(x, y, 220, rowH);
+        }
+
+        private void LayoutBar()
+            => DialogButtonBar.LayoutRight(_bar, _btnTemplateManage, _btnTemplateRef, _btnLinkManage, _btnCancel, _btnOK);
+
+        /// <summary>取色全部走当前皮肤令牌；换皮肤或翻明暗时由 Theme.Changed 重新走一遍。</summary>
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            _lvColumns.BackColor = p.Surface;
+            _lvColumns.ForeColor = p.Text;
+            _lvColumns.Font = Theme.List;
+
+            _fldSearch.ApplyTheme();
+            foreach (var b in new[] { _btnSelectAll, _btnDeselectAll, _btnTemplateManage, _btnTemplateRef,
+                                      _btnLinkManage, _btnCancel, _btnOK })
+            {
+                b.BackColor = p.Chrome;
+                b.Font = Theme.Body;
+            }
+
+            LayoutTopBar();
+            LayoutBar();
+            Invalidate(true);
+        }
+
+        private void OnTemplateManageClick(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_rootDir))
+            {
+                AlertForm.Show(this, "未设置目录路径，无法管理模板", "提示", AlertType.Information);
+                return;
+            }
+            using var dialog = new LinkTemplateDialog(mode: false, _fileEntries, _frozenRows, _headerRowIndex, _rootDir);
+            dialog.ShowDialog(this);
+            // 如果模板有变更，刷新关联列的显示
+            if (dialog.TemplatesChanged)
+            {
+                UpdateLinkColumnInListView();
+            }
         }
 
         private void OnLinkManageClick(object? sender, EventArgs e)

@@ -24,12 +24,11 @@ namespace wxd.files.winforms
         private long _anchorIndex = -1;      // Shift 多选锚点
 
         // ==================== 外观 ====================
-        private const int RowHeightPadding = 6;
+        // 行距留白按皮肤收紧：密集皮肤要一屏多看几行日志
+        private int _rowPad = 6;
         private const int LeftMargin = 4;
-        private static readonly Color SelectionBackColor = Color.FromArgb(66, 165, 245);
-        private static readonly Color SelectionTextColor = Color.White;
-        private static readonly Color BackColorDefault = Color.White;
-        private static readonly Color ForeColorDefault = Color.FromArgb(30, 30, 30);
+        private Color _selectionBack = Theme.P.Selection;
+        private Color _selectionText = Theme.P.AccentText;
 
         // ==================== 滚动条 ====================
         private readonly VScrollBar _vScroll;
@@ -56,9 +55,6 @@ namespace wxd.files.winforms
                    | ControlStyles.UserPaint
                    | ControlStyles.AllPaintingInWmPaint
                    | ControlStyles.ResizeRedraw, true);
-            BackColor = BackColorDefault;
-            ForeColor = ForeColorDefault;
-            Font = new Font("Consolas", 10F);
             DoubleBuffered = true;
 
             _vScroll = new VScrollBar { Dock = DockStyle.Right, Visible = false };
@@ -67,6 +63,9 @@ namespace wxd.files.winforms
             _hScroll.Scroll += OnHScroll;
             Controls.Add(_vScroll);
             Controls.Add(_hScroll);
+
+            // 初值也走令牌：原来这里钉了一套和皮肤无关的默认色，靠调用方记得补一次 ApplyTheme 才对得上
+            ApplyTheme();
         }
 
         // ==================== 公开 API ====================
@@ -79,7 +78,30 @@ namespace wxd.files.winforms
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public int HPos => _hPos;
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public int RowHeight => Font.Height + RowHeightPadding;
+        public int RowHeight => Font.Height + _rowPad;
+
+        /// <summary>深浅色或皮肤变了：重新取令牌色、字号和行距。滚动位置不动，只重画。</summary>
+        public void ApplyTheme()
+        {
+            var p = Theme.P;
+            _rowPad = Theme.Skin == UiSkin.Dense ? 3 : 6;
+            Font = Theme.Code;
+            BackColor = p.Surface;
+            ForeColor = p.Text;
+            _selectionBack = p.Selection;
+            _selectionText = p.AccentText;
+            // 行高随皮肤变了，可视行数跟着变：不重夹的话底部会画空白行、滚动条范围也对不上
+            ClampVPos();
+            UpdateVScroll();
+            // 画刷按新底色重建：每行每帧 new 一支 SolidBrush，滚动大文件时是纯 GDI 句柄开销
+            _brushNormal?.Dispose(); _brushSelected?.Dispose();
+            _brushNormal = new SolidBrush(BackColor);
+            _brushSelected = new SolidBrush(_selectionBack);
+            Invalidate();
+        }
+
+        private SolidBrush? _brushNormal;
+        private SolidBrush? _brushSelected;
 
         /// <summary>当前选中行集合（只读视图）</summary>
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -197,10 +219,14 @@ namespace wxd.files.winforms
                 bool selected = _selected.Contains(i);
 
                 // 背景
-                using (var backBrush = new SolidBrush(selected ? SelectionBackColor : BackColor))
+                var backBrush = selected ? _brushSelected : _brushNormal;
+                if (backBrush == null)
                 {
-                    g.FillRectangle(backBrush, 0, y, bgWidth, rowH);
+                    // 调用方没走 ApplyTheme 也会直接画（首次加载），这里按当前颜色补齐缓存
+                    backBrush = new SolidBrush(selected ? _selectionBack : BackColor);
+                    if (selected) _brushSelected = backBrush; else _brushNormal = backBrush;
                 }
+                g.FillRectangle(backBrush, 0, y, bgWidth, rowH);
 
                 // 文本
                 string text = GetLineText?.Invoke(i) ?? "";
@@ -214,7 +240,7 @@ namespace wxd.files.winforms
                     int drawY = y + (rowH - Font.Height) / 2;
                     TextRenderer.DrawText(g, text, Font,
                         new Point(drawX, drawY),
-                        selected ? SelectionTextColor : ForeColor,
+                        selected ? _selectionText : ForeColor,
                         TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
                 }
             }

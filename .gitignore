@@ -9,3 +9,8 @@ md5.txt
 wxd.files.winforms.exe
 md5.txt
 bin/
+obj/
+tools/restyle-shots/*.png
+tools/restyle-shots/*.txt
+tools/restyle-shots/*.log
+tools/restyle-shots/appout/

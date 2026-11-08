@@ -24,6 +24,17 @@ namespace wxd.files.winforms
             set => SetIntValue(ThemeModeKey, Math.Max(0, Math.Min(1, value)));
         }
 
+        private const string ThemeSkinKey = "ThemeSkin";
+
+        /// <summary>
+        /// 界面皮肤: 0=天蓝提质, 1=密集工具风
+        /// </summary>
+        public static int ThemeSkin
+        {
+            get => GetIntValue(ThemeSkinKey, 0, 0, 1);
+            set => SetIntValue(ThemeSkinKey, Math.Max(0, Math.Min(1, value)));
+        }
+
         #endregion
 
         #region 窗格设置

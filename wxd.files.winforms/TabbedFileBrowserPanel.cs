@@ -21,33 +21,41 @@ namespace wxd.files.winforms
         private const int TabBarHeight = 28;
         private const int TabMinWidth = 80;
         private const int TabMaxWidth = 200;
+        /// <summary>页签再窄就点不准了：多窗格挤不下 TabMinWidth 时允许缩到这里的下限</summary>
+        private const int TabNarrowWidth = 44;
         private const int TabPaddingX = 14;
         private const int AddButtonWidth = 26;
         private const int TabCloseButtonSize = 14;
         private const int TabCloseRightMargin = 6;
 
-        // ==================== 主题颜色 ====================
-        // 浅色：页签条用比主界面浅蓝(235,248,255)更深的蓝灰，激活页签用更亮的蓝白形成对比
-        private static readonly Color _colorLightTabBarBg = Color.FromArgb(218, 230, 243);
-        private static readonly Color _colorLightTabBg = Color.FromArgb(218, 230, 243);
-        private static readonly Color _colorLightTabActiveBg = Color.FromArgb(240, 247, 252);
-        private static readonly Color _colorLightTabHoverBg = Color.FromArgb(40, 255, 255, 255);
-        private static readonly Color _colorLightTabBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightTabText = Color.FromArgb(15, 15, 15);
-        private static readonly Color _colorLightTabTextSecondary = Color.FromArgb(70, 90, 110);
-        private static readonly Color _colorLightAddBtn = Color.FromArgb(90, 120, 140);
-        private static readonly Color _colorLightAccent = Color.FromArgb(0, 120, 215);
+        // 卡片外框：窗格画成圆角卡片。CardPadding 必须大于 描边位 + 圆角切角深度，
+        // 否则子控件的直角会戳出圆弧（r=8 时切角深约 2.3px）。
+        private const int CardInset = 2;
+        private const int CardPadding = 5;
+        private const int CardRadius = 8;
 
-        // 深色：非激活页签融入页签条，激活用稍亮底+底部强调线
-        private static readonly Color _colorDarkTabBarBg = Color.FromArgb(37, 37, 38);
-        private static readonly Color _colorDarkTabBg = Color.FromArgb(37, 37, 38);
-        private static readonly Color _colorDarkTabActiveBg = Color.FromArgb(45, 45, 48);
-        private static readonly Color _colorDarkTabHoverBg = Color.FromArgb(40, 255, 255, 255);
-        private static readonly Color _colorDarkTabBorder = Color.FromArgb(67, 67, 70);
-        private static readonly Color _colorDarkTabText = Color.FromArgb(241, 241, 241);
-        private static readonly Color _colorDarkTabTextSecondary = Color.FromArgb(170, 170, 170);
-        private static readonly Color _colorDarkAddBtn = Color.FromArgb(150, 150, 150);
-        private static readonly Color _colorDarkAccent = Color.FromArgb(0, 151, 251);
+        // ==================== 主题颜色 ====================
+        // 全部转发到 Theme 令牌：明暗与皮肤由 Theme.Set 决定，
+        // 保留 light/dark 两组名字是为了不动下面成片的 isDark 三元表达式。
+        private static Color _colorLightTabBarBg => Theme.P.Divider;
+        private static Color _colorLightTabBg => Theme.P.Divider;
+        private static Color _colorLightTabActiveBg => Theme.P.Surface;
+        private static Color _colorLightTabHoverBg => Theme.P.Hover;
+        private static Color _colorLightTabBorder => Theme.P.Border;
+        private static Color _colorLightTabText => Theme.P.Text;
+        private static Color _colorLightTabTextSecondary => Theme.P.Muted;
+        private static Color _colorLightAddBtn => Theme.P.Muted;
+        private static Color _colorLightAccent => Theme.P.Accent;
+
+        private static Color _colorDarkTabBarBg => Theme.P.Divider;
+        private static Color _colorDarkTabBg => Theme.P.Divider;
+        private static Color _colorDarkTabActiveBg => Theme.P.Surface;
+        private static Color _colorDarkTabHoverBg => Theme.P.Hover;
+        private static Color _colorDarkTabBorder => Theme.P.Border;
+        private static Color _colorDarkTabText => Theme.P.Text;
+        private static Color _colorDarkTabTextSecondary => Theme.P.Muted;
+        private static Color _colorDarkAddBtn => Theme.P.Muted;
+        private static Color _colorDarkAccent => Theme.P.Accent;
 
         // ==================== 状态 ====================
         private readonly int _paneIndex;
@@ -83,6 +91,9 @@ namespace wxd.files.winforms
         {
             _paneIndex = paneIndex;
             DoubleBuffered = true;
+            // 卡片外留白用窗口底色，让圆角卡片之间露出间隙
+            BackColor = Theme.P.Window;
+            Padding = new Padding(CardPadding);
 
             // 页签条
             _pnlTabBar = new Panel
@@ -100,7 +111,7 @@ namespace wxd.files.winforms
             _pnlContent = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.White,
+                BackColor = Theme.P.Surface,
             };
 
             Controls.Add(_pnlContent);
@@ -115,8 +126,31 @@ namespace wxd.files.winforms
             };
         }
 
-        // ==================== 初始化页签（恢复配置） ====================
+        // ==================== 圆角卡片 ====================
 
+        /// <summary>
+        /// 窗格画成圆角卡片：外圈留白用窗口底色，卡片本体填 Surface、描 1px 边框，
+        /// 获得焦点时描边换成强调色加粗，取代原来页签内面板的方形焦点框。
+        /// </summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Width <= CardInset * 2 + CardRadius * 2 || Height <= CardInset * 2 + CardRadius * 2) return;
+
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            bool focused = GetActivePanel()?.PaneHasFocus == true;
+            float stroke = focused ? 2f : 1f;
+            var card = new RectangleF(CardInset, CardInset, Width - CardInset * 2 - stroke, Height - CardInset * 2 - stroke);
+            using var path = ThemeButton.RoundRect(card, CardRadius);
+            using (var fill = new SolidBrush(Theme.P.Surface))
+                g.FillPath(fill, path);
+            using var pen = new Pen(focused ? Theme.P.Accent : Theme.P.Border, stroke);
+            g.DrawPath(pen, path);
+        }
+
+        // ==================== 初始化页签（恢复配置） ====================
         /// <summary>
         /// 从 AppStateStore 恢复页签：读取保存的页签数量，为每个页签创建独立 FileBrowserPanel。
         /// 每个页签使用 (paneIndex, tabIndex) 双键从 AppStateStore 读取/写入状态。
@@ -286,14 +320,17 @@ namespace wxd.files.winforms
         public void ApplyTheme(bool isDark)
         {
             _isDark = isDark;
+            BackColor = Theme.P.Window;
             _pnlTabBar.BackColor = isDark ? _colorDarkTabBarBg : _colorLightTabBarBg;
-            _pnlContent.BackColor = isDark ? Color.FromArgb(30, 30, 30) : Color.White;
+            _pnlContent.BackColor = Theme.P.Surface;
             foreach (var panel in _tabPanels)
             {
                 if (!panel.IsDisposed)
                     panel.ApplyTheme(isDark);
             }
             _pnlTabBar.Invalidate();
+            // 卡片圆角边框是 OnPaint 实时取 Theme.P 画的，只重画页签条会留下旧描边
+            Invalidate();
         }
 
         /// <summary>强制保存所有页签面板的状态</summary>
@@ -339,12 +376,10 @@ namespace wxd.files.winforms
             int addBtnX = rect.Right - AddButtonWidth;
             int tabAreaWidth = addBtnX;
             int tabCount = _tabPanels.Count;
-            int tabWidth = tabCount > 0
-                ? Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount))
-                : TabMinWidth;
+            int tabWidth = TabWidthFor(tabAreaWidth, tabCount);
 
             // 绘制各页签
-            using var fontTab = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular);
+            var fontTab = Theme.Body;
             using var brushText = new SolidBrush(_isDark ? _colorDarkTabText : _colorLightTabText);
             using var brushTextSecondary = new SolidBrush(_isDark ? _colorDarkTabTextSecondary : _colorLightTabTextSecondary);
             using var brushActive = new SolidBrush(_isDark ? _colorDarkTabActiveBg : _colorLightTabActiveBg);
@@ -395,14 +430,12 @@ namespace wxd.files.winforms
                     if (isCloseHover)
                     {
                         // 悬停时画圆形背景
-                        using var closeBgBrush = new SolidBrush(_isDark ? Color.FromArgb(70, 70, 70) : Color.FromArgb(220, 220, 220));
+                        using var closeBgBrush = new SolidBrush(Theme.Mix(Theme.P.Divider, Theme.P.Text, 0.14f));
                         g.FillEllipse(closeBgBrush, closeRect);
                     }
 
                     // 画 × 符号
-                    using var closePen = new Pen(isCloseHover
-                        ? (_isDark ? Color.FromArgb(255, 90, 90) : Color.FromArgb(200, 40, 40))
-                        : (_isDark ? Color.FromArgb(170, 170, 170) : Color.FromArgb(120, 120, 120)), 1.5f);
+                    using var closePen = new Pen(isCloseHover ? Theme.P.Danger : Theme.P.Muted, 1.5f);
                     int pad = 3;
                     g.DrawLine(closePen, closeRect.Left + pad, closeRect.Top + pad, closeRect.Right - pad, closeRect.Bottom - pad);
                     g.DrawLine(closePen, closeRect.Right - pad, closeRect.Top + pad, closeRect.Left + pad, closeRect.Bottom - pad);
@@ -417,7 +450,7 @@ namespace wxd.files.winforms
                 ? (_hoverAddButton
                     ? accentColor
                     : (_isDark ? _colorDarkAddBtn : _colorLightAddBtn))
-                : (_isDark ? Color.FromArgb(50, 50, 53) : Color.FromArgb(200, 215, 230));
+                : Theme.Mix(Theme.P.Divider, Theme.P.Text, 0.22f);
 
             using var penBtn = new Pen(btnColor, 1.5f);
             // 横线
@@ -493,9 +526,7 @@ namespace wxd.files.winforms
             int addBtnX = _pnlTabBar.ClientRectangle.Right - AddButtonWidth;
             int tabAreaWidth = addBtnX;
             int tabCount = _tabPanels.Count;
-            int tabWidth = tabCount > 0
-                ? Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount))
-                : TabMinWidth;
+            int tabWidth = TabWidthFor(tabAreaWidth, tabCount);
 
             // 检查是否点击了关闭按钮
             if (tabCount > 1)
@@ -538,9 +569,7 @@ namespace wxd.files.winforms
             int addBtnX = _pnlTabBar.ClientRectangle.Right - AddButtonWidth;
             int tabAreaWidth = addBtnX;
             int tabCount = _tabPanels.Count;
-            int tabWidth = tabCount > 0
-                ? Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount))
-                : TabMinWidth;
+            int tabWidth = TabWidthFor(tabAreaWidth, tabCount);
 
             // 检查是否悬停在 "+" 按钮上
             bool overAdd = (e.X >= addBtnX && _tabPanels.Count < MaxTabCount);
@@ -615,6 +644,15 @@ namespace wxd.files.winforms
             _tabToolTip.SetToolTip(_pnlTabBar, "");
         }
 
+        /// <summary>
+        /// 页签宽度：可用宽度平分，最宽 TabMaxWidth。
+        /// 原来窄到 TabMinWidth 就不再缩，多窗格下两个页签就把「+」盖住，加不了新页签；
+        /// 现在允许继续窄到 TabNarrowWidth，宁可标题截字也要保证加页签那颗点得到。
+        /// 绘制和命中测试都走这一个算法，两边不会算出两套宽度。
+        /// </summary>
+        private static int TabWidthFor(int tabAreaWidth, int tabCount)
+            => tabCount <= 0 ? TabMinWidth : Math.Clamp(tabAreaWidth / tabCount, TabNarrowWidth, TabMaxWidth);
+
         /// <summary>根据 X 坐标计算页签索引，返回 -1 表示不在任何页签上</summary>
         private int GetTabIndexAtX(int x)
         {
@@ -623,7 +661,7 @@ namespace wxd.files.winforms
             int tabCount = _tabPanels.Count;
             if (tabCount == 0) return -1;
 
-            int tabWidth = Math.Min(TabMaxWidth, Math.Max(TabMinWidth, tabAreaWidth / tabCount));
+            int tabWidth = TabWidthFor(tabAreaWidth, tabCount);
             int index = x / tabWidth;
             if (index < 0 || index >= tabCount) return -1;
             return index;

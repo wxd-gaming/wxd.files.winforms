@@ -69,6 +69,9 @@ namespace wxd.files.winforms
             
             ApplicationConfiguration.Initialize();
 
+            // 按存档的皮肤+明暗激活令牌（含原生深色模式）
+            Theme.Set((UiSkin)CsvSettings.ThemeSkin, CsvSettings.ThemeMode == 0);
+
             Application.Run(new Form1());
         }
 

@@ -6,9 +6,13 @@ namespace wxd.files.winforms
     public class TargetColumnSelectDialog : Form
     {
         private ListView _lvColumns = new();
-        private Button _btnOK = new();
-        private Button _btnCancel = new();
-        private TextBox _txtSearch = new();
+        private ThemeButton _btnOK = new();
+        private ThemeButton _btnCancel = new();
+        private ThemeField _fldSearch = new();
+        private Label _lblHint = new();
+        private Panel _topBar = new();
+        private Panel _topDivider = new();
+        private Panel _bar = new();
         private int _selectedIndex = -1;
         private string _selectedColumnName = "";        // 选中的列的表头名称
         private int _headerRowIndex = -1;              // 表头行索引
@@ -28,6 +32,9 @@ namespace wxd.files.winforms
             _frozenData = frozenData;
             _frozenRows = frozenRows;
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             PopulateList(frozenData, frozenRows);
             if (_selectedIndex >= 0 && _selectedIndex < _lvColumns.Items.Count)
             {
@@ -121,46 +128,30 @@ namespace wxd.files.winforms
         private void InitializeComponent()
         {
             SuspendLayout();
-            SuspendLayout();
+
             Text = _customTitle;
             ClientSize = new Size(780, 520);
             MinimumSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false; MaximizeBox = false;
             AutoScaleMode = AutoScaleMode.Font;
 
-            Controls.Add(new Label { Text = "请点击行选择目标关联列（单选）:", Location = new Point(10, 10), Size = new Size(240, 20),
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold), ForeColor = Color.FromArgb(31, 41, 55) });
+            _topBar = new Panel { Dock = DockStyle.Top, Height = ThemeMetrics.BarHeight };
+            _topDivider = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+            _topBar.Controls.Add(_topDivider);
 
-            // 搜索框（靠右对齐，不被标签遮挡）
-            _txtSearch = new TextBox
-            {
-                Location = new Point(260, 8),
-                Size = new Size(200, 24),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "搜索列...",
-                ForeColor = Color.FromArgb(20, 60, 100),
-                BackColor = Color.White
-            };
-            _txtSearch.TextChanged += (s, e) =>
-            {
-                PopulateList(_frozenData, _frozenRows, _txtSearch.Text.Trim());
-            };
-            Controls.Add(_txtSearch);
+            _lblHint = new Label { Text = "请点击行选择目标关联列（单选）:", AutoSize = true };
+            _fldSearch = new ThemeField { Placeholder = "搜索列..." };
+            _fldSearch.Edit.TextChanged += (s, e) =>
+                PopulateList(_frozenData, _frozenRows, _fldSearch.Edit.Text.Trim());
+            _topBar.Controls.AddRange(new Control[] { _lblHint, _fldSearch });
+            LayoutTopBar();
+            _topBar.Resize += (_, _) => LayoutTopBar();
 
             _lvColumns = new ListView
             {
-                Location = new Point(10, 38),
-                Size = new Size(760, 430),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.White,
-                ForeColor = Color.FromArgb(20, 60, 100),
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
                 View = View.Details,
                 FullRowSelect = true,
                 HideSelection = false,
@@ -183,23 +174,57 @@ namespace wxd.files.winforms
                 }
             };
 
-            _btnOK = new Button { Text = "确定", Location = new Point(590, 478),
-                Size = new Size(80, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White, FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                DialogResult = DialogResult.OK, Cursor = Cursors.Hand };
-            Controls.Add(_btnOK);
+            _bar = DialogButtonBar.Create();
+            _btnCancel = DialogButtonBar.Make("取消");
+            _btnCancel.DialogResult = DialogResult.Cancel;
+            _btnOK = DialogButtonBar.Make("确定", null, primary: true);
+            _btnOK.DialogResult = DialogResult.OK;
+            _bar.Controls.AddRange(new Control[] { _btnCancel, _btnOK });
+            LayoutBar();
+            _bar.Resize += (_, _) => LayoutBar();
 
-            _btnCancel = new Button { Text = "取消", Location = new Point(680, 478),
-                Size = new Size(70, 28), Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat, DialogResult = DialogResult.Cancel,
-                BackColor = Color.FromArgb(235, 248, 255), ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) } };
-            Controls.Add(_btnCancel);
-
+            // 停靠顺序：后加入的靠外，所以列表先加、页眉页脚后加
             Controls.Add(_lvColumns);
+            Controls.Add(_topBar);
+            Controls.Add(_bar);
             AcceptButton = _btnOK; CancelButton = _btnCancel;
             ResumeLayout(false);
+        }
+
+        private void LayoutTopBar()
+        {
+            int rowH = ThemeMetrics.RowH;
+            _lblHint.Location = new Point(ThemeMetrics.Margin,
+                (ThemeMetrics.BarHeight - _lblHint.Height) / 2);
+            // 搜索框贴右边，和提示文字之间留一组间距
+            int w = 220;
+            _fldSearch.SetBounds(_topBar.Width - ThemeMetrics.Margin - w, ThemeMetrics.RowPad, w, rowH);
+        }
+
+        private void LayoutBar()
+            => DialogButtonBar.LayoutRight(_bar, _btnCancel, _btnOK);
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            _lblHint.ForeColor = p.Muted;
+            _lvColumns.BackColor = p.Surface;
+            _lvColumns.ForeColor = p.Text;
+            _lvColumns.Font = Theme.List;
+
+            _fldSearch.ApplyTheme();
+            _btnCancel.BackColor = p.Chrome;
+            _btnOK.BackColor = p.Chrome;
+
+            LayoutTopBar();
+            LayoutBar();
+            Invalidate(true);
         }
     }
 }

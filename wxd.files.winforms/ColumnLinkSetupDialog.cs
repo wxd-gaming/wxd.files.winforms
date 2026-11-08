@@ -8,34 +8,43 @@ namespace wxd.files.winforms
     public class ColumnLinkSetupDialog : Form
     {
         // ===== 表头输入 =====
-        private TextBox _txtDisplayHeaders = new();
+        private ThemeField _fldHeaders = new();
+        private TextBox _txtDisplayHeaders;
         // ===== 值提取规则控件 =====
-        private CheckBox _chkExtractEnabled = new();
+        private ThemeCheckBox _chkExtractEnabled = new();
         private ListBox _lstSteps = new();
-        private Button _btnAddStep = new();
-        private Button _btnDeleteStep = new();
+        private ThemeButton _btnAddStep = new();
+        private ThemeButton _btnDeleteStep = new();
         private Label _lblStepDelimiter = new();
-        private TextBox _txtStepDelimiter = new();
+        private ThemeField _fldDelimiter = new();
+        private TextBox _txtStepDelimiter;
         private Label _lblStepPartIndex = new();
         private ComboBox _cboStepPartIndex = new();
-        private Button _btnUpdateStep = new();
+        private ThemeButton _btnUpdateStep = new();
         private Label _lblExtractPreview = new();
         private bool _hasUnsavedChanges = false;
         private bool _isLoadingStep = false;
         // ===== 多字段关联列表 =====
         private ListBox _lstFieldLinks = new();
-        private Button _btnAddFieldLink = new();   // 添加新段
-        private Button _btnDeleteFieldLink = new(); // 删除选中段配置
-        private Button _btnUpdateFieldLink = new(); // 更新选中段配置
+        private ThemeButton _btnAddFieldLink = new();   // 添加新段
+        private ThemeButton _btnDeleteFieldLink = new(); // 删除选中段配置
+        private ThemeButton _btnUpdateFieldLink = new(); // 更新选中段配置
         private Label _lblFieldLinkInfo = new();
-        private Button _btnSelectFieldFile = new();
-        private Button _btnSelectFieldCol = new();
-        private Button _btnSelectFieldDisplayCol = new();
+        private ThemeButton _btnSelectFieldFile = new();
+        private ThemeButton _btnSelectFieldCol = new();
+        private ThemeButton _btnSelectFieldDisplayCol = new();
         private int _editingFieldIndex = -1; // 当前编辑的段索引
         // ===== 按钮 =====
-        private Button _btnOK = new();
-        private Button _btnCancel = new();
-        private Button _btnDelete = new();
+        private ThemeButton _btnOK = new();
+        private ThemeButton _btnCancel = new();
+        private ThemeButton _btnDelete = new();
+        private Panel _bar = new();
+        private ThemeGroupBox _grpExtract = new();
+        private ThemeGroupBox _grpFieldLinks = new();
+        private Label _lblTitle = new();
+        private Label _lblHeaders = new();
+        private Label _lblEditHint = new();
+        private Label _lblHowTo = new();
         // ===== 状态 =====
         private List<(string display, string fullPath)> _fileEntries = new();
         private string _sourceFile = "";
@@ -73,6 +82,9 @@ namespace wxd.files.winforms
             _existingLink = existingLink;
 
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
 
             // 加载已有配置
             if (_existingLink != null)
@@ -785,44 +797,23 @@ namespace wxd.files.winforms
             Text = "Tips 显示设置 - 列 " + _sourceColumnIndex;
             ClientSize = new Size(540, 540);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
             MinimizeBox = false; MaximizeBox = false;
 
-            int y = 10;
-            int labelH = 18;
-            int gap = 4;
-
-            // ===== 标题 =====
-            Controls.Add(new Label
+            _lblTitle = new Label
             {
                 Text = $"设置列 {_sourceColumnIndex} 的 Tips 显示",
-                Location = new Point(10, y),
-                Size = new Size(520, 22),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(31, 41, 55)
-            });
-            y += 28;
+                AutoSize = false,
+                Height = 22,
+                Font = Theme.Head
+            };
 
             // ===== 第一步：切割方案 =====
-            var grpExtract = new GroupBox
-            {
-                Text = "第一步：切割方案 — 从单元格值中提取多个显示值",
-                Location = new Point(10, y),
-                Size = new Size(520, 175),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            y += 180;
+            _grpExtract.Text = "第一步：切割方案 — 从单元格值中提取多个显示值";
 
-            _chkExtractEnabled = new CheckBox
+            _chkExtractEnabled = new ThemeCheckBox
             {
                 Text = "启用切割（如 \"4002#1|3001#2\" → 按规则提取）",
-                Location = new Point(10, 20),
-                Size = new Size(320, 22),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Checked = false,
-                ForeColor = Color.FromArgb(31, 41, 55)
+                Checked = false
             };
             _chkExtractEnabled.CheckedChanged += (s, e) =>
             {
@@ -830,102 +821,38 @@ namespace wxd.files.winforms
                 _lstSteps.Enabled = en;
                 _btnAddStep.Enabled = en;
                 _btnDeleteStep.Enabled = en;
-                _txtStepDelimiter.Enabled = en;
+                _fldDelimiter.Enabled = en;
                 _cboStepPartIndex.Enabled = en;
                 _btnUpdateStep.Enabled = en;
+                _lblStepDelimiter.Enabled = en;
+                _lblStepPartIndex.Enabled = en;
                 _lblExtractPreview.Visible = en;
                 if (en) UpdatePreview();
             };
-            grpExtract.Controls.Add(_chkExtractEnabled);
 
             _lstSteps = new ListBox
             {
-                Location = new Point(10, 42),
-                Size = new Size(350, 70),
-                Font = new Font("Microsoft YaHei UI", 8f),
                 Enabled = false,
-                BorderStyle = BorderStyle.FixedSingle,
-                IntegralHeight = false,
-                BackColor = Color.FromArgb(250, 252, 255)
+                BorderStyle = BorderStyle.None,
+                IntegralHeight = false
             };
             _lstSteps.SelectedIndexChanged += OnStepSelected;
-            grpExtract.Controls.Add(_lstSteps);
 
-            _btnAddStep = new Button
-            {
-                Text = "＋添加",
-                Location = new Point(368, 42),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            _btnAddStep.Click += (s, e) => { AddStep(); };
-            grpExtract.Controls.Add(_btnAddStep);
+            _btnAddStep = DialogButtonBar.Make("添加", (s, e) => AddStep());
+            _btnAddStep.Enabled = false;
+            _btnDeleteStep = DialogButtonBar.Make("删除", (s, e) => DeleteStep());
+            _btnDeleteStep.Enabled = false;
 
-            _btnDeleteStep = new Button
-            {
-                Text = "✕删除",
-                Location = new Point(422, 42),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(255, 240, 240),
-                ForeColor = Color.FromArgb(180, 40, 40),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(240, 200, 200) }
-            };
-            _btnDeleteStep.Click += (s, e) => { DeleteStep(); };
-            grpExtract.Controls.Add(_btnDeleteStep);
-
-            _lblStepDelimiter = new Label
-            {
-                Text = "分隔符:",
-                Location = new Point(10, 118),
-                Size = new Size(50, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Enabled = false,
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            grpExtract.Controls.Add(_lblStepDelimiter);
-
-            _txtStepDelimiter = new TextBox
-            {
-                Text = "",
-                Location = new Point(60, 116),
-                Size = new Size(40, 21),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Enabled = false,
-                PlaceholderText = "# | :"
-            };
+            _lblStepDelimiter = new Label { Text = "分隔符:", AutoSize = true, Enabled = false };
+            _fldDelimiter = new ThemeField { Placeholder = "# | :", Enabled = false };
+            _txtStepDelimiter = _fldDelimiter.Edit;
             _txtStepDelimiter.TextChanged += (s, e) => MarkUnsaved();
-            grpExtract.Controls.Add(_txtStepDelimiter);
 
-            _lblStepPartIndex = new Label
+            _lblStepPartIndex = new Label { Text = "取段:", AutoSize = true, Enabled = false };
+            _cboStepPartIndex = new ThemeComboBox
             {
-                Text = "取段:",
-                Location = new Point(108, 118),
-                Size = new Size(35, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
                 Enabled = false,
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            grpExtract.Controls.Add(_lblStepPartIndex);
-
-            _cboStepPartIndex = new ComboBox
-            {
-                Location = new Point(143, 116),
-                Size = new Size(100, 21),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Enabled = false,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat
+                DropDownStyle = ComboBoxStyle.DropDownList
             };
             _cboStepPartIndex.Items.AddRange(new object[]
             {
@@ -935,257 +862,189 @@ namespace wxd.files.winforms
             });
             _cboStepPartIndex.SelectedIndex = 1;
             _cboStepPartIndex.SelectedIndexChanged += (s, e) => MarkUnsaved();
-            grpExtract.Controls.Add(_cboStepPartIndex);
 
-            _btnUpdateStep = new Button
-            {
-                Text = "更新",
-                Location = new Point(250, 114),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
-            };
-            _btnUpdateStep.Click += (s, e) => { UpdateStep(); };
-            grpExtract.Controls.Add(_btnUpdateStep);
+            _btnUpdateStep = DialogButtonBar.Make("更新", (s, e) => UpdateStep());
+            _btnUpdateStep.Enabled = false;
 
             _lblExtractPreview = new Label
             {
                 Text = "预览: 输入示例 \"2#1|3#1\"  →  结果: [\"2\",\"3\"]",
-                Location = new Point(10, 142),
-                Size = new Size(500, 18),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(140, 145, 150),
+                AutoSize = false,
+                Height = 18,
                 Visible = false
             };
-            grpExtract.Controls.Add(_lblExtractPreview);
 
-            Controls.Add(grpExtract);
+            _grpExtract.Controls.AddRange(new Control[]
+            {
+                _chkExtractEnabled, new ThemeBordered(_lstSteps), _btnAddStep, _btnDeleteStep,
+                _lblStepDelimiter, _fldDelimiter, _lblStepPartIndex, _cboStepPartIndex,
+                _btnUpdateStep, _lblExtractPreview
+            });
 
             // ===== 第二步：表头输入 =====
-            Controls.Add(new Label
+            _lblHeaders = new Label
             {
                 Text = "第二步：表头（可选，用分隔符分隔，如 \"道具#数量#权重\"，留空不显示表头）:",
-                Location = new Point(10, y),
-                Size = new Size(520, labelH),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            });
-            y += labelH + gap;
-
-            _txtDisplayHeaders = new TextBox
-            {
-                Text = "",
-                Location = new Point(10, y),
-                Size = new Size(520, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                PlaceholderText = "道具#数量#权重"
+                AutoSize = false,
+                Height = 18
             };
-            Controls.Add(_txtDisplayHeaders);
-            y += 30;
+            _fldHeaders = new ThemeField { Placeholder = "道具#数量#权重" };
+            _txtDisplayHeaders = _fldHeaders.Edit;
 
             // ===== 第三步：多字段关联配置 =====
-            var grpFieldLinks = new GroupBox
-            {
-                Text = "第三步：各段关联配置 — 每段可以关联不同的表",
-                Location = new Point(10, y),
-                Size = new Size(520, 215),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            y += 220;
+            _grpFieldLinks.Text = "第三步：各段关联配置 — 每段可以关联不同的表";
 
             _lstFieldLinks = new ListBox
             {
-                Location = new Point(10, 20),
-                Size = new Size(340, 80),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                BorderStyle = BorderStyle.FixedSingle,
-                IntegralHeight = false,
-                BackColor = Color.FromArgb(250, 252, 255)
+                BorderStyle = BorderStyle.None,
+                IntegralHeight = false
             };
             _lstFieldLinks.SelectedIndexChanged += OnFieldLinkSelectionChanged;
-            grpFieldLinks.Controls.Add(_lstFieldLinks);
 
-            // 添加按钮
-            _btnAddFieldLink = new Button
-            {
-                Text = "添加",
-                Location = new Point(358, 20),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            _btnAddFieldLink.Click += OnAddFieldLinkClick;
-            grpFieldLinks.Controls.Add(_btnAddFieldLink);
+            _btnAddFieldLink = DialogButtonBar.Make("添加", OnAddFieldLinkClick);
+            _btnDeleteFieldLink = DialogButtonBar.Make("删除", OnDeleteFieldLinkClick);
+            // 组内的"更新"只是提交一段配置，实心留给底部的确定，一屏一颗就够
+            _btnUpdateFieldLink = DialogButtonBar.Make("更新", OnUpdateFieldLinkClick);
 
-            // 删除按钮
-            _btnDeleteFieldLink = new Button
-            {
-                Text = "删除",
-                Location = new Point(358, 48),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(255, 240, 240),
-                ForeColor = Color.FromArgb(180, 40, 40),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(240, 200, 200) }
-            };
-            _btnDeleteFieldLink.Click += OnDeleteFieldLinkClick;
-            grpFieldLinks.Controls.Add(_btnDeleteFieldLink);
-
-            // 更新按钮
-            _btnUpdateFieldLink = new Button
-            {
-                Text = "更新",
-                Location = new Point(358, 76),
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
-            };
-            _btnUpdateFieldLink.Click += OnUpdateFieldLinkClick;
-            grpFieldLinks.Controls.Add(_btnUpdateFieldLink);
-
-            // 选中段的详情
             _lblFieldLinkInfo = new Label
             {
                 Text = "请选择一段进行关联配置",
-                Location = new Point(10, 106),
-                Size = new Size(500, 18),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                ForeColor = Color.FromArgb(31, 41, 55)
+                AutoSize = false,
+                Height = 18
             };
-            grpFieldLinks.Controls.Add(_lblFieldLinkInfo);
+            _lblEditHint = new Label { Text = "编辑当前选中段：", AutoSize = false, Height = 16 };
 
-            // 编辑提示
-            grpFieldLinks.Controls.Add(new Label
-            {
-                Text = "编辑当前选中段：",
-                Location = new Point(10, 128),
-                Size = new Size(500, 16),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(100, 120, 140)
-            });
+            _btnSelectFieldFile = DialogButtonBar.Make("选择目标文件", OnSelectFieldFileClick);
+            _btnSelectFieldFile.Enabled = false;
+            _btnSelectFieldCol = DialogButtonBar.Make("选择关联列", OnSelectFieldColClick);
+            _btnSelectFieldCol.Enabled = false;
+            _btnSelectFieldDisplayCol = DialogButtonBar.Make("显示列（可选）", OnSelectFieldDisplayColClick);
+            _btnSelectFieldDisplayCol.Enabled = false;
 
-            // 编辑按钮（全部放在 GroupBox 内部）
-            _btnSelectFieldFile = new Button
-            {
-                Text = "选择目标文件",
-                Location = new Point(10, 148),
-                Size = new Size(130, 26),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            _btnSelectFieldFile.Click += OnSelectFieldFileClick;
-            grpFieldLinks.Controls.Add(_btnSelectFieldFile);
-
-            _btnSelectFieldCol = new Button
-            {
-                Text = "选择关联列",
-                Location = new Point(150, 148),
-                Size = new Size(100, 26),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            _btnSelectFieldCol.Click += OnSelectFieldColClick;
-            grpFieldLinks.Controls.Add(_btnSelectFieldCol);
-
-            _btnSelectFieldDisplayCol = new Button
-            {
-                Text = "显示列（可选）",
-                Location = new Point(260, 148),
-                Size = new Size(120, 26),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                Enabled = false,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            _btnSelectFieldDisplayCol.Click += OnSelectFieldDisplayColClick;
-            grpFieldLinks.Controls.Add(_btnSelectFieldDisplayCol);
-
-            // 操作说明
-            grpFieldLinks.Controls.Add(new Label
+            _lblHowTo = new Label
             {
                 Text = "操作：选中一段 → 编辑（文件/关联列/显示列）→ 点击 [更新] 保存",
-                Location = new Point(10, 180),
-                Size = new Size(500, 16),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
-                ForeColor = Color.FromArgb(140, 145, 150)
+                AutoSize = false,
+                Height = 16
+            };
+
+            _grpFieldLinks.Controls.AddRange(new Control[]
+            {
+                new ThemeBordered(_lstFieldLinks), _btnAddFieldLink, _btnDeleteFieldLink,
+                _btnUpdateFieldLink, _lblFieldLinkInfo, _lblEditHint,
+                _btnSelectFieldFile, _btnSelectFieldCol, _btnSelectFieldDisplayCol, _lblHowTo
             });
 
-            Controls.Add(grpFieldLinks);
+            // ===== 底部按钮：清除设置靠左，窗口动作靠右 =====
+            _bar = DialogButtonBar.Create();
+            _btnDelete = DialogButtonBar.Make("清除设置", OnDeleteClick);
+            _btnDelete.Visible = _existingLink != null;
+            _btnCancel = DialogButtonBar.Make("取消");
+            _btnCancel.DialogResult = DialogResult.Cancel;
+            _btnOK = DialogButtonBar.Make("确定", OnOKClick, primary: true);
+            _bar.Controls.AddRange(new Control[] { _btnDelete, _btnCancel, _btnOK });
 
-            // ===== 按钮区域 =====
-            _btnDelete = new Button
+            Controls.AddRange(new Control[]
             {
-                Text = "清除设置",
-                Location = new Point(10, y),
-                Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(239, 68, 68),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(220, 50, 50) },
-                Cursor = Cursors.Hand,
-                Visible = _existingLink != null
-            };
-            _btnDelete.Click += OnDeleteClick;
-            Controls.Add(_btnDelete);
-
-            _btnOK = new Button
-            {
-                Text = "确定",
-                Location = new Point(370, y),
-                Size = new Size(80, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand
-            };
-            _btnOK.Click += OnOKClick;
-            Controls.Add(_btnOK);
-
-            _btnCancel = new Button
-            {
-                Text = "取消",
-                Location = new Point(460, y),
-                Size = new Size(70, 28),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237) }
-            };
-            Controls.Add(_btnCancel);
-
+                _lblTitle, _grpExtract, _lblHeaders, _fldHeaders, _grpFieldLinks, _bar
+            });
+            LayoutBody();
             AcceptButton = _btnOK;
+            CancelButton = _btnCancel;
             ResumeLayout(false);
+        }
+
+        /// <summary>
+        /// 两步三段的面板排版。窗口是固定尺寸，但按钮宽度和行高跟着皮肤变，
+        /// 所以位置一律现算，皮肤切换时重排一次。
+        /// </summary>
+        private void LayoutBody()
+        {
+            int m = ThemeMetrics.Margin, gap = ThemeMetrics.Gap, group = ThemeMetrics.Group;
+            int rowH = ThemeMetrics.RowH;
+            int bodyW = ClientSize.Width - m * 2;
+
+            _lblTitle.SetBounds(m, m, bodyW, 22);
+
+            // 第一步：切割方案
+            int gy = _lblTitle.Bottom + gap;
+            _grpExtract.SetBounds(m, gy, bodyW, 180);
+            _chkExtractEnabled.SetBounds(10, 24, bodyW - 20, rowH);
+            var stepsHost = (Control)_lstSteps.Parent!;
+            stepsHost.SetBounds(10, _chkExtractEnabled.Bottom + gap, 350, 66);
+            int ax = stepsHost.Right + gap;
+            _btnAddStep.SetBounds(ax, stepsHost.Top, ThemeButton.FitWidth(_btnAddStep.Text), rowH);
+            _btnDeleteStep.SetBounds(ax, _btnAddStep.Bottom + gap, ThemeButton.FitWidth(_btnDeleteStep.Text), rowH);
+
+            int dy = stepsHost.Bottom + gap;
+            _lblStepDelimiter.Location = new Point(10, dy + (rowH - _lblStepDelimiter.Height) / 2);
+            _fldDelimiter.SetBounds(_lblStepDelimiter.Right + 2, dy, 60, rowH);
+            _lblStepPartIndex.Location = new Point(_fldDelimiter.Right + gap, dy + (rowH - _lblStepPartIndex.Height) / 2);
+            // 下拉框高度由字体决定，只在行内垂直居中，别去拉伸它
+            _cboStepPartIndex.SetBounds(_lblStepPartIndex.Right + 2, dy + (rowH - _cboStepPartIndex.Height) / 2, 120, _cboStepPartIndex.Height);
+            _btnUpdateStep.SetBounds(_cboStepPartIndex.Right + group, dy, ThemeButton.FitWidth(_btnUpdateStep.Text), rowH);
+            _lblExtractPreview.SetBounds(10, dy + rowH + gap, bodyW - 20, 18);
+
+            // 第二步：表头
+            _lblHeaders.SetBounds(m, _grpExtract.Bottom + group, bodyW, 18);
+            _fldHeaders.SetBounds(m, _lblHeaders.Bottom + gap, bodyW, rowH);
+
+            // 第三步：各段关联配置
+            _grpFieldLinks.SetBounds(m, _fldHeaders.Bottom + group, bodyW, 208);
+            var linksHost = (Control)_lstFieldLinks.Parent!;
+            linksHost.SetBounds(10, 24, 340, 80);
+            int lx = linksHost.Right + gap;
+            _btnAddFieldLink.SetBounds(lx, 24, ThemeButton.FitWidth(_btnAddFieldLink.Text), rowH);
+            _btnDeleteFieldLink.SetBounds(lx, _btnAddFieldLink.Bottom + gap, ThemeButton.FitWidth(_btnDeleteFieldLink.Text), rowH);
+            _btnUpdateFieldLink.SetBounds(lx, _btnDeleteFieldLink.Bottom + gap, ThemeButton.FitWidth(_btnUpdateFieldLink.Text), rowH);
+
+            _lblFieldLinkInfo.SetBounds(10, linksHost.Bottom + gap, bodyW - 20, 18);
+            _lblEditHint.SetBounds(10, _lblFieldLinkInfo.Bottom + 2, bodyW - 20, 16);
+            int sy = _lblEditHint.Bottom + gap;
+            _btnSelectFieldFile.SetBounds(10, sy, ThemeButton.FitWidth(_btnSelectFieldFile.Text), rowH);
+            _btnSelectFieldCol.SetBounds(_btnSelectFieldFile.Right + gap, sy, ThemeButton.FitWidth(_btnSelectFieldCol.Text), rowH);
+            _btnSelectFieldDisplayCol.SetBounds(_btnSelectFieldCol.Right + gap, sy, ThemeButton.FitWidth(_btnSelectFieldDisplayCol.Text), rowH);
+            _lblHowTo.SetBounds(10, sy + rowH + gap, bodyW - 20, 16);
+
+            DialogButtonBar.LayoutLeft(_bar, _btnDelete);
+            DialogButtonBar.LayoutRight(_bar, _btnCancel, _btnOK);
+        }
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _bar.BackColor = p.Chrome;
+
+            _lblTitle.ForeColor = p.Text;
+            _lblExtractPreview.ForeColor = p.Muted;
+            _lblEditHint.ForeColor = p.Muted;
+            _lblHowTo.ForeColor = p.Muted;
+            foreach (var lbl in new[] { _lblHeaders, _lblStepDelimiter, _lblStepPartIndex, _lblFieldLinkInfo })
+                lbl.ForeColor = p.Text;
+
+            _grpExtract.BackColor = p.Window;
+            _grpFieldLinks.BackColor = p.Window;
+            _chkExtractEnabled.ForeColor = p.Text;
+
+            _lstSteps.BackColor = p.Surface;
+            _lstSteps.ForeColor = p.Text;
+            _lstFieldLinks.BackColor = p.Surface;
+            _lstFieldLinks.ForeColor = p.Text;
+
+            _fldHeaders.ApplyTheme();
+            _fldDelimiter.ApplyTheme();
+            _cboStepPartIndex.Invalidate();
+
+            foreach (var b in new[] { _btnAddStep, _btnDeleteStep, _btnUpdateStep, _btnAddFieldLink,
+                                      _btnDeleteFieldLink, _btnUpdateFieldLink, _btnSelectFieldFile,
+                                      _btnSelectFieldCol, _btnSelectFieldDisplayCol, _btnDelete,
+                                      _btnCancel, _btnOK })
+                b.BackColor = p.Chrome;
+
+            LayoutBody();
+            Invalidate(true);
         }
 
         private static int GetTargetHeaderRowIndexStatic(string targetFullPath)

@@ -30,18 +30,21 @@ namespace wxd.files.winforms
         private Label _lblInfo = new();
         private Label _lblCellPos = new();
         private Label _lblRowNumber = new();      // 选中标记行的源文件行号区间
-        private Font _rowNumberFont = new Font("Consolas", 9f);  // 行号区等宽字体，多位行号对齐便于扫读
-        private CheckBox _chkFilterKeepAll = new();
+        private Font _rowNumberFont = Theme.Mono;  // 行号区等宽字体，多位行号对齐便于扫读
+        private static readonly Font AdvHelpGlyphFont = new("Microsoft YaHei UI", 12f, FontStyle.Bold);
+        private ThemeCheckBox _chkFilterKeepAll = new();
         private Panel _pnlLoading = new();
-        private ProgressBar? _loadingProgressBar;
+        private ThemeProgressBar? _loadingProgressBar;
         private Label? _loadingLabel;
         private bool _isLoading = false;  // 防重入标志（DoEvents 期间避免二次加载）
         private Panel _pnlTop = new();
+        private TableLayoutPanel _pnlFilterBar = new();
         private Panel _pnlStatus = new();
         private Panel _statusSeparator = new();
         private DataTable _dataTable = new();
         private DataTable _headerTable = new();
         private FileTableData _fileData = new();  // 统一数据模型，用于行号追踪
+        private TableRow[] _rowTags = Array.Empty<TableRow>();  // 显示行 → 源行记录
         private string _filePath = "";
         private TableFileType _fileType;
         private char _delimiter = ',';
@@ -165,19 +168,21 @@ namespace wxd.files.winforms
         private SortOrder _sortOrder = SortOrder.None;
 
         // ==================== 配色 ====================
-        private static readonly Color _colorSurface = Color.White;
-        private static readonly Color _colorBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
-        private static readonly Color _colorHoverBg = Color.FromArgb(235, 245, 255);
-        private static readonly Color _colorHeaderBg = Color.FromArgb(240, 246, 252);
-        private static readonly Color _colorAltRow = Color.FromArgb(248, 252, 255);
-        private static readonly Color _colorSelectedBg = Color.FromArgb(227, 242, 253);
-        private static readonly Color _colorGridLine = Color.FromArgb(200, 225, 245);
-        private static readonly Color _colorRowNumBg = Color.FromArgb(224, 236, 248);   // 比数据区更深一档，行号区和数据列一眼能分开
-        private static readonly Color _colorRowNumberText = Color.FromArgb(58, 96, 138);
-        private static readonly Color _colorRowSelectedBorder = Color.FromArgb(255, 69, 0); // OrangeRed，醒目
+        // 全部转发到 Theme 令牌：换皮肤/明暗只改 Theme.Set 的入参，这里不用逐个值调。
+        // 用表达式属性而非 readonly 字段，静态上下文也能在每次取色时拿到当前皮肤。
+        private static Color _colorSurface => Theme.P.Surface;
+        private static Color _colorBorder => Theme.P.Border;
+        private static Color _colorLightText => Theme.P.Text;
+        private static Color _colorLightTextSecondary => Theme.P.Muted;
+        private static Color _colorPrimary => Theme.P.Accent;
+        private static Color _colorHoverBg => Theme.P.Hover;
+        private static Color _colorHeaderBg => Theme.P.Header;
+        private static Color _colorAltRow => Theme.P.Zebra;
+        private static Color _colorSelectedBg => Theme.P.Selection;
+        private static Color _colorGridLine => Theme.P.GridLine;
+        private static Color _colorRowNumBg => Theme.P.RowHead;   // 比数据区更深一档，行号区和数据列一眼能分开
+        private static Color _colorRowNumberText => Theme.P.Muted;
+        private static Color _colorRowSelectedBorder => Theme.P.Accent; // 选中行左侧强调条
         /// <summary>标记行按源文件物理行号记账：重新绑定/过滤/排序后仍能把标记落到同一行</summary>
         private readonly HashSet<int> _markedLineNumbers = new();
         /// <summary>标记行在当前视图中的显示行索引，由 _markedLineNumbers 映射，每次重绑后必须重建</summary>
@@ -256,14 +261,16 @@ namespace wxd.files.winforms
 
             InitializeComponent();
 
-            // 极简 UI 模式：隐藏工具栏和底部状态栏，保留高级过滤行
+            // 独立表格窗口（阅读器/版本对比/冲突）不挂在主窗的传播链上，切皮肤靠自己订阅重取令牌
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+
+            // 极简 UI 模式：隐藏工具栏和底部状态栏，只留高级过滤那一行
             if (options.ShowMinimalUI)
             {
-                // _pnlTop (TableLayoutPanel): [0]=工具栏, [1]=分隔线, [2]=内容过滤, [3]=高级过滤
-                // 只隐藏前3个，保留高级过滤行
-                if (_pnlTop.Controls.Count > 0) _pnlTop.Controls[0].Visible = false;
-                if (_pnlTop.Controls.Count > 1) _pnlTop.Controls[1].Visible = false;
-                if (_pnlTop.Controls.Count > 2) _pnlTop.Controls[2].Visible = false;
+                // _pnlTop = 工具栏 + 分隔线；_pnlFilterBar = [0]分隔线 [1]内容过滤 [2]高级过滤
+                _pnlTop.Visible = false;
+                if (_pnlFilterBar.Controls.Count > 1) _pnlFilterBar.Controls[1].Visible = false;
                 _statusSeparator.Visible = false;
                 _pnlStatus.Visible = false;
             }
@@ -351,18 +358,32 @@ namespace wxd.files.winforms
         }
 
         // ==================== UI初始化 ====================
+        /// <summary>
+        /// 工具条前置标签：文字比同行控件矮，FlowLayoutPanel 只按上边距对齐，
+        /// 所以按当前皮肤的行高补一次居中偏移，皮肤切换后不会顶到上边。
+        /// </summary>
+        private static Label ToolLabel(string text) => new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = Theme.Body,
+            ForeColor = Theme.P.Muted,
+            Margin = new Padding(0, Math.Max(2, (ThemeMetrics.RowH - Theme.Body.Height) / 2), 3, 0)
+        };
+
         private void InitializeComponent()
         {
             SuspendLayout();
             BackColor = _colorSurface;
 
+            // 顶栏只剩工具栏一行；搜索/过滤两行改放到底部（表格与状态栏之间）
             var topTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
                 BackColor = _colorSurface,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 2,
                 Padding = new Padding(0),
                 Margin = new Padding(0),
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
@@ -370,37 +391,30 @@ namespace wxd.files.winforms
             topTable.RowStyles.Clear();
             topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             topTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
-            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            topTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             // 第一行工具栏
             _flowTop = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                Height = 40,
+                Height = ThemeMetrics.RowH + 2 * ThemeMetrics.RowPad,
                 BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(8, 5, 8, 5),
+                Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.RowPad,
+                                     ThemeMetrics.Margin, ThemeMetrics.RowPad),
                 AutoSize = true
             };
 
             // 冻结行数选择
-            var lblFrozenRows = new Label
+            var lblFrozenRows = ToolLabel("冻结行:");
+            var cboFrozenRows = new ThemeComboBox
             {
-                Text = "冻结行:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            var cboFrozenRows = new ComboBox
-            {
-                Size = new Size(50, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Size = new Size(50, ThemeMetrics.RowH),
+                Font = Theme.Body,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             cboFrozenRows.Items.AddRange(new object[] { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" });
             if (!_frozenRowsOverridden)
@@ -427,21 +441,15 @@ namespace wxd.files.winforms
             };
 
             // 表头行选择
-            var lblHeaderRow = new Label
+            var lblHeaderRow = ToolLabel("表头行:");
+            var cboHeaderRow = new ThemeComboBox
             {
-                Text = "表头行:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            var cboHeaderRow = new ComboBox
-            {
-                Size = new Size(70, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Size = new Size(70, ThemeMetrics.RowH),
+                Font = Theme.Body,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             cboHeaderRow.Items.Add("未设置");
             for (int i = 0; i < 10; i++) cboHeaderRow.Items.Add($"第{i + 1}行");
@@ -461,21 +469,15 @@ namespace wxd.files.winforms
             };
 
             // 映射行选择
-            var lblMappingRow = new Label
+            var lblMappingRow = ToolLabel("映射行:");
+            var cboMappingRow = new ThemeComboBox
             {
-                Text = "映射行:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            var cboMappingRow = new ComboBox
-            {
-                Size = new Size(70, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Size = new Size(70, ThemeMetrics.RowH),
+                Font = Theme.Body,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             cboMappingRow.Items.Add("未设置");
             int maxMappingRow = Math.Min(_frozenRows, 10);
@@ -496,21 +498,15 @@ namespace wxd.files.winforms
             };
 
             // 唯一列选择
-            var lblUniqueColumn = new Label
+            var lblUniqueColumn = ToolLabel("唯一列:");
+            _cboUniqueColumn = new ThemeComboBox
             {
-                Text = "唯一列:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            _cboUniqueColumn = new ComboBox
-            {
-                Size = new Size(130, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Size = new Size(130, ThemeMetrics.RowH),
+                Font = Theme.Body,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text,
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             RefreshUniqueColumnCombo();
             _cboUniqueColumn.SelectedIndexChanged += (s, e) =>
@@ -526,53 +522,37 @@ namespace wxd.files.winforms
             };
 
             // 列管理按钮
-            var lblHeaderFilter = new Label
+            var lblHeaderFilter = ToolLabel("列管理:");
+            _btnSelectColumns = new ThemeButton
             {
-                Text = "列管理:",
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 3, 0)
-            };
-            _btnSelectColumns = new Button
-            {
-                Size = new Size(120, 27),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
+                Size = new Size(ThemeButton.FitWidth("列管理"), ThemeMetrics.RowH),
+                Font = Theme.Body,
                 Text = "列管理",
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = _colorHoverBg,
-                ForeColor = _colorLightText,
-                FlatAppearance = { BorderSize = 1, BorderColor = _colorBorder },
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             _btnSelectColumns.Click += OnSelectColumnsClick;
 
             _lblInfo = new Label
             {
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 ForeColor = _colorLightTextSecondary,
-                Margin = new Padding(3, 5, 0, 0)
+                Margin = new Padding(3, Math.Max(2, (ThemeMetrics.RowH - Theme.Body.Height) / 2), 0, 0)
             };
 
             _flowTop.Controls.AddRange(new Control[] { lblFrozenRows, cboFrozenRows, lblHeaderRow, cboHeaderRow,
                 lblMappingRow, cboMappingRow, lblUniqueColumn, _cboUniqueColumn, lblHeaderFilter, _btnSelectColumns });
 
             // 重新加载按钮
-            _btnReload = new Button
+            _btnReload = new ThemeButton
             {
                 Text = "重新加载",
-                Size = new Size(75, 27),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
+                Size = new Size(ThemeButton.FitWidth("重新加载"), ThemeMetrics.RowH),
+                Font = Theme.Body,
+                Primary = true,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 10, 0)
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
             _btnReload.Click += (s, e) => ReloadContentAsync();
             _flowTop.Controls.Add(_btnReload);
@@ -589,9 +569,9 @@ namespace wxd.files.winforms
             {
                 Text = "",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
+                Font = Theme.BodyBold,
                 ForeColor = _colorPrimary,
-                Margin = new Padding(0, 3, 10, 3)
+                Margin = new Padding(0, 3, ThemeMetrics.Group, 3)
             };
             _lblCellPos = lblCellPos;
             // _lblCellPos 和 _lblInfo 不再添加到 _flowTop，改为放入底部状态栏 _pnlStatus
@@ -601,35 +581,29 @@ namespace wxd.files.winforms
             {
                 Height = 1,
                 Dock = DockStyle.Top,
-                BackColor = Color.FromArgb(200, 225, 245),
+                BackColor = Theme.P.Border,
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
 
             // 内容过滤
-            var btnContentFilter = new Button
+            var btnContentFilter = new ThemeButton
             {
                 Text = "高亮匹配",
-                Size = new Size(75, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(66, 165, 245),
-                Margin = new Padding(3, 1, 3, 1),
+                Size = new Size(ThemeButton.FitWidth("高亮匹配"), ThemeMetrics.RowH),
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
                 Padding = new Padding(0),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Cursor = Cursors.Hand
+                TextAlign = ContentAlignment.MiddleCenter
             };
             btnContentFilter.Click += (s, e) => TriggerFilter();
-            var txtContentFilter = new TextBox
+            var fldContentFilter = new ThemeField
             {
-                Size = new Size(200, 30),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 1, 10, 1),
-                PlaceholderText = "按回车搜索..."
+                Size = new Size(200, ThemeMetrics.RowH),
+                Placeholder = "按回车搜索...",
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
+            var txtContentFilter = fldContentFilter.Edit;
             txtContentFilter.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter) { TriggerFilter(); e.Handled = true; e.SuppressKeyPress = true; }
@@ -637,30 +611,23 @@ namespace wxd.files.winforms
             };
 
             // 高级过滤
-            var btnAdvFilter = new Button
+            var btnAdvFilter = new ThemeButton
             {
                 Text = "高级过滤",
-                Size = new Size(75, 24),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) },
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(66, 165, 245),
-                Margin = new Padding(3, 1, 3, 1),
+                Size = new Size(ThemeButton.FitWidth("高级过滤"), ThemeMetrics.RowH),
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
                 Padding = new Padding(0),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Cursor = Cursors.Hand
+                TextAlign = ContentAlignment.MiddleCenter
             };
             btnAdvFilter.Click += (s, e) => TriggerFilter();
-            var txtAdvancedFilter = new TextBox
+            var fldAdvancedFilter = new ThemeField
             {
-                Size = new Size(200, 30),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(0, 1, 10, 1),
-                BackColor = Color.FromArgb(242, 249, 255),
-                PlaceholderText = "按回车过滤，支持 @line=128"
+                Size = new Size(200, ThemeMetrics.RowH),
+                Placeholder = "按回车过滤，支持 @line=128",
+                Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
+            var txtAdvancedFilter = fldAdvancedFilter.Edit;
             txtAdvancedFilter.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter) { TriggerFilter(); e.Handled = true; e.SuppressKeyPress = true; }
@@ -668,9 +635,9 @@ namespace wxd.files.winforms
             };
             var btnAdvHelp = new PictureBox
             {
-                Size = new Size(25, 24),
+                Size = new Size(25, ThemeMetrics.RowH),
                 SizeMode = PictureBoxSizeMode.StretchImage,
-                Margin = new Padding(0, 1, 2, 1),
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
                 Cursor = Cursors.Help,
                 BackColor = Color.Transparent
             };
@@ -687,7 +654,8 @@ namespace wxd.files.winforms
                 btnAdvHelp.Paint += (s, e) =>
                 {
                     using var brush = new SolidBrush(_colorPrimary);
-                    e.Graphics.DrawString("?", new Font("Microsoft YaHei UI", 12f, FontStyle.Bold), brush, 5, 3);
+                    // 字体必须是静态只读的一份：Paint 每帧都 new 的话，重绘次数就是 GDI 句柄的泄漏数
+                    e.Graphics.DrawString("?", AdvHelpGlyphFont, brush, 5, 3);
                 };
             }
             var advToolTip = new ToolTip
@@ -741,50 +709,88 @@ namespace wxd.files.winforms
             {
                 Text = "如: id=123 or name like test",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 7.5f),
+                Font = Theme.Caption,
                 ForeColor = _colorPrimary,
-                Margin = new Padding(3, 5, 10, 0)
+                Margin = new Padding(3, Math.Max(2, (ThemeMetrics.RowH - Theme.Caption.Height) / 2),
+                                    ThemeMetrics.Group, 0)
             };
+
+            // 这两行是叠起来的，上下留白按标准 RowPad=8 走会翻成两倍高（84px），读表时太占地方；
+            // 折到 4px，整块从 85 降到 69，和单行工具条的观感仍然一致。
+            const int filterRowPad = 4;
 
             var flowContent = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                Height = 30,
+                Height = ThemeMetrics.RowH + 2 * filterRowPad,
                 BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(8, 0, 8, 0),
+                Padding = new Padding(ThemeMetrics.Margin, filterRowPad,
+                                     ThemeMetrics.Margin, filterRowPad),
                 AutoSize = true
             };
-            flowContent.Controls.AddRange(new Control[] { btnContentFilter, txtContentFilter });
+            flowContent.Controls.AddRange(new Control[] { btnContentFilter, fldContentFilter });
 
             var flowAdv = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                Height = 30,
+                Height = ThemeMetrics.RowH + 2 * filterRowPad,
                 BackColor = _colorSurface,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(8, 0, 8, 5),
+                Padding = new Padding(ThemeMetrics.Margin, filterRowPad,
+                                     ThemeMetrics.Margin, filterRowPad),
                 AutoSize = true
             };
-            flowAdv.Controls.AddRange(new Control[] { btnAdvFilter, txtAdvancedFilter, btnAdvHelp, lblAdvHint });
+            flowAdv.Controls.AddRange(new Control[] { btnAdvFilter, fldAdvancedFilter, btnAdvHelp, lblAdvHint });
+
+            // 搜索/过滤条：贴在表格下方、状态栏上方，读表时视线不用回到顶部
+            _pnlFilterBar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                AutoSize = true,
+                BackColor = _colorSurface,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(0),
+                Margin = new Padding(0),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            _pnlFilterBar.RowStyles.Clear();
+            _pnlFilterBar.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
+            _pnlFilterBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            _pnlFilterBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            var gridDivider = new Panel
+            {
+                Height = 1,
+                Dock = DockStyle.Fill,
+                BackColor = Theme.P.Border,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
 
             topTable.Controls.Add(_flowTop, 0, 0);
             topTable.Controls.Add(separatorLine, 0, 1);
-            topTable.Controls.Add(flowContent, 0, 2);
-            topTable.Controls.Add(flowAdv, 0, 3);
+            _pnlFilterBar.Controls.Add(gridDivider, 0, 0);
+            _pnlFilterBar.Controls.Add(flowContent, 0, 1);
+            _pnlFilterBar.Controls.Add(flowAdv, 0, 2);
 
             _pnlTop = topTable;
             _txtContentFilter = txtContentFilter;
             _txtAdvancedFilter = txtAdvancedFilter;
 
-            topTable.Resize += (s, e) =>
+            // 两条过滤行右边那组控件（过滤按钮 + 帮助 + 示例文字）占掉的宽度，输入框吃掉剩下的。
+            // 文案或字号改动时要跟着调：这里是唯一一个横向尺寸不是全靠 ThemeMetrics 推出来的地方。
+            const int filterTailWidth = 280;
+
+            _pnlFilterBar.Resize += (s, e) =>
             {
-                int w = topTable.ClientSize.Width - 280;
+                int w = _pnlFilterBar.ClientSize.Width - filterTailWidth;
                 if (w < 100) w = 100;
-                txtContentFilter.Width = w;
-                txtAdvancedFilter.Width = w;
+                fldContentFilter.Width = w;
+                fldAdvancedFilter.Width = w;
             };
 
             // 表格容器
@@ -811,9 +817,7 @@ namespace wxd.files.winforms
             _dataGridHeader.AllowUserToResizeRows = false;
             _dataGridHeader.RowPostPaint += OnFrozenRowPostPaint;
             _dataGridHeader.CellFormatting += OnHeaderCellFormatting;
-            _dataGridHeader.DefaultCellStyle.SelectionBackColor = _dataGridHeader.DefaultCellStyle.BackColor;
-            _dataGridHeader.DefaultCellStyle.SelectionForeColor = _dataGridHeader.DefaultCellStyle.ForeColor;
-            _dataGridHeader.DefaultCellStyle.BackColor = Color.FromArgb(245, 250, 255);
+            StyleGrid(_dataGridHeader, frozenHeader: true);
             _dataGridHeader.TabStop = false;
             _dataGridHeader.CellMouseDown += (s, e) =>
             {
@@ -831,7 +835,7 @@ namespace wxd.files.winforms
                     if (_contextMenuMode == ContextMenuMode.None) return;
                     var cellValue = _dataGridHeader.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
                     var ctx = new ContextMenuStrip();
-                    ctx.Font = new Font("Microsoft YaHei UI", 9f);
+                    ctx.Font = Theme.Body;
                     var copyItem = new ToolStripMenuItem("复制");
                     copyItem.Click += (s2, args) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
                     ctx.Items.Add(copyItem);
@@ -984,13 +988,16 @@ namespace wxd.files.winforms
             Controls.Add(_pnlGridContainer);
             Controls.Add(_pnlTop);
 
+            // 底部同侧停靠后加的更靠边，所以从内到外依次是过滤条、分隔线、状态栏
+            Controls.Add(_pnlFilterBar);
+
             // ============ 底部状态栏 ============
             // 状态栏顶部分隔线
             _statusSeparator = new Panel
             {
                 Dock = DockStyle.Bottom,
                 Height = 1,
-                BackColor = Color.FromArgb(200, 225, 245),
+                BackColor = Theme.P.Border,
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
@@ -999,8 +1006,9 @@ namespace wxd.files.winforms
             _pnlStatus = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 28,
-                BackColor = Color.FromArgb(245, 250, 255),
+                // 和表格列头同一档高度，读表和看状态条是一条线
+                Height = Theme.P.RowHeight + 4,
+                BackColor = Theme.P.Header,
                 Padding = new Padding(0)
             };
 
@@ -1022,16 +1030,13 @@ namespace wxd.files.winforms
             statusTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 选中标记行的源文件行号区间
 
             // 列0: 过滤保留所有行 CheckBox
-            _chkFilterKeepAll = new CheckBox
+            _chkFilterKeepAll = new ThemeCheckBox
             {
                 Text = "保留所有行",
                 Checked = false,
                 AutoSize = false,
                 Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                CheckAlign = ContentAlignment.MiddleLeft,
-                ForeColor = _colorLightTextSecondary,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 Margin = new Padding(4, 2, 0, 2),
                 Padding = new Padding(0),
             };
@@ -1046,7 +1051,7 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = _colorLightTextSecondary,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 Cursor = Cursors.Hand,
                 Padding = new Padding(0, 0, 4, 0),
             };
@@ -1060,7 +1065,7 @@ namespace wxd.files.winforms
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = _colorLightTextSecondary,
-                Font = new Font("Microsoft YaHei UI", 9f),
+                Font = Theme.Body,
                 Dock = DockStyle.Fill,
             };
             statusTable.Controls.Add(_lblFileName, 2, 0);
@@ -1084,7 +1089,7 @@ namespace wxd.files.winforms
             _lblRowNumber.TextAlign = ContentAlignment.MiddleLeft;
             _lblRowNumber.AutoSize = true;
             _lblRowNumber.Dock = DockStyle.None;
-            _lblRowNumber.Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold);
+            _lblRowNumber.Font = Theme.BodyBold;
             _lblRowNumber.ForeColor = _colorLightText;
             _lblRowNumber.Margin = new Padding(2, 3, 4, 3);
             statusTable.Controls.Add(_lblRowNumber, 5, 0);
@@ -1139,7 +1144,7 @@ namespace wxd.files.winforms
         {
             if (_columnManagementDisabled || _dataGrid.Columns.Count <= 1) return;
             var ctx = new ContextMenuStrip();
-            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            ctx.Font = Theme.Body;
             AppendFrozenColumnMenuItems(ctx, displayColumnIndex, addSeparator: false);
             _linkToolTip?.Hide();
             // 不绑定 owner：冻结行面板折叠时列头在 _dataGrid 上，菜单跟随鼠标位置显示
@@ -1237,6 +1242,81 @@ namespace wxd.files.winforms
             public BufferedDataGridView() => DoubleBuffered = true;
         }
 
+        /// <summary>
+        /// 把当前皮肤的网格参数写进表格。可重入：换皮肤/明暗后对每个网格再调一次。
+        /// 只动视觉属性，不碰数据绑定、冻结列滚动同步和行号记账。
+        /// </summary>
+        /// <param name="frozenHeader">是否为冻结列的那个网格：它不该有选中高亮，底色跟表头同档。</param>
+        private void StyleGrid(DataGridView dgv, bool frozenHeader = false)
+        {
+            var p = Theme.P;
+            _rowNumberFont = Theme.Mono;
+
+            dgv.BackgroundColor = p.Surface;
+            dgv.GridColor = p.GridLine;
+            dgv.CellBorderStyle = p.ShowGridLines
+                ? DataGridViewCellBorderStyle.Single
+                : DataGridViewCellBorderStyle.SingleHorizontal;
+            dgv.ColumnHeadersHeight = p.RowHeight + 4;
+            dgv.RowTemplate.Height = p.RowHeight;
+
+            // 行号区：整格样式优先级低于单元格自身的 Style，所以三个态都要给
+            dgv.RowHeadersDefaultCellStyle = new DataGridViewCellStyle
+            {
+                Alignment = DataGridViewContentAlignment.MiddleCenter,
+                BackColor = p.RowHead,
+                ForeColor = p.Muted,
+                SelectionBackColor = p.RowHead,
+                SelectionForeColor = p.Text,
+                Font = _rowNumberFont
+            };
+
+            dgv.AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
+            {
+                BackColor = p.ZebraOn ? p.Zebra : p.Surface,
+                SelectionBackColor = p.Selection,
+                SelectionForeColor = p.Text
+            };
+
+            dgv.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+            {
+                BackColor = p.HeaderFill ? p.Header : p.Surface,
+                ForeColor = p.Text,
+                Font = Theme.Head,
+                Alignment = DataGridViewContentAlignment.MiddleCenter,
+                SelectionBackColor = p.HeaderFill ? p.Header : p.Surface,
+                SelectionForeColor = p.Text
+            };
+
+            var cellBack = frozenHeader ? p.Header : p.Surface;
+            dgv.DefaultCellStyle = new DataGridViewCellStyle
+            {
+                BackColor = cellBack,
+                ForeColor = p.Text,
+                Font = Theme.Body,
+                // 冻结网格只是主表的镜像，选中态由主表表达，这里不再叠一层高亮
+                SelectionBackColor = frozenHeader ? cellBack : p.Selection,
+                SelectionForeColor = p.Text,
+                Padding = new Padding(p.CellPadX, 0, p.CellPadX, 0)
+            };
+        }
+
+        /// <summary>
+        /// 皮肤或明暗变了：网格按新令牌重刷，其余子控件交给 <see cref="ThemeRecolor"/> 平移旧令牌色。
+        /// 这个界面有上百个创建时一次性取色的局部控件，逐个重赋一定会漏，所以走通用平移。
+        /// </summary>
+        public void ApplyTheme()
+        {
+            if (IsDisposed) return;
+            ThemeRecolor.Apply(this);
+            _rowNumberFont = Theme.Mono;
+            StyleGrid(_dataGrid);
+            StyleGrid(_dataGridHeader, frozenHeader: true);
+            _dataGrid.Invalidate();
+            _dataGridHeader.Invalidate();
+            Invalidate(true);
+        }
+
         private DataGridView CreateDataGridView()
         {
             var dgv = new BufferedDataGridView
@@ -1251,41 +1331,11 @@ namespace wxd.files.winforms
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
-                ColumnHeadersHeight = 28,
                 RowHeadersVisible = true,
-                RowHeadersWidth = 50,
                 RowHeadersWidthSizeMode = DataGridViewRowHeadersWidthSizeMode.DisableResizing,
-                RowHeadersDefaultCellStyle = new DataGridViewCellStyle
-                {
-                    Alignment = DataGridViewContentAlignment.MiddleCenter,
-                    BackColor = _colorRowNumBg,
-                    ForeColor = _colorLightTextSecondary,
-                    Font = _rowNumberFont
-                },
-                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle { BackColor = _colorAltRow },
-                GridColor = _colorGridLine,
-                CellBorderStyle = DataGridViewCellBorderStyle.Single,
-                EnableHeadersVisualStyles = false,
-                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
-                {
-                    BackColor = _colorHeaderBg,
-                    ForeColor = _colorLightText,
-                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                    Alignment = DataGridViewContentAlignment.MiddleCenter,
-                    SelectionBackColor = _colorHeaderBg,
-                    SelectionForeColor = _colorLightText
-                },
-                DefaultCellStyle = new DataGridViewCellStyle
-                {
-                    BackColor = _colorSurface,
-                    ForeColor = _colorLightText,
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    SelectionBackColor = _colorSelectedBg,
-                    SelectionForeColor = Color.FromArgb(20, 60, 100),
-                    Padding = new Padding(2, 0, 2, 0)
-                },
-                RowTemplate = new DataGridViewRow { Height = 24 }
+                EnableHeadersVisualStyles = false
             };
+            StyleGrid(dgv);
             dgv.ColumnHeaderMouseClick += OnColumnHeaderClick;
             dgv.CellFormatting += OnCellFormatting;
             dgv.CellDoubleClick += OnCellDoubleClick;
@@ -1316,6 +1366,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 数据加载 ====================
+
         private async void LoadCsvAsync()
         {
             if (_isLoading) return;  // ★ 防重入（DoEvents 期间可能触发二次加载）
@@ -1485,8 +1536,9 @@ namespace wxd.files.winforms
             {
                 // 轻量模式：直接绑定 DataSource，不做额外初始化
                 BindDataTableInBatches(_dataTable, configureColumns: true);
-                // 轻量模式：隐藏顶部工具栏
+                // 轻量模式：顶部工具栏和底部过滤条都收起来，只留表格
                 _pnlTop.Visible = false;
+                _pnlFilterBar.Visible = false;
             }
             else if (_frozenRows > 0)
                 await RefreshGridLayoutWithProgressAsync();  // ★ 冻结行场景：异步构建 filteredTable + 进度条
@@ -1940,7 +1992,8 @@ namespace wxd.files.winforms
                 if (_pnlLoading?.IsDisposed != false || _pnlLoading.Parent != null) return;
                 _pnlLoading = new Panel
                 {
-                    BackColor = Color.FromArgb(180, 255, 255, 255),
+                    // 原来是写死的半透明白，深色皮肤里等于糊一屏白板；遮罩跟着窗口色走
+                    BackColor = Theme.P.Window,
                     Dock = DockStyle.Fill,
                     Visible = true
                 };
@@ -1949,17 +2002,13 @@ namespace wxd.files.winforms
                     Text = "正在加载数据，请稍候...",
                     AutoSize = false,
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
-                    ForeColor = Color.FromArgb(30, 136, 229),
+                    Font = Theme.TitleBold,
+                    ForeColor = Theme.P.Link,
                     Dock = DockStyle.Top,
                     Height = 60
                 };
-                _loadingProgressBar = new ProgressBar
+                _loadingProgressBar = new ThemeProgressBar
                 {
-                    Minimum = 0,
-                    Maximum = 100,
-                    Value = 0,
-                    Style = ProgressBarStyle.Continuous,
                     Width = 400,
                     Height = 24
                 };
@@ -1985,7 +2034,12 @@ namespace wxd.files.winforms
         {
             if (_pnlLoading == null || !_pnlLoading.Visible || _pnlLoading.IsDisposed) return;
             if (_loadingProgressBar != null)
+            {
                 _loadingProgressBar.Value = Math.Clamp(percent, 0, 100);
+                // 自绘控件不吃父面板的 Refresh，得自己催一次重绘
+                _loadingProgressBar.Invalidate();
+                _loadingProgressBar.Update();
+            }
             if (_loadingLabel != null)
                 _loadingLabel.Text = stageText;
             _pnlLoading.Refresh();
@@ -2017,9 +2071,9 @@ namespace wxd.files.winforms
                         _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     }
                 }
-                // 行号列取的是行上的 Tag（TableRow → 源文件物理行号），这条路径不挂 Tag 的话
+                // 行号列取的是显示行→源行映射（TableRow → 源文件物理行号），这条路径不登记映射的话
                 // 首屏行号会退化成连续记录号，带引号换行的 CSV 就和源文件行号对不上
-                SetRowTags();
+                RebuildRowMap();
                 ApplyFrozenColumns();
                 return;
             }
@@ -2041,10 +2095,9 @@ namespace wxd.files.winforms
                 int percent = 5 + (int)((added / (double)totalRows) * 75);  // 5% ~ 80%
                 UpdateLoadingProgress(percent, $"正在加载行数据... {added}/{totalRows}");
             }
-
             // ★ 阶段2：数据已全部填充到 displayTable，现在一次性绑定到 DataGridView
-            //    这一步会同步创建所有 DataGridViewRow（约 6-8s），UI 线程会阻塞，
-            //    但进度条已走到 80%，用户知道数据已加载完成，正在渲染
+            //    绑定本身只要零点几秒（DataGridViewRow 是按需建的），但进度条已走到 80%，
+            //    用户知道数据已加载完成、正在渲染
             UpdateLoadingProgress(85, "正在渲染表格（可能需要数秒，请稍候）...");
             _dataGrid.DataSource = displayTable;
 
@@ -2064,7 +2117,7 @@ namespace wxd.files.winforms
 
             // ★ 阶段4：统一引用，保证后续编辑/排序基于同一份数据
             _dataTable = displayTable;
-            SetRowTags();
+            RebuildRowMap();
             // 这条路径不走 RefreshGridLayout，持久化的冻结列必须在这里补一次
             ApplyFrozenColumns();
             UpdateLoadingProgress(100, "完成");
@@ -2372,8 +2425,8 @@ namespace wxd.files.winforms
                         _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     }
                 }
-                // ★ 同步设置 Tag（DataSource 赋值后行已创建）
-                SetRowTags();
+                // ★ 登记显示行 → 源行映射
+                RebuildRowMap();
 
                 // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
                 foreach (var (origRow, origCols) in mergedNoFreeze)
@@ -2394,12 +2447,49 @@ namespace wxd.files.winforms
             RebuildSelectedRowIndices();
         }
 
-        /// <summary>将 _fileData.Rows 挂到 _dataGrid 每行的 Tag 上</summary>
-        private void SetRowTags()
+        /// <summary>登记全量行映射（显示行 i ↔ _fileData.Rows[i]）并重算行号列宽</summary>
+        private void RebuildRowMap()
         {
-            for (int i = 0; i < _dataGrid.Rows.Count && i < _fileData.Rows.Count; i++)
-                _dataGrid.Rows[i].Tag = _fileData.Rows[i];
+            BuildRowTagMap(null);
             UpdateRowHeadersWidth();
+        }
+
+        /// <summary>
+        /// 登记「显示行 → 源行记录」映射。
+        /// 不再逐行写 DataGridViewRow.Tag：那一步会强制网格为每一行建出 Row/Cell 对象，
+        /// 12 万行实测纯 UI 冻结 12.5 秒，而映射表本身只要零点几毫秒。
+        /// </summary>
+        private void BuildRowTagMap(IList<int>? visibleOrigIndices)
+        {
+            int count = visibleOrigIndices?.Count ?? _fileData.Rows.Count;
+            var map = new TableRow[count];
+            for (int i = 0; i < count; i++)
+            {
+                int origIdx = visibleOrigIndices?[i] ?? i;
+                if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
+                    map[i] = _fileData.Rows[origIdx];
+            }
+            _rowTags = map;
+        }
+
+        /// <summary>取显示行对应的源行记录（越界或刷新中间态返回 null，由调用方兜底）</summary>
+        private TableRow? RowTagAt(int displayRowIndex)
+            => displayRowIndex >= 0 && displayRowIndex < _rowTags.Length ? _rowTags[displayRowIndex] : null;
+
+        /// <summary>按原始行索引反查显示行，找不到返回 -1（只扫映射表，不碰网格行对象）</summary>
+        private int FindDisplayRowByOrigIndex(int originalRowIndex)
+        {
+            for (int i = 0; i < _rowTags.Length; i++)
+                if (_rowTags[i]?.OriginalRowIndex == originalRowIndex) return i;
+            return -1;
+        }
+
+        /// <summary>按源文件物理行号反查显示行，找不到返回 -1</summary>
+        private int FindDisplayRowByLineNumber(long lineNumber)
+        {
+            for (int i = 0; i < _rowTags.Length; i++)
+                if (_rowTags[i]?.DisplayLineNumber == lineNumber) return i;
+            return -1;
         }
 
         /// <summary>列标题 ToolTip 已统一由 DataGridLinkToolTip 自定义控件处理，此方法保留为空</summary>
@@ -2513,11 +2603,11 @@ namespace wxd.files.winforms
         private void ApplyDuplicateWarningStyle()
         {
             if (_duplicateWarningText == null) return;
-            _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+            _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
             _lblInfo.Text = _duplicateWarningText;
             _lblInfo.Cursor = Cursors.Hand;
             _lblInfo.Click += LblInfo_Click_ShowDuplicates;
-            _pnlStatus.BackColor = Color.FromArgb(255, 235, 235);
+            _pnlStatus.BackColor = Theme.CellTint(Color.FromArgb(255, 235, 235));
         }
 
         /// <summary>恢复状态栏正常样式</summary>
@@ -2529,7 +2619,7 @@ namespace wxd.files.winforms
             _lblInfo.ForeColor = _colorLightTextSecondary;
             _lblInfo.Cursor = Cursors.Default;
             _lblInfo.Click -= LblInfo_Click_ShowDuplicates;
-            _pnlStatus.BackColor = Color.FromArgb(245, 250, 255);
+            _pnlStatus.BackColor = Theme.P.Header;
         }
 
         /// <summary>点击状态栏标签 → 弹出重复值详情窗体</summary>
@@ -2545,18 +2635,13 @@ namespace wxd.files.winforms
         {
             if (_dataGrid.Rows.Count == 0) return;
 
-            for (int i = 0; i < _dataGrid.Rows.Count; i++)
-            {
-                // 行号以外的绑定表可能只是排序/过滤视图，必须用 Tag 里的原始行索引
-                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == dataTableRowIndex)
-                {
-                    _dataGrid.ClearSelection();
-                    _dataGrid.Rows[i].Selected = true;
-                    _dataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, i - 5);
-                    _dataGrid.CurrentCell = _dataGrid.Rows[i].Cells[Math.Min(1, _dataGrid.Columns.Count - 1)];
-                    return;
-                }
-            }
+            // 行号以外的绑定表可能只是排序/过滤视图，必须用映射里的原始行索引
+            int i = FindDisplayRowByOrigIndex(dataTableRowIndex);
+            if (i < 0) return;
+            _dataGrid.ClearSelection();
+            _dataGrid.Rows[i].Selected = true;
+            _dataGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, i - 5);
+            _dataGrid.CurrentCell = _dataGrid.Rows[i].Cells[Math.Min(1, _dataGrid.Columns.Count - 1)];
         }
 
         /// <summary>
@@ -2565,13 +2650,11 @@ namespace wxd.files.winforms
         /// </summary>
         public bool NavigateToPhysicalLine(long lineNumber)
         {
-            for (int i = 0; i < _dataGrid.Rows.Count; i++)
+            int hit = FindDisplayRowByLineNumber(lineNumber);
+            if (hit >= 0)
             {
-                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.DisplayLineNumber == lineNumber)
-                {
-                    RevealRow(_dataGrid, i);
-                    return true;
-                }
+                RevealRow(_dataGrid, hit);
+                return true;
             }
 
             // 冻结区（表头/描述行）行号 = 显示索引 + 1
@@ -2583,7 +2666,7 @@ namespace wxd.files.winforms
             }
 
             bool hiddenByFilter = _fileData.Rows.Any(r => r.DisplayLineNumber == lineNumber);
-            _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+            _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
             _lblInfo.Text = hiddenByFilter
                 ? $"行号 {lineNumber} 被当前过滤条件隐藏，清空高级过滤后再跳转"
                 : $"没有行号为 {lineNumber} 的行（当前最大行号 {MaxDisplayLineNumber()}）";
@@ -2705,7 +2788,7 @@ namespace wxd.files.winforms
             var unknownCols = FindUnknownFilterColumns(_txtAdvancedFilter.Text.Trim());
             if (unknownCols.Count > 0)
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = $"高级过滤里的列名不存在：{string.Join("、", unknownCols)}（可用偏左的\"列管理\"查看实际列名）";
                 return;
             }
@@ -3047,14 +3130,7 @@ namespace wxd.files.winforms
                 }
 
                 _dataGrid.DataSource = result.FilteredTable;
-
-                // 设置 Tag（使用原始行索引）
-                for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
-                {
-                    int origIdx = result.VisibleRowIndices[i];
-                    if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
-                        _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
-                }
+                BuildRowTagMap(result.VisibleRowIndices);
 
                 // 配置列宽/表头
                 _dataGrid.SuspendLayout();
@@ -3088,13 +3164,8 @@ namespace wxd.files.winforms
                 SetFrozenPanelVisible(false);
                 _dataGrid.DataSource = result.FilteredTable;
 
-                // 设置 Tag
-                for (int i = 0; i < _dataGrid.Rows.Count && i < result.VisibleRowIndices.Count; i++)
-                {
-                    int origIdx = result.VisibleRowIndices[i];
-                    if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
-                        _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
-                }
+                // 登记行映射
+                BuildRowTagMap(result.VisibleRowIndices);
 
                 // 配置列宽/表头
                 _dataGrid.SuspendLayout();
@@ -3128,12 +3199,12 @@ namespace wxd.files.winforms
             // ★ 高级过滤无匹配提示
             if (result.VisibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = $"高级过滤 \"{_txtAdvancedFilter.Text.Trim()}\" 未匹配到任何行";
             }
             else if (_duplicateWarningText != null)
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = _duplicateWarningText;
             }
 
@@ -3525,7 +3596,7 @@ namespace wxd.files.winforms
         /// <summary>
         /// 冻结行场景的异步加载版本（带进度条）。
         /// 把 filteredTable 构建移到后台线程，用 Progress&lt;T&gt; 报告进度（自动切 UI 线程更新进度条）。
-        /// 构建完成后切回 UI 线程做绑定 + Tag + 列宽。
+        /// 构建完成后切回 UI 线程做绑定 + 行映射 + 列宽。
         /// 注意：其他场景（过滤/排序/列选择）仍用同步的 RefreshGridLayout，本方法只用于首次加载。
         /// </summary>
         private async Task RefreshGridLayoutWithProgressAsync()
@@ -3637,9 +3708,8 @@ namespace wxd.files.winforms
             var filteredTable = await Task.Run(() => BuildFilteredTableInBackground(
                 visibleRowIndices, visibleColIndicesRef, dataTableRef, progress));
 
-            // ==================== 阶段3：UI 线程绑定 + Tag + 列宽 ====================
-            // 这一步的 _dataGrid.DataSource = filteredTable 会同步创建所有 DataGridViewRow（约 6-8s），
-            // UI 线程会阻塞，但进度条已走到 85%，用户知道数据已加载完成，正在渲染。
+            // ==================== 阶段3：UI 线程绑定 + 行映射 + 列宽 ====================
+            // 绑定 12 万行实测只要零点二秒（DataGridViewRow 按需建），UI 线程不会明显停顿。
             UpdateLoadingProgress(85, "正在渲染表格（可能需要数秒，请稍候）...");
 
             // 行编辑模式：刷新前退出编辑
@@ -3657,13 +3727,8 @@ namespace wxd.files.winforms
 
             _dataGrid.DataSource = filteredTable;
 
-            // 设置 Tag（使用原始行索引）
-            for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
-            {
-                int origIdx = visibleRowIndices[i];
-                if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
-                    _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
-            }
+            // 显示行 → 源行映射
+            BuildRowTagMap(visibleRowIndices);
 
             // 配置列宽/表头
             _dataGrid.SuspendLayout();
@@ -3690,12 +3755,11 @@ namespace wxd.files.winforms
                 }
             }
             _dataGrid.ResumeLayout(false);
-
             _lblCellPos.Text = $"显示 {_visibleColumnIndices.Count} 列, {visibleRowIndices.Count} 行";
             _lblInfo.Text = "";
             if (_duplicateWarningText != null)
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = _duplicateWarningText;
             }
 
@@ -3784,13 +3848,8 @@ namespace wxd.files.winforms
             }
 
             _dataGrid.DataSource = filteredTable;
-            // ★ 同步设置 Tag（DataSource 赋值后行已创建），使用原始行索引
-            for (int i = 0; i < _dataGrid.Rows.Count && i < visibleRowIndices.Count; i++)
-            {
-                int origIdx = visibleRowIndices[i];
-                if (origIdx >= 0 && origIdx < _fileData.Rows.Count)
-                    _dataGrid.Rows[i].Tag = _fileData.Rows[origIdx];
-            }
+            // ★ 行映射（DataSource 赋值后登记）
+            BuildRowTagMap(visibleRowIndices);
             for (int i = 0; i < _dataGrid.Columns.Count; i++)
             {
                 var colName = filteredTable.Columns[i].ColumnName;
@@ -3821,14 +3880,14 @@ namespace wxd.files.winforms
             // ★ 如果有重复警告，追加警告文本并保持红色
             if (_duplicateWarningText != null)
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = _duplicateWarningText;
             }
 
             // ★ 高级过滤无匹配提示（覆盖重复警告）
             if (visibleRowIndices.Count == 0 && !string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim()))
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = $"高级过滤 \"{_txtAdvancedFilter.Text.Trim()}\" 未匹配到任何行";
             }
         }
@@ -3964,7 +4023,7 @@ namespace wxd.files.winforms
         private int? GetMarkableLineNumber(int displayRow)
         {
             if (displayRow < 0 || displayRow >= _dataGrid.Rows.Count) return null;
-            return (_dataGrid.Rows[displayRow].Tag as TableRow)?.DisplayLineNumber;
+            return RowTagAt(displayRow)?.DisplayLineNumber;
         }
 
         /// <summary>重绑 DataGridView 后按 _markedLineNumbers 重算显示行索引。
@@ -3974,10 +4033,9 @@ namespace wxd.files.winforms
             _selectedRows.Clear();
             if (_markedLineNumbers.Count > 0)
             {
-                for (int i = 0; i < _dataGrid.Rows.Count; i++)
+                for (int i = 0; i < _rowTags.Length; i++)
                 {
-                    if (_dataGrid.Rows[i].Tag is TableRow tr
-                        && tr.DisplayLineNumber is int line
+                    if (_rowTags[i]?.DisplayLineNumber is int line
                         && _markedLineNumbers.Contains(line))
                     {
                         _selectedRows.Add(i);
@@ -4065,15 +4123,9 @@ namespace wxd.files.winforms
 
                             if (displayColIndex >= 0)
                             {
-                                for (int i = 0; i < _dataGrid.Rows.Count; i++)
-                                {
-                                    if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
-                                    {
-                                        if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
-                                            _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
-                                        break;
-                                    }
-                                }
+                                int hitRow = FindDisplayRowByOrigIndex(originalRowIndex);
+                                if (hitRow >= 0 && displayColIndex < _dataGrid.Rows[hitRow].Cells.Count)
+                                    _dataGrid.Rows[hitRow].Cells[displayColIndex].Value = newValue;
                             }
                         }
                     });
@@ -4107,15 +4159,9 @@ namespace wxd.files.winforms
                                         : originalColumnIndex;
                                     if (displayColIndex >= 0)
                                     {
-                                        for (int i = 0; i < _dataGrid.Rows.Count; i++)
-                                        {
-                                            if (_dataGrid.Rows[i].Tag is TableRow tagRow && tagRow.OriginalRowIndex == originalRowIndex)
-                                            {
-                                                if (displayColIndex < _dataGrid.Rows[i].Cells.Count)
-                                                    _dataGrid.Rows[i].Cells[displayColIndex].Value = newValue;
-                                                break;
-                                            }
-                                        }
+                                        int hitRow = FindDisplayRowByOrigIndex(originalRowIndex);
+                                        if (hitRow >= 0 && displayColIndex < _dataGrid.Rows[hitRow].Cells.Count)
+                                            _dataGrid.Rows[hitRow].Cells[displayColIndex].Value = newValue;
                                     }
                                 }
                             });
@@ -4295,14 +4341,11 @@ namespace wxd.files.winforms
             }
             if (_dataGrid.DataSource is DataTable filteredTable && filteredTable.Columns.Count > 0)
             {
-                // ★ 从 DataGridView 行的 Tag 直接获取原始行号
+                // ★ 从行标记取原始行号
                 int originalRowIndex = displayRowIndex;
-                if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
-                {
-                    var tagRow = _dataGrid.Rows[displayRowIndex].Tag as TableRow;
-                    if (tagRow != null)
-                        originalRowIndex = tagRow.OriginalRowIndex;
-                }
+                var tagRow = RowTagAt(displayRowIndex);
+                if (tagRow != null)
+                    originalRowIndex = tagRow.OriginalRowIndex;
                 int originalColumnIndex = displayColumnIndex;
                 if (_visibleColumnIndices.Count > 0 && displayColumnIndex < _dataGrid.Columns.Count)
                 {
@@ -4428,6 +4471,25 @@ namespace wxd.files.winforms
             return true;
         }
 
+        private Font? _boldCellStyleFont;
+        private Font? _boldCellStyleFontBase;
+
+        /// <summary>
+        /// 过滤命中单元格用的加粗字体。以前每命中一格、每重绘一次就 new 一个 Font，
+        /// 大表滚动一次的能量就是几千个 GDI 句柄；这里按基准字体缓存一份。
+        /// 切皮肤时 Theme 会换一批 Font 对象，基准引用变了就重建（旧句柄不回收，和 Theme 里的字体同一处理，
+        /// 因为可能仍被现存样式引用）。
+        /// </summary>
+        private Font BoldCellStyleFont(Font baseFont)
+        {
+            if (!ReferenceEquals(_boldCellStyleFontBase, baseFont))
+            {
+                _boldCellStyleFontBase = baseFont;
+                _boldCellStyleFont = new Font(baseFont, FontStyle.Bold);
+            }
+            return _boldCellStyleFont;
+        }
+
         /// <summary>冻结行区域（_dataGridHeader）的 CellFormatting：过滤匹配单元格红色加粗高亮</summary>
         private void OnHeaderCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
@@ -4436,7 +4498,7 @@ namespace wxd.files.winforms
             {
                 if (_headerFilterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
                 {
-                    e.CellStyle.Font = new Font(e.CellStyle.Font ?? _dataGridHeader.Font, FontStyle.Bold);
+                    e.CellStyle.Font = BoldCellStyleFont(e.CellStyle.Font ?? _dataGridHeader.Font);
                     e.CellStyle.ForeColor = Color.Red;
                     e.CellStyle.SelectionForeColor = Color.Red;
                 }
@@ -4447,9 +4509,18 @@ namespace wxd.files.winforms
         {
             if (sender == _dataGridHeader) return;
             if (e.RowIndex >= 0 && e.RowIndex < _dataGrid.Rows.Count)
-                _dataGrid.Rows[e.RowIndex].Height = 24;
+                _dataGrid.Rows[e.RowIndex].Height = Theme.P.RowHeight;
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
             {
+                // ==================== 标记行：整行铺一层柔和选中底（密度由皮肤决定） ====================
+                // 放在语义色之前：改了值/重复行这类信息比"被标记"更重要，后面会覆盖它
+                if (_selectedRows.Contains(e.RowIndex))
+                {
+                    e.CellStyle.BackColor = Theme.P.Selection;
+                    e.CellStyle.SelectionBackColor = Theme.Mix(Theme.P.Selection, Theme.P.Text, 0.08f);
+                    e.CellStyle.SelectionForeColor = Theme.P.Text;
+                }
+
                 // ==================== 行编辑模式：编辑行浅黄色背景 + 修改的单元格红色背景 ====================
                 if (_editingRowIndex >= 0 && e.RowIndex == _editingRowIndex)
                 {
@@ -4457,13 +4528,13 @@ namespace wxd.files.winforms
                     var (modOrigRow, modOrigCol) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
                     if (_modifiedCellsInEdit.TryGetValue(modOrigRow, out var modCols) && modCols.Contains(modOrigCol))
                     {
-                        e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);  // 浅红色（已修改单元格）
-                        e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
+                        e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 180, 180));  // 浅红色（已修改单元格）
+                        e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 140, 140));
                     }
                     else
                     {
-                        e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // 浅黄色（与未保存行颜色一致）
-                        e.CellStyle.SelectionBackColor = Color.FromArgb(255, 250, 180);
+                        e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 253, 210));  // 浅黄色（与未保存行颜色一致）
+                        e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 250, 180));
                     }
                 }
                 else
@@ -4472,20 +4543,20 @@ namespace wxd.files.winforms
                     bool isUnsavedRow = false;
                     if (_unsavedRowIndices.Count > 0)
                     {
-                        var tagRow = _dataGrid.Rows[e.RowIndex].Tag as TableRow;
+                        var tagRow = RowTagAt(e.RowIndex);
                         if (tagRow != null && _unsavedRowIndices.Contains(tagRow.OriginalRowIndex))
                         {
                             isUnsavedRow = true;
-                            e.CellStyle.BackColor = Color.FromArgb(255, 253, 210);  // 浅黄色（与编辑行一致）
-                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 250, 180);
+                            e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 253, 210));  // 浅黄色（与编辑行一致）
+                            e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 250, 180));
                             // 检查该单元格是否被修改过（使用原始行列索引匹配）
                             if (_modifiedCellsInEdit.Count > 0)
                             {
                                 var (modOrigRow2, modOrigCol2) = GetOriginalIndices(e.RowIndex, e.ColumnIndex);
                                 if (_modifiedCellsInEdit.TryGetValue(modOrigRow2, out var modCols2) && modCols2.Contains(modOrigCol2))
                                 {
-                                    e.CellStyle.BackColor = Color.FromArgb(255, 180, 180);
-                                    e.CellStyle.SelectionBackColor = Color.FromArgb(255, 140, 140);
+                                    e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 180, 180));
+                                    e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 140, 140));
                                 }
                             }
                         }
@@ -4497,8 +4568,8 @@ namespace wxd.files.winforms
                         ColumnLinkChecker.CheckCellColor(_cache, e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
                         if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                         {
-                            e.CellStyle.BackColor = Color.FromArgb(255, 255, 200);
-                            e.CellStyle.SelectionBackColor = Color.FromArgb(255, 240, 150);
+                            e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 255, 200));
+                            e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 240, 150));
                         }
                     }
                 }
@@ -4508,7 +4579,7 @@ namespace wxd.files.winforms
             {
                 if (_filterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
                 {
-                    e.CellStyle.Font = new Font(e.CellStyle.Font ?? _dataGrid.Font, FontStyle.Bold);
+                    e.CellStyle.Font = BoldCellStyleFont(e.CellStyle.Font ?? _dataGrid.Font);
                     e.CellStyle.ForeColor = Color.Red;
                     e.CellStyle.SelectionForeColor = Color.Red;
                 }
@@ -4563,7 +4634,7 @@ namespace wxd.files.winforms
 
             var cellValue = _dataGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? "";
             var ctx = new ContextMenuStrip();
-            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            ctx.Font = Theme.Body;
 
             var copyItem = new ToolStripMenuItem("复制");
             copyItem.Click += (s, args) => { if (!string.IsNullOrEmpty(cellValue)) Clipboard.SetText(cellValue); };
@@ -4891,13 +4962,13 @@ namespace wxd.files.winforms
         {
             if (_isEditLocked)
             {
-                _lblLock.Text = "?? 锁定";
+                _lblLock.Text = "已锁定";
                 _lblLock.ForeColor = _colorLightTextSecondary;
             }
             else
             {
-                _lblLock.Text = "?? 可编辑";
-                _lblLock.ForeColor = Color.FromArgb(22, 163, 74); // 绿色，表示可编辑
+                _lblLock.Text = "可编辑";
+                _lblLock.ForeColor = Theme.P.Mark; // 橙色，表示可编辑
             }
         }
 
@@ -4905,21 +4976,16 @@ namespace wxd.files.winforms
 
         /// <summary>
         /// 行号显示的唯一取值出口。行身份已知时用 TableRow.DisplayLineNumber（物理行号优先）；
-        /// Tag 缺失（尚未挂行的刷新中间态）时退回显示位置推算，保证不画空。
+        /// 映射登记缺失（刷新中间态）时退回显示位置推算，保证不画空。
         /// </summary>
         private static int? ResolveRowNumber(TableRow? tagRow, int displayRowIndex, int frozenRows)
             => tagRow?.DisplayLineNumber ?? displayRowIndex + 1 + frozenRows;
 
         /// <summary>取数据区某行的行号（主表格用）</summary>
         private int? GetDisplayLineNumber(int rowIndex)
-        {
-            TableRow? tagRow = null;
-            if (rowIndex >= 0 && rowIndex < _dataGrid.Rows.Count)
-                tagRow = _dataGrid.Rows[rowIndex].Tag as TableRow;
-            return ResolveRowNumber(tagRow, rowIndex, _frozenRows);
-        }
+            => ResolveRowNumber(RowTagAt(rowIndex), rowIndex, _frozenRows);
 
-        /// <summary>取冻结区某行的行号（表头表格用，Tag 未挂，按 _fileData 索引取）</summary>
+        /// <summary>取冻结区某行的行号（表头表格不在行映射里，按 _fileData 索引取）</summary>
         private int? GetFrozenDisplayLineNumber(int rowIndex)
         {
             TableRow? tagRow = rowIndex >= 0 && rowIndex < _fileData.Rows.Count
@@ -4930,22 +4996,12 @@ namespace wxd.files.winforms
 
         private void OnRowPostPaint(object? sender, DataGridViewRowPostPaintEventArgs e)
         {
-            // 画选中行整行边框（1px，橙红色，醒目）
-            // 注意：e.RowBounds 是屏幕坐标（已含滚动偏移），直接按它画即可；
-            // 右边界只画到可见列总宽，不画到右侧空白区域
-            if (_selectedRows.Contains(e.RowIndex))
+            // 标记行的整行底色由 OnCellFormatting 铺，这里只补左侧强调条：
+            // 原先画 1px 橙红方框要跟着横向滚动算右边界，宽表下既慢又容易错位。
+            if (_selectedRows.Contains(e.RowIndex) && Theme.P.LeftAccent)
             {
-                using var pen = new Pen(_colorRowSelectedBorder, 1);
-                int left = e.RowBounds.Left;
-                int top = e.RowBounds.Top;
-                int bottom = e.RowBounds.Bottom - 1;       // -1 防止 1px 溢出到下一行
-                int visibleColsWidth = _dataGrid.Columns.GetColumnsWidth(DataGridViewElementStates.Visible);
-                // 注意：行号区(RowHeader)占据左侧宽度，右边界需加上 RowHeadersWidth 才能对齐最后一列数据列的右边线
-                int right = e.RowBounds.Left + _dataGrid.RowHeadersWidth + visibleColsWidth - _dataGrid.HorizontalScrollingOffset - 1;
-                e.Graphics.DrawLine(pen, left, top, right, top);
-                e.Graphics.DrawLine(pen, left, bottom, right, bottom);
-                e.Graphics.DrawLine(pen, left, top, left, bottom);
-                e.Graphics.DrawLine(pen, right, top, right, bottom);
+                using var bar = new SolidBrush(_colorRowSelectedBorder);
+                e.Graphics.FillRectangle(bar, e.RowBounds.Left, e.RowBounds.Top, 3, e.RowBounds.Height);
             }
             // ★ 行号取值单点化：优先源文件物理行号
             var lineNumber = GetDisplayLineNumber(e.RowIndex);
@@ -4960,15 +5016,14 @@ namespace wxd.files.winforms
         /// <summary>行号的显示文本：null（占位行/无对应源行）画破折号</summary>
         private static string FormatRowNumber(int? lineNumber) => lineNumber?.ToString() ?? "—";
 
-        /// <summary>取某个显示行对应的数据行（冻结区按 _fileData 索引，主体区按 Tag）</summary>
+        /// <summary>取某个显示行对应的数据行（冻结区按 _fileData 索引，主体区按行映射）</summary>
         private TableRow GetRowOf(DataGridView dgv, int rowIndex)
         {
             if (dgv == _dataGridHeader && rowIndex >= 0 && rowIndex < _fileData.Rows.Count)
                 return _fileData.Rows[rowIndex];
-            if (dgv == _dataGrid && rowIndex >= 0 && rowIndex < _dataGrid.Rows.Count
-                && _dataGrid.Rows[rowIndex].Tag is TableRow tagRow)
+            if (dgv == _dataGrid && RowTagAt(rowIndex) is TableRow tagRow)
                 return tagRow;
-            // 刷新中间态还没挂 Tag：退回记录序号，口径和 RowHeader 兜底一致
+            // 刷新中间态映射还没登记：退回记录序号，口径和 RowHeader 兜底一致
             return new TableRow { OriginalRowIndex = rowIndex + (dgv == _dataGrid ? _frozenRows : 0) };
         }
 
@@ -4985,7 +5040,7 @@ namespace wxd.files.winforms
         {
             var line = GetRowOf(_dataGrid, displayRow).DisplayLineNumber;
             var ctx = new ContextMenuStrip();
-            ctx.Font = new Font("Microsoft YaHei UI", 9f);
+            ctx.Font = Theme.Body;
 
             if (line.HasValue)
             {
@@ -5230,18 +5285,14 @@ namespace wxd.files.winforms
                 var vcs = VersionControlHelper.DetectVcs(_filePath);
                 if (vcs == VcsType.None) return;
 
-                _btnHistory = new Button
+                var historyText = vcs == VcsType.Svn ? "SVN历史" : "Git历史";
+                _btnHistory = new ThemeButton
                 {
-                    Text = vcs == VcsType.Svn ? "SVN历史" : "Git历史",
-                    Size = new Size(75, 27),
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    FlatStyle = FlatStyle.Flat,
+                    Text = historyText,
+                    Size = new Size(ThemeButton.FitWidth(historyText), ThemeMetrics.RowH),
+                    Font = Theme.Body,
                     TextAlign = ContentAlignment.MiddleCenter,
-                    BackColor = Color.FromArgb(22, 163, 74),
-                    ForeColor = Color.White,
-                    FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(21, 128, 61) },
-                    Cursor = Cursors.Hand,
-                    Margin = new Padding(0, 2, 10, 0)
+                    Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
                 };
 
                 var vcsType = vcs;
@@ -5271,11 +5322,11 @@ namespace wxd.files.winforms
         /// <summary>获取内部 FileTableData（用于行号追踪、差异标记）</summary>
         public FileTableData GetFileData() => _fileData;
 
-        /// <summary>直接设置 FileTableData 并刷新 Tag（供版本对比等场景使用，绕过 BuildFileData 继承逻辑）</summary>
+        /// <summary>直接设置 FileTableData 并刷新行映射（供版本对比等场景使用，绕过 BuildFileData 继承逻辑）</summary>
         public void SetFileData(FileTableData fileData)
         {
             _fileData = fileData;
-            SetRowTags();
+            RebuildRowMap();
         }
 
         /// <summary>获取内部 DataGridView（供版本对比等外部功能使用）</summary>
@@ -5446,7 +5497,7 @@ namespace wxd.files.winforms
             // ★ 如果有重复警告，追加警告文本并保持红色
             if (_duplicateWarningText != null)
             {
-                _lblInfo.ForeColor = Color.FromArgb(200, 30, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 30, 30));
                 _lblInfo.Text = _duplicateWarningText;
             }
 
@@ -5476,8 +5527,8 @@ namespace wxd.files.winforms
                         _dataGrid.Columns[i].HeaderText = GetExcelColumnName(i);
                     }
                 }
-                // ★ 同步设置 Tag（DataSource 赋值后行已创建）
-                SetRowTags();
+                // ★ 登记显示行 → 源行映射
+                RebuildRowMap();
 
                 // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
                 _filterMatchCells.Clear();
@@ -5622,7 +5673,7 @@ namespace wxd.files.winforms
                 // 获取原始行索引（如果 _editingRowOrigIndex 尚未被外部设置）
                 if (_editingRowOrigIndex < 0)
                 {
-                    if (row.Tag is TableRow tr)
+                    if (RowTagAt(displayRowIndex) is TableRow tr)
                         _editingRowOrigIndex = tr.OriginalRowIndex;
                     else
                         _editingRowOrigIndex = displayRowIndex + _frozenRows;
@@ -5744,9 +5795,19 @@ namespace wxd.files.winforms
                 }
                 else
                 {
-                    // 不提交，刷新编辑行的高亮
+                    // 不提交：把已经敲进网格的值退回进入编辑时的快照。
+                    // 只重画一行的话，用户按「取消」的改动会一直留在网格里，之后任意一次保存都会把它写进源文件。
                     if (editingRow >= 0 && editingRow < _dataGrid.Rows.Count)
+                    {
+                        var row = _dataGrid.Rows[editingRow];
+                        if (snapShot != null)
+                        {
+                            for (int col = 0; col < row.Cells.Count && col < snapShot.Length; col++)
+                                row.Cells[col].Value = snapShot[col];
+                        }
+                        if (origIndex >= 0) _modifiedCellsInEdit.Remove(origIndex);
                         _dataGrid.InvalidateRow(editingRow);
+                    }
                 }
             }
             finally { _enteringEditMode = false; }
@@ -5823,11 +5884,8 @@ namespace wxd.files.winforms
         /// <summary>从 DataGridView 显示行索引获取原始 DataTable 行索引</summary>
         private int GetOriginalRowIndexFromDisplay(int displayRowIndex)
         {
-            if (displayRowIndex >= 0 && displayRowIndex < _dataGrid.Rows.Count)
-            {
-                if (_dataGrid.Rows[displayRowIndex].Tag is TableRow tr)
-                    return tr.OriginalRowIndex;
-            }
+            if (RowTagAt(displayRowIndex) is TableRow tr)
+                return tr.OriginalRowIndex;
             // 回退：无冻结行时 displayRowIndex 即原始行索引
             return displayRowIndex;
         }
@@ -5902,13 +5960,8 @@ namespace wxd.files.winforms
             else
                 newOrigIndex = _dataTable.Rows.Count - 1;
 
-            // 在 _dataGrid 中定位到新行
-            int displayRow = -1;
-            for (int i = 0; i < _dataGrid.Rows.Count; i++)
-            {
-                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == newOrigIndex)
-                { displayRow = i; break; }
-            }
+            // 在行映射中定位到新行
+            int displayRow = FindDisplayRowByOrigIndex(newOrigIndex);
             if (displayRow < 0) displayRow = 0;
 
             _isNewRowForEdit = true;
@@ -5977,12 +6030,7 @@ namespace wxd.files.winforms
             // ==================== 自动进入行编辑模式 ====================
             // 找到新复制行在显示表格中的位置
             int dupOrigIndex = originalRowIndex + 1;
-            int dupDisplayRow = -1;
-            for (int i = 0; i < _dataGrid.Rows.Count; i++)
-            {
-                if (_dataGrid.Rows[i].Tag is TableRow tr && tr.OriginalRowIndex == dupOrigIndex)
-                { dupDisplayRow = i; break; }
-            }
+            int dupDisplayRow = FindDisplayRowByOrigIndex(dupOrigIndex);
             if (dupDisplayRow < 0) dupDisplayRow = 0;
 
             _isNewRowForEdit = false;  // 复制行不是新增行，Esc不删除
@@ -6129,7 +6177,7 @@ namespace wxd.files.winforms
             if (_lblInfo.IsHandleCreated)
             {
                 _lblInfo.Text = $"? 文件被占用，{_unsavedRowIndices.Count} 行修改未保存（等待重试...）";
-                _lblInfo.ForeColor = Color.FromArgb(200, 130, 30);
+                _lblInfo.ForeColor = Theme.Signal(Color.FromArgb(200, 130, 30));
             }
         }
 

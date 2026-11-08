@@ -11,13 +11,15 @@ namespace wxd.files.winforms;
 public class CustomCommandManagerForm : Form
 {
     private DataGridView _dgv;
-    private Button _btnAdd;
-    private Button _btnDelete;
-    private Button _btnCopy;
-    private Button _btnMoveUp;
-    private Button _btnMoveDown;
-    private Button _btnOk;
-    private Button _btnCancel;
+    private ThemeButton _btnAdd;
+    private ThemeButton _btnDelete;
+    private ThemeButton _btnCopy;
+    private ThemeButton _btnMoveUp;
+    private ThemeButton _btnMoveDown;
+    private ThemeButton _btnOk;
+    private ThemeButton _btnCancel;
+    private Panel _bar;
+    private Panel _mainPanel;
 
     private BindingList<CustomCommandItem> _binding;
 
@@ -279,68 +281,30 @@ public class CustomCommandManagerForm : Form
         };
 
         // --- 底部按钮 ---
-        _btnAdd = new Button { Text = "新增", Width = 75, Height = 28 };
-        _btnAdd.Click += (s, e) => AddRow();
+        _btnAdd = DialogButtonBar.Make("新增", (s, e) => AddRow());
+        _btnCopy = DialogButtonBar.Make("复制", (s, e) => CopySelectedRow());
+        _btnDelete = DialogButtonBar.Make("删除", (s, e) => DeleteSelectedRow());
+        _btnMoveUp = DialogButtonBar.Make("上移", (s, e) => MoveRow(-1));
+        _btnMoveDown = DialogButtonBar.Make("下移", (s, e) => MoveRow(1));
+        _btnOk = DialogButtonBar.Make("确定", null, primary: true);
+        _btnOk.DialogResult = DialogResult.OK;
+        _btnCancel = DialogButtonBar.Make("取消");
+        _btnCancel.DialogResult = DialogResult.Cancel;
 
-        _btnCopy = new Button { Text = "复制", Width = 75, Height = 28 };
-        _btnCopy.Click += (s, e) => CopySelectedRow();
-
-        _btnDelete = new Button { Text = "删除", Width = 75, Height = 28 };
-        _btnDelete.Click += (s, e) => DeleteSelectedRow();
-
-        _btnMoveUp = new Button { Text = "上移", Width = 65, Height = 28 };
-        _btnMoveUp.Click += (s, e) => MoveRow(-1);
-
-        _btnMoveDown = new Button { Text = "下移", Width = 65, Height = 28 };
-        _btnMoveDown.Click += (s, e) => MoveRow(1);
-
-        _btnOk = new Button
+        _bar = DialogButtonBar.Create();
+        _bar.Controls.AddRange(new Control[]
         {
-            Text = "确定",
-            Width = 90,
-            Height = 28,
-            DialogResult = DialogResult.OK,
-            BackColor = Color.FromArgb(66, 165, 245),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229) }
-        };
-
-        _btnCancel = new Button
-        {
-            Text = "取消",
-            Width = 90,
-            Height = 28,
-            DialogResult = DialogResult.Cancel
-        };
-
-        var bottomPanel = new Panel
-        {
-            Height = 44,
-            Dock = DockStyle.Bottom,
-            Padding = new Padding(8)
-        };
-        _btnAdd.Location = new Point(8, 8);
-        _btnCopy.Location = new Point(_btnAdd.Right + 6, 8);
-        _btnDelete.Location = new Point(_btnCopy.Right + 6, 8);
-        _btnMoveUp.Location = new Point(_btnDelete.Right + 12, 8);
-        _btnMoveDown.Location = new Point(_btnMoveUp.Right + 6, 8);
-        _btnCancel.Location = new Point(bottomPanel.Width - 90 - 8, 8);
-        _btnOk.Location = new Point(_btnCancel.Left - 90 - 6, 8);
-
-        bottomPanel.Controls.AddRange(new Control[] { _btnAdd, _btnCopy, _btnDelete, _btnMoveUp, _btnMoveDown, _btnOk, _btnCancel });
-        bottomPanel.Resize += (s, e) =>
-        {
-            _btnCancel.Left = bottomPanel.Width - 90 - 8;
-            _btnOk.Left = _btnCancel.Left - 90 - 6;
-        };
+            _btnAdd, _btnCopy, _btnDelete, _btnMoveUp, _btnMoveDown, _btnOk, _btnCancel
+        });
+        LayoutBar();
+        _bar.Resize += (s, e) => LayoutBar();
 
         // 主体区域：DataGridView
-        var mainPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0) };
-        mainPanel.Controls.Add(_dgv);
+        _mainPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.Margin, ThemeMetrics.Margin, 0) };
+        _mainPanel.Controls.Add(_dgv);
 
-        Controls.Add(mainPanel);
-        Controls.Add(bottomPanel);
+        Controls.Add(_mainPanel);
+        Controls.Add(_bar);
 
         // 从配置加载
         var list = CsvSettings.GetCustomCommands();
@@ -358,6 +322,48 @@ public class CustomCommandManagerForm : Form
 
         AcceptButton = _btnOk;
         CancelButton = _btnCancel;
+
+        ApplyTheme();
+        Theme.Changed += ApplyTheme;
+        Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+    }
+
+    private void LayoutBar()
+    {
+        // 行操作靠左、窗口动作靠右，两组之间用一组间距隔开
+        int x = ThemeMetrics.Margin, y = ThemeMetrics.RowPad, rowH = ThemeMetrics.RowH;
+        foreach (var b in new[] { _btnAdd, _btnCopy, _btnDelete })
+        {
+            b.Size = new Size(ThemeButton.FitWidth(b.Text), rowH);
+            b.Location = new Point(x, y);
+            b.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            x += b.Width + ThemeMetrics.Gap;
+        }
+        x += ThemeMetrics.Group - ThemeMetrics.Gap;
+        foreach (var b in new[] { _btnMoveUp, _btnMoveDown })
+        {
+            b.Size = new Size(ThemeButton.FitWidth(b.Text), rowH);
+            b.Location = new Point(x, y);
+            b.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            x += b.Width + ThemeMetrics.Gap;
+        }
+        DialogButtonBar.LayoutRight(_bar, _btnCancel, _btnOk);
+    }
+
+    private void ApplyTheme()
+    {
+        var p = Theme.P;
+        Font = Theme.Body;
+        BackColor = p.Window;
+        _bar.BackColor = p.Chrome;
+        _mainPanel.BackColor = p.Window;
+
+        ThemeGrid.Apply(_dgv);
+        foreach (var b in new[] { _btnAdd, _btnCopy, _btnDelete, _btnMoveUp, _btnMoveDown, _btnOk, _btnCancel })
+            b.BackColor = p.Chrome;
+
+        LayoutBar();
+        Invalidate(true);
     }
 
     private void AddRow()

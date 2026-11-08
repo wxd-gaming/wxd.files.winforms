@@ -29,13 +29,13 @@ namespace wxd.files.winforms
         private static readonly Font _textFont = new("Microsoft YaHei UI", 9f);
         private static readonly Font _hintFont = new("Microsoft YaHei UI", 8f, FontStyle.Italic);
 
-        private static readonly Color _bgColor = Color.FromArgb(252, 252, 254);
-        private static readonly Color _borderColor = Color.FromArgb(200, 210, 225);
-        private static readonly Color _titleColor = Color.FromArgb(30, 100, 180);
-        private static readonly Color _normalTextColor = Color.FromArgb(60, 60, 70);
-        private static readonly Color _warningTextColor = Color.FromArgb(200, 40, 40);
-        private static readonly Color _hintColor = Color.FromArgb(140, 150, 170);
-        private static readonly Color _separatorColor = Color.FromArgb(220, 228, 240);
+        private static Color _bgColor => Theme.P.Surface;
+        private static Color _borderColor => Theme.P.Border;
+        private static Color _titleColor => Theme.P.Link;
+        private static Color _normalTextColor => Theme.P.Text;
+        private static Color _warningTextColor => Theme.Signal(Color.FromArgb(200, 40, 40));
+        private static Color _hintColor => Theme.P.Muted;
+        private static Color _separatorColor => Theme.P.Divider;
 
         /// <summary>用于外部提供 tooltip 内容的委托（grid: 当前鼠标所在的 DataGridView）
         /// 返回值新增 tableHeaders: 表模式的列头列表（非表模式返回 null）</summary>
@@ -86,6 +86,16 @@ namespace wxd.files.winforms
 
             _hoverTimer = new System.Windows.Forms.Timer { Interval = 400 };
             _hoverTimer.Tick += OnHoverTimerTick;
+
+            // Tips 里的行是每次弹出按当前令牌重画的，只有下拉框底色是构造时钉死的，切皮肤要补这一次
+            Theme.Changed += OnThemeChanged;
+        }
+
+        private void OnThemeChanged()
+        {
+            if (_disposed) return;
+            _dropDown.BackColor = Theme.P.Surface;
+            _panel.Invalidate();
         }
 
         /// <summary>注册一个额外的 DataGridView（如固定行表头）</summary>
@@ -245,6 +255,7 @@ namespace wxd.files.winforms
         {
             if (_disposed) return;
             _disposed = true;
+            Theme.Changed -= OnThemeChanged;
             _hoverTimer?.Dispose();
             _dropDown.Dispose();
             _panel.Dispose();
@@ -766,9 +777,9 @@ namespace wxd.files.winforms
                             {
                                 Font = new Font(_textFont, FontStyle.Bold),
                                 ForeColor = _titleColor,
-                                BackColor = Color.FromArgb(235, 245, 255),
+                                BackColor = Theme.CellTint(Color.FromArgb(235, 245, 255)),
                                 SelectionForeColor = _titleColor,
-                                SelectionBackColor = Color.FromArgb(235, 245, 255),
+                                SelectionBackColor = Theme.CellTint(Color.FromArgb(235, 245, 255)),
                             };
                             cell.Style = headerStyle;
                         }
@@ -778,9 +789,9 @@ namespace wxd.files.winforms
                             var warningStyle = new DataGridViewCellStyle(cellStyle)
                             {
                                 ForeColor = _warningTextColor,
-                                BackColor = Color.FromArgb(255, 240, 240),
+                                BackColor = Theme.CellTint(Color.FromArgb(255, 240, 240)),
                                 SelectionForeColor = _warningTextColor,
-                                SelectionBackColor = Color.FromArgb(255, 240, 240),
+                                SelectionBackColor = Theme.CellTint(Color.FromArgb(255, 240, 240)),
                             };
                             cell.Style = warningStyle;
                         }
@@ -920,12 +931,12 @@ namespace wxd.files.winforms
             private static readonly Font _titleFont2 = new("Microsoft YaHei UI", 10f, FontStyle.Bold);
             private static readonly Font _textFont2 = new("Microsoft YaHei UI", 9f);
 
-            private static readonly Color _bgColor2 = Color.FromArgb(255, 255, 248);
-            private static readonly Color _borderColor2 = Color.FromArgb(180, 190, 140);
-            private static readonly Color _titleColor2 = Color.FromArgb(120, 100, 30);
-            private static readonly Color _normalTextColor2 = Color.FromArgb(60, 60, 70);
-            private static readonly Color _warningTextColor2 = Color.FromArgb(200, 40, 40);
-            private static readonly Color _separatorColor2 = Color.FromArgb(220, 215, 195);
+            private static Color _bgColor2 => Theme.P.Surface;
+            private static Color _borderColor2 => Theme.P.Border;
+            private static Color _titleColor2 => Theme.P.Link;
+            private static Color _normalTextColor2 => Theme.P.Text;
+            private static Color _warningTextColor2 => Theme.Signal(Color.FromArgb(200, 40, 40));
+            private static Color _separatorColor2 => Theme.P.Divider;
 
             private const int PaddingH = 14;
             private const int PaddingV = 10;
@@ -1411,9 +1422,9 @@ namespace wxd.files.winforms
                                 {
                                     Font = new Font(_textFont2, FontStyle.Bold),
                                     ForeColor = _titleColor2,
-                                    BackColor = Color.FromArgb(235, 245, 255),
+                                    BackColor = Theme.CellTint(Color.FromArgb(235, 245, 255)),
                                     SelectionForeColor = _titleColor2,
-                                    SelectionBackColor = Color.FromArgb(235, 245, 255),
+                                    SelectionBackColor = Theme.CellTint(Color.FromArgb(235, 245, 255)),
                                 };
                                 cell.Style = headerStyle;
                             }
@@ -1422,7 +1433,7 @@ namespace wxd.files.winforms
                                 var warningStyle = new DataGridViewCellStyle(cellStyle)
                                 {
                                     ForeColor = _warningTextColor2,
-                                    BackColor = Color.FromArgb(255, 240, 230),
+                                    BackColor = Theme.CellTint(Color.FromArgb(255, 240, 230)),
                                 };
                                 cell.Style = warningStyle;
                             }
@@ -1544,17 +1555,17 @@ namespace wxd.files.winforms
                     // 关闭按钮（右上角，自绘 X）
                     int closeBtnX = Width - CloseBtnMargin - CloseBtnSize;
                     _closeBtnRect = new Rectangle(closeBtnX, CloseBtnMargin, CloseBtnSize, CloseBtnSize);
-                    using (var cbBgBrush = new SolidBrush(_closeHovered ? Color.FromArgb(240, 220, 220) : Color.FromArgb(250, 248, 240)))
+                    using (var cbBgBrush = new SolidBrush(_closeHovered ? Theme.CellTint(Color.FromArgb(240, 220, 220)) : Theme.P.Surface))
                     {
                         g.FillRectangle(cbBgBrush, _closeBtnRect);
                     }
-                    using (var cbBorderPen = new Pen(_closeHovered ? Color.FromArgb(220, 80, 80) : Color.FromArgb(200, 200, 180), 1f))
+                    using (var cbBorderPen = new Pen(_closeHovered ? Theme.Signal(Color.FromArgb(220, 80, 80)) : Theme.P.Border, 1f))
                     {
                         g.DrawRectangle(cbBorderPen, _closeBtnRect);
                     }
                     // 绘制 X
                     int pad = 5;
-                    using var xPen = new Pen(_closeHovered ? Color.FromArgb(200, 50, 50) : Color.FromArgb(150, 140, 120), 1.8f);
+                    using var xPen = new Pen(_closeHovered ? Theme.Signal(Color.FromArgb(200, 50, 50)) : Theme.P.Muted, 1.8f);
                     g.DrawLine(xPen, _closeBtnRect.Left + pad, _closeBtnRect.Top + pad,
                                _closeBtnRect.Right - pad, _closeBtnRect.Bottom - pad);
                     g.DrawLine(xPen, _closeBtnRect.Right - pad, _closeBtnRect.Top + pad,

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Text;
@@ -17,28 +18,25 @@ namespace wxd.files.winforms
     /// <summary>自定义弹窗，支持复制按钮（便于复制异常信息）</summary>
     public class AlertForm : Form
     {
+        /// <summary>一颗底部按钮的声明：文案、点完返回什么、是不是主操作。</summary>
+        private readonly record struct ButtonSpec(string Text, DialogResult Result, bool Primary);
+
         private readonly string _message;
         private readonly AlertType _type;
-        private readonly bool _showCopy;
-        private readonly Exception? _exception;
         private readonly RichTextBox _rtbMessage;
-        private readonly Button _btnCopy;
-        private readonly Button _btnOk;
+        private readonly Panel _bar;
+        private readonly List<ThemeButton> _barButtons = new();
+        private readonly ThemeButton? _btnCopy;
+        private readonly ThemeButton _defaultButton;
+        private readonly Label _lblIcon;
+        private readonly Label _lblTitle;
+        private readonly Panel _sep;
 
-        // 配色
-        private static readonly Color _colorBg = Color.FromArgb(245, 250, 255);
-        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
-        private static readonly Color _colorWarning = Color.FromArgb(255, 160, 0);
-        private static readonly Color _colorError = Color.FromArgb(239, 68, 68);
-        private static readonly Color _colorTitleFg = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorBtnBorder = Color.FromArgb(30, 136, 229);
-
-        private AlertForm(string title, string message, AlertType type, bool showCopy, Exception? exception)
+        private AlertForm(string title, string message, AlertType type, bool showCopy,
+            Exception? exception, ButtonSpec[]? buttons)
         {
             _message = message;
             _type = type;
-            _showCopy = showCopy;
-            _exception = exception;
 
             // 如果 exception 不为 null，将堆栈信息追加到消息中显示在弹窗，同时输出到输出窗口
             if (exception != null)
@@ -73,147 +71,150 @@ namespace wxd.files.winforms
             MinimizeBox = false;
             ShowIcon = false;
             ShowInTaskbar = false;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = _colorBg;
 
-            // 图标 + 标题
-            var iconText = type switch
+            _lblIcon = new Label
+            {
+                AutoSize = true,
+                Font = new Font("Segoe UI", 20f, FontStyle.Regular),
+                BackColor = Color.Transparent
+            };
+            _lblTitle = new Label
+            {
+                Text = title,
+                AutoSize = false,
+                Height = 30,
+                TextAlign = ContentAlignment.MiddleLeft,
+                BackColor = Color.Transparent
+            };
+            _sep = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+
+            var header = new Panel { Dock = DockStyle.Top, Height = 58 };
+            header.Controls.Add(_sep);
+            header.Controls.Add(_lblTitle);
+            header.Controls.Add(_lblIcon);
+            header.Resize += (_, _) => LayoutHeader();
+
+            _rtbMessage = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                WordWrap = true,
+                DetectUrls = false,
+                ScrollBars = RichTextBoxScrollBars.Vertical,
+                Text = _message
+            };
+            _rtbMessage.Select(0, 0); // 不选中任何文本
+
+            // 正文要缩进，但页眉页脚的分隔线要铺满整宽，所以只给正文套一层留白容器
+            var body = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(ThemeMetrics.Margin + 6, ThemeMetrics.Gap,
+                                     ThemeMetrics.Margin + 6, ThemeMetrics.RowPad)
+            };
+            body.Controls.Add(_rtbMessage);
+
+            // 底部按钮条：一条分隔线 + 右对齐的主题按钮，和其他对话框共用同一套排布
+            _bar = DialogButtonBar.Create();
+            var specs = buttons ?? new[] { new ButtonSpec("确定", DialogResult.Yes, true) };
+            if (showCopy)
+            {
+                _btnCopy = DialogButtonBar.Make("复制", BtnCopy_Click);
+                _barButtons.Add(_btnCopy);
+            }
+            ThemeButton? primary = null;
+            foreach (var s in specs)
+            {
+                var b = DialogButtonBar.Make(s.Text, null, s.Primary);
+                b.DialogResult = s.Result;
+                if (s.Primary && primary == null) primary = b;
+                _barButtons.Add(b);
+            }
+            _defaultButton = primary ?? _barButtons[^1];
+            _bar.Controls.AddRange(_barButtons.ToArray());
+            LayoutBar();
+            _bar.Resize += (_, _) => LayoutBar();
+
+            // 停靠顺序：后加入的靠外，所以填充区先加、页眉页脚后加
+            Controls.Add(body);
+            Controls.Add(header);
+            Controls.Add(_bar);
+
+            AcceptButton = _defaultButton;
+            // Esc 必须落在"放弃"那颗。LayoutRight 是数组末尾靠右，主按钮（确定/Yes）在最右，
+            // 原来取 _barButtons[^1] 等于把 Esc 变成确认，删除笔记、强制重装这类会被一键误触发。
+            // 单按钮时没有放弃项，Esc 就还是确定本身。
+            ThemeButton? esc = null;
+            foreach (var s in specs)
+            {
+                if (s.Result != DialogResult.Cancel && s.Result != DialogResult.No) continue;
+                esc = _barButtons.FirstOrDefault(b => b.DialogResult == s.Result);
+                if (esc != null) break;
+            }
+            CancelButton = esc ?? _defaultButton;
+
+            ApplyTheme();
+            // 独立弹窗，主窗翻明暗时遍历不到，只能自己订阅
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+        }
+
+        private void LayoutBar() => DialogButtonBar.LayoutRight(_bar, _barButtons.ToArray());
+
+        /// <summary>标题从图标右侧开始，宽度跟着页眉走。</summary>
+        private void LayoutHeader()
+            => _lblTitle.SetBounds(58, 16, Math.Max(40, _sep.Width - 66), 30);
+
+        /// <summary>取色全部走当前皮肤令牌；换皮肤或翻明暗时由 Theme.Changed 重新走一遍。</summary>
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _bar.BackColor = p.Chrome;
+
+            _lblIcon.Text = _type switch
             {
                 AlertType.Warning => "\u26A0",     // ⚠
                 AlertType.Error => "\u2716",       // ✖
                 _ => "\u2139"                      // ℹ
             };
-            var iconColor = type switch
+            _lblIcon.ForeColor = _type switch
             {
-                AlertType.Warning => _colorWarning,
-                AlertType.Error => _colorError,
-                _ => _colorPrimary
+                AlertType.Warning => Theme.Signal(Color.FromArgb(255, 160, 0)),
+                AlertType.Error => p.Danger,
+                _ => p.Accent
             };
+            _lblTitle.ForeColor = p.Text;
+            // 用 Theme 持有的字体实例，别在这里 new：每次切皮肤 new 一个就漏一个 GDI 字体句柄
+            _lblTitle.Font = Theme.TitleBold;
+            _sep.BackColor = p.Divider;
 
-            var lblIcon = new Label
+            _rtbMessage.BackColor = p.Surface;
+            _rtbMessage.ForeColor = p.Text;
+            _rtbMessage.Font = Theme.List;
+
+            foreach (var b in _barButtons)
             {
-                Text = iconText,
-                AutoSize = true,
-                Font = new Font("Segoe UI", 20f, FontStyle.Regular),
-                ForeColor = iconColor,
-                Location = new Point(18, 16),
-                BackColor = Color.Transparent
-            };
-
-            var lblTitle = new Label
-            {
-                Text = title,
-                AutoSize = false,
-                Height = 30,
-                Location = new Point(58, 16),
-                Width = ClientSize.Width - 80,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold),
-                ForeColor = _colorTitleFg,
-                BackColor = Color.Transparent
-            };
-
-            // 分隔线
-            var sep = new Panel
-            {
-                Location = new Point(16, 50),
-                Size = new Size(ClientSize.Width - 32, 1),
-                BackColor = Color.FromArgb(173, 209, 237)
-            };
-
-            // 消息文本框（只读，可选择复制）
-            _rtbMessage = new RichTextBox
-            {
-                Location = new Point(16, 58),
-                Size = new Size(ClientSize.Width - 32, ClientSize.Height - 120),
-                Font = new Font("Microsoft YaHei UI", 9.5f),
-                ReadOnly = true,
-                BorderStyle = BorderStyle.None,
-                BackColor = Color.White,
-                ForeColor = Color.FromArgb(30, 60, 100),
-                WordWrap = true,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
-                DetectUrls = false,
-                ScrollBars = RichTextBoxScrollBars.Vertical
-            };
-            _rtbMessage.Text = message;
-            _rtbMessage.Select(0, 0); // 不选中任何文本
-
-            // 底部按钮
-            var bottomPanel = new Panel
-            {
-                Height = 44,
-                Dock = DockStyle.Bottom,
-                BackColor = Color.Transparent,
-                Padding = new Padding(10, 6, 10, 6)
-            };
-
-            _btnOk = new Button
-            {
-                Text = "确定",
-                Size = new Size(90, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _colorPrimary,
-                ForeColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.Yes
-            };
-            _btnOk.FlatAppearance.BorderSize = 1;
-            _btnOk.FlatAppearance.BorderColor = _colorBtnBorder;
-            _btnOk.FlatAppearance.MouseOverBackColor = Color.FromArgb(50, 145, 235);
-            _btnOk.Location = new Point(bottomPanel.Width - _btnOk.Width - 10, 6);
-
-            bottomPanel.Controls.Add(_btnOk);
-
-            if (_showCopy)
-            {
-                _btnCopy = new Button
-                {
-                    Text = "复制",
-                    Size = new Size(90, 30),
-                    Anchor = AnchorStyles.Right,
-                    FlatStyle = FlatStyle.Flat,
-                    BackColor = Color.FromArgb(120, 144, 156),
-                    ForeColor = Color.White,
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    Cursor = Cursors.Hand
-                };
-                _btnCopy.FlatAppearance.BorderSize = 1;
-                _btnCopy.FlatAppearance.BorderColor = Color.FromArgb(100, 124, 136);
-                _btnCopy.FlatAppearance.MouseOverBackColor = Color.FromArgb(100, 124, 136);
-                _btnCopy.Location = new Point(_btnOk.Left - _btnCopy.Width - 8, 6);
-                _btnCopy.Click += BtnCopy_Click;
-
-                bottomPanel.Controls.Add(_btnCopy);
+                b.BackColor = p.Chrome;
+                b.Font = Theme.Body;
             }
 
-            Controls.Add(_rtbMessage);
-            Controls.Add(sep);
-            Controls.Add(lblTitle);
-            Controls.Add(lblIcon);
-            Controls.Add(bottomPanel);
-
-            AcceptButton = _btnOk;
-            CancelButton = _btnOk;
-
-            // 自适应宽度
-            lblTitle.Width = ClientSize.Width - 80;
-            _rtbMessage.Width = ClientSize.Width - 32;
+            LayoutHeader();
+            LayoutBar();
+            Invalidate(true);
         }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            // 自动调整高度：根据内容高度
+            // 自适应高度：正文有多长，窗体就撑多高
             var textHeight = _rtbMessage.GetPositionFromCharIndex(_rtbMessage.TextLength).Y + 30;
             var idealHeight = Math.Max(200, Math.Min(600, textHeight + 130));
             if (ClientSize.Height != idealHeight)
-            {
                 ClientSize = new Size(ClientSize.Width, idealHeight);
-            }
-            _btnOk.Focus();
+            _defaultButton.Focus();
         }
 
         private void BtnCopy_Click(object? sender, EventArgs e)
@@ -221,7 +222,7 @@ namespace wxd.files.winforms
             try
             {
                 Clipboard.SetText(_message);
-                _btnCopy.Text = "已复制";
+                _btnCopy!.Text = "已复制";
                 _btnCopy.Enabled = false;
                 var timer = new System.Windows.Forms.Timer { Interval = 1500 };
                 timer.Tick += (s, args) =>
@@ -245,11 +246,11 @@ namespace wxd.files.winforms
         /// <param name="title">标题</param>
         /// <param name="type">弹窗类型（决定图标颜色）</param>
         /// <param name="showCopy">是否显示"复制"按钮，方便复制异常信息</param>
-        /// <param name="exception">可选异常对象，不为 null 时将输出堆栈到输出窗口</param>
+        /// <param name="exception">可选异常对象，不为 null 时将输出堆栈到弹窗和输出窗口</param>
         public static DialogResult Show(IWin32Window owner, string message, string title,
             AlertType type = AlertType.Information, bool showCopy = false, Exception? exception = null)
         {
-            using var form = new AlertForm(title, message, type, showCopy, exception);
+            using var form = new AlertForm(title, message, type, showCopy, exception, null);
             return form.ShowDialog(owner);
         }
 
@@ -257,35 +258,12 @@ namespace wxd.files.winforms
         public static DialogResult ShowConfirm(IWin32Window owner, string message, string title,
             AlertType type = AlertType.Warning)
         {
-            using var form = new AlertForm(title, message, type, showCopy: false, exception: null);
-            // 在底部面板添加"取消"按钮
-            var cancelBtn = new Button
+            var specs = new[]
             {
-                Text = "取消",
-                Size = new Size(90, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(180, 190, 200),
-                ForeColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.No
+                new ButtonSpec("取消", DialogResult.No, false),
+                new ButtonSpec("确定", DialogResult.Yes, true)
             };
-            cancelBtn.FlatAppearance.BorderSize = 1;
-            cancelBtn.FlatAppearance.BorderColor = Color.FromArgb(160, 170, 180);
-            cancelBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(160, 170, 180);
-
-            // 获取底部面板（最后一个控件）
-            var bottomPanel = form.Controls[^1] as Panel;
-            if (bottomPanel != null)
-            {
-                // 调整确定按钮位置
-                form._btnOk.Location = new Point(bottomPanel.Width - form._btnOk.Width - 10, 6);
-                cancelBtn.Location = new Point(form._btnOk.Left - cancelBtn.Width - 8, 6);
-                bottomPanel.Controls.Add(cancelBtn);
-            }
-
-            form.CancelButton = cancelBtn;
+            using var form = new AlertForm(title, message, type, false, null, specs);
             return form.ShowDialog(owner);
         }
 
@@ -294,67 +272,14 @@ namespace wxd.files.winforms
             string yesText = "确定", string noText = "取消", string cancelText = "继续编辑",
             AlertType type = AlertType.Warning)
         {
-            using var form = new AlertForm(title, message, type, showCopy: false, exception: null);
-
-            var btnYes = new Button
+            // 从左到右：次要的排前面，主操作永远落在最右
+            var specs = new[]
             {
-                Text = yesText,
-                Size = new Size(110, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.Yes
+                new ButtonSpec(cancelText, DialogResult.Cancel, false),
+                new ButtonSpec(noText, DialogResult.No, false),
+                new ButtonSpec(yesText, DialogResult.Yes, true)
             };
-            btnYes.FlatAppearance.BorderSize = 1;
-            btnYes.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
-
-            var btnNo = new Button
-            {
-                Text = noText,
-                Size = new Size(110, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(180, 190, 200),
-                ForeColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.No
-            };
-            btnNo.FlatAppearance.BorderSize = 1;
-            btnNo.FlatAppearance.BorderColor = Color.FromArgb(160, 170, 180);
-
-            var btnCancel = new Button
-            {
-                Text = cancelText,
-                Size = new Size(100, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(210, 215, 225),
-                ForeColor = Color.FromArgb(60, 70, 90),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.Cancel
-            };
-            btnCancel.FlatAppearance.BorderSize = 1;
-            btnCancel.FlatAppearance.BorderColor = Color.FromArgb(190, 195, 205);
-
-            var bottomPanel = form.Controls[^1] as Panel;
-            if (bottomPanel != null)
-            {
-                form._btnOk.Visible = false;
-                btnYes.Location = new Point(bottomPanel.Width - btnYes.Width - 10, 6);
-                btnNo.Location = new Point(btnYes.Left - btnNo.Width - 8, 6);
-                btnCancel.Location = new Point(btnNo.Left - btnCancel.Width - 8, 6);
-                bottomPanel.Controls.Add(btnYes);
-                bottomPanel.Controls.Add(btnNo);
-                bottomPanel.Controls.Add(btnCancel);
-            }
-
-            form.AcceptButton = btnYes;
-            form.CancelButton = btnCancel;
+            using var form = new AlertForm(title, message, type, false, null, specs);
             return form.ShowDialog(owner);
         }
 

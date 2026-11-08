@@ -9,39 +9,35 @@ namespace wxd.files.winforms
     public class UpdateNotifyForm : Form
     {
         private readonly CheckResult _result;
-        private readonly bool _isDark;
 
         /// <summary>用户选择：0=未选, 1=立即更新, 2=跳过版本, 3=取消</summary>
         public int UserChoice { get; private set; }
 
-        // 控件
-        private readonly Label _lblMsg;
-        private readonly Button _btnUpdate;
-        private readonly Button _btnSkip;
-        private readonly Button _btnCancel;
-        private readonly Label _lblProgressText;
-        private readonly ProgressBar _progressBar;
+        private readonly Label _lblMsg = new();
+        private readonly Label _lblTitle = new();
+        private readonly Label _lblNotesTitle = new();
+        private readonly Label _lblNoNotes = new();
+        private readonly ThemeButton _btnUpdate = new();
+        private readonly ThemeButton _btnSkip = new();
+        private readonly ThemeButton _btnCancel = new();
+        private readonly Label _lblProgressText = new();
+        private readonly ThemeProgressBar _progressBar = new();
+        private readonly Panel _topBar = new();
+        private readonly Panel _topDivider = new();
+        private readonly Panel _body = new();
+        private readonly Panel _progressRow = new();
+        private readonly Panel _bar = new();
+        private readonly RichTextBox? _rtbReleaseNotes;
 
-        private RichTextBox? _rtbReleaseNotes;
-
-        public UpdateNotifyForm(CheckResult result, bool isDark = false)
+        public UpdateNotifyForm(CheckResult result)
         {
             _result = result;
-            _isDark = isDark;
             UserChoice = 0;
 
-            var lightBg = Color.FromArgb(235, 248, 255);
-            var darkBg = Color.FromArgb(30, 30, 30);
-            var lightBtnBg = Color.FromArgb(66, 165, 245);
-            var darkBtnBg = Color.FromArgb(0, 122, 204);
+            bool hasNotes = !string.IsNullOrEmpty(result.ReleaseNotes);
 
             Text = "发现更新";
-
-            // 根据是否有更新内容调整窗体高度
-            bool hasNotes = !string.IsNullOrEmpty(result.ReleaseNotes);
-            int formHeight = hasNotes ? 520 : 200;
-            ClientSize = new Size(600, formHeight);
-
+            ClientSize = new Size(600, hasNotes ? 520 : 200);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -49,152 +45,167 @@ namespace wxd.files.winforms
             ShowIcon = false;
             ShowInTaskbar = false;
             TopMost = true;
-            Font = new Font("Microsoft YaHei UI", 10f);
-            BackColor = _isDark ? darkBg : lightBg;
 
-            var msg = $"发现新版本 v{result.RemoteVersion}！\n" +
-                      $"当前版本: v{result.CurrentVersion}\n" +
-                      $"最新版本: v{result.RemoteVersion}";
+            _topBar.Dock = DockStyle.Top;
+            _topBar.Height = ThemeMetrics.BarHeight;
+            _topDivider.Dock = DockStyle.Bottom;
+            _topDivider.Height = 1;
+            _topBar.Controls.Add(_topDivider);
 
-            _lblMsg = new Label
-            {
-                Text = msg,
-                AutoSize = false,
-                Size = new Size(560, 65),
-                Location = new Point(20, 16),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                ForeColor = _isDark ? Color.FromArgb(241, 241, 241) : Color.FromArgb(20, 60, 100),
-                BackColor = Color.Transparent,
-                TextAlign = ContentAlignment.MiddleLeft
-            };
+            _lblTitle.Text = "发现新版本";
+            _lblTitle.AutoSize = false;
+            _lblTitle.TextAlign = ContentAlignment.MiddleLeft;
+            _lblTitle.BackColor = Color.Transparent;
+            _topBar.Controls.Add(_lblTitle);
+            _topBar.Resize += (_, _) => LayoutTopBar();
 
-            // 更新内容区域
-            int notesTop = 80;
+            _body.Dock = DockStyle.Fill;
+
+            _lblMsg.AutoSize = false;
+            _lblMsg.TextAlign = ContentAlignment.MiddleLeft;
+            _lblMsg.BackColor = Color.Transparent;
+            _lblMsg.Text = $"当前版本：v{result.CurrentVersion}\n最新版本：v{result.RemoteVersion}";
+            _body.Controls.Add(_lblMsg);
+
             if (hasNotes)
             {
-                var notesLabel = new Label
-                {
-                    Text = "📋 更新内容：",
-                    AutoSize = true,
-                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                    Location = new Point(20, notesTop),
-                    ForeColor = _isDark ? Color.FromArgb(200, 200, 200) : Color.FromArgb(60, 100, 140),
-                    BackColor = Color.Transparent
-                };
+                _lblNotesTitle.Text = "更新内容：";
+                _lblNotesTitle.AutoSize = true;
+                _lblNotesTitle.BackColor = Color.Transparent;
+                _body.Controls.Add(_lblNotesTitle);
 
                 _rtbReleaseNotes = new RichTextBox
                 {
                     Text = result.ReleaseNotes,
-                    Location = new Point(20, notesTop + 22),
-                    Size = new Size(560, 300),
                     ReadOnly = true,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    BackColor = _isDark ? Color.FromArgb(45, 45, 48) : Color.White,
-                    ForeColor = _isDark ? Color.FromArgb(220, 220, 220) : Color.FromArgb(30, 60, 100),
+                    BorderStyle = BorderStyle.None,
                     ScrollBars = RichTextBoxScrollBars.Vertical,
-                    Font = new Font("Microsoft YaHei UI", 9f),
+                    DetectUrls = false,
+                    WordWrap = true,
                     TabStop = false
                 };
-
-                Controls.Add(notesLabel);
-                Controls.Add(_rtbReleaseNotes);
+                _body.Controls.Add(new ThemeBordered(_rtbReleaseNotes));
             }
             else
             {
-                // 无更新日志时显示友好提示
-                var noNotesLabel = new Label
-                {
-                    Text = "暂无更新记录",
-                    AutoSize = true,
-                    Font = new Font("Microsoft YaHei UI", 9f),
-                    Location = new Point(20, notesTop),
-                    ForeColor = _isDark ? Color.FromArgb(150, 150, 150) : Color.FromArgb(160, 160, 160),
-                    BackColor = Color.Transparent
-                };
-                Controls.Add(noNotesLabel);
+                _lblNoNotes.Text = "暂无更新记录";
+                _lblNoNotes.AutoSize = true;
+                _lblNoNotes.BackColor = Color.Transparent;
+                _body.Controls.Add(_lblNoNotes);
             }
+            _body.Resize += (_, _) => LayoutBody();
 
-            // 按钮布局：有更新内容时下移
-            int btnTop = hasNotes ? 410 : 100;
+            // 进度行贴在按钮条上方，未开始下载时整行隐藏
+            _progressRow.Dock = DockStyle.Bottom;
+            _progressRow.Height = ThemeMetrics.RowH + ThemeMetrics.Gap;
+            _progressRow.Visible = false;
+            _lblProgressText.AutoSize = false;
+            _lblProgressText.TextAlign = ContentAlignment.MiddleRight;
+            _lblProgressText.BackColor = Color.Transparent;
+            _progressRow.Controls.Add(_progressBar);
+            _progressRow.Controls.Add(_lblProgressText);
+            _progressRow.Resize += (_, _) => LayoutProgressRow();
 
-            _btnUpdate = new Button
-            {
-                Text = "立即更新",
-                Size = new Size(110, 34),
-                Location = new Point(20, btnTop),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _isDark ? darkBtnBg : Color.FromArgb(76, 175, 80),
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand
-            };
-            _btnUpdate.FlatAppearance.BorderSize = 0;
+            _bar = DialogButtonBar.Create();
+            _btnSkip.Text = "跳过版本";
+            _btnSkip.Click += (_, _) => { UserChoice = 2; Close(); };
+            _btnCancel.Text = "取消";
+            _btnCancel.Click += (_, _) => { UserChoice = 3; Close(); };
+            _btnUpdate.Text = "立即更新";
+            _btnUpdate.Primary = true;
+            _btnUpdate.Click += OnUpdateClick;
+            _bar.Controls.AddRange(new Control[] { _btnSkip, _btnCancel, _btnUpdate });
+            _bar.Resize += (_, _) => LayoutBar();
 
-            _btnSkip = new Button
-            {
-                Text = "跳过版本",
-                Size = new Size(110, 34),
-                Location = new Point(150, btnTop),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _isDark ? darkBtnBg : Color.FromArgb(255, 152, 0),
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand
-            };
-            _btnSkip.FlatAppearance.BorderSize = 0;
-
-            _btnCancel = new Button
-            {
-                Text = "取消",
-                Size = new Size(110, 34),
-                Location = new Point(460, btnTop),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _isDark ? darkBtnBg : Color.FromArgb(158, 158, 158),
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand
-            };
-            _btnCancel.FlatAppearance.BorderSize = 0;
-
-            // 进度条（在按钮下方，默认隐藏）
-            int progressTop = btnTop + 42;
-            _progressBar = new ProgressBar
-            {
-                Location = new Point(20, progressTop),
-                Size = new Size(480, 18),
-                Visible = false,
-                Style = ProgressBarStyle.Continuous,
-                Minimum = 0,
-                Maximum = 100,
-                Value = 0
-            };
-
-            // 进度百分比
-            _lblProgressText = new Label
-            {
-                Text = "",
-                AutoSize = false,
-                Size = new Size(40, 18),
-                Location = new Point(504, progressTop),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _isDark ? Color.FromArgb(200, 200, 200) : Color.FromArgb(90, 130, 170),
-                BackColor = Color.Transparent,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Visible = false
-            };
-
-            Controls.Add(_lblMsg);
-            Controls.Add(_btnUpdate);
-            Controls.Add(_btnSkip);
-            Controls.Add(_btnCancel);
-            Controls.Add(_progressBar);
-            Controls.Add(_lblProgressText);
+            // 停靠顺序：同一条边上后加入的靠外，所以正文先加、页眉页脚后加
+            Controls.Add(_body);
+            Controls.Add(_progressRow);
+            Controls.Add(_topBar);
+            Controls.Add(_bar);
 
             AcceptButton = _btnUpdate;
 
-            _btnUpdate.Click += OnUpdateClick;
-            _btnSkip.Click += (_, _) => { UserChoice = 2; Close(); };
-            _btnCancel.Click += (_, _) => { UserChoice = 3; Close(); };
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+        }
+
+        private void LayoutTopBar()
+        {
+            _lblTitle.SetBounds(ThemeMetrics.Margin, 0,
+                _topBar.Width - ThemeMetrics.Margin * 2, ThemeMetrics.BarHeight - 1);
+        }
+
+        private void LayoutBody()
+        {
+            // 正文区自己排，留白比页眉的边距多留一点，读起来不至于贴边
+            int m = ThemeMetrics.Margin + 6;
+            int x = m, y = ThemeMetrics.Group;
+            int w = _body.ClientSize.Width - m * 2;
+
+            _lblMsg.SetBounds(x, y, w, ThemeMetrics.RowH * 2);
+            y += _lblMsg.Height + ThemeMetrics.Group;
+
+            if (_rtbReleaseNotes != null)
+            {
+                _lblNotesTitle.Location = new Point(x, y);
+                y = _lblNotesTitle.Bottom + ThemeMetrics.Gap;
+                var host = (Control)_rtbReleaseNotes.Parent!;
+                host.SetBounds(x, y, w,
+                    Math.Max(ThemeMetrics.RowH, _body.ClientSize.Height - y - ThemeMetrics.RowPad));
+            }
+            else
+            {
+                _lblNoNotes.Location = new Point(x, y);
+            }
+        }
+
+        private void LayoutProgressRow()
+        {
+            const int textW = 44;
+            int barH = Math.Max(10, ThemeMetrics.RowH - 8);
+            int y = (_progressRow.Height - barH) / 2;
+            _lblProgressText.SetBounds(_progressRow.Width - textW, y, textW, barH);
+            _progressBar.SetBounds(0, y,
+                Math.Max(1, _progressRow.Width - textW - ThemeMetrics.Gap), barH);
+        }
+
+        private void LayoutBar()
+            => DialogButtonBar.LayoutRight(_bar, _btnSkip, _btnCancel, _btnUpdate);
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+            _progressRow.BackColor = p.Window;
+
+            _lblTitle.ForeColor = p.Text;
+            _lblTitle.Font = Theme.Head;
+            _lblMsg.ForeColor = p.Text;
+            _lblNotesTitle.ForeColor = p.Muted;
+            _lblNotesTitle.Font = Theme.Head;
+            _lblNoNotes.ForeColor = p.Muted;
+            _lblProgressText.ForeColor = p.Muted;
+
+            if (_rtbReleaseNotes != null)
+            {
+                _rtbReleaseNotes.BackColor = p.Surface;
+                _rtbReleaseNotes.ForeColor = p.Text;
+            }
+
+            _btnSkip.BackColor = p.Chrome;
+            _btnCancel.BackColor = p.Chrome;
+            _btnUpdate.BackColor = p.Chrome;
+
+            LayoutTopBar();
+            LayoutBody();
+            LayoutProgressRow();
+            LayoutBar();
+            Invalidate(true);
         }
 
         private async void OnUpdateClick(object? sender, EventArgs e)
@@ -206,8 +217,9 @@ namespace wxd.files.winforms
             _btnSkip.Enabled = false;
             _btnCancel.Enabled = false;
             _btnUpdate.Text = "下载中...";
-            _progressBar.Visible = true;
-            _lblProgressText.Visible = true;
+            _progressRow.Visible = true;
+            LayoutProgressRow();
+            LayoutBar();
 
             try
             {
@@ -234,17 +246,18 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                _progressBar.Visible = false;
+                _progressRow.Visible = false;
                 _lblProgressText.Text = "";
 
                 AlertForm.Show(null, $"更新失败：{ex.Message}", "更新错误", AlertType.Error, exception: ex);
 
-                // 恢复关闭功能
+                // 失败后这颗按钮的作用变成关掉窗口，实心留给它，不用再改层级
                 _btnUpdate.Text = "关闭";
                 _btnUpdate.Enabled = true;
                 _btnUpdate.Click -= OnUpdateClick;
                 _btnUpdate.Click += (_, _) => Close();
                 AcceptButton = _btnUpdate;
+                LayoutBar();
             }
         }
     }

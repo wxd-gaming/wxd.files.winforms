@@ -13,36 +13,16 @@ namespace wxd.files.winforms
     /// </summary>
     public class NoteForm : Form
     {
-        // ==================== 配色（浅色/深色） ====================
-        private readonly bool _isDark;
-        private static readonly Color _lightBg = Color.FromArgb(245, 250, 255);
-        private static readonly Color _lightPanel = Color.White;
-        private static readonly Color _lightBorder = Color.FromArgb(200, 215, 230);
-        private static readonly Color _lightListItemBg = Color.White;
-        private static readonly Color _lightListItemHover = Color.FromArgb(235, 243, 252);
-        private static readonly Color _lightListItemSel = Color.FromArgb(210, 230, 250);
-        private static readonly Color _lightTitleFg = Color.FromArgb(20, 60, 100);
-        private static readonly Color _lightSubFg = Color.FromArgb(120, 140, 160);
-        private static readonly Color _lightTextFg = Color.FromArgb(30, 50, 80);
-
-        private static readonly Color _darkBg = Color.FromArgb(30, 30, 30);
-        private static readonly Color _darkPanel = Color.FromArgb(45, 45, 48);
-        private static readonly Color _darkBorder = Color.FromArgb(70, 70, 76);
-        private static readonly Color _darkListItemBg = Color.FromArgb(45, 45, 48);
-        private static readonly Color _darkListItemHover = Color.FromArgb(62, 62, 66);
-        private static readonly Color _darkListItemSel = Color.FromArgb(81, 113, 170);
-        private static readonly Color _darkTitleFg = Color.FromArgb(241, 241, 241);
-        private static readonly Color _darkSubFg = Color.FromArgb(160, 160, 160);
-        private static readonly Color _darkTextFg = Color.FromArgb(220, 220, 220);
-
         // ==================== 控件 ====================
         private SplitContainer _splitter = null!;
         private Panel _leftPanel = null!;
         private Panel _toolBarPanel = null!;
-        private Button _btnNew = null!;
-        private Button _btnDelete = null!;
+        private Panel _searchRow = null!;
+        private ThemeButton _btnNew = null!;
+        private ThemeButton _btnDelete = null!;
+        private ThemeField _fldSearch = null!;
         private TextBox _txtSearch = null!;
-        private Button _btnSearch = null!;
+        private ThemeButton _btnSearch = null!;
         private Panel _listPanel = null!;
         private Panel _rightPanel = null!;
         private Panel _cardPanel = null!;
@@ -50,9 +30,9 @@ namespace wxd.files.winforms
         private Label _lblTitleHint = null!;
         private TextBox _txtTitle = null!;
         private RichTextBox _rtbContent = null!;
-        private StatusStrip _statusBar = null!;
-        private ToolStripStatusLabel _lblStatus = null!;
-        private ToolStripStatusLabel _lblCount = null!;
+        private Panel _statusBar = null!;
+        private Label _lblStatus = null!;
+        private Label _lblCount = null!;
 
         // ==================== 状态 ====================
         private List<NoteItem> _allNotes = new();           // 全部笔记
@@ -66,14 +46,15 @@ namespace wxd.files.winforms
         private string _pendingRtf = "";
         private string _pendingPlain = "";
 
-        public NoteForm(bool isDark)
+        public NoteForm()
         {
-            _isDark = isDark;
             _debounceTimer = new System.Windows.Forms.Timer { Interval = 1500 };
             _debounceTimer.Tick += OnDebounceTick;
 
             BuildUi();
             ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             LoadNotes();
         }
 
@@ -84,7 +65,7 @@ namespace wxd.files.winforms
             ClientSize = new Size(900, 580);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Microsoft YaHei UI", 9f);
+            Font = Theme.Body;
             ShowIcon = false;
             KeyPreview = true;
 
@@ -123,77 +104,34 @@ namespace wxd.files.winforms
             _toolBarPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 36,
-                Padding = new Padding(6, 4, 6, 4)
+                Height = ThemeMetrics.BarHeight
             };
 
-            _btnNew = new Button
-            {
-                Text = "+ 新建",
-                Size = new Size(80, 26),
-                Location = new Point(6, 5),
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand
-            };
-            _btnNew.FlatAppearance.BorderSize = 1;
+            _btnNew = DialogButtonBar.Make("新建");
             _btnNew.Click += OnNewClick;
-            _toolBarPanel.Controls.Add(_btnNew);
-
-            _btnDelete = new Button
-            {
-                Text = "🗑 删除",
-                Size = new Size(80, 26),
-                Location = new Point(6 + 80 + 6, 5),   // 紧贴新建按钮右侧
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Cursor = Cursors.Hand
-            };
-            _btnDelete.FlatAppearance.BorderSize = 1;
+            _btnDelete = DialogButtonBar.Make("删除");
             _btnDelete.Click += OnDeleteClick;
-            _toolBarPanel.Controls.Add(_btnDelete);
+            _toolBarPanel.Controls.AddRange(new Control[] { _btnNew, _btnDelete });
+            _toolBarPanel.Resize += (_, _) => LayoutToolBar();
+            LayoutToolBar();
 
-            // 搜索行（用 TableLayoutPanel 保证文本框和按钮高度对齐）
-            var searchPanel = new TableLayoutPanel
+            // 搜索行：输入框占满剩余宽度，搜索按钮贴右
+            _searchRow = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 34,
-                ColumnCount = 2,
-                Padding = new Padding(6, 4, 6, 4),
-                Margin = new Padding(0)
+                Height = ThemeMetrics.BarHeight
             };
-            searchPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f)); // 文本框占满剩余
-            searchPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));  // 按钮固定宽
-            searchPanel.RowCount = 1;
-            searchPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-
-            _txtSearch = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                PlaceholderText = "搜索标题或内容...",
-                Margin = new Padding(0, 2, 4, 2)
-            };
+            _fldSearch = new ThemeField { Placeholder = "搜索标题或内容..." };
+            _txtSearch = _fldSearch.Edit;
             _txtSearch.KeyDown += (s, e) =>
             {
                 if (e.KeyCode == Keys.Enter) { ApplyFilter(); e.SuppressKeyPress = true; }
             };
-
-            _btnSearch = new Button
-            {
-                Text = "🔍",
-                Dock = DockStyle.Fill,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9f),
-                Cursor = Cursors.Hand,
-                Margin = new Padding(0, 2, 0, 2)
-            };
-            _btnSearch.FlatAppearance.BorderSize = 1;
+            _btnSearch = DialogButtonBar.Make("搜索");
             _btnSearch.Click += (s, e) => ApplyFilter();
-
-            searchPanel.Controls.Add(_txtSearch, 0, 0);
-            searchPanel.Controls.Add(_btnSearch, 1, 0);
+            _searchRow.Controls.AddRange(new Control[] { _fldSearch, _btnSearch });
+            _searchRow.Resize += (_, _) => LayoutSearchRow(_searchRow);
+            LayoutSearchRow(_searchRow);
 
             // 列表（用可滚动 Panel 承载 NoteListItemControl，子控件 Dock=Top 自动堆叠并占满宽度）
             _listPanel = new Panel
@@ -201,7 +139,7 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                Font = Theme.Body
             };
 
             // Dock 布局顺序：WinForms 按 z-order 逆序 Dock（索引大的先布局,占外侧位置）。
@@ -209,8 +147,26 @@ namespace wxd.files.winforms
             // Top 控件按"越靠外的越后 Add"的顺序加入。
             // 工具栏(最外顶) → 最后 Add, 搜索框(次外顶) → 第二 Add, 列表(Fill) → 第一 Add
             _leftPanel.Controls.Add(_listPanel);
-            _leftPanel.Controls.Add(searchPanel);
+            _leftPanel.Controls.Add(_searchRow);
             _leftPanel.Controls.Add(_toolBarPanel);
+        }
+
+        private void LayoutToolBar()
+        {
+            int x = ThemeMetrics.Margin, y = ThemeMetrics.RowPad;
+            int rowH = ThemeMetrics.RowH;
+            _btnNew.SetBounds(x, y, ThemeButton.FitWidth(_btnNew.Text), rowH);
+            x += _btnNew.Width + ThemeMetrics.Gap;
+            _btnDelete.SetBounds(x, y, ThemeButton.FitWidth(_btnDelete.Text), rowH);
+        }
+
+        private void LayoutSearchRow(Panel row)
+        {
+            int m = ThemeMetrics.Margin, y = ThemeMetrics.RowPad;
+            int rowH = ThemeMetrics.RowH;
+            int btnW = ThemeButton.FitWidth(_btnSearch.Text);
+            _btnSearch.SetBounds(row.Width - m - btnW, y, btnW, rowH);
+            _fldSearch.SetBounds(m, y, Math.Max(60, _btnSearch.Left - m - ThemeMetrics.Gap), rowH);
         }
 
         private void BuildRightPanel(Panel parent)
@@ -218,12 +174,13 @@ namespace wxd.files.winforms
             _rightPanel = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(12, 12, 12, 8)   // 浅蓝底留白，衬托白色卡片
+                Padding = new Padding(ThemeMetrics.Group, ThemeMetrics.Group,
+                                     ThemeMetrics.Group, ThemeMetrics.RowPad)   // 窗口底色留白，衬托卡片
             };
             parent.Controls.Add(_rightPanel);
 
-            // 白色卡片：Panel 自绘 1px 边框（Panel 是托管控件，Paint 可靠触发，
-            // 不像 TextBox 原生控件默认不触发 Paint）
+            // 笔记正文画成圆角卡片，和文件管理器那边的窗格卡片同一套画法：
+            // Surface 填充 + 1px 描边，聚焦时描边转 Accent
             _cardPanel = new Panel
             {
                 Dock = DockStyle.Fill,
@@ -231,13 +188,19 @@ namespace wxd.files.winforms
             };
             _cardPanel.Paint += (s, e) =>
             {
-                var r = _cardPanel.ClientRectangle;
-                using var pen = new Pen(_isDark ? _darkBorder : _lightBorder, 1);
-                e.Graphics.DrawRectangle(pen, 0, 0, r.Width - 1, r.Height - 1);
+                var p = Theme.P;
+                float stroke = _rtbContent.Focused || _txtTitle.Focused ? 2f : 1f;
+                var rect = new RectangleF(stroke / 2f, stroke / 2f,
+                    _cardPanel.Width - stroke, _cardPanel.Height - stroke);
+                using var path = ThemeButton.RoundRect(rect, p.Radius);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var fill = new SolidBrush(p.Surface)) e.Graphics.FillPath(fill, path);
+                using var pen = new Pen(_rtbContent.Focused || _txtTitle.Focused ? p.Accent : p.Border, stroke);
+                e.Graphics.DrawPath(pen, path);
             };
             _rightPanel.Controls.Add(_cardPanel);
 
-            // 标题区：Label + FixedSingle 输入框 + 底部 1px 细分隔线
+            // 标题区：Label + 无边框输入框 + 底部 1px 细分隔线，边界由卡片提供
             _titlePanel = new Panel
             {
                 Dock = DockStyle.Top,
@@ -247,7 +210,7 @@ namespace wxd.files.winforms
             _titlePanel.Paint += (s, e) =>
             {
                 var r = _titlePanel.ClientRectangle;
-                using var pen = new Pen(_isDark ? _darkBorder : _lightBorder, 1);
+                using var pen = new Pen(Theme.P.Divider, 1);
                 e.Graphics.DrawLine(pen, 0, r.Bottom - 1, r.Width, r.Bottom - 1);
             };
 
@@ -256,15 +219,14 @@ namespace wxd.files.winforms
                 Text = "标题：",
                 AutoSize = true,
                 Dock = DockStyle.Left,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Microsoft YaHei UI", 9f)
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
             _txtTitle = new TextBox
             {
                 Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold),
+                BorderStyle = BorderStyle.None,
+                Font = Theme.Body,
                 PlaceholderText = "输入标题..."
             };
             _txtTitle.TextChanged += OnTitleChanged;
@@ -278,29 +240,52 @@ namespace wxd.files.winforms
             _titlePanel.Controls.Add(_txtTitle);
             _titlePanel.Controls.Add(_lblTitleHint);
 
-            // 状态栏（Bottom）：透明底 + 去掉右下角尺寸握把
-            _statusBar = new StatusStrip
+            // 状态栏（Bottom）：Panel + Label，跟其他窗口一致。
+            // 原来用 StatusStrip，但 ToolStripStatusLabel 不认 ForeColor（系统渲染器走自己的取色），
+            // 深色下会画成黑底黑字，只剩 ClearType 边缘那点蓝色像素。
+            _statusBar = new Panel { Dock = DockStyle.Bottom, Height = Theme.P.RowHeight };
+            _statusBar.Paint += (s, e) =>
             {
-                BackColor = Color.Transparent,
-                SizingGrip = false,
-                Padding = new Padding(0, 4, 0, 2)
+                var r = _statusBar.ClientRectangle;
+                using var pen = new Pen(Theme.P.Divider, 1);
+                e.Graphics.DrawLine(pen, 0, 0, r.Width, 0);
             };
-            _lblCount = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-            _lblStatus = new ToolStripStatusLabel { TextAlign = ContentAlignment.MiddleRight };
-            _statusBar.Items.Add(_lblCount);
-            _statusBar.Items.Add(_lblStatus);
+            _lblCount = new Label
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(2, 0, 0, 0)
+            };
+            _lblStatus = new Label
+            {
+                Dock = DockStyle.Right,
+                AutoSize = false,
+                Width = 130,
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding = new Padding(0, 0, 6, 0)
+            };
+            // Dock 顺序：Fill 先 Add 占剩余，Right 后 Add 先挤右侧
+            _statusBar.Controls.Add(_lblCount);
+            _statusBar.Controls.Add(_lblStatus);
 
             // 内容编辑区（Fill）：无边框，边界由卡片提供，消除"框中框"
             _rtbContent = new RichTextBox
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Microsoft YaHei UI", 10.5f),
+                Font = Theme.Body,
                 WordWrap = true,
                 DetectUrls = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical
             };
             _rtbContent.TextChanged += OnContentChanged;
+            // 聚焦态画在卡片描边上，进出焦点要重画一次卡片
+            foreach (Control c in new Control[] { _rtbContent, _txtTitle })
+            {
+                c.Enter += (_, _) => _cardPanel.Invalidate();
+                c.Leave += (_, _) => _cardPanel.Invalidate();
+            }
 
             // Dock 布局顺序：Fill 先 Add(z 低)，Top/Bottom 后 Add(z 高,先从边缘挤占)
             _cardPanel.Controls.Add(_rtbContent);
@@ -311,54 +296,48 @@ namespace wxd.files.winforms
         // ==================== 主题 ====================
         private void ApplyTheme()
         {
-            var bg = _isDark ? _darkBg : _lightBg;
-            var panel = _isDark ? _darkPanel : _lightPanel;
-            var titleFg = _isDark ? _darkTitleFg : _lightTitleFg;
-            var subFg = _isDark ? _darkSubFg : _lightSubFg;
-            var textFg = _isDark ? _darkTextFg : _lightTextFg;
+            var p = Theme.P;
+            Font = Theme.Body;
 
-            BackColor = bg;
-            _leftPanel.BackColor = panel;
-            _rightPanel.BackColor = bg;
-            _toolBarPanel.BackColor = panel;
-            _splitter.BackColor = bg;   // 分隔条与底色一致，消除突兀灰条
+            BackColor = p.Window;
+            _leftPanel.BackColor = p.Window;
+            _rightPanel.BackColor = p.Window;
+            _toolBarPanel.BackColor = p.Chrome;
+            _searchRow.BackColor = p.Chrome;
+            _splitter.BackColor = p.Window;   // 分隔条与底色一致，消除突兀灰条
 
-            // 按钮（新建=琥珀色，删除=灰红）
-            StyleButton(_btnNew, Color.FromArgb(255, 152, 0), Color.FromArgb(245, 124, 0));
-            StyleButton(_btnDelete, Color.FromArgb(229, 115, 115), Color.FromArgb(198, 78, 78));
-            StyleButton(_btnSearch, _isDark ? Color.FromArgb(70, 70, 74) : Color.FromArgb(227, 235, 245),
-                         _isDark ? Color.FromArgb(90, 90, 94) : Color.FromArgb(180, 200, 220));
-            _btnSearch.ForeColor = _isDark ? Color.White : Color.FromArgb(40, 60, 90);
+            foreach (var b in new[] { _btnNew, _btnDelete, _btnSearch })
+                b.BackColor = p.Chrome;
+            _fldSearch.ApplyTheme();
 
-            _txtSearch.BackColor = _isDark ? Color.FromArgb(37, 37, 38) : Color.White;
-            _txtSearch.ForeColor = textFg;
-            _txtSearch.BorderStyle = BorderStyle.FixedSingle;
+            // 列表项自己会按 Surface/Hover/Selection 上色，这里只兜住空隙
+            _listPanel.BackColor = p.Surface;
+            _listPanel.ForeColor = p.Text;
 
-            _listPanel.BackColor = panel;
-            _listPanel.ForeColor = titleFg;
+            // 卡片：本体 Surface，圆角外圈露出的部分跟窗口底色一致
+            _cardPanel.BackColor = p.Window;
+            _titlePanel.BackColor = p.Surface;
+            _lblTitleHint.ForeColor = p.Muted;
+            _txtTitle.BackColor = p.Surface;
+            _txtTitle.ForeColor = p.Text;
+            _rtbContent.BackColor = p.Surface;
+            _rtbContent.ForeColor = p.Text;
+            if (_rtbContent.IsHandleCreated)
+            {
+                // 换肤刷字色不是用户编辑：不压住事件就会把笔记标脏，防抖一过自动存盘并挪动 UpdatedAt
+                _suppressContentEvents = true;
+                try { RecolorContentText(); }
+                finally { _suppressContentEvents = false; }
+            }
 
-            // 卡片及内部统一用面板色（白/深灰），形成"纸面"整体
-            _cardPanel.BackColor = panel;
-            _titlePanel.BackColor = panel;
-            _lblTitleHint.ForeColor = subFg;
+            _statusBar.BackColor = p.Chrome;
+            _lblCount.ForeColor = p.Muted;
+            _lblStatus.ForeColor = p.Muted;
 
-            _txtTitle.BackColor = panel;
-            _txtTitle.ForeColor = titleFg;
-
-            _rtbContent.BackColor = panel;
-            _rtbContent.ForeColor = textFg;
-
-            _statusBar.BackColor = Color.Transparent;
-            _lblCount.ForeColor = subFg;
-            _lblStatus.ForeColor = subFg;
-        }
-
-        private static void StyleButton(Button btn, Color bg, Color border)
-        {
-            btn.BackColor = bg;
-            btn.ForeColor = Color.White;
-            btn.FlatAppearance.BorderColor = border;
-            btn.FlatAppearance.MouseOverBackColor = ControlPaint.Light(bg, 0.1f);
+            LayoutToolBar();
+            LayoutSearchRow(_searchRow);
+            _cardPanel.Invalidate();
+            Invalidate(true);
         }
 
         // ==================== 数据加载 ====================
@@ -402,7 +381,7 @@ namespace wxd.files.winforms
             for (var i = _filtered.Count - 1; i >= 0; i--)
             {
                 var n = _filtered[i];
-                var ctrl = new NoteListItemControl(n, _isDark);
+                var ctrl = new NoteListItemControl(n);
                 ctrl.Selected += OnItemSelected;
                 _listPanel.Controls.Add(ctrl);
                 if (n.Id == _currentId) selectCtrl = ctrl;
@@ -456,6 +435,22 @@ namespace wxd.files.winforms
             base.OnResize(e);
         }
 
+        /// <summary>
+        /// 正文按当前主题重刷取色。
+        /// 笔记存的是 RTF，里面钉着写入当时主题的正文色（浅色下是 30,50,80 这种近黑蓝），
+        /// 直接 Rtf= 赋值会把控件 ForeColor 顶掉，深色底上就变成看不见。
+        /// 编辑器本身没有改字色的功能，所以读回来一律刷成 Theme.P.Text，光标位置原样还回去。
+        /// </summary>
+        private void RecolorContentText()
+        {
+            if (_rtbContent.TextLength == 0) return;
+            int caret = _rtbContent.SelectionStart;
+            int len = _rtbContent.SelectionLength;
+            _rtbContent.SelectAll();
+            _rtbContent.SelectionColor = Theme.P.Text;
+            _rtbContent.Select(caret, len);
+        }
+
         private void LoadNoteToEditor(NoteItem note)
         {
             _suppressContentEvents = true;
@@ -466,6 +461,7 @@ namespace wxd.files.winforms
                 {
                     try { _rtbContent.Rtf = note.RtfContent; }
                     catch { _rtbContent.Text = note.PlainText; }
+                    RecolorContentText();
                 }
                 else
                 {

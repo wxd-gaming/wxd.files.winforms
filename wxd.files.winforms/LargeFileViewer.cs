@@ -17,12 +17,17 @@ namespace wxd.files.winforms
         // ==================== 控件 ====================
         private SplitContainer _splitContainer = new();
         private ListView _lstFiles = new();
-        private TextBox _txtFileFilter = new();
+        private ThemeField _fldFilter = new();
+        private TextBox _txtFileFilter => _fldFilter.Edit;
         private TabControl _tabContent = new();
         private Panel _pnlLeft = new();
         private Panel _pnlLeftTop = new();
-        private Button _btnSelectFolder = new();
-        private Button _btnRefresh = new();
+        private ThemeButton _btnSelectFolder = new();
+        private ThemeButton _btnRefresh = new();
+        private ThemeButton _btnHelp = new();
+        private ThemeButton _btnTabMenu = new();
+        private Panel _tabPanel = new();
+        private Panel _tabStripCover = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
@@ -62,19 +67,15 @@ namespace wxd.files.winforms
             public string RelativePath { get; set; } = "";
         }
 
-        // ==================== 配色（浅色天蓝色调）====================
-        private static readonly Color _colorLightBg = Color.FromArgb(235, 248, 255);
-        private static readonly Color _colorLightBorder = Color.FromArgb(173, 209, 237);
-        private static readonly Color _colorLightText = Color.FromArgb(20, 60, 100);
-        private static readonly Color _colorLightTextSecondary = Color.FromArgb(90, 130, 170);
-        private static readonly Color _colorBtnBg = Color.FromArgb(66, 165, 245);
-
         public LargeFileViewer(string? initialDir = null)
         {
             _currentDir = initialDir ?? "";
             InitializeComponent();
             CreateControls();
             ApplyTheme();
+            // 独立窗口，主窗翻明暗时遍历不到，只能自己订阅
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
 
             Shown += async (s, e) =>
             {
@@ -113,66 +114,24 @@ namespace wxd.files.winforms
 
             // ==================== 左侧面板 ====================
             _pnlLeft.Dock = DockStyle.Fill;
-            _pnlLeft.BackColor = Color.White;
             _pnlLeft.Padding = new Padding(0);
 
-            // 左侧顶部工具栏
-            _pnlLeftTop.Height = 80;
+            // 左侧顶部工具栏：按钮一行、过滤框一行、文件数一行，坐标由 LayoutLeftTop 算
             _pnlLeftTop.Dock = DockStyle.Top;
-            _pnlLeftTop.BackColor = _colorLightBg;
-            _pnlLeftTop.Padding = new Padding(6, 4, 6, 4);
+            _pnlLeftTop.Padding = new Padding(0);
 
-            // 选择目录按钮
-            _btnSelectFolder = new Button
-            {
-                Text = "选择目录",
-                Location = new Point(6, 6),
-                Size = new Size(80, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorBtnBg,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            _btnSelectFolder.FlatAppearance.BorderSize = 1;
-            _btnSelectFolder.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+            _btnSelectFolder = new ThemeButton { Text = "选择目录", Primary = true };
             _btnSelectFolder.Click += OnSelectFolderClick;
 
-            // 刷新按钮
-            _btnRefresh = new Button
-            {
-                Text = "刷新",
-                Location = new Point(90, 6),
-                Size = new Size(50, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = _colorBtnBg,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            _btnRefresh.FlatAppearance.BorderSize = 1;
-            _btnRefresh.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
+            _btnRefresh = new ThemeButton { Text = "刷新" };
             _btnRefresh.Click += OnRefreshClick;
 
-            // 过滤文本框
-            _txtFileFilter = new TextBox
-            {
-                Location = new Point(6, 40),
-                Size = new Size(250, 23),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BorderStyle = BorderStyle.FixedSingle,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left,
-                PlaceholderText = "过滤文件名..."
-            };
+            _btnHelp = new ThemeButton { Text = "使用说明" };
+            _btnHelp.Click += OnHelpClick;
 
-            _lblFileCount = new Label
-            {
-                Text = "共 0 个文件",
-                Location = new Point(6, 66),
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ForeColor = _colorLightTextSecondary
-            };
+            _fldFilter = new ThemeField { Placeholder = "过滤文件名..." };
+
+            _lblFileCount = new Label { Text = "共 0 个文件", AutoSize = true };
 
             _filterDebounceTimer = new System.Windows.Forms.Timer { Interval = 300 };
             _filterDebounceTimer.Tick += (s, e) =>
@@ -194,23 +153,8 @@ namespace wxd.files.winforms
                 }
             };
 
-            // 使用说明按钮（放在过滤文本框右侧）
-            var btnHelp = new Button
-            {
-                Text = "使用说明",
-                Location = new Point(144, 6),
-                Size = new Size(75, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(120, 144, 156),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnHelp.FlatAppearance.BorderSize = 1;
-            btnHelp.FlatAppearance.BorderColor = Color.FromArgb(96, 125, 139);
-            btnHelp.Click += OnHelpClick;
-
-            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, btnHelp, _txtFileFilter, _lblFileCount });
+            _pnlLeftTop.Controls.AddRange(new Control[] { _btnSelectFolder, _btnRefresh, _btnHelp, _fldFilter, _lblFileCount });
+            LayoutLeftTop();
 
             // 文件列表
             _imgList = new ImageList();
@@ -226,7 +170,6 @@ namespace wxd.files.winforms
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
-                Font = new Font("Microsoft YaHei UI", 9f),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = false,
@@ -253,71 +196,44 @@ namespace wxd.files.winforms
             _tabContent = new TabControl
             {
                 Dock = DockStyle.Fill,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                ItemSize = new Size(200, 28),
                 SizeMode = TabSizeMode.Fixed,
                 Multiline = true
             };
             _tabContent.SelectedIndexChanged += OnTabSelectedChanged;
 
             // ▼ 下拉按钮（列出所有打开的标签页）
-            var btnTabMenu = new Button
-            {
-                Text = "▼",
-                Size = new Size(24, 24),
-                Location = new Point(0, 2),
-                Font = new Font("Microsoft YaHei UI", 8f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.White,
-                ForeColor = Color.FromArgb(107, 114, 128),
-                Cursor = Cursors.Hand,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Padding = new Padding(0),
-                Margin = new Padding(0),
-                FlatAppearance = { BorderSize = 0 }
-            };
-            btnTabMenu.Click += (s, e) => ShowTabMenu(btnTabMenu);
+            _btnTabMenu = new ThemeButton { Text = "▼", Ghost = true };
+            _btnTabMenu.Click += (s, e) => ShowTabMenu(_btnTabMenu);
 
-            // 标签页面板：TabControl + ▼按钮（覆盖在右上角）
-            var tabPanel = new Panel
+            // 标签页面板：TabControl + 页签条盖板 + ▼按钮（后两个盖在右上角）
+            _tabPanel = new Panel { Dock = DockStyle.Fill };
+            _tabPanel.SizeChanged += (s, e) =>
             {
-                Dock = DockStyle.Fill,
-                BackColor = Color.White
+                int size = Theme.P.ButtonHeight;
+                _btnTabMenu.SetBounds(_tabPanel.Width - size - 6, 4, size, size);
+                LayoutTabStripCover();
             };
-            tabPanel.SizeChanged += (s, e) =>
-            {
-                btnTabMenu.Location = new Point(tabPanel.Width - 28, 2);
-            };
-            tabPanel.Controls.Add(_tabContent);
-            tabPanel.Controls.Add(btnTabMenu);
-            btnTabMenu.BringToFront();
+            _tabContent.SelectedIndexChanged += (s, e) => LayoutTabStripCover();
+            _tabContent.ControlAdded += (s, e) => LayoutTabStripCover();
+            _tabContent.ControlRemoved += (s, e) => LayoutTabStripCover();
+            _tabPanel.Controls.Add(_tabContent);
+            _tabPanel.Controls.Add(_tabStripCover);
+            _tabPanel.Controls.Add(_btnTabMenu);
+            _tabStripCover.BringToFront();
+            _btnTabMenu.BringToFront();
 
             // 初始空白页
-            var welcomePage = new TabPage("欢迎")
-            {
-                BackColor = _colorLightBg
-            };
-            var welcomeLabel = new Label
-            {
-                Text = "在左侧文件列表中选择文件打开\n或点击\"打开文件\"按钮",
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Microsoft YaHei UI", 12f),
-                ForeColor = _colorLightTextSecondary
-            };
-            welcomePage.Controls.Add(welcomeLabel);
-            _tabContent.TabPages.Add(welcomePage);
+            _tabContent.TabPages.Add(MakeWelcomePage());
 
             // ==================== 分割容器 ====================
             _splitContainer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 SplitterDistance = 400,
-                FixedPanel = FixedPanel.Panel1,
-                BackColor = _colorLightBorder
+                FixedPanel = FixedPanel.Panel1
             };
             _splitContainer.Panel1.Controls.Add(_pnlLeft);
-            _splitContainer.Panel2.Controls.Add(tabPanel);
+            _splitContainer.Panel2.Controls.Add(_tabPanel);
 
             _splitContainer.SplitterMoved += (s, e) =>
             {
@@ -327,10 +243,7 @@ namespace wxd.files.winforms
 
             Controls.Add(_splitContainer);
 
-            _pnlLeftTop.Resize += (s, e) =>
-            {
-                _txtFileFilter.Width = Math.Max(100, _pnlLeftTop.Width - 16);
-            };
+            _pnlLeftTop.Resize += (s, e) => LayoutLeftTop();
 
             _lstFiles.Resize += (s, e) =>
             {
@@ -341,13 +254,124 @@ namespace wxd.files.winforms
             ResumeLayout(false);
         }
 
+        /// <summary>
+        /// 左侧工具区逐行算坐标：按钮、过滤框、文件数各一行。
+        /// 过滤框跟着面板宽度铺满，不再像原来那样固定 250 宽被截断。
+        /// </summary>
+        private void LayoutLeftTop()
+        {
+            // 边距和间距与阅读器工具条用同一套数字，两个区域才看得出是同一风格
+            int margin = ThemeMetrics.Margin, gap = ThemeMetrics.Gap;
+            int rowH = ThemeMetrics.RowH;
+            int w = Math.Max(120, _pnlLeftTop.Width - margin * 2);
+            int y = 8;
+
+            int x = margin;
+            int wSelect = ThemeButton.FitWidth(_btnSelectFolder.Text);
+            int wRefresh = ThemeButton.FitWidth(_btnRefresh.Text);
+            int wHelp = ThemeButton.FitWidth(_btnHelp.Text);
+            _btnSelectFolder.SetBounds(x, y, wSelect, rowH); x += wSelect + gap;
+            _btnRefresh.SetBounds(x, y, wRefresh, rowH); x += wRefresh + gap;
+            _btnHelp.SetBounds(x, y, wHelp, rowH);
+
+            y += rowH + gap;
+            _fldFilter.SetBounds(margin, y, w, rowH);
+
+            y += rowH + gap - 2;
+            _lblFileCount.Location = new Point(margin + 2, y);
+            _pnlLeftTop.Height = _lblFileCount.Bottom + 8;
+        }
+
+        /// <summary>
+        /// 页签条右侧空白是 comctl32 拿系统灰画死的，BackColor 和 SetWindowTheme 都压不住，
+        /// 所以用一块同色面板只盖空白段，页签本体仍由 TabControl 自绘；多行时空白只出现在最后一行。
+        /// </summary>
+        private void LayoutTabStripCover()
+        {
+            int n = _tabContent.TabCount;
+            if (n == 0 || !_tabContent.IsHandleCreated)
+            {
+                _tabStripCover.Visible = false;
+                return;
+            }
+            var last = _tabContent.GetTabRect(n - 1);
+            int w = _tabContent.Width - last.Right;
+            if (w <= 1)
+            {
+                _tabStripCover.Visible = false;
+                return;
+            }
+            // 从页签条顶端开始盖，顺带盖住上面那条系统色描边和下面的分隔线
+            // 但页签换行时 last 已经在下面一行，从 0 盖会把第一行右侧的页签一起涂掉，只盖它自己那一行
+            var first = _tabContent.GetTabRect(0);
+            int top = last.Top > first.Top ? last.Top : 0;
+            _tabStripCover.SetBounds(last.Right, top, w, last.Bottom - top + 4);
+            _tabStripCover.Visible = true;
+        }
+
+        /// <summary>没有页签时的占位页，两种皮肤都靠令牌取色。</summary>
+        private TabPage MakeWelcomePage()
+        {
+            var page = new TabPage("欢迎") { BackColor = Theme.P.Window };
+            var label = new Label
+            {
+                Text = "在左侧文件列表中选择文件打开\n或点击\"打开文件\"按钮",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.Title,
+                ForeColor = Theme.P.Muted,
+                BackColor = Color.Transparent,
+                Tag = "welcome"
+            };
+            page.Controls.Add(label);
+            return page;
+        }
+
+        /// <summary>取色全部走当前皮肤令牌；换皮肤或翻明暗时由 Theme.Changed 重新走一遍。</summary>
         private void ApplyTheme()
         {
-            BackColor = _colorLightBg;
-            _pnlLeft.BackColor = Color.White;
-            _lstFiles.BackColor = Color.White;
-            _lstFiles.ForeColor = _colorLightText;
-            _tabContent.BackColor = Color.White;
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _splitContainer.BackColor = p.Divider;
+
+            _pnlLeft.BackColor = p.Surface;
+            _pnlLeftTop.BackColor = p.Chrome;
+            foreach (var b in new[] { _btnSelectFolder, _btnRefresh, _btnHelp })
+            {
+                b.BackColor = p.Chrome;
+                b.Font = Theme.Body;
+                b.Invalidate();
+            }
+            _fldFilter.ApplyTheme();
+            _lblFileCount.Font = Theme.Caption;
+            _lblFileCount.ForeColor = p.Muted;
+            _lblFileCount.BackColor = p.Chrome;
+
+            _lstFiles.Font = Theme.List;
+            _lstFiles.BackColor = p.Surface;
+            _lstFiles.ForeColor = p.Text;
+
+            _tabPanel.BackColor = p.Window;
+            _tabContent.Font = Theme.Body;
+            _tabContent.BackColor = p.Window;
+            _tabContent.ItemSize = new Size(180, p.ButtonHeight + 4);
+            _tabStripCover.BackColor = p.Window;
+            _btnTabMenu.BackColor = p.Window;
+            _btnTabMenu.Font = Theme.Caption;
+            _btnTabMenu.Invalidate();
+
+            // 欢迎页是程序自己造的占位页，页签里带的文件阅读器由控件自己响应主题
+            foreach (TabPage page in _tabContent.TabPages)
+            {
+                bool welcome = false;
+                foreach (Control c in page.Controls)
+                    if (c.Tag as string == "welcome") { c.ForeColor = p.Muted; welcome = true; }
+                if (welcome) page.BackColor = p.Window;
+            }
+
+            LayoutLeftTop();
+            LayoutTabStripCover();
         }
 
         // ==================== 目录选择与文件加载 ====================
@@ -468,7 +492,7 @@ namespace wxd.files.winforms
   · 内存占用严格控制在合理范围内
   · 大文件打开速度与文件大小无关，秒级响应";
 
-            HelpForm.ShowHelp(this, "使用说明 - 日志分析", helpText, CsvSettings.ThemeMode == 0);
+            HelpForm.ShowHelp(this, "使用说明 - 日志分析", helpText);
         }
 
         private async void LoadFilesAsync()
@@ -595,7 +619,7 @@ namespace wxd.files.winforms
 
             if (_allFiles.Count == 0)
             {
-                _lstFiles.Items.Add(new ListViewItem("未找到文本文件") { ForeColor = _colorLightTextSecondary });
+                _lstFiles.Items.Add(new ListViewItem("未找到文本文件") { ForeColor = Theme.P.Muted });
                 _lstFiles.EndUpdate();
                 _lblFileCount.Text = "共 0 个文件";
                 return;
@@ -628,7 +652,7 @@ namespace wxd.files.winforms
 
             if (_allFiles.Count == 0)
             {
-                _lstFiles.Items.Add(new ListViewItem("未找到文本文件") { ForeColor = _colorLightTextSecondary });
+                _lstFiles.Items.Add(new ListViewItem("未找到文本文件") { ForeColor = Theme.P.Muted });
                 _lstFiles.EndUpdate();
                 _lblFileCount.Text = "共 0 个文件";
                 return;
@@ -809,7 +833,7 @@ namespace wxd.files.winforms
                     var roundRect = new Rectangle(
                         tabRect.X + 2, tabRect.Y + 2,
                         tabRect.Width - 4, tabRect.Height - 2 + bottomExtra);
-                    int radius = 6;
+                    int radius = Theme.P.Radius + 2;
 
                     using (var path = new GraphicsPath())
                     {
@@ -822,17 +846,8 @@ namespace wxd.files.winforms
 
                         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-                        Color bgColor, borderColor;
-                        if (isSelected)
-                        {
-                            bgColor = Color.FromArgb(66, 165, 245);
-                            borderColor = Color.FromArgb(30, 136, 229);
-                        }
-                        else
-                        {
-                            bgColor = Color.FromArgb(227, 242, 253);
-                            borderColor = Color.FromArgb(173, 209, 237);
-                        }
+                        var bgColor = isSelected ? Theme.P.Accent : Theme.P.Selection;
+                        var borderColor = isSelected ? Theme.P.Accent : Theme.P.Border;
 
                         using (var brush = new SolidBrush(bgColor))
                         {
@@ -845,12 +860,12 @@ namespace wxd.files.winforms
                     }
 
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Color.White : Color.FromArgb(20, 60, 100);
+                    Color textColor = isSelected ? Theme.P.AccentText : Theme.P.Text;
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
                     var closeRect = new Rectangle(tabRect.Right - 18, tabRect.Top + 6, 12, 12);
-                    Color closeColor = isSelected ? Color.FromArgb(200, 220, 255) : Color.FromArgb(107, 114, 128);
+                    Color closeColor = isSelected ? Theme.Mix(Theme.P.Accent, Color.White, 0.5f) : Theme.P.Muted;
                     using (var pen = new Pen(closeColor, 1.5f))
                     {
                         e.Graphics.DrawLine(pen, closeRect.Left + 2, closeRect.Top + 2, closeRect.Right - 2, closeRect.Bottom - 2);
@@ -859,7 +874,7 @@ namespace wxd.files.winforms
 
                     if (isSelected)
                     {
-                        using (var coverPen = new Pen(Color.FromArgb(66, 165, 245), 2f))
+                        using (var coverPen = new Pen(Theme.P.Accent, 2f))
                         {
                             e.Graphics.DrawLine(coverPen,
                                 roundRect.X + 1, roundRect.Bottom,
@@ -891,29 +906,18 @@ namespace wxd.files.winforms
 
             // 如果没有标签页了，恢复欢迎页
             if (_tabContent.TabPages.Count == 0)
-            {
-                var welcomePage = new TabPage("欢迎")
-                {
-                    BackColor = _colorLightBg
-                };
-                var welcomeLabel = new Label
-                {
-                    Text = "在左侧文件列表中选择文件打开\n或点击\"打开文件\"按钮",
-                    Dock = DockStyle.Fill,
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Microsoft YaHei UI", 12f),
-                    ForeColor = _colorLightTextSecondary
-                };
-                welcomePage.Controls.Add(welcomeLabel);
-                _tabContent.TabPages.Add(welcomePage);
-            }
+                _tabContent.TabPages.Add(MakeWelcomePage());
         }
 
         /// <summary>▼按钮下拉菜单 — 列出所有打开的标签页</summary>
         private void ShowTabMenu(Button btn)
         {
-            var menu = new ContextMenuStrip();
-            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            var menu = new ContextMenuStrip
+            {
+                Font = Theme.List,
+                ShowImageMargin = false,
+                ShowCheckMargin = true
+            };
             for (int i = 0; i < _tabContent.TabPages.Count; i++)
             {
                 var tp = _tabContent.TabPages[i];
@@ -923,7 +927,7 @@ namespace wxd.files.winforms
                     Tag = i,
                     Checked = isCurrent,
                     CheckState = isCurrent ? CheckState.Checked : CheckState.Unchecked,
-                    Font = new Font("Microsoft YaHei UI", 9f, isCurrent ? FontStyle.Bold : FontStyle.Regular)
+                    Font = isCurrent ? Theme.ListBold : Theme.List
                 };
                 item.Click += (s, e) =>
                 {
@@ -938,8 +942,11 @@ namespace wxd.files.winforms
         /// <summary>右键菜单 — 关闭页签</summary>
         private void ShowTabContextMenu(Point screenPoint, int tabIndex)
         {
-            var menu = new ContextMenuStrip();
-            menu.Font = new Font("Microsoft YaHei UI", 9f);
+            var menu = new ContextMenuStrip
+            {
+                Font = Theme.List,
+                ShowImageMargin = false
+            };
 
             var itemClose = new ToolStripMenuItem("关闭当前页签");
             itemClose.Click += (s, e) => CloseTab(tabIndex);
@@ -988,7 +995,15 @@ namespace wxd.files.winforms
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            _loadingCts?.Cancel();
+            // 防抖计时器带着指向本窗体的闭包，不 Dispose 就等于窗体关闭后还被消息循环攥着一份
+            try
+            {
+                _filterDebounceTimer?.Stop();
+                _filterDebounceTimer?.Dispose();
+                _filterDebounceTimer = null;
+            }
+            catch { }
+            try { _loadingCts?.Cancel(); _loadingCts?.Dispose(); _loadingCts = null; } catch { }
             // ★ 主动清理所有标签页，避免 Dispose 递归时堆积导致 UI 卡顿
             CloseAllTabs();
             base.OnFormClosing(e);

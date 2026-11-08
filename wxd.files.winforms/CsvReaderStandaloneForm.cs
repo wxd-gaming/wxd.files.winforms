@@ -26,9 +26,9 @@ namespace wxd.files.winforms
                 MinimumSize = new Size(560, 350);
             }
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Microsoft YaHei UI", 9f);
+            Font = Theme.Body;
             try { Icon = Icon.ExtractAssociatedIcon(options.FilePath); } catch { }
-            BackColor = Color.FromArgb(240, 242, 245);
+            BackColor = Theme.P.Window;
 
             // 如果是单元格关联打开模式，隐藏工具栏和状态栏，只显示表格
             if (linkOpt.IsLinkedFromCell)

@@ -4,29 +4,21 @@ using System.Windows.Forms;
 
 namespace wxd.files.winforms
 {
-    /// <summary>通用帮助信息展示窗体，支持主题切换</summary>
+    /// <summary>通用帮助信息展示窗体，配色跟随当前皮肤</summary>
     public class HelpForm : Form
     {
-        private readonly RichTextBox _rtbContent;
-        private readonly Button _btnClose;
-
-        // 浅色配色
-        private static readonly Color _lightBg = Color.FromArgb(235, 248, 255);
-        private static readonly Color _lightTitleFg = Color.FromArgb(20, 60, 100);
-        private static readonly Color _lightBtnBg = Color.FromArgb(66, 165, 245);
-        private static readonly Color _lightBtnBorder = Color.FromArgb(30, 136, 229);
-
-        // 深色配色
-        private static readonly Color _darkBg = Color.FromArgb(30, 30, 30);
-        private static readonly Color _darkTitleFg = Color.FromArgb(241, 241, 241);
-        private static readonly Color _darkBtnBg = Color.FromArgb(0, 122, 204);
-        private static readonly Color _darkBtnBorder = Color.FromArgb(0, 95, 160);
+        /// <summary>正文区：更新记录窗体继承后直接往这里填内容</summary>
+        protected readonly RichTextBox _rtbContent = new();
+        private readonly Label _lblTitle = new();
+        private readonly Panel _topBar = new();
+        private readonly Panel _topDivider = new();
+        private readonly Panel _bar = new();
+        private readonly ThemeButton _btnClose = new();
 
         /// <summary>创建帮助窗体</summary>
         /// <param name="title">标题栏文字</param>
         /// <param name="content">帮助内容（RTF格式，纯文本也可）</param>
-        /// <param name="isDark">是否深色主题</param>
-        public HelpForm(string title, string content, bool isDark = false)
+        public HelpForm(string title, string content)
         {
             Text = title;
             ClientSize = new Size(700, 560);
@@ -35,66 +27,86 @@ namespace wxd.files.winforms
             MaximizeBox = false;
             MinimizeBox = false;
             ShowIcon = false;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = isDark ? _darkBg : _lightBg;
-            Padding = new Padding(16, 16, 16, 12);
 
-            // === 标题标签 ===
-            var lblTitle = new Label
-            {
-                Text = title,
-                AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 14f, FontStyle.Bold),
-                ForeColor = isDark ? _darkTitleFg : _lightTitleFg,
-                Location = new Point(16, 12),
-                BackColor = Color.Transparent
-            };
+            _topBar.Dock = DockStyle.Top;
+            _topBar.Height = ThemeMetrics.BarHeight;
+            _topDivider.Dock = DockStyle.Bottom;
+            _topDivider.Height = 1;
+            _topBar.Controls.Add(_topDivider);
 
-            // === 分隔线 ===
-            var sep = new Panel
-            {
-                Location = new Point(16, 42),
-                Size = new Size(668, 1),
-                BackColor = isDark ? Color.FromArgb(62, 62, 66) : Color.FromArgb(173, 209, 237)
-            };
+            // 标题和窗口标题重复，但正文需要一个可见的抬头，保留并和其他对话框的页眉同规格
+            _lblTitle.Text = title;
+            _lblTitle.AutoSize = false;
+            _lblTitle.TextAlign = ContentAlignment.MiddleLeft;
+            _lblTitle.BackColor = Color.Transparent;
+            _topBar.Controls.Add(_lblTitle);
+            _topBar.Resize += (_, _) => LayoutTopBar();
 
-            // === 富文本框（只读可滚动） ===
-            _rtbContent = new RichTextBox
-            {
-                Location = new Point(16, 52),
-                Size = new Size(668, 450),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                ReadOnly = true,
-                BorderStyle = BorderStyle.FixedSingle,
-                ScrollBars = RichTextBoxScrollBars.Vertical,
-                DetectUrls = false,
-                WordWrap = true,
-                BackColor = isDark ? Color.FromArgb(37, 37, 38) : Color.White,
-                ForeColor = isDark ? Color.FromArgb(220, 220, 220) : Color.FromArgb(30, 60, 100)
-            };
+            _rtbContent.BorderStyle = BorderStyle.None;
+            _rtbContent.ReadOnly = true;
+            _rtbContent.ScrollBars = RichTextBoxScrollBars.Vertical;
+            _rtbContent.DetectUrls = false;
+            _rtbContent.WordWrap = true;
+            _rtbContent.Dock = DockStyle.Fill;
             _rtbContent.Text = content;
 
-            // === 关闭按钮 ===
-            _btnClose = new Button
+            // 正文要缩进，但页眉页脚的分隔线要铺满整宽，所以只给正文套一层留白容器
+            var body = new Panel
             {
-                Text = "关闭",
-                Size = new Size(100, 30),
-                Location = new Point(584, 514),
-                Font = new Font("Microsoft YaHei UI", 10f),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = isDark ? _darkBtnBg : _lightBtnBg,
-                ForeColor = Color.White,
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.OK
+                Dock = DockStyle.Fill,
+                Padding = new Padding(ThemeMetrics.Margin + 6, ThemeMetrics.Gap,
+                                     ThemeMetrics.Margin + 6, ThemeMetrics.RowPad)
             };
-            _btnClose.FlatAppearance.BorderSize = 1;
-            _btnClose.FlatAppearance.BorderColor = isDark ? _darkBtnBorder : _lightBtnBorder;
-            _btnClose.Click += (s, e) => Close();
+            body.Controls.Add(_rtbContent);
 
-            Controls.AddRange(new Control[] { lblTitle, sep, _rtbContent, _btnClose });
+            _bar = DialogButtonBar.Create();
+            _btnClose.Text = "关闭";
+            _btnClose.Primary = true;
+            _btnClose.DialogResult = DialogResult.OK;
+            _btnClose.Click += (s, e) => Close();
+            _bar.Controls.Add(_btnClose);
+            _bar.Resize += (_, _) => LayoutBar();
+
+            // 停靠顺序：同一条边上后加入的靠外，所以正文先加、页眉页脚后加
+            Controls.Add(body);
+            Controls.Add(_topBar);
+            Controls.Add(_bar);
 
             AcceptButton = _btnClose;
             CancelButton = _btnClose;
+
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+        }
+
+        private void LayoutTopBar()
+        {
+            _lblTitle.SetBounds(ThemeMetrics.Margin, 0,
+                _topBar.Width - ThemeMetrics.Margin * 2, ThemeMetrics.BarHeight - 1);
+        }
+
+        private void LayoutBar() => DialogButtonBar.LayoutRight(_bar, _btnClose);
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            _lblTitle.ForeColor = p.Text;
+            _lblTitle.Font = Theme.Head;
+            _rtbContent.BackColor = p.Surface;
+            _rtbContent.ForeColor = p.Text;
+            _rtbContent.Font = Theme.Body;
+            _btnClose.BackColor = p.Chrome;
+
+            LayoutTopBar();
+            LayoutBar();
+            Invalidate(true);
         }
 
         protected override void OnLoad(EventArgs e)
@@ -107,9 +119,9 @@ namespace wxd.files.winforms
         }
 
         /// <summary>便捷方法：显示帮助窗体</summary>
-        public static void ShowHelp(IWin32Window owner, string title, string content, bool isDark = false)
+        public static void ShowHelp(IWin32Window owner, string title, string content)
         {
-            using var form = new HelpForm(title, content, isDark);
+            using var form = new HelpForm(title, content);
             form.ShowDialog(owner);
         }
     }

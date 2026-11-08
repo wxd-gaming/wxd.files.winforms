@@ -11,23 +11,9 @@ namespace wxd.files.winforms
     /// </summary>
     public class NoteListItemControl : UserControl
     {
-        // ==================== 配色（与 NoteForm 保持一致） ====================
-        private static readonly Color _lightBg = Color.White;
-        private static readonly Color _lightHover = Color.FromArgb(235, 243, 252);
-        private static readonly Color _lightSel = Color.FromArgb(210, 230, 250);
-        private static readonly Color _lightTitleFg = Color.FromArgb(20, 60, 100);
-        private static readonly Color _lightSubFg = Color.FromArgb(120, 140, 160);
-
-        private static readonly Color _darkBg = Color.FromArgb(45, 45, 48);
-        private static readonly Color _darkHover = Color.FromArgb(62, 62, 66);
-        private static readonly Color _darkSel = Color.FromArgb(81, 113, 170);
-        private static readonly Color _darkTitleFg = Color.FromArgb(241, 241, 241);
-        private static readonly Color _darkSubFg = Color.FromArgb(160, 160, 160);
-
         // ==================== 字段 ====================
         private readonly Label _lblTitle;
         private readonly Label _lblTime;
-        private readonly bool _isDark;
         private bool _isSelected;
         private bool _isHover;
 
@@ -37,10 +23,9 @@ namespace wxd.files.winforms
         /// <summary>被点击/选中时触发，参数为自身</summary>
         public event Action<NoteListItemControl>? Selected;
 
-        public NoteListItemControl(NoteItem note, bool isDark)
+        public NoteListItemControl(NoteItem note)
         {
             Note = note ?? throw new ArgumentNullException(nameof(note));
-            _isDark = isDark;
 
             // 控件本身：固定高度，Dock=Top 在可滚动 Panel 中自动从顶部堆叠并占满宽度
             Height = 44;
@@ -56,7 +41,7 @@ namespace wxd.files.winforms
                 AutoSize = false,
                 Location = new Point(8, 5),
                 Size = new Size(Width - 16, 20),
-                Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold),
+                Font = Theme.Head,
                 Text = string.IsNullOrEmpty(note.Title) ? "(无标题)" : note.Title,
                 TextAlign = ContentAlignment.MiddleLeft
             };
@@ -67,7 +52,7 @@ namespace wxd.files.winforms
                 AutoSize = false,
                 Location = new Point(8, 27),
                 Size = new Size(Width - 16, 14),
-                Font = new Font("Microsoft YaHei UI", 7.5f),
+                Font = Theme.Caption,
                 Text = note.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
                 TextAlign = ContentAlignment.MiddleLeft
             };
@@ -84,7 +69,9 @@ namespace wxd.files.winforms
                 c.Click += (s, e) => OnClick(e);
             }
 
-            ApplyBackColor();
+            ApplyColors();
+            Theme.Changed += ApplyColors;
+            Disposed += (_, _) => Theme.Changed -= ApplyColors;
         }
 
         /// <summary>更新标题显示</summary>
@@ -104,21 +91,21 @@ namespace wxd.files.winforms
         {
             if (_isSelected == selected) return;
             _isSelected = selected;
-            ApplyBackColor();
+            ApplyColors();
         }
 
         protected override void OnMouseEnter(EventArgs e)
         {
             base.OnMouseEnter(e);
             _isHover = true;
-            if (!_isSelected) ApplyBackColor();
+            if (!_isSelected) ApplyColors();
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
             _isHover = false;
-            if (!_isSelected) ApplyBackColor();
+            if (!_isSelected) ApplyColors();
         }
 
         protected override void OnClick(EventArgs e)
@@ -142,21 +129,16 @@ namespace wxd.files.winforms
             }
         }
 
-        private void ApplyBackColor()
+        private void ApplyColors()
         {
-            Color bg;
-            if (_isSelected)
-                bg = _isDark ? _darkSel : _lightSel;
-            else if (_isHover)
-                bg = _isDark ? _darkHover : _lightHover;
-            else
-                bg = _isDark ? _darkBg : _lightBg;
+            var p = Theme.P;
+            Color bg = _isSelected ? p.Selection : _isHover ? p.Hover : p.Surface;
 
             BackColor = bg;
             _lblTitle.BackColor = bg;
             _lblTime.BackColor = bg;
-            _lblTitle.ForeColor = _isDark ? _darkTitleFg : _lightTitleFg;
-            _lblTime.ForeColor = _isDark ? _darkSubFg : _lightSubFg;
+            _lblTitle.ForeColor = p.Text;
+            _lblTime.ForeColor = p.Muted;
         }
     }
 }

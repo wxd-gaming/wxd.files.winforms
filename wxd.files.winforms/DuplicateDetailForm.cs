@@ -15,14 +15,14 @@ namespace wxd.files.winforms
         private readonly FileTableData _fileData;
         private readonly TableBrowserControl _owner;
         private DataGridView _grid = new();
-        private TextBox _txtSearch = new();
+        private ThemeField _fldSearch = new();
         private Label _lblSummary = new();
-        private Button _btnCopy = new();
-        private Button _btnClose = new();
+        private ThemeButton _btnCopy = new();
+        private ThemeButton _btnClose = new();
+        private Panel _topBar = new();
+        private Panel _topDivider = new();
+        private Panel _bar = new();
         private DataTable _displayTable = new();
-
-        private static readonly Color _colorBg = Color.FromArgb(245, 250, 255);
-        private static readonly Color _colorPrimary = Color.FromArgb(66, 165, 245);
 
         public DuplicateDetailForm(
             List<TableBrowserControl.DuplicateGroup> duplicates,
@@ -34,6 +34,9 @@ namespace wxd.files.winforms
             _owner = owner;
 
             InitializeComponent();
+            ApplyTheme();
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
             SetupGrid();
             PopulateGrid();
         }
@@ -44,14 +47,10 @@ namespace wxd.files.winforms
             ClientSize = new Size(750, 550);
             MinimumSize = new Size(500, 350);
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = _colorBg;
             FormBorderStyle = FormBorderStyle.Sizable;
             ShowInTaskbar = false;
 
             var totalRedundant = _duplicates.Sum(d => d.Count - 1);
-
-            // 摘要标签
             _lblSummary = new Label
             {
                 Text = $"共 {_duplicates.Count} 个重复值，{totalRedundant} 处冗余  |  双击某行可跳转到对应位置",
@@ -59,33 +58,21 @@ namespace wxd.files.winforms
                 Height = 30,
                 Dock = DockStyle.Top,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(10, 0, 10, 0),
-                ForeColor = Color.FromArgb(180, 50, 30),
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                BackColor = Color.FromArgb(255, 240, 240),
+                Padding = new Padding(ThemeMetrics.Margin, 0, ThemeMetrics.Margin, 0),
+                Font = Theme.Head
             };
 
-            // 搜索框
-            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 38, Padding = new Padding(10, 4, 10, 4) };
-            var lblSearch = new Label
-            {
-                Text = "搜索:",
-                AutoSize = true,
-                Location = new Point(0, 8),
-                ForeColor = Color.FromArgb(90, 130, 170),
-            };
-            _txtSearch = new TextBox
-            {
-                Width = 260,
-                Anchor = AnchorStyles.Left,
-                Font = new Font("Microsoft YaHei UI", 9f),
-                Location = new Point(45, 6),
-            };
-            _txtSearch.TextChanged += (s, e) => ApplyFilter();
-            searchPanel.Controls.Add(lblSearch);
-            searchPanel.Controls.Add(_txtSearch);
+            _topBar = new Panel { Dock = DockStyle.Top, Height = ThemeMetrics.BarHeight };
+            _topDivider = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+            _topBar.Controls.Add(_topDivider);
 
-            // DataGridView
+            var lblSearch = new Label { Text = "搜索:", AutoSize = true };
+            _fldSearch = new ThemeField { Placeholder = "按重复值或行号筛选..." };
+            _fldSearch.Edit.TextChanged += (s, e) => ApplyFilter();
+            _topBar.Controls.AddRange(new Control[] { lblSearch, _fldSearch });
+            LayoutTopBar(lblSearch);
+            _topBar.Resize += (_, _) => LayoutTopBar(lblSearch);
+
             _grid = new DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -96,57 +83,56 @@ namespace wxd.files.winforms
                 RowHeadersVisible = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                BackgroundColor = Color.White,
                 BorderStyle = BorderStyle.None,
-                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
-                GridColor = Color.FromArgb(200, 225, 245),
-                ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
-                {
-                    BackColor = Color.FromArgb(240, 246, 252),
-                    ForeColor = Color.FromArgb(20, 60, 100),
-                    Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                },
-                DefaultCellStyle = new DataGridViewCellStyle
-                {
-                    ForeColor = Color.FromArgb(20, 60, 100),
-                    SelectionBackColor = Color.FromArgb(227, 242, 253),
-                    SelectionForeColor = Color.FromArgb(20, 60, 100),
-                },
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal
             };
             _grid.CellDoubleClick += Grid_CellDoubleClick;
 
-            // 底部按钮
-            var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 46, Padding = new Padding(10, 6, 10, 6) };
-            _btnCopy = new Button
-            {
-                Text = "复制到剪贴板",
-                Size = new Size(120, 30),
-                Anchor = AnchorStyles.Left,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = _colorPrimary,
-                ForeColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 9f),
-            };
-            _btnCopy.Click += BtnCopy_Click;
-            _btnClose = new Button
-            {
-                Text = "关闭",
-                Size = new Size(80, 30),
-                Anchor = AnchorStyles.Right,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(200, 210, 220),
-                ForeColor = Color.FromArgb(60, 70, 80),
-                Font = new Font("Microsoft YaHei UI", 9f),
-            };
-            _btnClose.Click += (s, e) => Close();
-            bottomPanel.Controls.Add(_btnCopy);
-            bottomPanel.Controls.Add(_btnClose);
-            _btnClose.Location = new Point(bottomPanel.Width - 90, 6);
+            _bar = DialogButtonBar.Create();
+            _btnCopy = DialogButtonBar.Make("复制到剪贴板", BtnCopy_Click, primary: true);
+            _btnClose = DialogButtonBar.Make("关闭", (s, e) => Close());
+            _bar.Controls.AddRange(new Control[] { _btnCopy, _btnClose });
+            LayoutBar();
+            _bar.Resize += (_, _) => LayoutBar();
 
+            // 停靠顺序：同一条边上后加入的靠外，所以摘要条要最后加
             Controls.Add(_grid);
-            Controls.Add(bottomPanel);
-            Controls.Add(searchPanel);
+            Controls.Add(_bar);
+            Controls.Add(_topBar);
             Controls.Add(_lblSummary);
+        }
+
+        private void LayoutTopBar(Label lblSearch)
+        {
+            int rowH = ThemeMetrics.RowH;
+            lblSearch.Location = new Point(ThemeMetrics.Margin, (ThemeMetrics.BarHeight - lblSearch.Height) / 2);
+            _fldSearch.SetBounds(lblSearch.Right + ThemeMetrics.Gap, ThemeMetrics.RowPad,
+                _topBar.Width - lblSearch.Right - ThemeMetrics.Margin * 2 - ThemeMetrics.Gap, rowH);
+        }
+
+        private void LayoutBar()
+            => DialogButtonBar.LayoutRight(_bar, _btnClose, _btnCopy);
+
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _topBar.BackColor = p.Chrome;
+            _bar.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            // 摘要条是提示性的问题清单，底色从危险色淡出来，文字保住对比度
+            var signal = Theme.Signal(Color.FromArgb(180, 50, 30));
+            _lblSummary.ForeColor = signal;
+            _lblSummary.BackColor = Theme.Mix(signal, p.Surface, 0.88f);
+
+            ThemeGrid.Apply(_grid);
+            _fldSearch.ApplyTheme();
+            _btnCopy.BackColor = p.Chrome;
+            _btnClose.BackColor = p.Chrome;
+
+            Invalidate(true);
         }
 
         private void SetupGrid()
@@ -190,7 +176,7 @@ namespace wxd.files.winforms
 
         private void ApplyFilter()
         {
-            var filter = _txtSearch.Text.Trim();
+            var filter = _fldSearch.Edit.Text.Trim();
             if (string.IsNullOrEmpty(filter))
             {
                 _grid.DataSource = _displayTable;

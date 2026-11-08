@@ -105,8 +105,7 @@ namespace wxd.files.winforms
                     return;
 
                 // 有更新 → 使用自定义弹窗（三个按钮：立即更新 / 跳过版本 / 取消）
-                var isDark = CsvSettings.ThemeMode == 0;
-                var notifyForm = new UpdateNotifyForm(result, isDark);
+                var notifyForm = new UpdateNotifyForm(result);
                 notifyForm.ShowDialog();
 
                 if (notifyForm.UserChoice == 2)

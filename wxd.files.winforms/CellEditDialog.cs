@@ -4,12 +4,13 @@
     public class CellEditDialog : Form
     {
         private RichTextBox _txtValue = new();
-        private Button _btnSave = new();
-        private Button _btnCancel = new();
-        private Button _btnDefault = new();
-        private Button _btnRaw = new();
+        private ThemeButton _btnSave = new();
+        private ThemeButton _btnCancel = new();
+        // 两种互斥的显示方式，用分段控件代替两颗会互相抢底色的切换按钮
+        private ThemeSegmented _segView = new();
         private Panel _pnlBottom = new();
         private Panel _pnlTop = new();
+        private Panel _topDivider = new();
         private Label _lblSaveTime = new();  // 保存时间标签
         private Label _lblReadOnlyHint = new(); // 只读提示标签
         private readonly Action<string>? _onSave;
@@ -37,6 +38,11 @@
             InitializeComponent(readOnly, readOnlyMessage, closeOnSave);
             _txtValue.Text = NormalizeLineBreaksForDisplay(initialValue);
 
+            ApplyTheme();
+            // 独立对话框，主窗翻明暗时遍历不到，只能自己订阅
+            Theme.Changed += ApplyTheme;
+            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+
             // 自定义标题：直接用作窗口标题（模态弹窗场景）
             if (!string.IsNullOrEmpty(customTitle))
             {
@@ -55,18 +61,6 @@
                 Text = $"编辑单元格 — 行 {row + 1}  列 {colDisplay}({col})";
         }
 
-        private static void SetActiveButton(Button active, Button inactive)
-        {
-            active.BackColor = Color.FromArgb(66, 165, 245);
-            active.ForeColor = Color.White;
-            active.FlatAppearance.BorderSize = 1;
-            active.FlatAppearance.BorderColor = Color.FromArgb(30, 136, 229);
-            inactive.BackColor = Color.FromArgb(235, 248, 255);
-            inactive.ForeColor = Color.FromArgb(20, 60, 100);
-            inactive.FlatAppearance.BorderSize = 1;
-            inactive.FlatAppearance.BorderColor = Color.FromArgb(173, 209, 237);
-        }
-
         private void InitializeComponent(bool readOnly = false, string readOnlyMessage = "", bool closeOnSave = false)
         {
             SuspendLayout();
@@ -76,89 +70,33 @@
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = true;
             MaximizeBox = true;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            BackColor = Color.FromArgb(242, 249, 255);
 
             // ==================== 顶部格式切换面板 ====================
-            _pnlTop = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 44,
-                BackColor = Color.FromArgb(235, 245, 255),
-                Padding = new Padding(8, 7, 8, 7)
-            };
+            _pnlTop = new Panel { Dock = DockStyle.Top, Height = ThemeMetrics.BarHeight };
+            _topDivider = new Panel { Dock = DockStyle.Bottom, Height = 1 };
+            _pnlTop.Controls.Add(_topDivider);
 
-            _btnDefault = new Button
+            _segView = new ThemeSegmented { Items = new[] { "默认格式", "自动换行" }, ActiveIndex = 0 };
+            _segView.SegmentClicked += i =>
             {
-                Text = "默认格式",
-                Location = new Point(8, 7),
-                Size = new Size(90, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(227, 242, 253) }
-            };
-
-            _btnRaw = new Button
-            {
-                Text = "自动换行",
-                Location = new Point(106, 7),
-                Size = new Size(90, 28),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand,
-                FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(227, 242, 253) }
-            };
-
-            _btnDefault.Click += (s, e) =>
-            {
-                SetActiveButton(_btnDefault, _btnRaw);
-                _txtValue.WordWrap = false;
+                _txtValue.WordWrap = i == 1;
                 _txtValue.ScrollBars = RichTextBoxScrollBars.Both;
             };
-            _btnRaw.Click += (s, e) =>
-            {
-                SetActiveButton(_btnRaw, _btnDefault);
-                _txtValue.WordWrap = true;
-                _txtValue.ScrollBars = RichTextBoxScrollBars.Both;
-            };
-
-            // 默认选中"默认格式"
-            SetActiveButton(_btnDefault, _btnRaw);
-
-            _pnlTop.Controls.Add(_btnDefault);
-            _pnlTop.Controls.Add(_btnRaw);
+            _pnlTop.Controls.Add(_segView);
+            _pnlTop.Resize += (_, _) => LayoutTop();
 
             // ==================== 底部按钮面板 ====================
-            _pnlBottom = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 52,
-                BackColor = Color.FromArgb(235, 245, 255)
-            };
+            _pnlBottom = DialogButtonBar.Create();
 
-            // 只读提示标签（左侧）
             _lblReadOnlyHint = new Label
             {
                 Text = readOnly ? readOnlyMessage : "",
                 AutoSize = true,
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                ForeColor = Color.Red,
-                Location = new Point(10, 14)
+                Font = Theme.Body
             };
 
-            // 保存按钮
-            _btnSave = new Button
-            {
-                Text = "保存",
-                Size = new Size(80, 30),
-                Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold),
-                BackColor = Color.FromArgb(66, 165, 245),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(30, 136, 229), MouseOverBackColor = Color.FromArgb(30, 136, 229) },
-                Enabled = !readOnly
-            };
+            _btnSave = DialogButtonBar.Make("保存", null, primary: true);
+            _btnSave.Enabled = !readOnly;
             _btnSave.Click += (s, e) =>
             {
                 if (closeOnSave)
@@ -172,63 +110,37 @@
                 {
                     _lblSaveTime.Text = $"已保存 {DateTime.Now:HH:mm:ss}";
                     _onSave?.Invoke(CellValue);
+                    LayoutBottom();
                 }
             };
 
-            // 保存时间标签
             _lblSaveTime = new Label
             {
                 Text = "",
                 Size = new Size(140, 28),
-                Font = new Font("Microsoft YaHei UI", 8.5f),
-                ForeColor = Color.FromArgb(76, 175, 80),
                 TextAlign = ContentAlignment.MiddleRight
             };
 
-            // 取消（关闭）按钮
-            _btnCancel = new Button
-            {
-                Text = "关闭",
-                Size = new Size(80, 30),
-                Font = new Font("Microsoft YaHei UI", 9f),
-                BackColor = Color.FromArgb(235, 248, 255),
-                ForeColor = Color.FromArgb(20, 60, 100),
-                FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1, BorderColor = Color.FromArgb(173, 209, 237), MouseOverBackColor = Color.FromArgb(200, 225, 245) }
-            };
+            _btnCancel = DialogButtonBar.Make("关闭");
             _btnCancel.Click += (s, e) => { Close(); };
 
             _pnlBottom.Controls.Add(_lblReadOnlyHint);
             _pnlBottom.Controls.Add(_lblSaveTime);
-            _pnlBottom.Controls.Add(_btnSave);
-            _pnlBottom.Controls.Add(_btnCancel);
-
-            // 窗口调整大小时重新定位按钮（保持在右下角）
-            void LayoutButtons()
-            {
-                _btnCancel.Left = _pnlBottom.Width - _btnCancel.Width - 10;
-                _btnSave.Left = _btnCancel.Left - _btnSave.Width - 8;
-                _lblSaveTime.Left = _btnSave.Left - _lblSaveTime.Width - 8;
-                _lblSaveTime.Top = 12;
-                _btnSave.Top = 10;
-                _btnCancel.Top = 10;
-                _lblReadOnlyHint.Top = 14;
-            }
-            LayoutButtons();
-            _pnlBottom.Resize += (s, e) => LayoutButtons();
+            _pnlBottom.Controls.AddRange(new Control[] { _btnSave, _btnCancel });
+            LayoutBottom();
+            _pnlBottom.Resize += (_, _) => LayoutBottom();
 
             // ==================== 编辑区（RichTextBox）====================
             _txtValue = new RichTextBox
             {
                 Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 10f),
                 BorderStyle = BorderStyle.None,
                 WordWrap = false,
                 ScrollBars = RichTextBoxScrollBars.Both,
-                AcceptsTab = true,
-                BackColor = Color.White
+                AcceptsTab = true
             };
 
+            // 停靠顺序：后加入的靠外，所以编辑区先加、页眉页脚后加
             Controls.Add(_txtValue);
             Controls.Add(_pnlBottom);
             Controls.Add(_pnlTop);
@@ -237,6 +149,43 @@
             CancelButton = _btnCancel;
 
             ResumeLayout(false);
+        }
+
+        private void LayoutTop()
+            => _segView.Location = new Point(ThemeMetrics.Margin,
+                (_pnlTop.Height - _topDivider.Height - _segView.Height) / 2);
+
+        /// <summary>按钮整组靠右，保存时间和只读提示分别贴在按钮左边和容器左边。</summary>
+        private void LayoutBottom()
+        {
+            DialogButtonBar.LayoutRight(_pnlBottom, _btnSave, _btnCancel);
+            int y = (_pnlBottom.Height - _lblSaveTime.Height) / 2;
+            _lblSaveTime.Location = new Point(_btnSave.Left - _lblSaveTime.Width - ThemeMetrics.Gap, y);
+            _lblReadOnlyHint.Location = new Point(ThemeMetrics.Margin,
+                (_pnlBottom.Height - _lblReadOnlyHint.Height) / 2);
+        }
+
+        /// <summary>取色全部走当前皮肤令牌；换皮肤或翻明暗时由 Theme.Changed 重新走一遍。</summary>
+        private void ApplyTheme()
+        {
+            var p = Theme.P;
+            Font = Theme.Body;
+            BackColor = p.Window;
+            _pnlTop.BackColor = p.Chrome;
+            _pnlBottom.BackColor = p.Chrome;
+            _topDivider.BackColor = p.Divider;
+
+            _txtValue.BackColor = p.Surface;
+            _txtValue.ForeColor = p.Text;
+            _txtValue.Font = Theme.Code;
+
+            _lblSaveTime.ForeColor = Theme.Signal(Color.FromArgb(22, 163, 74));
+            _lblReadOnlyHint.ForeColor = p.Danger;
+
+            _segView.RefreshTheme();
+            LayoutTop();
+            LayoutBottom();
+            Invalidate(true);
         }
     }
 }
