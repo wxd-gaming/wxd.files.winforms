@@ -1200,7 +1200,7 @@ namespace wxd.files.winforms
                 StartPosition = FormStartPosition.CenterParent,
                 MinimizeBox = true,
                 MaximizeBox = true,
-                ShowIcon = false,
+                Icon = WindowIcons.Logs,
                 ShowInTaskbar = false,
                 BackColor = Theme.P.Window
             };

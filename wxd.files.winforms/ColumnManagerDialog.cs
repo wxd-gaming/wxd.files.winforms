@@ -176,6 +176,7 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             Text = "列管理";
+            Icon = WindowIcons.Colmgr;
             ClientSize = new Size(980, 520);
             MinimumSize = new Size(600, 300);
             StartPosition = FormStartPosition.CenterParent;

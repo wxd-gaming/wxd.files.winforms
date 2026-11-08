@@ -251,14 +251,13 @@ namespace wxd.files.winforms
 
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             SuspendLayout();
             // 
             // Form1
             // 
             ClientSize = new Size(1300, 750);
             Font = Theme.Body;
-            Icon = (Icon)resources.GetObject("$this.Icon");
+            Icon = WindowIcons.App;
             MinimumSize = new Size(600, 450);
             Name = "Form1";
             StartPosition = FormStartPosition.CenterScreen;

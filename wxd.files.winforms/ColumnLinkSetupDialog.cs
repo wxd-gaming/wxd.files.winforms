@@ -795,6 +795,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             Text = "Tips 显示设置 - 列 " + _sourceColumnIndex;
+            Icon = WindowIcons.Link;
             ClientSize = new Size(540, 540);
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false; MaximizeBox = false;

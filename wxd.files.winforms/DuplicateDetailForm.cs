@@ -44,6 +44,7 @@ namespace wxd.files.winforms
         private void InitializeComponent()
         {
             Text = "重复值详情";
+            Icon = WindowIcons.Dup;
             ClientSize = new Size(750, 550);
             MinimumSize = new Size(500, 350);
             StartPosition = FormStartPosition.CenterParent;

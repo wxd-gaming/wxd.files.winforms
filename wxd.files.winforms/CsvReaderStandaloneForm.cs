@@ -27,7 +27,8 @@ namespace wxd.files.winforms
             }
             StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.Body;
-            try { Icon = Icon.ExtractAssociatedIcon(options.FilePath); } catch { }
+            // 标题栏统一用本程序的阅读器图标；关联表来自哪种扩展名，看标签页就够了
+            Icon = WindowIcons.Reader;
             BackColor = Theme.P.Window;
 
             // 如果是单元格关联打开模式，隐藏工具栏和状态栏，只显示表格

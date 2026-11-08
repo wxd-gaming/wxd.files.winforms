@@ -73,6 +73,7 @@ namespace wxd.files.winforms
         {
             SuspendLayout();
             Text = selectMode ? "选择关联配置模板" : "管理关联配置模板";
+            Icon = WindowIcons.Link;
             ClientSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false;

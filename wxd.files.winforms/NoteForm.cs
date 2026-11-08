@@ -66,7 +66,7 @@ namespace wxd.files.winforms
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.Body;
-            ShowIcon = false;
+            Icon = WindowIcons.Notes;
             KeyPreview = true;
 
             _splitter = new SplitContainer

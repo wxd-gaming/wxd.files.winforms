@@ -17,6 +17,7 @@ namespace wxd.files.winforms
         {
             _maxLine = maxLine;
             Text = "跳转到行号";
+            Icon = WindowIcons.Jump;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;

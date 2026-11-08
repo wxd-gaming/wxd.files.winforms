@@ -130,6 +130,7 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             Text = _customTitle;
+            Icon = WindowIcons.Colmgr;
             ClientSize = new Size(780, 520);
             MinimumSize = new Size(560, 400);
             StartPosition = FormStartPosition.CenterParent;

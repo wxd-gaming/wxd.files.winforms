@@ -23,6 +23,11 @@ namespace wxd.files.winforms
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public Color? FillOverride { get; set; }
 
+        /// <summary>警示态：文字和描边走红，用于"有隐藏列"这类需要一眼看到的提示</summary>
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Danger { get; set; }
+
         private bool _hover;
         private bool _down;
 
@@ -53,6 +58,15 @@ namespace wxd.files.winforms
                 ? (Theme.IsDark(fill) ? Color.White : p.Text)
                 : Ghost ? p.Muted : p.Text;
 
+            // 警示态在描边和文字上各来一刀；自绘按钮不认 ForeColor，只认这个开关
+            var alert = Danger && Enabled && !flat;
+            if (alert)
+            {
+                var danger = Theme.Signal(Color.FromArgb(220, 38, 38));
+                fore = danger;
+                line = Theme.Mix(danger, face, 0.25f);
+            }
+
             if (!Enabled)
             {
                 fill = Theme.Mix(fill, face, 0.55f);
@@ -68,6 +82,7 @@ namespace wxd.files.winforms
             {
                 fill = Theme.Mix(fill, flat ? Color.White : p.Text, flat ? 0.14f : 0.06f);
                 if (!Ghost) line = Theme.Mix(line, flat ? Color.White : p.Text, 0.14f);
+                if (alert) line = Theme.Mix(line, Color.White, 0.18f);
             }
 
             var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
@@ -141,6 +156,113 @@ namespace wxd.files.winforms
             path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
             path.CloseFigure();
             return path;
+        }
+    }
+
+    /// <summary>
+    /// 皮肤化的页签容器：页签本体照旧由 DrawItem 自绘，这里只补自绘够不着的地方。
+    /// comctl32 把页签条的底子、页签之间的缝、上下描边都画成系统灰，而这些像素都在页签面之外；
+    /// 只能等它画完，在 WM_PAINT 之后按皮肤色重铺一次。
+    /// </summary>
+    internal class ThemeTabControl : TabControl
+    {
+        private const int WM_PAINT = 0x000F;
+
+        /// <summary>页签分排的容差：选中页签的矩形会比同排其它页签高出一小截。</summary>
+        private const int RowTolerance = 4;
+
+        private bool _paintingBand;
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg != WM_PAINT || _paintingBand) return;
+            if (DrawMode != TabDrawMode.OwnerDrawFixed || TabCount == 0) return;
+
+            // GetTabRect 是 SendMessage，在 WM_PAINT 里会回调进本窗口的嵌套 WM_PAINT，
+            // 不挡住就是无限递归（实测直接 Stack overflow）。
+            _paintingBand = true;
+            try
+            {
+                PaintStripBand();
+            }
+            finally
+            {
+                _paintingBand = false;
+            }
+        }
+
+        /// <summary>
+        /// 把页签条上不属于页签面的像素（上沿、行首、页签缝、行尾空白、下沿分隔线）铺成皮肤底色。
+        /// 每一笔都落在页签面之外，所以增量重绘时也能整条铺，不必按更新区裁剪：
+        /// 按更新区裁反而会让没重绘到的那截留着 comctl32 的系统灰描边。
+        /// </summary>
+        private void PaintStripBand()
+        {
+            if (!IsHandleCreated || Width < 4 || Height < 4) return;
+
+            int top = -1, bottom = 0, right = 0;
+            int maxBottom = 0;
+            bool firstRow = true;
+            using var g = Graphics.FromHwnd(Handle);
+            using var brush = new SolidBrush(Theme.P.Window);
+
+            void CloseRow()
+            {
+                if (top < 0) return;
+                if (Width > right) g.FillRectangle(brush, right, top, Width - right, bottom - top);
+                top = -1;
+            }
+
+            for (int i = 0; i < TabCount; i++)
+            {
+                var r = GetTabRect(i);
+                if (r.Width <= 0 || r.Height <= 0) continue;
+                maxBottom = Math.Max(maxBottom, r.Bottom);
+
+                // 选中页签的矩形比同排其它页签上下各多出 2px，按 Top 完全相等来分排会把它单独算成一排，
+                // 于是"行首补铺"从 0 一路抹到它左边，把前面画好的页签全刷掉。给分排留点容差。
+                if (top < 0 || Math.Abs(r.Top - top) > RowTolerance)
+                {
+                    CloseRow();
+                    if (firstRow)
+                    {
+                        if (r.Top > 0) g.FillRectangle(brush, 0, 0, Width, r.Top);
+                        firstRow = false;
+                    }
+                    top = r.Top;
+                    bottom = r.Bottom;
+                    if (r.Left > 0) g.FillRectangle(brush, 0, top, r.Left, bottom - top);
+                    right = r.Right;
+                }
+                else
+                {
+                    top = Math.Min(top, r.Top);
+                    bottom = Math.Max(bottom, r.Bottom);
+                    if (r.Left > right) g.FillRectangle(brush, right, top, r.Left - right, bottom - top);
+                    right = Math.Max(right, r.Right);
+                }
+
+                // 页签面四周各留了 2px，comctl32 在这 2px 里画的是系统边框色，而且是在 DrawItem 之后补画的，
+                // 抹不掉只能盖掉：这三条正好在自绘的页签面之外，铺回皮肤底色不吃页签本体。
+                // 未选中页签头顶那条尤其显眼，深色皮肤里是一整排白线。
+                g.FillRectangle(brush, r.X, r.Y, 2, r.Height);
+                g.FillRectangle(brush, r.Right - 2, r.Y, 2, r.Height);
+                g.FillRectangle(brush, r.X, r.Y, r.Width, 2);
+
+                // 选中页签的矩形比同排上下各多出一截，comctl32 在多出来那 2px 里画的还是系统色描边。
+                // 只有一排时下面那截正好被"最后一行下沿"那笔盖住；页签换行后选中页签夹在两排之间，
+                // 头顶那截谁也没铺，深色皮肤里就是一根横在行间的白线，所以上下各补一笔。
+                if (i == SelectedIndex)
+                {
+                    g.FillRectangle(brush, r.X, r.Y - 2, r.Width, 2);
+                    g.FillRectangle(brush, r.X, r.Bottom, r.Width, 2);
+                }
+            }
+            CloseRow();
+
+            if (maxBottom > 0 && maxBottom + 2 <= Height)
+                g.FillRectangle(brush, 0, maxBottom, Width, 2);
         }
     }
 

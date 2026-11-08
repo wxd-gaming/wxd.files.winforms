@@ -26,6 +26,7 @@ public class CustomCommandManagerForm : Form
     public CustomCommandManagerForm()
     {
         Text = "自定义命令管理";
+        Icon = WindowIcons.Cmdmgr;
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1250, 650);
         MinimizeBox = false;

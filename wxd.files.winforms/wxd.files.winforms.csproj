@@ -26,6 +26,11 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- 各窗口标题栏图标：由 tools/genicons.ps1 生成，嵌入资源所以运行时不依赖磁盘文件 -->
+  <ItemGroup>
+    <EmbeddedResource Include="icons\*.ico" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="wenhao.jpg" />
   </ItemGroup>

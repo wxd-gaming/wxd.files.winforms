@@ -26,7 +26,7 @@ namespace wxd.files.winforms
         private TreeView _treeFiles = new();
         private TextBox _txtFileFilter = new();
         private ThemeField _fieldFileFilter = new();
-        private TabControl _tabContent = new();
+        private ThemeTabControl _tabContent = new();
         private Panel _pnlLeft = new();
         private Panel _pnlLeftTop = new();
         private Panel _pnlLeftBottom = new();   // 底部状态栏
@@ -168,6 +168,7 @@ namespace wxd.files.winforms
             SuspendLayout();
             ClientSize = new Size(1200, 800);
             Text = "CSV/Excel阅读器";
+            Icon = WindowIcons.Reader;
             MinimumSize = new Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
             WindowState = FormWindowState.Maximized;
@@ -417,7 +418,7 @@ namespace wxd.files.winforms
             _pnlLeft.Controls.Add(_pnlLeftTop);
 
             // ==================== 右侧标签页 ====================
-            _tabContent = new TabControl
+            _tabContent = new ThemeTabControl
             {
                 Dock = DockStyle.Fill,
                 Font = Theme.Body,
@@ -544,6 +545,7 @@ namespace wxd.files.winforms
             _pnlTreeHeader.Invalidate();
             _treeFiles.Invalidate();
             _tabContent.BackColor = _colorSurface;
+            _tabContent.Invalidate();
             // 界面上还有一批创建时一次性取色的局部控件，逐个重赋容易漏，统一按旧令牌→新令牌平移一次
             ThemeRecolor.Apply(this);
         }
@@ -2140,6 +2142,12 @@ namespace wxd.files.winforms
                     var tabPage = _tabContent.TabPages[e.Index];
                     var tabRect = _tabContent.GetTabRect(e.Index);
                     bool isSelected = _tabContent.SelectedIndex == e.Index;
+
+                    // 页签本体四周留了 2px 缝，先按皮肤底色铺一层，否则缝里露的是 comctl32 的系统灰。
+                    // 这里只能铺自己这一格：DrawItem 给的 Graphics 没有裁到本页签矩形（ClipBounds 是无限大），
+                    // 用 Clear 会把整条页签带连同别处画好的页签一起刷掉，最后只剩画得最晚的那个页签。
+                    using (var bandBrush = new SolidBrush(Theme.P.Window))
+                        e.Graphics.FillRectangle(bandBrush, tabRect);
 
                     // 选中页签底部多延伸2px，与内容区无缝衔接
                     int bottomExtra = isSelected ? 2 : 0;

@@ -56,6 +56,7 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             Text = "选择关联表";
+            Icon = WindowIcons.Link;
             ClientSize = new Size(500, 400);
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false;

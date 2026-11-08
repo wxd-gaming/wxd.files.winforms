@@ -180,10 +180,15 @@ static void Run(string[] args)
         if (args.Length > 4)
         {
             var fileType = asm.GetType("wxd.files.winforms.CsvReaderForm+FileType")!;
+            var openFile = readerType.GetMethod("OpenFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
             reader.Shown += (s, e) =>
             {
-                readerType.GetMethod("OpenFile", BindingFlags.Instance | BindingFlags.NonPublic)!
-                      .Invoke(reader, new object[] { args[4], Enum.GetValues(fileType).GetValue(0) });
+                // args[4..] 可以传多个文件，一次开多个页签才能看到页签之间的缝
+                for (int i = 4; i < args.Length; i++)
+                {
+                    if (!args[i].EndsWith(".csv") && !args[i].EndsWith(".xlsx")) continue;
+                    openFile.Invoke(reader, new object[] { args[i], Enum.GetValues(fileType).GetValue(0) });
+                }
 
                 // 构造时传入的是文件路径，左侧目录树不会自动扫描；这里补上真实使用时的加载入口
                 var dirField = readerType.GetField("_currentDir", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -358,20 +363,21 @@ static void Run(string[] args)
 
     if (args.Length > 3 && args[3] == "logs")
     {
-        // 日志分析窗口：args[2] 当目录用，args[4]（可选）在启动后打开成标签页
+        // 日志分析窗口：args[2] 当目录用，args[4..] 是启动后打开成标签页的文件（可多个，
+        // 只看得到页签之间的缝；非路径参数如 switch/detail/geom 会被跳过）
         var viewerType = asm.GetType("wxd.files.winforms.LargeFileViewer")!;
         var viewer = (Form)Activator.CreateInstance(viewerType, new object[] { file })!;
         if (args.Length > 4)
         {
-            string open = args[4];
+            var openFiles = args.Skip(4).Where(System.IO.Path.IsPathRooted).ToArray();
             viewer.Shown += (s, e) =>
             {
                 var timer = new System.Windows.Forms.Timer { Interval = 1200 };
                 timer.Tick += (_, _) =>
                 {
                     timer.Stop();
-                    viewerType.GetMethod("OpenFile", BindingFlags.Instance | BindingFlags.NonPublic)!
-                          .Invoke(viewer, new object[] { open });
+                    var openFile = viewerType.GetMethod("OpenFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    foreach (string f in openFiles) openFile.Invoke(viewer, new object[] { f });
                 };
                 timer.Start();
             };
@@ -605,6 +611,14 @@ static void ShowDialog(Assembly asm, Form owner, string which)
             using var dlg = (Form)Activator.CreateInstance(t, new object?[] {
                 "第一行内容\n第二行内容\t带制表符", 4, 3, "cfg_monster.csv", "desc",
                 null, false, "", false, null })!;
+            dlg.ShowDialog(owner);
+            break;
+        }
+
+        case "jump":
+        {
+            var t = asm.GetType("wxd.files.winforms.LineNumberJumpDialog")!;
+            using var dlg = (Form)Activator.CreateInstance(t, new object?[] { 120000, 4321L })!;
             dlg.ShowDialog(owner);
             break;
         }

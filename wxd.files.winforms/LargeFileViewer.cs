@@ -19,7 +19,7 @@ namespace wxd.files.winforms
         private ListView _lstFiles = new();
         private ThemeField _fldFilter = new();
         private TextBox _txtFileFilter => _fldFilter.Edit;
-        private TabControl _tabContent = new();
+        private ThemeTabControl _tabContent = new();
         private Panel _pnlLeft = new();
         private Panel _pnlLeftTop = new();
         private ThemeButton _btnSelectFolder = new();
@@ -27,7 +27,6 @@ namespace wxd.files.winforms
         private ThemeButton _btnHelp = new();
         private ThemeButton _btnTabMenu = new();
         private Panel _tabPanel = new();
-        private Panel _tabStripCover = new();
         private Label _lblFileCount = new();
         private ImageList _imgList = new();
 
@@ -82,8 +81,7 @@ namespace wxd.files.winforms
                 await Task.Delay(200);
                 if (_splitContainer.SplitterDistance < 300)
                     _splitContainer.SplitterDistance = 300;
-                if (_lstFiles.Columns.Count > 0)
-                    _lstFiles.Columns[0].Width = 280;
+                FitFileColumn();
                 _lstFiles.Refresh();
             };
 
@@ -104,7 +102,7 @@ namespace wxd.files.winforms
             StartPosition = FormStartPosition.CenterScreen;
             WindowState = FormWindowState.Maximized;
             Font = new Font("Microsoft YaHei UI", 9f);
-            try { Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico")); } catch { }
+            Icon = WindowIcons.Logs;
             ResumeLayout(false);
         }
 
@@ -193,7 +191,7 @@ namespace wxd.files.winforms
             _pnlLeft.Controls.Add(_pnlLeftTop);
 
             // ==================== 右侧标签页 ====================
-            _tabContent = new TabControl
+            _tabContent = new ThemeTabControl
             {
                 Dock = DockStyle.Fill,
                 SizeMode = TabSizeMode.Fixed,
@@ -205,21 +203,15 @@ namespace wxd.files.winforms
             _btnTabMenu = new ThemeButton { Text = "▼", Ghost = true };
             _btnTabMenu.Click += (s, e) => ShowTabMenu(_btnTabMenu);
 
-            // 标签页面板：TabControl + 页签条盖板 + ▼按钮（后两个盖在右上角）
+            // 标签页面板：页签条空白由 ThemeTabControl 自己铺皮肤色，不再需要盖板
             _tabPanel = new Panel { Dock = DockStyle.Fill };
             _tabPanel.SizeChanged += (s, e) =>
             {
                 int size = Theme.P.ButtonHeight;
                 _btnTabMenu.SetBounds(_tabPanel.Width - size - 6, 4, size, size);
-                LayoutTabStripCover();
             };
-            _tabContent.SelectedIndexChanged += (s, e) => LayoutTabStripCover();
-            _tabContent.ControlAdded += (s, e) => LayoutTabStripCover();
-            _tabContent.ControlRemoved += (s, e) => LayoutTabStripCover();
             _tabPanel.Controls.Add(_tabContent);
-            _tabPanel.Controls.Add(_tabStripCover);
             _tabPanel.Controls.Add(_btnTabMenu);
-            _tabStripCover.BringToFront();
             _btnTabMenu.BringToFront();
 
             // 初始空白页
@@ -235,23 +227,25 @@ namespace wxd.files.winforms
             _splitContainer.Panel1.Controls.Add(_pnlLeft);
             _splitContainer.Panel2.Controls.Add(_tabPanel);
 
-            _splitContainer.SplitterMoved += (s, e) =>
-            {
-                if (_lstFiles.Columns.Count > 0)
-                    _lstFiles.Columns[0].Width = Math.Max(380, _splitContainer.Panel1.Width - 20);
-            };
-
             Controls.Add(_splitContainer);
 
             _pnlLeftTop.Resize += (s, e) => LayoutLeftTop();
 
-            _lstFiles.Resize += (s, e) =>
-            {
-                if (_lstFiles.Columns.Count > 0 && _lstFiles.ClientSize.Width > 380)
-                    _lstFiles.Columns[0].Width = _lstFiles.ClientSize.Width - 4;
-            };
+            // 列表是 Dock=Fill，拖动分隔条时一定会触发 Resize，列宽跟着可视宽度铺满即可
+            _lstFiles.Resize += (s, e) => FitFileColumn();
 
             ResumeLayout(false);
+        }
+
+        /// <summary>
+        /// 文件列铺满列表可视宽度。ListView 的 ClientSize 已经扣掉竖向滚动条，
+        /// 以前按 Panel1.Width - 20 估算会在列表右侧留出一条空白。
+        /// </summary>
+        private void FitFileColumn()
+        {
+            if (_lstFiles.Columns.Count == 0) return;
+            int w = _lstFiles.ClientSize.Width - 4;
+            if (w > 0) _lstFiles.Columns[0].Width = w;
         }
 
         /// <summary>
@@ -280,33 +274,6 @@ namespace wxd.files.winforms
             y += rowH + gap - 2;
             _lblFileCount.Location = new Point(margin + 2, y);
             _pnlLeftTop.Height = _lblFileCount.Bottom + 8;
-        }
-
-        /// <summary>
-        /// 页签条右侧空白是 comctl32 拿系统灰画死的，BackColor 和 SetWindowTheme 都压不住，
-        /// 所以用一块同色面板只盖空白段，页签本体仍由 TabControl 自绘；多行时空白只出现在最后一行。
-        /// </summary>
-        private void LayoutTabStripCover()
-        {
-            int n = _tabContent.TabCount;
-            if (n == 0 || !_tabContent.IsHandleCreated)
-            {
-                _tabStripCover.Visible = false;
-                return;
-            }
-            var last = _tabContent.GetTabRect(n - 1);
-            int w = _tabContent.Width - last.Right;
-            if (w <= 1)
-            {
-                _tabStripCover.Visible = false;
-                return;
-            }
-            // 从页签条顶端开始盖，顺带盖住上面那条系统色描边和下面的分隔线
-            // 但页签换行时 last 已经在下面一行，从 0 盖会把第一行右侧的页签一起涂掉，只盖它自己那一行
-            var first = _tabContent.GetTabRect(0);
-            int top = last.Top > first.Top ? last.Top : 0;
-            _tabStripCover.SetBounds(last.Right, top, w, last.Bottom - top + 4);
-            _tabStripCover.Visible = true;
         }
 
         /// <summary>没有页签时的占位页，两种皮肤都靠令牌取色。</summary>
@@ -356,7 +323,6 @@ namespace wxd.files.winforms
             _tabContent.Font = Theme.Body;
             _tabContent.BackColor = p.Window;
             _tabContent.ItemSize = new Size(180, p.ButtonHeight + 4);
-            _tabStripCover.BackColor = p.Window;
             _btnTabMenu.BackColor = p.Window;
             _btnTabMenu.Font = Theme.Caption;
             _btnTabMenu.Invalidate();
@@ -371,7 +337,7 @@ namespace wxd.files.winforms
             }
 
             LayoutLeftTop();
-            LayoutTabStripCover();
+            _tabContent.Invalidate();
         }
 
         // ==================== 目录选择与文件加载 ====================
@@ -614,8 +580,7 @@ namespace wxd.files.winforms
             _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
-            if (_lstFiles.Columns.Count > 0)
-                _lstFiles.Columns[0].Width = 380;
+            FitFileColumn();
 
             if (_allFiles.Count == 0)
             {
@@ -647,8 +612,7 @@ namespace wxd.files.winforms
             _lstFiles.BeginUpdate();
             _lstFiles.Items.Clear();
 
-            if (_lstFiles.Columns.Count > 0)
-                _lstFiles.Columns[0].Width = 380;
+            FitFileColumn();
 
             if (_allFiles.Count == 0)
             {
@@ -828,6 +792,11 @@ namespace wxd.files.winforms
                     var tabPage = _tabContent.TabPages[e.Index];
                     var tabRect = _tabContent.GetTabRect(e.Index);
                     bool isSelected = _tabContent.SelectedIndex == e.Index;
+
+                    // 页签本体四周留了 2px 缝，先按皮肤底色铺一层，否则缝里露的是 comctl32 的系统灰。
+                    // 只能铺自己这一格：DrawItem 给的 Graphics 没有裁到本页签矩形，铺整条会把别的页签刷掉。
+                    using (var bandBrush = new SolidBrush(Theme.P.Window))
+                        e.Graphics.FillRectangle(bandBrush, tabRect);
 
                     int bottomExtra = isSelected ? 2 : 0;
                     var roundRect = new Rectangle(

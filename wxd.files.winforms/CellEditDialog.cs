@@ -66,6 +66,7 @@
             SuspendLayout();
 
             Text = "编辑单元格";
+            Icon = WindowIcons.Celledit;
             ClientSize = new Size(800, 600);
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = true;

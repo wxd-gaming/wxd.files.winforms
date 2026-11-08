@@ -22,7 +22,7 @@ namespace wxd.files.winforms
         private DataGridView _dataGrid = new();
         private SplitContainer _pnlGridContainer = new();
         private Panel? _headerPanel;  // 固定行区域容器引用，避免每次 AttachGridToParent 创建新 Panel 导致空 Panel 堆积遮挡
-        private Button _btnSelectColumns = new();
+        private ThemeButton _btnSelectColumns = new();
         private TextBox _txtContentFilter = new();
         private TextBox _txtAdvancedFilter = new();
         private Label _lblLock = new();
@@ -2775,8 +2775,20 @@ namespace wxd.files.winforms
                 dataColumns = Math.Max(0, _columnCheckStates.Length - 1);
                 checkedData = Math.Max(0, checkedCount - 1);
             }
-            _btnSelectColumns.Text = $"列管理({checkedData}/{dataColumns})";
-            _btnSelectColumns.ForeColor = checkedData < dataColumns ? Color.Red : _colorLightText;
+            string colmgrText = $"列管理({checkedData}/{dataColumns})";
+            bool hasHidden = checkedData < dataColumns;
+            if (_btnSelectColumns.Text != colmgrText)
+            {
+                // 按钮建好时按"列管理"量宽，加上列数后文字变长会被截断，这里跟着文本重新量宽
+                _btnSelectColumns.Text = colmgrText;
+                _btnSelectColumns.Width = ThemeButton.FitWidth(colmgrText);
+            }
+            // ThemeButton 自绘不认 ForeColor，有隐藏列时走 Danger 态把文字和描边染红
+            if (_btnSelectColumns.Danger != hasHidden)
+            {
+                _btnSelectColumns.Danger = hasHidden;
+                _btnSelectColumns.Invalidate();
+            }
         }
 
         // ==================== 行过滤 ====================
@@ -5624,8 +5636,8 @@ namespace wxd.files.winforms
         public void DisableColumnManagement()
         {
             _columnManagementDisabled = true;
-            // ★ 不设置 _btnSelectColumns.Enabled = false，因为 WinForms 禁用按钮会用灰色绘制文本，
-            //   覆盖红色 ForeColor。改为用标志位在 Click 事件中拦截，按钮外观保持正常。
+            // ★ 不设置 _btnSelectColumns.Enabled = false，禁用态会把文字和描边混灰，
+            //   盖掉"有隐藏列"的红色警示。改为用标志位在 Click 事件中拦截，按钮外观保持正常。
             // 禁用 _flowTop 中所有 ComboBox（固定行/表头行/映射行/唯一列）
             if (_flowTop != null)
             {

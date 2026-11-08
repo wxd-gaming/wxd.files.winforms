@@ -194,6 +194,7 @@ namespace wxd.files.winforms
         {
             Text = $"版本对比 - {Path.GetFileName(_filePath)} " +
                    $"[{(_vcsType == VcsType.Svn ? "SVN" : "Git")}]";
+            Icon = WindowIcons.Vcmp;
             ClientSize = new Size(1400, 900);
             WindowState = FormWindowState.Maximized;
             StartPosition = FormStartPosition.CenterScreen;
