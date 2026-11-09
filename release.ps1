@@ -261,9 +261,10 @@ Write-Host "[4/6] Tag pushed" -ForegroundColor Green
 Write-Host
 Write-Host "[5/6] Creating Gitee Release..." -ForegroundColor Cyan
 
-# ★ 使用双引号字符串 + 转义换行符，避免 here-string 中的反引号与 Markdown 冲突
+# ★ 双引号串里反引号是转义符，字面反引号要写成 ``；MD5 必须保持 `xxx` 反引号包裹，
+#   已发布的旧客户端只认这种写法，去掉反引号会让它解析不到校验值而拒绝更新
 $releaseTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$releaseBody = "## $TagName`n`n**Release Time**: $releaseTime`n`n$ReleaseNotes`n`n---`n`n**MD5**: $md5`n**File**: $ExeName`n**Size**: $exeSize MB"
+$releaseBody = "## $TagName`n`n**Release Time**: $releaseTime`n`n$ReleaseNotes`n`n---`n`n**MD5**: ``${md5}```n**File**: $ExeName`n**Size**: $exeSize MB"
 
 # ★ 使用 JavaScriptSerializer 替代 ConvertTo-Json，避免中文字符被转义为 \uXXXX 导致乱码
 Add-Type -AssemblyName System.Web.Extensions

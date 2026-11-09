@@ -400,7 +400,9 @@ namespace wxd.files.winforms
             var body = root.GetProperty("body").GetString() ?? "";
 
             // 从 body 中解析 MD5: **MD5**: `xxx`
-            var md5Match = Regex.Match(body, @"\*\*MD5\*\*:\s*`([a-f0-9]{32})`", RegexOptions.IgnoreCase);
+            // 反引号可选：早期 Release 用反引号包裹，release.ps1 改成双引号拼串后不再带反引号，
+            // 两种写法都必须能解析，否则已发布的旧 Release 无法被更新
+            var md5Match = Regex.Match(body, @"\*{0,2}MD5\*{0,2}\s*:?\s*[`""']?([0-9a-fA-F]{32})", RegexOptions.IgnoreCase);
             var md5 = md5Match.Success ? md5Match.Groups[1].Value : "";
 
             string? downloadUrl = null;
