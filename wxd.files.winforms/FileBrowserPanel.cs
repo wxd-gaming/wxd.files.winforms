@@ -851,7 +851,7 @@ namespace wxd.files.winforms
             ResumeLayout(false);
         }
 
-        private const string FilterPlaceholder = "关键词过滤，支持 || 和 &&";
+        private const string FilterPlaceholder = "关键词过滤，支持 ||、&&、*锚定";
 
         /// <summary>
         /// 顶部路径栏：路径框吃满剩余宽度，「上级」按钮钉在右侧。
@@ -877,15 +877,17 @@ namespace wxd.files.winforms
         private void SizeFileCountLabel()
         {
             if (_lblFileCount == null) return;
-            int w = 0, h = 0;
+            int w = 0, lineH = 0, lines = 0;
             foreach (var line in _lblFileCount.Text.Split(GlobalConst.LfChar))
             {
                 var sz = TextRenderer.MeasureText(line.TrimEnd(GlobalConst.CrChar), Theme.Caption);
                 w = Math.Max(w, sz.Width);
-                h = Math.Max(h, sz.Height);
+                lineH = Math.Max(lineH, sz.Height);
+                lines++;
             }
+            // 文案是上下两行，高度得按两行算，只量一行会把第二行裁掉
             _lblFileCount.Width = w + 8;
-            _lblFileCount.Height = h;
+            _lblFileCount.Height = lineH * lines;
         }
 
         /// <summary>
@@ -917,7 +919,8 @@ namespace wxd.files.winforms
             if (_lblFileCount != null)
             {
                 _lblFileCount.Left = area.Left;
-                _lblFileCount.Top = area.Top + Math.Max(0, (area.Height - _lblFileCount.Height) / 2);
+                // 两行文案比一行控件高，按整个底栏垂直居中（吃掉上下 Padding 的留白，底栏不加高）
+                _lblFileCount.Top = Math.Max(0, (_pnlBottom.ClientSize.Height - _lblFileCount.Height) / 2);
                 filterLeft = _lblFileCount.Right + ThemeMetrics.Group;
             }
 
@@ -1592,17 +1595,38 @@ namespace wxd.files.winforms
             if (filter.Contains('|'))
             {
                 var terms = filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return names.Where(n => terms.Any(t => n.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0));
+                return names.Where(n => terms.Any(t => MatchTerm(n, t)));
             }
             else if (filter.Contains('&'))
             {
                 var terms = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return names.Where(n => terms.All(t => n.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0));
+                return names.Where(n => terms.All(t => MatchTerm(n, t)));
             }
             else
             {
-                return names.Where(n => n.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+                return names.Where(n => MatchTerm(n, filter));
             }
+        }
+
+        /// <summary>
+        /// 单个过滤词与文件名的匹配规则。
+        /// 词首/词尾的 * 是锚点：<c>1.3.*</c> 只匹配前缀，<c>*.3</c> 只匹配后缀，
+        /// 两端都没有 * 时保持原来的包含匹配。锚点可以和 ||、&& 组合使用。
+        /// </summary>
+        private static bool MatchTerm(string name, string term)
+        {
+            bool hasLeadStar = term.Length > 0 && term[0] == '*';
+            bool hasTrailStar = term.Length > (hasLeadStar ? 1 : 0) && term[term.Length - 1] == '*';
+
+            var core = term[(hasLeadStar ? 1 : 0)..(hasTrailStar ? term.Length - 1 : term.Length)];
+            if (core.Length == 0) return true;
+
+            if (hasTrailStar && !hasLeadStar)
+                return name.StartsWith(core, StringComparison.OrdinalIgnoreCase);
+            if (hasLeadStar && !hasTrailStar)
+                return name.EndsWith(core, StringComparison.OrdinalIgnoreCase);
+
+            return name.Contains(core, StringComparison.OrdinalIgnoreCase);
         }
 
         // ==================== 列表项操作 ====================

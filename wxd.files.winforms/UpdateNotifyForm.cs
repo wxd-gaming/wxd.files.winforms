@@ -228,7 +228,7 @@ namespace wxd.files.winforms
                 //    导致进度条跳过中间值（只显示 0% → 100%）
                 await Task.Run(async () =>
                 {
-                    await UpdateHelper.DoUpdateAsync(_result.RemoteVersion, _result.RemoteMd5, p =>
+                    await UpdateHelper.DoUpdateAsync(_result.RemoteVersion, _result.RemoteMd5, _result.DownloadUrl, p =>
                     {
                         // 此回调在线程池线程上执行，通过 BeginInvoke 安全更新 UI
                         BeginInvoke(new Action(() =>

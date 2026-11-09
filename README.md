@@ -43,7 +43,7 @@
 | 日志分析 | 工具栏 **日志分析** | 超大文本文件浏览、搜索、导出、格式化 |
 | 笔记 | 工具栏 **📝 笔记** | 随手记 + 富文本粘贴截图，标题/内容全文搜索 |
 | 自定义命令 | **≡ → 命令管理** | 把常用脚本、网址做成工具栏按钮 |
-| 自动更新 | 工具栏 **关于** | 每天自动检查 Gitee Release，可跳过版本 |
+| 自动更新 | 工具栏 **关于** | 每天自动检查 Release（Gitee 优先，失败自动改用 GitHub），可跳过版本 |
 
 ---
 
@@ -182,7 +182,7 @@
 
 ![关于 · 检查更新](docs/images/14-about.png)
 
-「关于」窗口内置完整使用说明，同时是更新入口：启动时每天自动检查一次 Gitee Release，发现新版本弹出更新内容与"立即更新 / 跳过版本 / 取消"，支持强制重装当前版本。
+「关于」窗口内置完整使用说明，同时是更新入口：启动时每天自动检查一次 Release，Gitee 优先、连不上时自动改用 GitHub 镜像，发现新版本弹出更新内容与"立即更新 / 跳过版本 / 取消"，支持强制重装当前版本。
 
 ---
 
@@ -191,7 +191,7 @@
 ### 多窗格文件管理
 - 1~10 窗格；横向 / 纵向 / 纵横交错流式三种布局；3·5·7 窗格走"左流式 + 右占满高度"特例
 - 每窗格独立目录、过滤、视图、页签；活动窗格蓝框高亮
-- 过滤框支持 `||`（或）与 `&&`（与），忽略大小写，`Esc` 清空，300ms 防抖
+- 过滤框支持 `||`（或）与 `&&`（与），词首/词尾的 `*` 可锚定（`1.3.*` 只要开头、`*3.1` 只要结尾），忽略大小写，`Esc` 清空，300ms 防抖
 - 显示/隐藏系统隐藏文件；双击文件夹进入，双击文件用系统默认程序打开
 
 ### CSV/Excel 阅读器
@@ -246,7 +246,7 @@ dotnet run --project wxd.files.winforms/wxd.files.winforms.csproj
 .\release.ps1 -Version "1.0.2.8" -ReleaseNotes "【优化】xxx"
 ```
 
-脚本会 publish、生成 `md5.txt`（版本号 + MD5 + SHA1 + 更新说明）并创建 Gitee Release。源码里的 `Version` 默认 `1.0.0.0`，实际发布版本由 `-p:Version=` 注入，**当前发布版本见 `md5.txt`**。
+脚本会 publish、算出 exe 的 MD5、打 tag 并把 `master` + tag 同时推到 Gitee 和 GitHub，再在两端各建一个 Release 并上传 exe 附件——Release 正文里的 `` **MD5**: `xxx` `` 就是客户端下载后的校验值来源。源码里的 `Version` 默认 `1.0.0.0`，实际发布版本由 `-p:Version=` 注入。首次运行会依次索要 `GITEE_TOKEN`（projects 权限）和 `GITHUB_TOKEN`（repo 权限）并写入用户环境变量；GitHub token 直接回车跳过则只发 Gitee。
 
 ## 配置存储
 
@@ -270,7 +270,7 @@ dotnet run --project wxd.files.winforms/wxd.files.winforms.csproj
 - **.NET 10.0**（`net10.0-windows7.0`）+ Windows Forms，C#，Nullable / ImplicitUsings 开启
 - NuGet：`ExcelDataReader` 3.7.0、`ExcelDataReader.DataSet` 3.7.0、`MiniExcel` 1.37.0
 - 外部命令行：`svn.exe` / `git.exe`
-- 自动更新源：Gitee Releases API
+- 自动更新源：Gitee Releases API，失败自动回退 GitHub Releases API（双发布，两端内容一致）
 - 编码：源码与数据文件统一 UTF-8
 
 ## 项目结构与模块文档

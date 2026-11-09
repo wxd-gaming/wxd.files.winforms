@@ -1,6 +1,8 @@
-# release.ps1 - wxd.files.winforms Auto Release Tool
+# release.ps1 - wxd.files.winforms Auto Release Tool (dual publish: Gitee + GitHub)
 # Usage: Double-click release.bat (recommended), or right-click -> Run with PowerShell
-# Prerequisite: On first run, you will be prompted to enter your Gitee personal token, which will be saved automatically.
+# Prerequisite: On first run, you will be prompted for your Gitee and GitHub personal
+# tokens (GITEE_TOKEN / GITHUB_TOKEN); both are saved to user environment variables.
+# Leaving the GitHub token empty publishes to Gitee only.
 
 param(
     [string]$Version = "",
@@ -12,7 +14,11 @@ param(
 # ============================================
 $GiteeOwner = "wxd-gaming"              # Gitee username/organization
 $GiteeRepo  = "wxd.files.winforms"      # Repository name
-$GiteeToken = $env:GITEE_TOKEN          # Read token from environment variable
+$GiteeRemoteName = "origin"             # Gitee git remote
+
+$GithubOwner = "wxd-gaming"             # GitHub username/organization
+$GithubRepo  = "wxd.files.winforms"     # Repository name
+$GithubRepoUrl = "https://github.com/$GithubOwner/$GithubRepo.git"
 
 $ProjectDir  = Join-Path $PSScriptRoot "wxd.files.winforms"
 $CsprojPath  = Join-Path $ProjectDir "wxd.files.winforms.csproj"
@@ -20,43 +26,77 @@ $PublishDir  = Join-Path $PSScriptRoot "publish"
 
 
 # ============================================
+# Helpers
+# ============================================
+
+# Read token from process/user env; prompt and persist when missing.
+# Returns $null when the user skips it (caller decides whether that is fatal).
+function Resolve-ApiToken {
+    param(
+        [string]$EnvName,
+        [string]$DisplayName,
+        [string]$ScopeHint
+    )
+
+    $token = [Environment]::GetEnvironmentVariable($EnvName, "Process")
+    if (-not $token) { $token = [Environment]::GetEnvironmentVariable($EnvName, "User") }
+    if ($token) { return $token }
+
+    Write-Host "[INFO] $EnvName environment variable not found." -ForegroundColor Yellow
+    Write-Host "       A $DisplayName personal token is required to create a Release." -ForegroundColor Yellow
+    Write-Host "       How to get one: $DisplayName website -> Settings -> Developer settings -> Personal Access Token" -ForegroundColor Yellow
+    Write-Host "       Required scope: $ScopeHint" -ForegroundColor Yellow
+    Write-Host
+    Write-Host "       Leave it empty and press Enter to skip $DisplayName publishing." -ForegroundColor DarkGray
+    Write-Host
+
+    $inputToken = Read-Host "Please enter your $DisplayName personal token"
+    if (-not $inputToken) { return $null }
+
+    try {
+        [Environment]::SetEnvironmentVariable($EnvName, $inputToken, "User")
+        [Environment]::SetEnvironmentVariable($EnvName, $inputToken, "Process")
+        Write-Host "[OK] Token saved to user environment variable. You won't need to enter it again." -ForegroundColor Green
+    } catch {
+        [Environment]::SetEnvironmentVariable($EnvName, $inputToken, "Process")
+        Write-Host "[WARN] Could not save token persistently. It will only be valid for this session." -ForegroundColor Yellow
+    }
+    Write-Host
+
+    return $inputToken
+}
+
+# Find the git remote that points at the GitHub repo; create one if absent.
+function Resolve-GithubRemoteName {
+    foreach ($line in (& git remote -v 2>$null)) {
+        if ($line -match "^(\S+)\s+\S*github\.com[/:]$GithubOwner/$GithubRepo(\.git)?\s+\(fetch\)") {
+            return $Matches[1]
+        }
+    }
+    & git remote add github $GithubRepoUrl 2>&1 | Out-Null
+    Write-Host "  [INFO] Added git remote 'github' -> $GithubRepoUrl" -ForegroundColor Gray
+    return "github"
+}
+
+# ============================================
 # 0. Pre-checks
 # ============================================
 Write-Host
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  wxd.files.winforms Auto Release Tool" -ForegroundColor Cyan
+Write-Host "  (dual publish: Gitee + GitHub)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host
 
-# Check Gitee Token
+$GiteeToken = Resolve-ApiToken -EnvName "GITEE_TOKEN" -DisplayName "Gitee" -ScopeHint "projects"
 if (-not $GiteeToken) {
-    Write-Host "[INFO] GITEE_TOKEN environment variable not found." -ForegroundColor Yellow
-    Write-Host "       A Gitee personal token is required to create a Release." -ForegroundColor Yellow
-    Write-Host "       How to get one: Gitee website -> Settings -> Private Token -> Generate" -ForegroundColor Yellow
-    Write-Host "       Required scope: projects" -ForegroundColor Yellow
-    Write-Host
-
-    $inputToken = Read-Host "Please enter your Gitee personal token"
-
-    if (-not $inputToken) {
-        Write-Host "[ERROR] Token cannot be empty. Cancelled." -ForegroundColor Red
-        Read-Host "Press any key to exit..."
-        exit 1
-    }
-
-    # Save to user environment variable persistently
-    try {
-        [Environment]::SetEnvironmentVariable("GITEE_TOKEN", $inputToken, "User")
-        $env:GITEE_TOKEN = $inputToken
-        $GiteeToken = $inputToken
-        Write-Host "[OK] Token saved to user environment variable. You won't need to enter it again." -ForegroundColor Green
-    } catch {
-        Write-Host "[WARN] Could not save token persistently. It will only be valid for this session." -ForegroundColor Yellow
-        $env:GITEE_TOKEN = $inputToken
-        $GiteeToken = $inputToken
-    }
-    Write-Host
+    Write-Host "[ERROR] Gitee token cannot be empty. Cancelled." -ForegroundColor Red
+    Read-Host "Press any key to exit..."
+    exit 1
 }
+
+# GitHub is optional: without a token the script still publishes to Gitee only.
+$GithubToken = Resolve-ApiToken -EnvName "GITHUB_TOKEN" -DisplayName "GitHub" -ScopeHint "repo (classic token)"
 
 # Check csproj file
 if (-not (Test-Path $CsprojPath)) {
@@ -140,6 +180,11 @@ Write-Host "========================================"
 Write-Host "  Version : $Version" -ForegroundColor White
 Write-Host "  Tag     : $TagName" -ForegroundColor White
 Write-Host "  File    : $ExeName" -ForegroundColor White
+if ($GithubToken) {
+    Write-Host "  Targets : Gitee + GitHub" -ForegroundColor White
+} else {
+    Write-Host "  Targets : Gitee only (no GitHub token)" -ForegroundColor Yellow
+}
 Write-Host "  Notes   :" -ForegroundColor White
 foreach ($line in ($ReleaseNotes -split "`n")) {
     Write-Host "            $line" -ForegroundColor Gray
@@ -158,7 +203,7 @@ if ($confirm -ne 'y' -and $confirm -ne 'Y') {
 # 4. Build project
 # ============================================
 Write-Host
-Write-Host "[1/6] Building project (dotnet publish)..." -ForegroundColor Cyan
+Write-Host "[1/8] Building project (dotnet publish)..." -ForegroundColor Cyan
 Write-Host
 
 # Clean old publish directory
@@ -200,13 +245,13 @@ if ($publishExitCode -ne 0) {
     exit 1
 }
 
-Write-Host "[1/6] Build successful!" -ForegroundColor Green
+Write-Host "[1/8] Build successful!" -ForegroundColor Green
 
 # ============================================
 # 5. Locate published EXE (single-file mode)
 # ============================================
 Write-Host
-Write-Host "[2/6] Locating published EXE..." -ForegroundColor Cyan
+Write-Host "[2/8] Locating published EXE..." -ForegroundColor Cyan
 
 $ExeName = "wxd.files.winforms.exe"
 $ExePath = Join-Path $PublishDir $ExeName
@@ -218,13 +263,13 @@ if (-not (Test-Path $ExePath)) {
 }
 
 $exeSize = [math]::Round((Get-Item $ExePath).Length / 1MB, 2)
-Write-Host "[2/6] EXE found: $ExeName ($exeSize MB)" -ForegroundColor Green
+Write-Host "[2/8] EXE found: $ExeName ($exeSize MB)" -ForegroundColor Green
 
 # ============================================
 # 6. Generate MD5 (of EXE, not ZIP)
 # ============================================
 Write-Host
-Write-Host "[3/6] Generating MD5 of EXE..." -ForegroundColor Cyan
+Write-Host "[3/8] Generating MD5 of EXE..." -ForegroundColor Cyan
 
 $md5 = (Get-FileHash $ExePath -Algorithm MD5).Hash.ToLower()
 
@@ -235,13 +280,13 @@ if ([string]::IsNullOrEmpty($md5) -or $md5.Length -ne 32) {
     exit 1
 }
 
-Write-Host "[3/6] MD5 generated: $md5" -ForegroundColor Green
+Write-Host "[3/8] MD5 generated: $md5" -ForegroundColor Green
 
 # ============================================
-# 7. Create and push Git Tag (no md5.txt commit)
+# 7. Create Git Tag, push master + tag to both remotes
 # ============================================
 Write-Host
-Write-Host "[4/6] Creating Git Tag..." -ForegroundColor Cyan
+Write-Host "[4/8] Creating Git Tag..." -ForegroundColor Cyan
 
 # Create tag only (no commit of md5.txt)
 git tag -a $TagName -m "$ReleaseNotes" 2>$null
@@ -249,17 +294,28 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[WARN] Tag creation may have failed (may already exist), continuing..." -ForegroundColor Yellow
 }
 
-# Push tag only
-Write-Host "  Pushing tag to remote..."
-git push origin $TagName 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+$GithubRemoteName = $null
+if ($GithubToken) {
+    $GithubRemoteName = Resolve-GithubRemoteName
+}
 
-Write-Host "[4/6] Tag pushed" -ForegroundColor Green
+Write-Host "  Pushing master + tag to Gitee ($GiteeRemoteName)..."
+git push $GiteeRemoteName master 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+git push $GiteeRemoteName $TagName 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+
+if ($GithubRemoteName) {
+    Write-Host "  Pushing master + tag to GitHub ($GithubRemoteName)..."
+    git push $GithubRemoteName master 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+    git push $GithubRemoteName $TagName 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+}
+
+Write-Host "[4/8] Tag pushed" -ForegroundColor Green
 
 # ============================================
 # 8. Create Gitee Release via API
 # ============================================
 Write-Host
-Write-Host "[5/6] Creating Gitee Release..." -ForegroundColor Cyan
+Write-Host "[5/8] Creating Gitee Release..." -ForegroundColor Cyan
 
 # ★ 双引号串里反引号是转义符，字面反引号要写成 ``；MD5 必须保持 `xxx` 反引号包裹，
 #   已发布的旧客户端只认这种写法，去掉反引号会让它解析不到校验值而拒绝更新
@@ -294,7 +350,7 @@ try {
     } else { 
         "https://gitee.com/$GiteeOwner/$GiteeRepo/releases/$TagName" 
     }
-    Write-Host "[5/6] Release created successfully!" -ForegroundColor Green
+    Write-Host "[5/8] Release created successfully!" -ForegroundColor Green
     Write-Host "  Release ID : $releaseId" -ForegroundColor Gray
     Write-Host "  URL        : $releaseUrl" -ForegroundColor Cyan
 } catch {
@@ -316,7 +372,7 @@ try {
 # 9. Upload EXE as attachment (Win10/Win11 compatible)
 # ============================================
 Write-Host
-Write-Host "[6/6] Uploading EXE as attachment..." -ForegroundColor Cyan
+Write-Host "[6/8] Uploading EXE as attachment..." -ForegroundColor Cyan
 
 try {
     # Use curl.exe (built-in on Win10 1803+ / Win11) for reliable multipart upload
@@ -337,7 +393,7 @@ try {
     }
 
     if ($httpCode -eq "201" -or $httpCode -eq "200") {
-        Write-Host "[6/6] EXE uploaded successfully!" -ForegroundColor Green
+        Write-Host "[6/8] EXE uploaded successfully!" -ForegroundColor Green
     } else {
         Write-Host "[WARN] EXE upload failed (HTTP $httpCode)" -ForegroundColor Yellow
         Write-Host "  Response: $responseBody" -ForegroundColor Gray
@@ -350,6 +406,119 @@ try {
 }
 
 # ============================================
+# 10. Publish the same release to GitHub (skipped without token)
+# ============================================
+$githubReleaseUrl = $null
+
+if (-not $GithubToken) {
+    Write-Host
+    Write-Host "[7/8] [8/8] GitHub publishing skipped (no GITHUB_TOKEN)." -ForegroundColor Yellow
+} else {
+    # api.github.com 只接受 TLS 1.2，PS 5.1 默认协议可能更低
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+    $ghApi = "https://api.github.com/repos/$GithubOwner/$GithubRepo"
+    $ghHeaders = @{
+        "Authorization" = "token $GithubToken"
+        "Accept"        = "application/vnd.github+json"
+        "User-Agent"    = "wxd.files.winforms release script"
+    }
+
+    Write-Host
+    Write-Host "[7/8] Creating GitHub Release..." -ForegroundColor Cyan
+
+    $ghPayload = $serializer.Serialize(@{
+        tag_name         = $TagName
+        name             = $TagName
+        body             = $releaseBody
+        target_commitish = "master"
+        prerelease       = $false
+        draft            = $false
+    })
+    $ghBytes = [System.Text.Encoding]::UTF8.GetBytes($ghPayload)
+
+    $ghReleaseId = $null
+    try {
+        # 先查该 Tag 是否已有 Release：存在就改正文复用 id，脚本重跑不会被 422 挡住
+        $ghRelease = $null
+        try {
+            $ghRelease = Invoke-RestMethod -Uri "$ghApi/releases/tags/$TagName" -Method Get -Headers $ghHeaders
+        } catch {
+            $ghRelease = $null
+        }
+
+        if ($ghRelease) {
+            $ghReleaseId = $ghRelease.id
+            Invoke-RestMethod -Uri "$ghApi/releases/$ghReleaseId" -Method Patch `
+                -Body $ghBytes -ContentType "application/json; charset=utf-8" -Headers $ghHeaders | Out-Null
+            Write-Host "[7/8] GitHub Release updated (already existed for this tag)." -ForegroundColor Green
+        } else {
+            $ghRelease = Invoke-RestMethod -Uri "$ghApi/releases" -Method Post `
+                -Body $ghBytes -ContentType "application/json; charset=utf-8" -Headers $ghHeaders
+            $ghReleaseId = $ghRelease.id
+            Write-Host "[7/8] GitHub Release created successfully!" -ForegroundColor Green
+        }
+
+        $githubReleaseUrl = if ($ghRelease.html_url) {
+            $ghRelease.html_url
+        } else {
+            "https://github.com/$GithubOwner/$GithubRepo/releases/tag/$TagName"
+        }
+        Write-Host "  Release ID : $ghReleaseId" -ForegroundColor Gray
+        Write-Host "  URL        : $githubReleaseUrl" -ForegroundColor Cyan
+    } catch {
+        $errorMsg = $_.Exception.Message
+        Write-Host "[WARN] GitHub Release creation failed: $errorMsg" -ForegroundColor Yellow
+        if ($errorMsg -match "401|403|Bad credentials") {
+            Write-Host "  Please check that GITHUB_TOKEN is correct and has 'repo' scope." -ForegroundColor Yellow
+        }
+    }
+
+    if ($ghReleaseId) {
+        Write-Host
+        Write-Host "[8/8] Uploading EXE to GitHub Release..." -ForegroundColor Cyan
+
+        $responseFile = Join-Path $env:TEMP "github_upload_response.txt"
+
+        try {
+            # 同名附件会 422，先删旧的再传，保证重复执行也能得到最新文件
+            $existingAssets = @(Invoke-RestMethod -Uri "$ghApi/releases/$ghReleaseId/assets" -Method Get -Headers $ghHeaders)
+            foreach ($asset in $existingAssets) {
+                if ($asset.name -eq $ExeName) {
+                    Invoke-RestMethod -Uri "$ghApi/releases/assets/$($asset.id)" -Method Delete -Headers $ghHeaders | Out-Null
+                }
+            }
+
+            $ghUploadUrl = "https://uploads.github.com/repos/$GithubOwner/$GithubRepo/releases/$ghReleaseId/assets?name=$ExeName"
+
+            $httpCode = & curl.exe -s -w "%{http_code}" -X POST $ghUploadUrl `
+                -H "Authorization: token $GithubToken" `
+                -H "Content-Type: application/octet-stream" `
+                --data-binary "@$ExePath" `
+                -o $responseFile 2>&1
+
+            $responseBody = ""
+            if (Test-Path $responseFile) {
+                $responseBody = Get-Content $responseFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+                Remove-Item $responseFile -Force -ErrorAction SilentlyContinue
+            }
+
+            if ($httpCode -eq "201") {
+                Write-Host "[8/8] EXE uploaded to GitHub successfully!" -ForegroundColor Green
+            } else {
+                Write-Host "[WARN] GitHub EXE upload failed (HTTP $httpCode)" -ForegroundColor Yellow
+                Write-Host "  Response: $responseBody" -ForegroundColor Gray
+                Write-Host "  You can upload $ExeName manually on the Release page later." -ForegroundColor Yellow
+            }
+        } catch {
+            $errorMsg = $_.Exception.Message
+            Write-Host "[WARN] GitHub EXE upload failed: $errorMsg" -ForegroundColor Yellow
+            Write-Host "  You can upload $ExeName manually on the Release page later." -ForegroundColor Yellow
+        }
+    }
+}
+
+# ============================================
 # Done
 # ============================================
 Write-Host
@@ -359,7 +528,12 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host "  Version : $TagName" -ForegroundColor White
 Write-Host "  MD5     : $md5" -ForegroundColor White
 Write-Host "  File    : $ExeName (${exeSize} MB)" -ForegroundColor White
-Write-Host "  Release : $releaseUrl" -ForegroundColor Cyan
+Write-Host "  Gitee   : $releaseUrl" -ForegroundColor Cyan
+if ($githubReleaseUrl) {
+    Write-Host "  GitHub  : $githubReleaseUrl" -ForegroundColor Cyan
+} else {
+    Write-Host "  GitHub  : not published" -ForegroundColor Yellow
+}
 Write-Host "========================================" -ForegroundColor Green
 Write-Host
 

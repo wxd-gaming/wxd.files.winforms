@@ -26,9 +26,13 @@ namespace wxd.files.winforms
         public string CurrentVersion { get; set; } = "";
         /// <summary>更新说明（累积历史版本的 Release body）</summary>
         public string ReleaseNotes { get; set; } = "";
+        /// <summary>本次命中的发布镜像名（Gitee / GitHub）</summary>
+        public string SourceName { get; set; } = "";
+        /// <summary>最新附件的下载地址，来自命中的镜像</summary>
+        public string DownloadUrl { get; set; } = "";
     }
 
-    /// <summary>Release 信息（从 Gitee API 解析）</summary>
+    /// <summary>Release 信息（从镜像 API 解析）</summary>
     internal class ReleaseInfo
     {
         public string Version { get; set; } = "";
@@ -37,24 +41,52 @@ namespace wxd.files.winforms
         public string Body { get; set; } = "";
     }
 
+    /// <summary>发布镜像（同一份 Release 在 Gitee 和 GitHub 各有一份）</summary>
+    internal class ReleaseSource
+    {
+        public string Name { get; init; } = "";
+        public string LatestApi { get; init; } = "";
+        public string ListApi { get; init; } = "";
+    }
+
     /// <summary>更新核心逻辑</summary>
     public static class UpdateHelper
     {
-        // Gitee API（公开仓库无需 token）
-        private const string ReleaseLatestApi =
-            "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases/latest";
-        private const string ReleasesListApi =
-            "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases?page=1&per_page=50";
+        // 双发布镜像：Gitee 在前（国内直连快），GitHub 兜底（Gitee 接口异常时仍可更新）
+        // 公开仓库读接口无需 token
+        private static readonly ReleaseSource[] _sources = new[]
+        {
+            new ReleaseSource
+            {
+                Name = "Gitee",
+                LatestApi = "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases/latest",
+                ListApi = "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases?page=1&per_page=50"
+            },
+            new ReleaseSource
+            {
+                Name = "GitHub",
+                LatestApi = "https://api.github.com/repos/wxd-gaming/wxd.files.winforms/releases/latest",
+                ListApi = "https://api.github.com/repos/wxd-gaming/wxd.files.winforms/releases?per_page=50"
+            }
+        };
 
         // Config 中的键名
         private const string KeyLastCheckTime = "UpdateLastCheckTime";
         private const string KeySkippedVersions = "UpdateSkippedVersions";
         private const string KeyCurrentVersion = "UpdateCurrentVersion";
 
-        private static readonly HttpClient _httpClient = new HttpClient
+        private static readonly HttpClient _httpClient = CreateHttpClient();
+
+        private static HttpClient CreateHttpClient()
         {
-            Timeout = TimeSpan.FromSeconds(8)
-        };
+            // GitHub API 不带 User-Agent 一律返回 403，Gitee 不挑，统一带上
+            var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(8)
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("wxd.files.winforms");
+            return client;
+        }
 
         /// <summary>统一检查更新入口（自动/手动都调用此方法）</summary>
         /// <remarks>
@@ -133,7 +165,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>下载并更新，带进度回调（Action&lt;int&gt; 每次读取都触发，不合并）</summary>
-        public static async Task DoUpdateAsync(string remoteVersion, string expectedMd5, Action<int>? onProgress)
+        public static async Task DoUpdateAsync(string remoteVersion, string expectedMd5, string downloadUrl, Action<int>? onProgress)
         {
             var currentExePath = Application.ExecutablePath;
             if (string.IsNullOrEmpty(currentExePath) || !File.Exists(currentExePath))
@@ -143,8 +175,7 @@ namespace wxd.files.winforms
             if (!IsValidMd5(expectedMd5))
                 throw new Exception("更新包缺少有效的 MD5 校验值，已取消更新。");
 
-            // 从 Release API 获取附件下载地址
-            var downloadUrl = await GetLatestReleaseDownloadUrlAsync().ConfigureAwait(false);
+            // 下载地址取自检查更新时命中的那个镜像，不能另找源，否则校验值和文件可能不同源
             if (string.IsNullOrEmpty(downloadUrl))
                 throw new Exception("无法获取更新文件的下载地址。");
 
@@ -292,14 +323,15 @@ namespace wxd.files.winforms
             Environment.Exit(0);
         }
 
-        /// <summary>从 Gitee Release API 获取版本检查结果</summary>
+        /// <summary>从发布镜像 API 获取版本检查结果</summary>
         private static async Task<CheckResult?> FetchCheckResultAsync()
         {
-            // 1. 获取最新 Release 信息
-            var latestRelease = await GetLatestReleaseAsync().ConfigureAwait(false);
-            if (latestRelease == null)
+            // 1. 依次尝试镜像，取第一个能拿到最新 Release 的源
+            var hit = await GetLatestFromAnySourceAsync().ConfigureAwait(false);
+            if (hit == null)
                 return null;
 
+            var (source, latestRelease) = hit.Value;
             var remoteVersion = latestRelease.Version;
             var remoteMd5 = latestRelease.Md5;
 
@@ -310,18 +342,18 @@ namespace wxd.files.winforms
 
             bool versionSame = string.Equals(currentVersion, remoteVersion, StringComparison.Ordinal);
 
-            // 3. 获取更新日志
+            // 3. 获取更新日志（与版本信息同源，避免一半 Gitee 一半 GitHub）
             string releaseNotes;
             if (versionSame)
             {
                 // 版本号相同 → 取最近 3 个版本的更新日志
-                releaseNotes = await FetchRecentReleaseNotesAsync(3).ConfigureAwait(false);
+                releaseNotes = await FetchRecentReleaseNotesAsync(3, source).ConfigureAwait(false);
             }
             else
             {
                 // 版本号不同 → 获取当前版本到最新版本之间的累积更新日志
                 releaseNotes = await FetchReleaseNotesBetweenAsync(
-                    currentVersion, remoteVersion).ConfigureAwait(false);
+                    currentVersion, remoteVersion, source).ConfigureAwait(false);
             }
 
             // 计算本地 exe 的 MD5
@@ -357,30 +389,30 @@ namespace wxd.files.winforms
                 RemoteMd5 = remoteMd5,
                 ReleaseNotes = releaseNotes,
                 HasUpdate = needUpdateFile,
-                CurrentVersion = currentVersion
+                CurrentVersion = currentVersion,
+                SourceName = source.Name,
+                DownloadUrl = latestRelease.DownloadUrl ?? ""
             };
         }
 
-        /// <summary>获取最新 Release 的 exe 下载地址</summary>
-        private static async Task<string?> GetLatestReleaseDownloadUrlAsync()
+        /// <summary>按优先级依次尝试各镜像，返回首个成功的源及其最新 Release</summary>
+        private static async Task<(ReleaseSource Source, ReleaseInfo Release)?> GetLatestFromAnySourceAsync()
         {
-            var json = await _httpClient.GetStringAsync(ReleaseLatestApi).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("assets", out var assets) && assets.GetArrayLength() > 0)
+            foreach (var source in _sources)
             {
-                return assets[0].GetProperty("browser_download_url").GetString();
+                var info = await GetLatestReleaseAsync(source).ConfigureAwait(false);
+                if (info != null)
+                    return (source, info);
             }
             return null;
         }
 
-        /// <summary>从 Gitee API 获取最新 Release 信息（版本号 + MD5）</summary>
-        private static async Task<ReleaseInfo?> GetLatestReleaseAsync()
+        /// <summary>从指定镜像获取最新 Release 信息（版本号 + MD5 + 下载地址）</summary>
+        private static async Task<ReleaseInfo?> GetLatestReleaseAsync(ReleaseSource source)
         {
             try
             {
-                var json = await _httpClient.GetStringAsync(ReleaseLatestApi).ConfigureAwait(false);
+                var json = await _httpClient.GetStringAsync(source.LatestApi).ConfigureAwait(false);
                 return ParseReleaseInfo(json);
             }
             catch
@@ -405,19 +437,36 @@ namespace wxd.files.winforms
             var md5Match = Regex.Match(body, @"\*{0,2}MD5\*{0,2}\s*:?\s*[`""']?([0-9a-fA-F]{32})", RegexOptions.IgnoreCase);
             var md5 = md5Match.Success ? md5Match.Groups[1].Value : "";
 
-            string? downloadUrl = null;
-            if (root.TryGetProperty("assets", out var assets) && assets.GetArrayLength() > 0)
-            {
-                downloadUrl = assets[0].GetProperty("browser_download_url").GetString();
-            }
-
             return new ReleaseInfo
             {
                 Version = version,
                 Md5 = md5,
-                DownloadUrl = downloadUrl,
+                DownloadUrl = PickExeDownloadUrl(root),
                 Body = body
             };
+        }
+
+        /// <summary>取 exe 附件的下载地址；镜像还会挂源码包，不能直接拿第一个</summary>
+        private static string? PickExeDownloadUrl(JsonElement root)
+        {
+            if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+                return null;
+
+            string? firstUrl = null;
+            foreach (var asset in assets.EnumerateArray())
+            {
+                var url = asset.TryGetProperty("browser_download_url", out var urlProp)
+                    ? urlProp.GetString() : null;
+                if (string.IsNullOrEmpty(url))
+                    continue;
+
+                var name = asset.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "";
+                if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    return url;
+
+                firstUrl ??= url;
+            }
+            return firstUrl;
         }
 
         /// <summary>从 Release body 中提取纯更新日志（去掉 MD5 等元信息行）</summary>
@@ -456,11 +505,11 @@ namespace wxd.files.winforms
 
         /// <summary>获取两个版本之间的累积更新日志</summary>
         private static async Task<string> FetchReleaseNotesBetweenAsync(
-            string currentVersion, string targetVersion)
+            string currentVersion, string targetVersion, ReleaseSource source)
         {
             try
             {
-                var json = await _httpClient.GetStringAsync(ReleasesListApi).ConfigureAwait(false);
+                var json = await _httpClient.GetStringAsync(source.ListApi).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(json);
                 var releases = doc.RootElement;
 
@@ -522,7 +571,7 @@ namespace wxd.files.winforms
                 // 降级：只取最新 Release 的更新日志
                 try
                 {
-                    var latest = await GetLatestReleaseAsync().ConfigureAwait(false);
+                    var latest = await GetLatestReleaseAsync(source).ConfigureAwait(false);
                     if (latest != null)
                         return ExtractReleaseNotes(latest.Body);
                 }
@@ -537,12 +586,25 @@ namespace wxd.files.winforms
             return await FetchRecentReleaseNotesAsync(count).ConfigureAwait(false);
         }
 
-        /// <summary>获取最近 N 个版本的更新日志</summary>
-        private static async Task<string> FetchRecentReleaseNotesAsync(int count)
+        /// <summary>获取最近 N 个版本的更新日志（未指定源时按优先级依次尝试各镜像）</summary>
+        private static async Task<string> FetchRecentReleaseNotesAsync(int count, ReleaseSource? source = null)
+        {
+            var candidates = source != null ? new[] { source } : _sources;
+            foreach (var src in candidates)
+            {
+                var text = await FetchRecentReleaseNotesFromSourceAsync(src, count).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(text))
+                    return text;
+            }
+            return "";
+        }
+
+        /// <summary>从指定镜像获取最近 N 个版本的更新日志</summary>
+        private static async Task<string> FetchRecentReleaseNotesFromSourceAsync(ReleaseSource source, int count)
         {
             try
             {
-                var json = await _httpClient.GetStringAsync(ReleasesListApi).ConfigureAwait(false);
+                var json = await _httpClient.GetStringAsync(source.ListApi).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(json);
                 var releases = doc.RootElement;
 
