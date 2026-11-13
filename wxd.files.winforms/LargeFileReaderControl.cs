@@ -44,6 +44,13 @@ namespace wxd.files.winforms
         private System.Windows.Forms.Timer _timer = null!, _timerScroll = null!;
         private Panel _toolPanel = null!;
         private Panel _toolDivider = null!;
+        // 选中行详情框：列表只画截断的前 8KB，这里用 ReadLineFull 展示完整行，只读但可选中复制，
+        // 省去「想看全/想复制就得双击弹窗」这一步。只留文本框本身，不另占表头行；
+        // 行号/大小/截断提示放悬停 tooltip。贴底 docking 从列表区借高度，外框和状态栏都不长高。
+        private Panel _detailPanel = null!;
+        private Panel _detailDivider = null!;
+        private TextBox _txtDetail = null!;
+        private ToolTip _detailTip = null!;
 
         // 搜索状态
         // ★ 行号统一改为 long，支持超过 21 亿行的超大文件（极端超短行场景）
@@ -75,6 +82,7 @@ namespace wxd.files.winforms
         private const int CHUNK = 4 * 1024 * 1024;
         private const int DISPLAY_LINE_LIMIT = 8 * 1024;          // 列表面板显示截断：8KB
         private const int FULL_LINE_LIMIT = 64 * 1024 * 1024;     // 弹窗原始内容上限：64MB
+        private const int DETAIL_LINE_LIMIT = 256 * 1024;         // 详情框显示上限：256KB，再大的行交给双击弹窗，免得 EDIT 控件卡死
         // ★ 修复D：Win32 SetScrollInfo 的 nMax 为 int，负值会静默失败。
         // 同时水平滚动范围过大也会导致滚动条精度问题。上限夹紧到 10MB 像素。
         private const int MAX_SCROLL_RANGE = 10 * 1024 * 1024;
@@ -228,19 +236,36 @@ namespace wxd.files.winforms
             _lstContent.GetLineText = idx => _cache.TryGetValue((int)idx, out var v) ? v : ReadLine(idx);
             _lstContent.SelectedIndexChanged += (s, e) =>
             {
-                // 选中变化时刷新底部状态栏当前行
-                try
-                {
-                    long cur = _lstContent.SelectedIndices.Count > 0
-                        ? (new List<long>(_lstContent.SelectedIndices))[0]
-                        : _lstContent.TopIndex;
-                    _lblCurLine.Text = $"行：第{cur + 1:N0}行";
-                }
-                catch { }
+                // 同步刷新选中行详情框（完整内容，方便阅读和复制）
+                try { UpdateDetail(); } catch { }
+                // 选中变化时刷新底部状态栏当前行（与滚动定时器同一口径）
+                try { RefreshCurLineLabel(); } catch { }
             };
             _lstContent.ItemDoubleClick += OnDoubleClick;
             _lstContent.VScrollChanged += (s, e) => UpdateScrollPos();
             _lstContent.KeyDown += OnListViewKeyDown;
+
+            // ★ 选中行详情框：列表只画截断的前 8KB，这里用 ReadLineFull 展示完整行，只读但可选中复制。
+            // 不另占表头行：行号/大小/截断提示放悬停 tooltip，复制直接在框内选中后 Ctrl+C（或 Ctrl+A 全选）。
+            _txtDetail = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                WordWrap = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                MaxLength = 0,
+                Font = Theme.Code,
+                BackColor = Theme.P.Surface,
+                ForeColor = Theme.P.Text
+            };
+            _detailTip = new ToolTip();
+            _detailDivider = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Theme.P.Divider };
+            _detailPanel = new Panel { Dock = DockStyle.Bottom, Height = 72, BackColor = Theme.P.Surface };
+            // Fill 先加、Top 后加：分隔线在顶，文本框填满剩余
+            _detailPanel.Controls.Add(_txtDetail);
+            _detailPanel.Controls.Add(_detailDivider);
 
             // ★ 底部状态栏：一条分隔线 + 6 个流式排列的信息
             _lblFileModify = MakeStatusLabel("最后修改：-");
@@ -262,8 +287,9 @@ namespace wxd.files.winforms
             _statusBar.Controls.Add(_statusDivider);
             _statusFlow.Controls.AddRange(new Control[] { _lblFileModify, _lblFileSize, _lblCacheSize, _lblCurLine, _lblFileLines, _lblSearchPos });
 
-            // 同一条边上后加入的靠外：状态栏要在最底，所以它排在工具区后面
+            // 同一条边上后加入的靠外：状态栏最底，其次工具区，再是详情框，列表填满剩余
             Controls.Add(_lstContent);
+            Controls.Add(_detailPanel);
             Controls.Add(_toolPanel);
             Controls.Add(_statusBar);
             ResumeLayout(false);
@@ -482,6 +508,13 @@ namespace wxd.files.winforms
                 lbl.ForeColor = p.Muted;
                 lbl.BackColor = p.Chrome;
             }
+
+            // 选中行详情框跟随皮肤
+            _detailPanel.BackColor = p.Surface;
+            _detailDivider.BackColor = p.Divider;
+            _txtDetail.Font = Theme.Code;
+            _txtDetail.BackColor = p.Surface;
+            _txtDetail.ForeColor = p.Text;
 
             _lstContent.ApplyTheme();
             LayoutToolbar();
@@ -915,9 +948,9 @@ namespace wxd.files.winforms
         {
             try
             {
-                int line = _lstContent.TopIndex + 1;
-                // ★ 底部状态栏：当前行（滚动时更新）
-                _lblCurLine.Text = $"行：第{line:N0}行";
+                // ★ 底部状态栏：当前行（滚动时更新）。有选中行时保持选中行号，
+                // 不能拿视口顶行直接覆盖，否则 300ms 定时器会把选中行号重置回顶行。
+                RefreshCurLineLabel();
                 // ★ 同时定时刷新缓存大小（缓存随时可能因搜索而增长）
                 RefreshCacheSizeStatus();
                 // 预读可见行缓存
@@ -1243,6 +1276,61 @@ namespace wxd.files.winforms
                 try { Thread.Sleep(100); Clipboard.SetDataObject(text, true); }
                 catch { }
             }
+        }
+
+        /// <summary>
+        /// 刷新选中行详情框：取首个选中行的完整内容（ReadLineFull，不是列表那份 8KB 截断版），
+        /// 超过 256KB 只显示前段并提示双击看全，免得超大行把 EDIT 控件卡死。
+        /// 行号/大小/截断提示放悬停 tooltip，不另占表头行。
+        /// </summary>
+        private void UpdateDetail()
+        {
+            if (_txtDetail == null) return;
+
+            // 取最小选中行号（最靠上那行）；多选时只显示首行
+            long idx = -1; int selCount = 0;
+            foreach (var s in _lstContent.SelectedIndices)
+            {
+                selCount++;
+                if (idx < 0 || s < idx) idx = s;
+            }
+
+            if (idx < 0 || idx >= _lstContent.TotalLines)
+            {
+                _txtDetail.Text = "";
+                _detailTip.SetToolTip(_txtDetail, "");
+                return;
+            }
+
+            bool over64 = false;
+            string full = ReadLineFull(idx, out over64) ?? "";
+            bool capped = full.Length > DETAIL_LINE_LIMIT;
+            _txtDetail.Text = capped ? full.Substring(0, DETAIL_LINE_LIMIT) : full;
+
+            // 行字节数直接查偏移表，O(1)，不必为超大行把整行再编码一遍
+            long lineBytes = 0;
+            var off = _lineOffsets;
+            if (off != null && idx < off.Length)
+                lineBytes = (idx + 1 < off.Length ? off[idx + 1] : _fileLength) - off[idx];
+
+            string note = over64 ? "（超过 64MB，已截断）"
+                        : capped ? "（超大行，仅显示前 256KB，双击查看完整）"
+                        : selCount > 1 ? $"（已选 {selCount} 行，显示首行）"
+                        : "";
+            _detailTip.SetToolTip(_txtDetail, $"行 {idx + 1:N0} — {FormatSize(lineBytes)}{note}");
+        }
+
+        /// <summary>
+        /// 底部状态栏「当前行」唯一口径：有选中行显示选中行，无选中才显示视口顶行。
+        /// 滚动定时器和选中变化都走这里，否则 300ms 定时器会把选中行号覆盖回顶行。
+        /// </summary>
+        private void RefreshCurLineLabel()
+        {
+            long cur = -1;
+            foreach (var s in _lstContent.SelectedIndices)
+                if (cur < 0 || s < cur) cur = s;
+            if (cur < 0) cur = _lstContent.TopIndex;
+            _lblCurLine.Text = $"行：第{cur + 1:N0}行";
         }
 
         private async void OnDoubleClick(long idx)
@@ -2815,7 +2903,7 @@ namespace wxd.files.winforms
             _lastNavigatedMatchLine = line;
             // ★ 底部状态栏：搜索位置 + 当前行
             _lblSearchPos.Text = $"搜索：第{index + 1:N0}/{results.Count:N0}个";
-            _lblCurLine.Text = $"行：第{line + 1:N0}行";
+            RefreshCurLineLabel();
         }
 
         private bool userHasMovedAway()
@@ -3618,6 +3706,9 @@ namespace wxd.files.winforms
                     _lblSearchPos.Text = "";
                     _lblCacheSize.Text = "缓存：0B";
                     _lblCurLine.Text = "行：1";
+                    // 详情框一并清空，换文件/关页签后不留上一行的内容
+                    _txtDetail.Text = "";
+                    _detailTip.SetToolTip(_txtDetail, "");
                 }
                 catch { }
         }
@@ -3633,6 +3724,8 @@ namespace wxd.files.winforms
                 _searchCts?.Dispose();
                 _indexCts?.Dispose();
                 _exportCts?.Dispose();
+                // ToolTip 是组件、不在 Controls 集合里，控件销毁不会连带释放，需手动 Dispose
+                _detailTip?.Dispose();
             }
             base.Dispose(disposing);
         }
