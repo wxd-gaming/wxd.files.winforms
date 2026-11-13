@@ -26,7 +26,7 @@ namespace wxd.files.winforms
         // 可编辑下拉框在 Flat 下浅色没有边框、深色只有系统灰边，外面套一圈主题描边统一观感
         private SearchBoxHost _searchHost = null!;
         private ThemeCheckBox _chkCaseSensitive = null!, _chkRegex = null!;
-        private ThemeButton _btnExport = null!, _btnReverseExport = null!;
+        private ThemeButton _btnExport = null!, _btnReverseExport = null!, _btnCancelExport = null!;
         // 首条/上一个/下一个/末条合成一颗分段按钮，比四颗并排方按钮更像一个整体
         private ThemeSegmented _segNav = null!;
         private Label _lblStatus = null!;
@@ -53,6 +53,8 @@ namespace wxd.files.winforms
         private CancellationTokenSource? _searchCts;
         // 导出/反向导出共用：关掉页签或换文件时取消，半截输出会被删掉而不是报「导出成功」
         private CancellationTokenSource? _exportCts;
+        // 导出并发闸：正向/反向同一时刻只跑一个，后来的提示等待而不是取消覆盖上一个
+        private int _exportRunning;
         // ★ 当前生效的搜索 key，格式 "keyword|caseSensitive|useRegex"
         private string _lastSearch = "";
         private bool _hasuserNavigated; // 用户在搜索过程中是否已手动跳转过
@@ -60,7 +62,7 @@ namespace wxd.files.winforms
         // ★ 控件内最近搜索结果缓存（与 FileCacheStore 独立，不受 5000 万行限制）
         // 解决：大结果不缓存到 FileCacheStore 时，切回来仍能立即跳转
         // 使用 LinkedList 维护插入顺序，便于 LRU 淘汰
-        private readonly LinkedList<KeyValuePair<string, List<long>>> _recentSearches = new();
+        private readonly LinkedList<KeyValuePair<string, SearchResultSet>> _recentSearches = new();
         private long _recentSearchesBytes;
         private const long MaxRecentSearchesBytes = 800L * 1024 * 1024; // 800MB
         private const int MaxRecentSearchesCount = 5;
@@ -98,8 +100,13 @@ namespace wxd.files.winforms
         // ★ 横向滚动条：索引构建期间按字节长度跟踪的最长行（索引完成后一次性测量并设置滚动条，之后不再重算）
         private long _longestLineOffset = -1;         // 最长行起始字节偏移（-1 表示尚未发现）
         private long _longestLineBytes = 0;           // 最长行字节长度
-        // 并行搜索：每块的局部结果
-        private readonly ConcurrentDictionary<int, List<long>> _blockSearchResults = new();
+        // 并行搜索：行数超过这个值才值得按块铺开扫描
+        private const long ParallelSearchLineThreshold = 50_000;
+        // 单线程扫描时攒够这么多匹配就发布一段，避免段数过多拖慢视图重建
+        private const int SearchSegmentLines = 65_536;
+        // 进度回投单飞闸（1=已有一个委托在 UI 队列里排队）与首次自动跳转标记，每次新搜索重置
+        private int _searchProgressQueued;
+        private int _autoJumpTried;
 
         /// <summary>单块索引构建结果</summary>
         private sealed class BlockIndexResult
@@ -191,6 +198,9 @@ namespace wxd.files.winforms
             _btnExport.Click += OnExport;
             _btnReverseExport = new ThemeButton { Text = "反向导出" };
             _btnReverseExport.Click += OnReverseExport;
+            // 取消按钮平时隐藏，导出跑起来才摆到进度文字前面（见 LayoutToolbar / ShowCancelExport）
+            _btnCancelExport = new ThemeButton { Text = "取消", Visible = false };
+            _btnCancelExport.Click += OnCancelExport;
             _lblContextLines = new Label { Text = "上下行", AutoSize = true };
             _fldContext = new ThemeField();
             _txtContext = _fldContext.Edit;
@@ -208,7 +218,7 @@ namespace wxd.files.winforms
             {
                 _btnOpenFile, _btnClearCache, _fldGoto, _btnGotoLine, _lblStatus,
                 _searchHost, _chkCaseSensitive, _chkRegex, _segNav,
-                _lblContextLines, _fldContext, _btnExport, _btnReverseExport
+                _lblContextLines, _fldContext, _btnExport, _btnReverseExport, _btnCancelExport
             });
             LayoutToolbar();
             _toolPanel.Resize += (s, e) => LayoutToolbar();
@@ -304,14 +314,20 @@ namespace wxd.files.winforms
             // 上下文/导出这一组靠右对齐；两组之间留不出放进度文字的位子时，把这组退回第二行尾部
             bool splitRight = w - leftRow1 - rightRow1 >= group * 2 + statusMin;
             // 进度/结果文字跟在文件组后面（说的就是这个文件），空档留在两组之间；
-            // 右组退回第二行时才贴到行尾，免得在空档里飘着
+            // 右组退回第二行时才贴到行尾，免得在空档里飘着。
+            // 导出期间取消按钮常驻进度文字前面，它占掉的宽度要从文字可用空间里先扣掉
             int statusW = _lblStatus.Width;
-            int statusX = splitRight ? _btnGotoLine.Right + group : margin + w - statusW;
+            bool exporting = _btnCancelExport.Visible;
+            int cancelW = exporting ? ThemeButton.FitWidth(_btnCancelExport.Text) : 0;
+            int leadW = exporting ? cancelW + gap : 0;
+            int statusX = splitRight ? _btnGotoLine.Right + group : margin + w - statusW - leadW;
             int statusLimit = splitRight ? margin + w - rightRow1 - group : margin + w;
-            bool showStatus = statusX + statusW <= statusLimit;
+            if (exporting)
+                _btnCancelExport.SetBounds(statusX, y1, cancelW, rowH);
+            bool showStatus = statusX + leadW + statusW <= statusLimit;
             _lblStatus.Visible = showStatus;
             if (showStatus)
-                _lblStatus.Location = new Point(statusX, y1 + (rowH - _lblStatus.Height) / 2);
+                _lblStatus.Location = new Point(statusX + leadW, y1 + (rowH - _lblStatus.Height) / 2);
 
             // 第二行搜索框右侧的固定占位：搜索框吃掉剩下的全部宽度，整行刚好收在右边界
             int navTailW = gap + flagsW + group + _segNav.Width;
@@ -429,7 +445,7 @@ namespace wxd.files.winforms
             _statusDivider.BackColor = p.Divider;
             _toolDivider.BackColor = p.Divider;
 
-            foreach (var b in new[] { _btnOpenFile, _btnClearCache, _btnGotoLine, _btnExport, _btnReverseExport })
+            foreach (var b in new[] { _btnOpenFile, _btnClearCache, _btnGotoLine, _btnExport, _btnReverseExport, _btnCancelExport })
             {
                 b.Font = Theme.Body;
                 b.BackColor = p.Chrome;
@@ -1069,6 +1085,56 @@ namespace wxd.files.winforms
                 BeginInvoke(action);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// 导出进度节流上报：写盘循环每 65536 行才看一次表，距上次上报不足 250ms 就跳过。
+        /// 千万行导出若每行都 BeginInvoke，UI 消息队列会被进度刷爆，反而卡界面。
+        /// </summary>
+        private void ReportExportProgress(string verb, long done, long total, Stopwatch sw, ref long lastMs)
+        {
+            long now = sw.ElapsedMilliseconds;
+            if (now - lastMs < 250) return;
+            lastMs = now;
+            long pct = total > 0 ? done * 100 / total : 0;
+            ExportUi(() => Status($"{verb} {done:N0}/{total:N0} 行 ({pct}%)"));
+        }
+
+        /// <summary>导出收尾：放开并发闸并清掉自己的 CTS。凭 token 比对，不替 Cleanup 或下一次导出清。</summary>
+        private void ReleaseExport(CancellationToken token)
+        {
+            Interlocked.Exchange(ref _exportRunning, 0);
+            if (_exportCts != null && _exportCts.Token == token)
+            {
+                var c = _exportCts;
+                _exportCts = null;
+                try { c.Dispose(); } catch { }
+            }
+            // 收尾在后台线程，隐藏取消按钮要回 UI；若此刻已有新导出抢到闸，就别误隐藏它的按钮
+            ExportUi(() =>
+            {
+                if (Volatile.Read(ref _exportRunning) == 0)
+                {
+                    _btnCancelExport.Visible = false;
+                    LayoutToolbar();
+                }
+            });
+        }
+
+        /// <summary>导出开跑：把取消按钮摆到进度文字前面（在 UI 线程、抢到并发闸之后调用）。</summary>
+        private void ShowCancelExport()
+        {
+            _btnCancelExport.Enabled = true;
+            _btnCancelExport.Visible = true;
+            LayoutToolbar();
+        }
+
+        /// <summary>取消正在跑的导出：只发信号，半截产物由导出线程的 finally 自己删。灰掉按钮防连点。</summary>
+        private void OnCancelExport(object? s, EventArgs e)
+        {
+            _btnCancelExport.Enabled = false;
+            // 导出可能正好在这一刻收尾并 Dispose 掉 CTS，Cancel 会抛 ObjectDisposedException
+            try { _exportCts?.Cancel(); } catch { }
         }
 
         /// <summary>读取行的完整内容（无截断），上限 64MB</summary>
@@ -2250,21 +2316,6 @@ namespace wxd.files.winforms
             catch { return 0; }
         }
 
-        private static long FindNearestIndex(List<long> results, long currentLine)
-        {
-            if (results.Count == 0) return -1;
-            int lo = 0, hi = results.Count - 1;
-            while (lo <= hi)
-            {
-                int mid = (lo + hi) / 2;
-                if (results[mid] == currentLine) return mid;
-                if (results[mid] < currentLine) lo = mid + 1;
-                else hi = mid - 1;
-            }
-            if (hi >= 0) return hi;
-            return 0;
-        }
-
         /// <summary>根据搜索框和选项计算当前搜索 key</summary>
         private string CurrentSearchKey()
         {
@@ -2275,7 +2326,7 @@ namespace wxd.files.winforms
         /// 写入控件内最近搜索缓存（不受 FileCacheStore 的 5000 万行限制）。
         /// 采用 LRU：按总字节数 800MB 和条数 5 的上限淘汰最旧条目。
         /// </summary>
-        private void PutRecentSearch(string key, List<long> results)
+        private void PutRecentSearch(string key, SearchResultSet results)
         {
             // 先移除同 key 旧条目（避免重复）
             var node = _recentSearches.First;
@@ -2291,7 +2342,7 @@ namespace wxd.files.winforms
             }
 
             // 加入链表尾部（最新）
-            _recentSearches.AddLast(new KeyValuePair<string, List<long>>(key, results));
+            _recentSearches.AddLast(new KeyValuePair<string, SearchResultSet>(key, results));
             _recentSearchesBytes += EstimateSearchResultBytes(results);
 
             // LRU 淘汰：超过条数或字节数时从头部移除最旧
@@ -2305,7 +2356,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>查询控件内最近搜索缓存，命中则返回结果（不移除，LRU 顺序不变）</summary>
-        private List<long>? TryGetRecentSearch(string key)
+        private SearchResultSet? TryGetRecentSearch(string key)
         {
             foreach (var kv in _recentSearches)
             {
@@ -2315,11 +2366,63 @@ namespace wxd.files.winforms
             return null;
         }
 
-        /// <summary>估算 List&lt;long&gt; 占用字节数（每 long 8 字节 + 列表开销）</summary>
-        private static long EstimateSearchResultBytes(List<long> list)
+        /// <summary>估算搜索结果集占用字节数</summary>
+        private static long EstimateSearchResultBytes(SearchResultSet results)
         {
-            // List<long> 内部 long 数组：count * 8，加上 List 对象本身约 32 字节
-            return (long)list.Count * 8 + 64;
+            return results.EstimatedBytes;
+        }
+
+        /// <summary>按关键词/大小写/正则构造逐行匹配器</summary>
+        private static Func<string, bool> BuildLineMatcher(string keyword, bool caseSensitive, bool useRegex)
+        {
+            if (useRegex)
+            {
+                var opts = caseSensitive ? System.Text.RegularExpressions.RegexOptions.None : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
+                var regex = new System.Text.RegularExpressions.Regex(keyword, opts);
+                return (line) => regex.IsMatch(line);
+            }
+            StringComparison cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            return (line) => line.Contains(keyword, cmp);
+        }
+
+        /// <summary>搜索进行中的状态栏文案：分块扫描报块进度，单线程扫描报百分比</summary>
+        private static string BuildSearchingText(long count, long doneUnits, long totalUnits, long scannedLines, long totalLines)
+        {
+            if (totalUnits > 1) return $"搜索中... {count:N0} 个匹配 ({doneUnits}/{totalUnits}块)";
+            int pct = totalLines > 0 ? (int)((scannedLines + 1L) * 100 / totalLines) : 0;
+            return $"搜索中... {count:N0} 个 ({pct}%)";
+        }
+
+        /// <summary>
+        /// 请刷进度。后台每千行/每块都会调，这里用单飞闸把它压成「最多一个委托在排队」，
+        /// 否则千万行扫描会往 UI 消息队列里塞几万个委托，界面被自己的进度条刷死。
+        /// </summary>
+        private void QueueSearchProgress(SearchResultSet results, string currentKey,
+            long doneUnits, long totalUnits, long scannedLines, long totalLines)
+        {
+            if (Interlocked.CompareExchange(ref _searchProgressQueued, 1, 0) != 0) return;
+            if (!IsHandleCreated) { _searchProgressQueued = 0; return; }
+            long snapshotDone = doneUnits, snapshotTotal = totalUnits;
+            long snapshotScanned = scannedLines, snapshotLines = totalLines;
+            SafeBeginInvoke(() =>
+            {
+                _searchProgressQueued = 0;
+                if (_lastSearch != currentKey) return;
+                _lblSearchPos.Text = BuildSearchingText(results.Count, snapshotDone, snapshotTotal, snapshotScanned, snapshotLines);
+            });
+        }
+
+        /// <summary>扫出第一个匹配时自动跳过去；用户已手动跳转或已跳过则不再打扰</summary>
+        private void TryAutoJump(SearchResultSet results, string currentKey, long curLine)
+        {
+            if (_hasuserNavigated || results.Count == 0) return;
+            if (Interlocked.CompareExchange(ref _autoJumpTried, 1, 0) != 0) return;
+            SafeBeginInvoke(() =>
+            {
+                if (_lastSearch != currentKey || _hasuserNavigated) return;
+                long idx = results.IndexOfNearest(curLine);
+                if (idx >= 0) NavigateTo(results, idx);
+            });
         }
 
         private async void OnSearch()
@@ -2366,8 +2469,10 @@ namespace wxd.files.winforms
             }
 
             // 2a. 先查控件内最近搜索缓存（同步，无 IO，不受大小限制）
+            // ★ 只认封了口的：切走关键词时上一次搜索可能被中途放弃，缓存里留的是半截结果，
+            //   拿它当"搜索完成"会让导航和导出都少一截
             var recent = TryGetRecentSearch(currentKey);
-            if (recent != null)
+            if (recent != null && recent.IsSealed)
             {
                 _searchCts = null;
                 _lastSearch = currentKey;
@@ -2377,8 +2482,7 @@ namespace wxd.files.winforms
 
                 if (recent.Count > 0)
                 {
-                    long idx2 = FindNearestIndex(recent, GetCurrentLine());
-                    NavigateTo(recent, idx2);
+                    NavigateTo(recent, recent.IndexOfNearest(GetCurrentLine()));
                 }
                 else
                 {
@@ -2406,8 +2510,7 @@ namespace wxd.files.winforms
 
                 if (cached.Count > 0)
                 {
-                    long idx2 = FindNearestIndex(cached, GetCurrentLine());
-                    NavigateTo(cached, idx2);
+                    NavigateTo(cached, cached.IndexOfNearest(GetCurrentLine()));
                 }
                 else
                 {
@@ -2425,13 +2528,17 @@ namespace wxd.files.winforms
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
             _hasuserNavigated = false;
-            // ★ 向缓存中插入空列表作为搜索容器（DoSearch 中会增量追加）
-            PutRecentSearch(currentKey, new List<long>());
+            _autoJumpTried = 0;
+            Volatile.Write(ref _searchProgressQueued, 0);
+            // ★ 先建空容器进缓存，再把引用直接交给后台任务：
+            // 后台若回头去查 _recentSearches，会和 UI 线程增删链表打架（链表非线程安全）
+            var container = new SearchResultSet();
+            PutRecentSearch(currentKey, container);
             // ★ 实际发起搜索时才写入历史记录、刷新下拉框
             SearchHistoryStore.Add(keyword, caseSensitive, useRegex);
             RefreshSearchHistory();
             long curLine = GetCurrentLine();
-            _ = Task.Run(() => DoSearch(keyword, caseSensitive, useRegex, token, curLine));
+            _ = Task.Run(() => DoSearch(keyword, caseSensitive, useRegex, token, curLine, container));
             return false;
         }
 
@@ -2490,202 +2597,152 @@ namespace wxd.files.winforms
             AlertForm.Show(ParentForm, "已清理当前文件的搜索缓存", "提示", AlertType.Information);
         }
 
-        private void DoSearch(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, long curLine)
+        private void DoSearch(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, long curLine, SearchResultSet results)
         {
-            bool useParallel = false;
             try
             {
-                StringComparison cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
-                Func<string, bool> matcher;
-                if (useRegex)
-                {
-                    var opts = caseSensitive ? System.Text.RegularExpressions.RegexOptions.None : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
-                    var regex = new System.Text.RegularExpressions.Regex(keyword, opts);
-                    matcher = (line) => regex.IsMatch(line);
-                }
-                else
-                {
-                    matcher = (line) => line.Contains(keyword, cmp);
-                }
-
+                Func<string, bool> matcher = BuildLineMatcher(keyword, caseSensitive, useRegex);
                 long total = _lineOffsets!.Length;
-                useParallel = total > 50000;
                 string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
 
-                if (useParallel)
+                if (total > ParallelSearchLineThreshold)
                 {
-                    // ★ 增量并行搜索：Task.Run + SemaphoreSlim 控制并发
-                    // 每块完成后立即增量合并到缓存的列表，第一块完成即自动跳转
+                    // ★ 并行分块搜索：每块把匹配行号按块号发布成独立一段。
+                    // 块号即字节位置即行号顺序，所以段与段天然全局有序，不需要合并；
+                    // 旧实现把各块结果逐个 Insert 进同一个有序 List（O(n) 搬移），
+                    // 千万级匹配时光合并就要在 UI 线程跑几十分钟，界面直接假死。
                     var lineBounds = ComputeLineBoundsForBlocks();
-                    var semaphore = new SemaphoreSlim(MAX_PARALLEL);
-                    var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    var cancelToken = cts.Token;
-                    int totalBlocks = _blockCount;
+                    int totalBlocks = lineBounds.Length;
                     int completedCount = 0;
-                    bool firstBlockHandled = false;
-
-                    for (int blockId = 0; blockId < totalBlocks; blockId++)
+                    var options = new ParallelOptions
                     {
-                        int block = blockId; // 捕获闭包
-                        semaphore.Wait(cancelToken);
+                        MaxDegreeOfParallelism = MAX_PARALLEL,
+                        CancellationToken = token
+                    };
 
-                        Task.Run(() =>
+                    try
+                    {
+                        Parallel.For(0, totalBlocks, options, block =>
                         {
-                            try
+                            var (startLine, endLine) = lineBounds[block];
+                            var local = new List<long>();
+                            using var fs = new FileStream(_filePath!, FileMode.Open, FileAccess.Read,
+                                FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
+
+                            for (long i = startLine; i <= endLine; i++)
                             {
-                                if (cancelToken.IsCancellationRequested) return;
-
-                                var (startLine, endLine) = lineBounds[block];
-                                var local = new List<long>();
-                                using var fs = new FileStream(_filePath!, FileMode.Open, FileAccess.Read,
-                                    FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
-
-                                for (long i = startLine; i <= endLine; i++)
-                                {
-                                    if (cancelToken.IsCancellationRequested) return;
-                                    string line = ReadLineWithStream(fs, i);
-                                    if (!string.IsNullOrEmpty(line) && matcher(line))
-                                        local.Add(i);
-                                }
-
-                                if (cancelToken.IsCancellationRequested) return;
-
-                                // ★ 每块完成后，增量合并到缓存的列表（在 UI 线程上）
-                                BeginInvoke(() =>
-                                {
-                                    if (_lastSearch != currentKey) return;
-
-                                    // 从缓存获取列表引用，追加结果
-                                    var cacheList = TryGetRecentSearch(currentKey);
-                                    if (cacheList == null) return;
-
-                                    if (local.Count > 0)
-                                    {
-                                        foreach (var lineNum in local)
-                                        {
-                                            int pos = cacheList.BinarySearch(lineNum);
-                                            if (pos < 0) pos = ~pos;
-                                            cacheList.Insert(pos, lineNum);
-                                        }
-                                    }
-
-                                    int done = Interlocked.Increment(ref completedCount);
-
-                                    // ★ 第一块完成且有匹配 → 自动跳转到最近匹配项
-                                    if (!firstBlockHandled && done == 1)
-                                    {
-                                        firstBlockHandled = true;
-                                        if (cacheList.Count > 0 && !_hasuserNavigated)
-                                        {
-                                            long idx2 = FindNearestIndex(cacheList, curLine);
-                                            NavigateTo(cacheList, idx2);
-                                        }
-                                    }
-
-                                    // 更新进度
-                                    _lblSearchPos.Text = $"搜索中... {cacheList.Count} 个匹配 ({done}/{totalBlocks}块)";
-
-                                    // ★ 全部完成 → 收尾并释放 semaphore
-                                    if (done >= totalBlocks)
-                                    {
-                                        OnSearchComplete(keyword, caseSensitive, useRegex);
-                                        try { semaphore.Dispose(); } catch { }
-                                    }
-                                });
+                                if (token.IsCancellationRequested) return;
+                                string line = ReadLineWithStream(fs, i);
+                                if (!string.IsNullOrEmpty(line) && matcher(line))
+                                    local.Add(i);
                             }
-                            finally
-                            {
-                                semaphore.Release();
-                            }
-                        }, cancelToken);
+
+                            // 取消掉的块不落位：结果集只描述一次完整扫描
+                            if (token.IsCancellationRequested) return;
+
+                            results.Publish(block, local.ToArray());
+                            int done = Interlocked.Increment(ref completedCount);
+                            QueueSearchProgress(results, currentKey, done, totalBlocks, 0, 0);
+                            TryAutoJump(results, currentKey, curLine);
+                        });
                     }
+                    catch (OperationCanceledException) { return; }
+
+                    if (token.IsCancellationRequested) return;
+
+                    results.Seal();
+                    SafeBeginInvoke(() =>
+                    {
+                        if (_lastSearch != currentKey) return;
+                        OnSearchComplete(keyword, caseSensitive, useRegex, results);
+                    });
                 }
                 else
                 {
-                    // 单线程快速路径（增量模式）
-                    for (long i = 0; i < total; i++)
-                    {
-                        if (token.IsCancellationRequested) return;
-                        string line = ReadLine(i);
-                        if (!string.IsNullOrEmpty(line) && matcher(line))
-                        {
-                            var cacheList = TryGetRecentSearch(currentKey);
-                            if (cacheList != null)
-                            {
-                                cacheList.Add(i);
-                            }
-                        }
-                        if (i % 500 == 0)
-                        {
-                            int cnt = TryGetRecentSearch(currentKey)?.Count ?? 0;
-                            int pct = (int)((i + 1L) * 100 / total);
-                            // ★ 有匹配就跳转（首次）
-                            if (cnt > 0 && !_hasuserNavigated)
-                            {
-                                BeginInvoke(() =>
-                                {
-                                    if (_lastSearch != currentKey) return;
-                                    if (!_hasuserNavigated)
-                                    {
-                                        var list = TryGetRecentSearch(currentKey);
-                                        if (list != null && list.Count > 0)
-                                        {
-                                            long idx2 = FindNearestIndex(list, curLine);
-                                            NavigateTo(list, idx2);
-                                        }
-                                    }
-                                });
-                            }
-                            BeginInvoke(() => _lblSearchPos.Text = $"搜索中... {cnt} 个 ({pct}%)");
-                        }
-                    }
+                    // 小文件：单线程顺序扫，同样按段发布（≤5万行，一段就够）
+                    bool cancelled = ScanLinesSequential(results, currentKey, matcher, token, curLine, autoJump: true);
+                    if (cancelled) return;
 
-                    // 单线程完成
-                    BeginInvoke(() =>
+                    SafeBeginInvoke(() =>
                     {
-                        string currentKey2 = $"{keyword}|{caseSensitive}|{useRegex}";
-                        if (_lastSearch != currentKey2) return;
-                        OnSearchComplete(keyword, caseSensitive, useRegex);
+                        if (_lastSearch != currentKey) return;
+                        OnSearchComplete(keyword, caseSensitive, useRegex, results);
                     });
                 }
             }
             catch { }
             finally
             {
-                // ★★★ Bug 修复：搜索结束后清理 _searchCts，避免导航按钮误判"搜索中" ★★★
-                // ★ 注意：并行分支中所有 Task.Run 已通过 fire-and-forget 启动，
-                // DoSearch 在启动所有任务后立即返回，所以 finally 在这里执行。
-                // 对于并行分支，_searchCts 的清理由 OnSearchComplete 负责（在所有块完成后）。
-                // 对于单线程分支，这里清理 _searchCts 是正确的。
-                if (!useParallel && _searchCts != null && _searchCts.Token == token)
-                {
-                    var cts = _searchCts;
-                    _searchCts = null;
-                    try { cts.Dispose(); } catch { }
-                }
+                // 两条分支都同步等到扫描彻底结束才返回，所以收尾统一放这里
+                ReleaseSearchCts(token);
             }
         }
 
-        /// <summary>搜索全部完成后的收尾逻辑（写入缓存、更新状态）</summary>
-        private void OnSearchComplete(string keyword, bool caseSensitive, bool useRegex)
+        /// <summary>
+        /// 单线程顺序扫描全文件，匹配行号攒够一段就发布出去。
+        /// 返回 true 表示中途被取消。发布出去的段不再改动，所以 UI 线程可以同时读。
+        /// </summary>
+        private bool ScanLinesSequential(SearchResultSet results, string currentKey,
+            Func<string, bool> matcher, CancellationToken token, long curLine, bool autoJump)
         {
-            string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
-            if (_lastSearch != currentKey) return;
+            long total = _lineOffsets!.Length;
+            var local = new List<long>();
+            for (long i = 0; i < total; i++)
+            {
+                if (token.IsCancellationRequested) break;
+                string line = ReadLine(i);
+                if (!string.IsNullOrEmpty(line) && matcher(line))
+                {
+                    local.Add(i);
+                    if (local.Count >= SearchSegmentLines)
+                    {
+                        results.AppendSegment(local.ToArray());
+                        local.Clear();
+                    }
+                }
+                if ((i & 1023) == 1023)
+                {
+                    QueueSearchProgress(results, currentKey, 1, 1, i, total);
+                    if (autoJump) TryAutoJump(results, currentKey, curLine);
+                }
+            }
+            if (local.Count > 0) results.AppendSegment(local.ToArray());
+            if (token.IsCancellationRequested) return true;
+            results.Seal();
+            return false;
+        }
 
-            // ★ 清理 _searchCts（并行分支在 OnSearchComplete 中清理）
-            if (_searchCts != null)
+        /// <summary>后台线程往 UI 投委托时窗口可能已被关掉（句柄未建/已毁），这里吞掉那一下异常</summary>
+        private void SafeBeginInvoke(Action action)
+        {
+            try
+            {
+                if (IsHandleCreated) BeginInvoke(action);
+            }
+            catch (InvalidOperationException) { } // 含 ObjectDisposedException：句柄已毁
+        }
+
+        /// <summary>
+        /// 搜索任务结束时清掉自己的 CTS，避免导航按钮误判"搜索中"。
+        /// 凭 token 比对：用户已发起新搜索时 _searchCts 是新的那个，不能替它清。
+        /// </summary>
+        private void ReleaseSearchCts(CancellationToken token)
+        {
+            if (_searchCts != null && _searchCts.Token == token)
             {
                 var cts = _searchCts;
                 _searchCts = null;
                 try { cts.Dispose(); } catch { }
             }
+        }
 
-            // ★ 从缓存获取结果列表（搜索过程中已增量写入）
-            var results = TryGetRecentSearch(currentKey);
-            if (results == null) return;
+        /// <summary>搜索全部完成后的收尾逻辑（写入缓存、更新状态）</summary>
+        private void OnSearchComplete(string keyword, bool caseSensitive, bool useRegex, SearchResultSet results)
+        {
+            string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
+            if (_lastSearch != currentKey) return;
 
-            // ★ 写入 FileCacheStore 持久化缓存（后台写盘）
+            // ★ 写入 FileCacheStore 持久化缓存（内存存引用，磁盘后台分段写）
             _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
 
             if (results.Count > 0)
@@ -2693,12 +2750,11 @@ namespace wxd.files.winforms
                 // ★ 如果用户已经手动跳转过，不再强制跳转
                 if (!_hasuserNavigated)
                 {
-                    long idx2 = FindNearestIndex(results, GetCurrentLine());
-                    NavigateTo(results, idx2);
+                    NavigateTo(results, results.IndexOfNearest(GetCurrentLine()));
                 }
                 else
                 {
-                    _lblSearchPos.Text = $"搜索完成，共 {results.Count} 个匹配";
+                    _lblSearchPos.Text = $"搜索完成，共 {results.Count:N0} 个匹配";
                 }
             }
             else
@@ -2750,15 +2806,15 @@ namespace wxd.files.winforms
             return lo;
         }
 
-        private void NavigateTo(List<long> results, long index)
+        private void NavigateTo(SearchResultSet results, long index)
         {
             _searchCurrentIndex = index;
-            long line = results[(int)index];
+            long line = results[index];
             _lstContent.SelectRow(line);
             _lstContent.Focus();
             _lastNavigatedMatchLine = line;
             // ★ 底部状态栏：搜索位置 + 当前行
-            _lblSearchPos.Text = $"搜索：第{index + 1}/{results.Count}个";
+            _lblSearchPos.Text = $"搜索：第{index + 1:N0}/{results.Count:N0}个";
             _lblCurLine.Text = $"行：第{line + 1:N0}行";
         }
 
@@ -2776,22 +2832,26 @@ namespace wxd.files.winforms
             return false;
         }
 
-        /// <summary>从缓存获取当前关键字的搜索结果快照（拷贝），供导航使用</summary>
-        private List<long>? GetSearchResultsSnapshot()
+        /// <summary>
+        /// 取当前关键字的搜索结果集，供导航使用。
+        /// 段发布后不再改动，所以直接给引用即可；旧实现每次导航 ToList() 拷一份，
+        /// 千万级匹配就是每次几十 MB 的大对象堆分配，连按几下 F3 就把 GC 压垮了。
+        /// </summary>
+        private SearchResultSet? CurrentSearchResults()
         {
             string currentKey = CurrentSearchKey();
             if (string.IsNullOrEmpty(_cboSearch.Text.Trim()) || currentKey != _lastSearch)
                 return null;
-            var list = TryGetRecentSearch(currentKey);
-            if (list == null || list.Count == 0)
+            var set = TryGetRecentSearch(currentKey);
+            if (set == null || set.Count == 0)
                 return null;
-            return list.ToList(); // ★ 快照：防止导航过程中列表被后台搜索修改
+            return set;
         }
 
         private async void OnSearchPrev(object? s, EventArgs e)
         {
             bool ready = await EnsureSearchReadyAsync();
-            var results = GetSearchResultsSnapshot();
+            var results = CurrentSearchResults();
             // ★ 搜索中但已有部分结果时，仍然可以导航
             if (!ready && results == null)
             {
@@ -2809,8 +2869,8 @@ namespace wxd.files.winforms
             if (userHasMovedAway())
             {
                 long curLine = GetCurrentLine();
-                long idx2 = FindNearestIndex(results, curLine);
-                if (results[(int)idx2] >= curLine)
+                long idx2 = results.IndexOfNearest(curLine);
+                if (results[idx2] >= curLine)
                     idx2--;
                 if (idx2 < 0)
                 {
@@ -2833,7 +2893,7 @@ namespace wxd.files.winforms
         private async void OnSearchNext(object? s, EventArgs e)
         {
             bool ready = await EnsureSearchReadyAsync();
-            var results = GetSearchResultsSnapshot();
+            var results = CurrentSearchResults();
             // ★ 搜索中但已有部分结果时，仍然可以导航
             if (!ready && results == null)
             {
@@ -2851,8 +2911,8 @@ namespace wxd.files.winforms
             if (userHasMovedAway())
             {
                 long curLine = GetCurrentLine();
-                long idx2 = FindNearestIndex(results, curLine);
-                if (results[(int)idx2] <= curLine)
+                long idx2 = results.IndexOfNearest(curLine);
+                if (results[idx2] <= curLine)
                     idx2++;
                 if (idx2 >= results.Count)
                 {
@@ -2875,7 +2935,7 @@ namespace wxd.files.winforms
         private async void OnSearchFirst(object? s, EventArgs e)
         {
             bool ready = await EnsureSearchReadyAsync();
-            var results = GetSearchResultsSnapshot();
+            var results = CurrentSearchResults();
             // ★ 搜索中但已有部分结果时，仍然可以导航
             if (!ready && results == null)
             {
@@ -2896,7 +2956,7 @@ namespace wxd.files.winforms
         private async void OnSearchLast(object? s, EventArgs e)
         {
             bool ready = await EnsureSearchReadyAsync();
-            var results = GetSearchResultsSnapshot();
+            var results = CurrentSearchResults();
             // ★ 搜索中但已有部分结果时，仍然可以导航
             if (!ready && results == null)
             {
@@ -2946,13 +3006,22 @@ namespace wxd.files.winforms
 
             // 检查缓存中是否有结果
             var results = TryGetRecentSearch(currentKey);
+
+            // ★ 未封口就不能导：要么同一条件的搜索还在后台跑（容器里只有已落位的几段），
+            //   要么切走关键词时留下了半截结果，两种情况导出去的都是残缺文件
+            if (results != null && !results.IsSealed)
+            {
+                AlertForm.Show(ParentForm, "搜索尚未完成，请等待搜索完成后再导出", "提示", AlertType.Information);
+                return;
+            }
+
             if (results == null || results.Count == 0)
             {
                 StartSearchForExport(keyword, false);
                 return;
             }
 
-            // 已有搜索结果且条件匹配 → 直接导出
+            // 已有完整搜索结果且条件匹配 → 直接导出
             DoExport(results);
         }
 
@@ -2969,14 +3038,17 @@ namespace wxd.files.winforms
             _lblSearchPos.Text = "搜索中...";
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;
-            // ★ 向缓存中插入空列表作为搜索容器
-            PutRecentSearch(currentKey, new List<long>());
+            _autoJumpTried = 0;
+            Volatile.Write(ref _searchProgressQueued, 0);
+            // ★ 建空容器进缓存，引用直接交给后台任务，后台不再回查缓存链表
+            var container = new SearchResultSet();
+            PutRecentSearch(currentKey, container);
 
             Status($"正在搜索 \"{keyword}\"...");
             if (reverse)
-                _ = Task.Run(() => DoSearchAndReverseExport(keyword, caseSensitive, useRegex, token));
+                _ = Task.Run(() => DoSearchAndReverseExport(keyword, caseSensitive, useRegex, token, container));
             else
-                _ = Task.Run(() => DoSearchAndExport(keyword, caseSensitive, useRegex, token));
+                _ = Task.Run(() => DoSearchAndExport(keyword, caseSensitive, useRegex, token, container));
         }
 
         /// <summary>反向导出：排除匹配行，保留不匹配的所有行</summary>
@@ -3012,68 +3084,45 @@ namespace wxd.files.winforms
 
             // 检查缓存中是否有结果
             var results = TryGetRecentSearch(currentKey);
+
+            // ★ 未封口就不能反向导出：搜索还在跑时，尚未扫到的行会被当成"不匹配"写进产物
+            if (results != null && !results.IsSealed)
+            {
+                AlertForm.Show(ParentForm, "搜索尚未完成，请等待搜索完成后再反向导出", "提示", AlertType.Information);
+                return;
+            }
+
             if (results == null || results.Count == 0)
             {
                 StartSearchForExport(keyword, true);
                 return;
             }
 
-            // 已有搜索结果 → 直接反向导出
+            // 已有完整搜索结果 → 直接反向导出
             DoReverseExport(results);
         }
 
         /// <summary>搜索完成后自动反向导出</summary>
-        private void DoSearchAndReverseExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token)
+        private void DoSearchAndReverseExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, SearchResultSet results)
         {
             try
             {
                 string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
-                StringComparison cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+                Func<string, bool> matcher = BuildLineMatcher(keyword, caseSensitive, useRegex);
 
-                Func<string, bool> matcher;
-                if (useRegex)
-                {
-                    var opts = caseSensitive ? System.Text.RegularExpressions.RegexOptions.None : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
-                    var regex = new System.Text.RegularExpressions.Regex(keyword, opts);
-                    matcher = (line) => regex.IsMatch(line);
-                }
-                else
-                {
-                    matcher = (line) => line.Contains(keyword, cmp);
-                }
+                // 导出要的是完整匹配集，扫描期间不做自动跳转，免得界面被带着跑
+                if (ScanLinesSequential(results, currentKey, matcher, token, curLine: -1, autoJump: false)) return;
 
-                long total = _lineOffsets!.Length;
-                for (long i = 0; i < total; i++)
-                {
-                    if (token.IsCancellationRequested) return;
-                    string line = ReadLine(i);
-                    if (!string.IsNullOrEmpty(line) && matcher(line))
-                    {
-                        var cacheList = TryGetRecentSearch(currentKey);
-                        if (cacheList != null) cacheList.Add(i);
-                    }
-                    if (i % 500 == 0)
-                    {
-                        int cnt = TryGetRecentSearch(currentKey)?.Count ?? 0;
-                        int pct = (int)((i + 1L) * 100 / total);
-                        BeginInvoke(() => _lblSearchPos.Text = $"搜索中... {cnt} 个 ({pct}%)");
-                    }
-                }
-
-                BeginInvoke(() =>
+                SafeBeginInvoke(() =>
                 {
                     // ★ 如果用户在搜索期间切换了关键词，丢弃本次结果
                     if (_lastSearch != currentKey) return;
 
-                    var results = TryGetRecentSearch(currentKey);
-                    if (results == null) return;
-
-                    // ★ 写入 FileCacheStore 持久化缓存（后台写盘）
+                    // ★ 写入 FileCacheStore 持久化缓存（内存存引用，磁盘后台分段写）
                     _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
                     if (results.Count > 0)
                     {
-                        long idx2 = FindNearestIndex(results, GetCurrentLine());
-                        NavigateTo(results, idx2);
+                        NavigateTo(results, results.IndexOfNearest(GetCurrentLine()));
                         // "正在搜索"是过程消息，命中后底部状态栏已经报了几处/第几处，这里收掉别让它常驻
                         Status("");
                         DoReverseExport(results);
@@ -3085,31 +3134,32 @@ namespace wxd.files.winforms
                         _lblSearchPos.Text = "未找到匹配，无法反向导出";
                         Status("未找到匹配行");
                     }
-
-                    // ★ 清理 _searchCts
-                    if (_searchCts != null)
-                    {
-                        var cts = _searchCts;
-                        _searchCts = null;
-                        try { cts.Dispose(); } catch { }
-                    }
                 });
             }
             catch { }
+            finally
+            {
+                ReleaseSearchCts(token);
+            }
         }
 
         /// <summary>反向导出：利用已有的搜索结果索引，导出所有不匹配的行</summary>
-        private void DoReverseExport(List<long> results)
+        private void DoReverseExport(SearchResultSet results)
         {
             string? sourcePath = _filePath;
             if (results.Count == 0 || string.IsNullOrEmpty(sourcePath)) return;
 
-            // 快照：避免后台线程读取时被并发修改
-            var searchResultsSnapshot = results.ToList();
+            // 段快照：发布出去的段不会再改，直接共享引用，不必再拷一份大列表
+            var segments = results.SnapshotSegments();
             var lineOffsets = _lineOffsets!;
             long fileLength = _fileLength;
             string exportSource = sourcePath;
-            _exportCts?.Cancel();
+            // ★ 与正向导出共用并发闸：已有导出在跑就提示等待，不取消覆盖
+            if (Interlocked.CompareExchange(ref _exportRunning, 1, 0) != 0)
+            {
+                AlertForm.Show(ParentForm, "当前有导出正在运行，请稍后重试", "提示", AlertType.Information);
+                return;
+            }
             _exportCts = new CancellationTokenSource();
             var exportToken = _exportCts.Token;
             string dir = Path.GetDirectoryName(sourcePath)!;
@@ -3119,13 +3169,14 @@ namespace wxd.files.winforms
             string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
+            ShowCancelExport();
             Status("正在准备反向导出...");
 
             _ = Task.Run(() =>
             {
                 // 计算反向导出的总行数 = 总行数 - 匹配行数
                 long totalLines = lineOffsets.Length;
-                int excludedCount = searchResultsSnapshot.Count;
+                long excludedCount = results.Count;
                 long exportCount = totalLines - excludedCount;
 
                 // 命名规则：原始文件名.过滤字符_排除.时间戳.源文件后缀
@@ -3142,10 +3193,27 @@ namespace wxd.files.winforms
 
                 StreamWriter? sw = null;
                 FileStream? fs = null;
-                int matchIdx = 0;
                 long exported = 0;
                 bool cancelled = false;
                 bool done = false;
+                var progSw = Stopwatch.StartNew();
+                long lastProgMs = 0;
+
+                // 匹配行号游标：段内、段间都是升序，顺着推即可，
+                // 旧实现先 ToList() 拷一份再用下标走，千万级匹配等于白拷几十 MB
+                int segIdx = 0, segOff = -1;
+                long NextMatch()
+                {
+                    segOff++;
+                    while (segIdx < segments.Length)
+                    {
+                        if (segOff < segments[segIdx].Length) return segments[segIdx][segOff];
+                        segIdx++;
+                        segOff = 0;
+                    }
+                    return long.MaxValue;
+                }
+                long matchLine = NextMatch();
                 try
                 {
                     fs = new FileStream(exportSource, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
@@ -3155,9 +3223,9 @@ namespace wxd.files.winforms
                     {
                         if (exportToken.IsCancellationRequested) { cancelled = true; break; }
                         // 如果当前行在匹配列表中 → 跳过
-                        if (matchIdx < excludedCount && searchResultsSnapshot[matchIdx] == lineIdx)
+                        if (matchLine == lineIdx)
                         {
-                            matchIdx++;
+                            do { matchLine = NextMatch(); } while (matchLine == lineIdx);
                             continue;
                         }
                         // 不在匹配列表中 → 输出
@@ -3165,6 +3233,8 @@ namespace wxd.files.winforms
                         if (lineText == null) throw new EndOfStreamException($"源文件第 {lineIdx + 1} 行读取失败");
                         sw.WriteLine(lineText);
                         exported++;
+                        if ((exported & 0xFFFF) == 0)
+                            ReportExportProgress("反向导出中", exported, exportCount, progSw, ref lastProgMs);
                     }
                     sw.Flush();
                     if (cancelled)
@@ -3201,62 +3271,31 @@ namespace wxd.files.winforms
                     try { sw?.Dispose(); } catch { }
                     try { fs?.Dispose(); } catch { }
                     if (!done) { try { File.Delete(outPath); } catch { } }
+                    ReleaseExport(exportToken);
                 }
             });
         }
 
         /// <summary>搜索完成后自动导出</summary>
-        private void DoSearchAndExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token)
+        private void DoSearchAndExport(string keyword, bool caseSensitive, bool useRegex, CancellationToken token, SearchResultSet results)
         {
             try
             {
                 string currentKey = $"{keyword}|{caseSensitive}|{useRegex}";
-                StringComparison cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+                Func<string, bool> matcher = BuildLineMatcher(keyword, caseSensitive, useRegex);
 
-                Func<string, bool> matcher;
-                if (useRegex)
-                {
-                    var opts = caseSensitive ? System.Text.RegularExpressions.RegexOptions.None : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
-                    var regex = new System.Text.RegularExpressions.Regex(keyword, opts);
-                    matcher = (line) => regex.IsMatch(line);
-                }
-                else
-                {
-                    matcher = (line) => line.Contains(keyword, cmp);
-                }
+                if (ScanLinesSequential(results, currentKey, matcher, token, curLine: -1, autoJump: false)) return;
 
-                long total = _lineOffsets!.Length;
-                for (long i = 0; i < total; i++)
-                {
-                    if (token.IsCancellationRequested) return;
-                    string line = ReadLine(i);
-                    if (!string.IsNullOrEmpty(line) && matcher(line))
-                    {
-                        var cacheList = TryGetRecentSearch(currentKey);
-                        if (cacheList != null) cacheList.Add(i);
-                    }
-                    if (i % 500 == 0)
-                    {
-                        int cnt = TryGetRecentSearch(currentKey)?.Count ?? 0;
-                        int pct = (int)((i + 1L) * 100 / total);
-                        BeginInvoke(() => _lblSearchPos.Text = $"搜索中... {cnt} 个 ({pct}%)");
-                    }
-                }
-
-                BeginInvoke(() =>
+                SafeBeginInvoke(() =>
                 {
                     // ★ 如果用户在搜索期间切换了关键词，丢弃本次结果
                     if (_lastSearch != currentKey) return;
 
-                    var results = TryGetRecentSearch(currentKey);
-                    if (results == null) return;
-
-                    // ★ 写入 FileCacheStore 持久化缓存（后台写盘）
+                    // ★ 写入 FileCacheStore 持久化缓存（内存存引用，磁盘后台分段写）
                     _ = FileCacheStore.PutSearchResultAsync(_filePath!, currentKey, results);
                     if (results.Count > 0)
                     {
-                        long idx2 = FindNearestIndex(results, GetCurrentLine());
-                        NavigateTo(results, idx2);
+                        NavigateTo(results, results.IndexOfNearest(GetCurrentLine()));
                         DoExport(results);
                     }
                     else
@@ -3266,33 +3305,34 @@ namespace wxd.files.winforms
                         _lblSearchPos.Text = "未找到匹配，无法导出";
                         Status("未找到匹配行");
                     }
-
-                    // ★ 清理 _searchCts
-                    if (_searchCts != null)
-                    {
-                        var cts = _searchCts;
-                        _searchCts = null;
-                        try { cts.Dispose(); } catch { }
-                    }
                 });
             }
             catch { }
+            finally
+            {
+                ReleaseSearchCts(token);
+            }
         }
 
-        private void DoExport(List<long> results)
+        private void DoExport(SearchResultSet results)
         {
             string? sourcePath = _filePath;
             if (results.Count == 0 || string.IsNullOrEmpty(sourcePath)) return;
 
             int contextLines = ContextLines;
 
-            // 快照：避免后台线程读取时被并发修改
-            var searchResultsSnapshot = results.ToList();
+            // 段快照：发布出去的段不会再改，直接共享引用，无需拷成一份大列表
+            var segments = results.SnapshotSegments();
             var lineOffsets = _lineOffsets!;
             long fileLength = _fileLength;
             string exportSource = sourcePath;
-            // 同一时刻只保留最后一个导出：重开导出会取消上一个，Cleanup 关掉页签时同样取消
-            _exportCts?.Cancel();
+            // ★ 同一时刻只跑一个导出：正向/反向共用一个闸。旧实现这里 Cancel 上一个再开新的，
+            //   用户连点两个按钮会把先发起的那次悄悄取消、产物被删，看起来像"被覆盖"
+            if (Interlocked.CompareExchange(ref _exportRunning, 1, 0) != 0)
+            {
+                AlertForm.Show(ParentForm, "当前有导出正在运行，请稍后重试", "提示", AlertType.Information);
+                return;
+            }
             _exportCts = new CancellationTokenSource();
             var exportToken = _exportCts.Token;
             string dir = Path.GetDirectoryName(sourcePath)!;
@@ -3302,6 +3342,7 @@ namespace wxd.files.winforms
             string filterPart = SanitizeFileName(_lastSearch.Split('|')[0], 50);
             string timestamp = DateTime.Now.ToString("yyyyMMddHHmmssfff");
 
+            ShowCancelExport();
             Status("正在准备导出...");
 
             // 所有耗时操作都在后台线程执行，避免 UI 卡死
@@ -3309,36 +3350,32 @@ namespace wxd.files.winforms
             {
                 // ===== 以下全部在后台线程执行 =====
 
-                // 合并重叠的上下文区间，避免重复输出
-                var ranges = new List<(long Start, long End)>(searchResultsSnapshot.Count);
-                foreach (long lineIdx in searchResultsSnapshot)
-                {
-                    long start = Math.Max(0, lineIdx - contextLines);
-                    long end = Math.Min(lineOffsets.Length - 1, lineIdx + contextLines);
-                    ranges.Add((start, end));
-                }
-                ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
-
+                // 合并重叠的上下文区间，避免重复输出。
+                // 匹配行号本来就全局升序，所以 [line-ctx, line+ctx] 也是升序，顺路合并即可；
+                // 旧实现先给每个匹配建一条区间再整体 Sort，800w 匹配就是 128MB 加一次
+                // 千万级排序，导出没卡死过才怪。
                 var mergedRanges = new List<(long Start, long End)>();
-                foreach (var range in ranges)
+                long lastStart = 0, lastEnd = -1;
+                long lastLine = lineOffsets.Length - 1;
+                foreach (var seg in segments)
                 {
-                    if (mergedRanges.Count == 0)
+                    foreach (long lineIdx in seg)
                     {
-                        mergedRanges.Add(range);
-                    }
-                    else
-                    {
-                        var last = mergedRanges[^1];
-                        if (range.Start <= last.End + 1) // 相邻或重叠 → 合并
+                        long start = lineIdx > contextLines ? lineIdx - contextLines : 0;
+                        long end = Math.Min(lastLine, lineIdx + contextLines);
+                        if (lastEnd >= 0 && start <= lastEnd + 1)
                         {
-                            mergedRanges[^1] = (last.Start, Math.Max(last.End, range.End));
+                            if (end > lastEnd) lastEnd = end; // 与当前区间相邻/重叠 → 就地延长
                         }
                         else
                         {
-                            mergedRanges.Add(range);
+                            if (lastEnd >= 0) mergedRanges.Add((lastStart, lastEnd));
+                            lastStart = start;
+                            lastEnd = end;
                         }
                     }
                 }
+                if (lastEnd >= 0) mergedRanges.Add((lastStart, lastEnd));
 
                 // 计算总行数
                 long totalLines = 0;
@@ -3362,6 +3399,9 @@ namespace wxd.files.winforms
                 FileStream? fs = null;
                 bool cancelled = false;
                 bool done = false;
+                long exported = 0;
+                var progSw = Stopwatch.StartNew();
+                long lastProgMs = 0;
                 try
                 {
                     // 自带流 + 快照偏移：页签中途关掉也不影响这次导出的正确性
@@ -3375,6 +3415,9 @@ namespace wxd.files.winforms
                             string? lineText = ReadLineForExport(fs, lineOffsets, fileLength, lineIdx);
                             if (lineText == null) throw new EndOfStreamException($"源文件第 {lineIdx + 1} 行读取失败");
                             sw.WriteLine(lineText);
+                            exported++;
+                            if ((exported & 0xFFFF) == 0)
+                                ReportExportProgress("导出中", exported, totalLines, progSw, ref lastProgMs);
                         }
                         if (cancelled) break;
                     }
@@ -3390,7 +3433,7 @@ namespace wxd.files.winforms
                     {
                         Status($"已导出 {totalLines} 行 -> {outName}");
                         AlertForm.Show(ParentForm,
-                            $"导出完成！" + GlobalConst.NewLine + GlobalConst.NewLine + $"文件: {outName}" + GlobalConst.NewLine + $"路径: {dir}" + GlobalConst.NewLine + $"行数: {totalLines:N0}" + GlobalConst.NewLine + $"匹配行: {searchResultsSnapshot.Count:N0}" + GlobalConst.NewLine + $"上下行数: {contextLines}",
+                            $"导出完成！" + GlobalConst.NewLine + GlobalConst.NewLine + $"文件: {outName}" + GlobalConst.NewLine + $"路径: {dir}" + GlobalConst.NewLine + $"行数: {totalLines:N0}" + GlobalConst.NewLine + $"匹配行: {results.Count:N0}" + GlobalConst.NewLine + $"上下行数: {contextLines}",
                             "导出成功", AlertType.Information);
                         try { FileExported?.Invoke(this, EventArgs.Empty); } catch { }
                     });
@@ -3409,6 +3452,7 @@ namespace wxd.files.winforms
                     try { fs?.Dispose(); } catch { }
                     // 半截文件（被取消或读失败）一律删掉：留着会被当成一次成功的导出
                     if (!done) { try { File.Delete(outPath); } catch { } }
+                    ReleaseExport(exportToken);
                 }
             });
         }
@@ -3546,7 +3590,6 @@ namespace wxd.files.winforms
             _filePath = null;
             _lineOffsets = null;
             _blockResults.Clear();
-            _blockSearchResults.Clear();
             _searchCts?.Cancel();
             _searchCurrentIndex = -1;
             _lastNavigatedMatchLine = -1;

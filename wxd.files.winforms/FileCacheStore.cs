@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -26,6 +27,8 @@ namespace wxd.files.winforms
         private const int MaxDiskCacheEntries = 30;
         /// <summary>单条搜索结果超 5000 万行不缓存（防极端 OOM）</summary>
         private const int MaxSearchResultRowsToCache = 50_000_000;
+        /// <summary>磁盘读每次搬这么多行（8 字节/行 ≈ 8MB），避免千万级结果一次性分配连续大块</summary>
+        private const int ReadSegmentRows = 1_048_576;
 
         // 二进制文件头
         private static readonly byte[] MagicSearch = { (byte)'W', (byte)'S', (byte)'C', (byte)'C' }; // Wxd Search Cache Chunk
@@ -37,9 +40,9 @@ namespace wxd.files.winforms
         private class MemEntry
         {
             public string Key;
-            public List<long> Results;
+            public SearchResultSet Results;
             public long Bytes;
-            public MemEntry(string k, List<long> r) { Key = k; Results = r; Bytes = 56L + r.Count * 8L + 64; }
+            public MemEntry(string k, SearchResultSet r) { Key = k; Results = r; Bytes = 56L + r.EstimatedBytes; }
         }
         private static readonly object _memLock = new();
         // filePath → (链表, 总字节数)
@@ -122,7 +125,7 @@ namespace wxd.files.winforms
 
         // ===== 读取 =====
         /// <summary>尝试获取搜索结果（先内存后磁盘）。命中返回结果，未命中返回 null。</summary>
-        public static Task<List<long>?> TryGetSearchResultAsync(string filePath, string cacheKey)
+        public static Task<SearchResultSet?> TryGetSearchResultAsync(string filePath, string cacheKey)
         {
             return Task.Run(() =>
             {
@@ -139,7 +142,9 @@ namespace wxd.files.winforms
                                 // 移到头部（LRU）
                                 list.Remove(node);
                                 list.AddFirst(node);
-                                return new List<long>(node.Value.Results); // 返回副本
+                                // 段发布后不再改动，直接给引用即可；旧实现这里 ToList 拷一份，
+                                // 千万级匹配每次命中都白拷几十 MB
+                                return node.Value.Results;
                             }
                             node = node.Next;
                         }
@@ -160,22 +165,32 @@ namespace wxd.files.winforms
                     if (version != CacheVersion) return null;
                     int count = BitConverter.ToInt32(header, 8);
                     if (count < 0 || count > MaxSearchResultRowsToCache) return null;
-                    // ★ long 每元素 8 字节
-                    var bytes = new byte[count * 8L];
-                    int got = 0;
-                    while (got < bytes.Length)
+                    // ★ 分段读入：一次 count*8 的连续分配在千万级结果上就是几百 MB 尖峰
+                    var set = new SearchResultSet();
+                    var data = new byte[ReadSegmentRows * 8];
+                    int done = 0, slot = 0;
+                    while (done < count)
                     {
-                        int r = fs.Read(bytes, got, bytes.Length - got);
-                        if (r <= 0) break;
-                        got += r;
+                        int take = Math.Min(ReadSegmentRows, count - done);
+                        int need = take * 8;
+                        int got = 0;
+                        while (got < need)
+                        {
+                            int r = fs.Read(data, got, need - got);
+                            if (r <= 0) break;
+                            got += r;
+                        }
+                        if (got != need) return null;
+                        var seg = new long[take];
+                        Buffer.BlockCopy(data, 0, seg, 0, need);
+                        set.Publish(slot++, seg);
+                        done += take;
                     }
-                    if (got != bytes.Length) return null;
-                    var arr = new long[count];
-                    Buffer.BlockCopy(bytes, 0, arr, 0, bytes.Length);
-                    var result = new List<long>(arr);
+                    // 磁盘缓存只存完整扫描的产物，读回来即封口
+                    set.Seal();
                     // 加载到内存 LRU
-                    PutMemory(filePath, cacheKey, result);
-                    return result;
+                    PutMemory(filePath, cacheKey, set);
+                    return set;
                 }
                 catch { return null; }
             });
@@ -183,12 +198,12 @@ namespace wxd.files.winforms
 
         // ===== 写入 =====
         /// <summary>写入搜索结果（内存 + 磁盘，后台执行）</summary>
-        public static Task PutSearchResultAsync(string filePath, string cacheKey, List<long> results)
+        public static Task PutSearchResultAsync(string filePath, string cacheKey, SearchResultSet results)
         {
             // 单条结果过大不缓存
             if (results.Count > MaxSearchResultRowsToCache) return Task.CompletedTask;
 
-            // 内存层（同步，快）
+            // 内存层（同步，只存引用）
             PutMemory(filePath, cacheKey, results);
 
             // 磁盘层（后台）
@@ -203,11 +218,10 @@ namespace wxd.files.winforms
                     // 头
                     fs.Write(MagicSearch, 0, 4);
                     fs.Write(BitConverter.GetBytes(CacheVersion), 0, 4);
-                    fs.Write(BitConverter.GetBytes(results.Count), 0, 4);
-                    // 数据：long 每元素 8 字节
-                    var bytes = new byte[results.Count * 8L];
-                    Buffer.BlockCopy(results.ToArray(), 0, bytes, 0, bytes.Length);
-                    fs.Write(bytes, 0, bytes.Length);
+                    fs.Write(BitConverter.GetBytes((int)results.Count), 0, 4);
+                    // 数据：逐段直接落盘，不先把段拍成一个连续大数组
+                    foreach (var seg in results.SnapshotSegments())
+                        fs.Write(MemoryMarshal.AsBytes(seg.AsSpan()));
 
                     // 磁盘条数上限：超过则删最旧
                     EnforceDiskLimit(filePath);
@@ -236,7 +250,7 @@ namespace wxd.files.winforms
         }
 
         // ===== 内存层操作 =====
-        private static void PutMemory(string filePath, string cacheKey, List<long> results)
+        private static void PutMemory(string filePath, string cacheKey, SearchResultSet results)
         {
             lock (_memLock)
             {
