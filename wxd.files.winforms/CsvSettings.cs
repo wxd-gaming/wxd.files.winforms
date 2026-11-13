@@ -27,12 +27,12 @@ namespace wxd.files.winforms
         private const string ThemeSkinKey = "ThemeSkin";
 
         /// <summary>
-        /// 界面皮肤: 0=天蓝提质, 1=密集工具风
+        /// 界面皮肤: 0=天蓝提质, 1=密集工具, 2=北欧蓝灰, 3=暖沙护眼, 4=复古暖棕, 5=德古拉紫, 6=薄荷绿, 7=淑女粉
         /// </summary>
         public static int ThemeSkin
         {
-            get => GetIntValue(ThemeSkinKey, 0, 0, 1);
-            set => SetIntValue(ThemeSkinKey, Math.Max(0, Math.Min(1, value)));
+            get => GetIntValue(ThemeSkinKey, 0, 0, 7);
+            set => SetIntValue(ThemeSkinKey, Math.Max(0, Math.Min(7, value)));
         }
 
         #endregion

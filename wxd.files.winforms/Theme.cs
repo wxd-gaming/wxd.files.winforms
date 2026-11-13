@@ -2,8 +2,8 @@ using System.Reflection;
 
 namespace wxd.files.winforms
 {
-    /// <summary>界面气质：C=天蓝提质（保留品牌色，修密度与层次），A=密集工具风（细网格、高信息密度）</summary>
-    internal enum UiSkin { Sky = 0, Dense = 1 }
+    /// <summary>界面皮肤：天蓝提质 / 密集工具 / 北欧蓝灰(Nord) / 暖沙护眼(Solarized) / 复古暖棕(Gruvbox) / 德古拉紫(Dracula) / 薄荷绿(Mint) / 淑女粉(Rose)</summary>
+    internal enum UiSkin { Sky = 0, Dense = 1, Nord = 2, Solarized = 3, Gruvbox = 4, Dracula = 5, Mint = 6, Rose = 7 }
 
     /// <summary>一套皮肤在一个明暗模式下的全部视觉参数。</summary>
     internal sealed class UiTheme
@@ -191,6 +191,162 @@ namespace wxd.files.winforms
                         GridLine = C("E7E9ED"), RowHead = C("F2F3F5"), Link = C("2A5FA8"), Mark = C("B4442B"),
                         Danger = C("B03A2E"),
                         RowHeight = 22, ButtonHeight = 24, Radius = 3, CellPadX = 5, FontSize = 9f,
+                    };
+            }
+
+            // Nord：官方 Polar Night（深）/ Snow Storm（浅）色板
+            if (skin == UiSkin.Nord)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("2E3440"), Chrome = C("3B4252"), Surface = C("434C5E"),
+                        Border = C("4C566A"), Divider = C("404859"), Header = C("505A6E"),
+                        Text = C("ECEFF4"), Muted = C("929CAD"), Accent = C("5E81AC"),
+                        AccentText = Color.White, Selection = C("4A5B78"), Hover = C("4A5364"), Zebra = C("3E4553"),
+                        GridLine = C("485162"), RowHead = C("404857"), Link = C("88C0D0"), Mark = C("D08770"),
+                        Danger = C("BF616A"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("ECEFF4"), Chrome = C("E5E9F0"), Surface = C("FFFFFF"),
+                        Border = C("C8D0DD"), Divider = C("D8DEE9"), Header = C("DFE5EE"),
+                        Text = C("2E3440"), Muted = C("616E82"), Accent = C("5E81AC"),
+                        AccentText = Color.White, Selection = C("CFDAE8"), Hover = C("E0E6EF"), Zebra = C("F4F6FA"),
+                        GridLine = C("E0E5EE"), RowHead = C("EFF2F7"), Link = C("4C74A0"), Mark = C("D08770"),
+                        Danger = C("BF616A"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    };
+            }
+
+            // Solarized：官方 base03~base3 暖青/米黄色板，低对比护眼是它的设计本意
+            if (skin == UiSkin.Solarized)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("002B36"), Chrome = C("073642"), Surface = C("04313D"),
+                        Border = C("274C56"), Divider = C("0A3E4A"), Header = C("0B4250"),
+                        Text = C("93A1A1"), Muted = C("657B83"), Accent = C("268BD2"),
+                        AccentText = Color.White, Selection = C("104F6D"), Hover = C("0A4050"), Zebra = C("03303C"),
+                        GridLine = C("0D4452"), RowHead = C("053541"), Link = C("2AA198"), Mark = C("B58900"),
+                        Danger = C("DC322F"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("FDF6E3"), Chrome = C("EEE8D5"), Surface = C("FFFBF0"),
+                        Border = C("D8D0B8"), Divider = C("E9E2CB"), Header = C("E7E0C8"),
+                        Text = C("586E75"), Muted = C("657B83"), Accent = C("268BD2"),
+                        AccentText = Color.White, Selection = C("E4DCC2"), Hover = C("EAE3CC"), Zebra = C("F7F0DC"),
+                        GridLine = C("E6DFC8"), RowHead = C("F5EED8"), Link = C("1E78BE"), Mark = C("CB4B16"),
+                        Danger = C("DC322F"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    };
+            }
+
+            // Gruvbox：官方 retro 暖棕/米黄色板
+            if (skin == UiSkin.Gruvbox)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("282828"), Chrome = C("32302F"), Surface = C("3C3836"),
+                        Border = C("504945"), Divider = C("4A4440"), Header = C("45403D"),
+                        Text = C("EBDBB2"), Muted = C("A89984"), Accent = C("D65D0E"),
+                        AccentText = Color.White, Selection = C("4E463C"), Hover = C("423D3A"), Zebra = C("353230"),
+                        GridLine = C("44403C"), RowHead = C("383432"), Link = C("83A598"), Mark = C("FABD2F"),
+                        Danger = C("FB4934"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("F9F5D7"), Chrome = C("F2E5BC"), Surface = C("FBF1C7"),
+                        Border = C("D5C4A1"), Divider = C("E8DAB0"), Header = C("EBDBB2"),
+                        Text = C("3C3836"), Muted = C("7C6F64"), Accent = C("AF3A03"),
+                        AccentText = Color.White, Selection = C("E5D5A5"), Hover = C("F0E2B6"), Zebra = C("F5EDC0"),
+                        GridLine = C("E6D9AE"), RowHead = C("F6EFC8"), Link = C("076678"), Mark = C("B57614"),
+                        Danger = C("9D0006"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    };
+            }
+
+            // Dracula：官方深色色板 + Alucard 浅色变体；Accent 用加深的紫（官方 #BD93F9 太亮，白字读不出）
+            if (skin == UiSkin.Dracula)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("191A21"), Chrome = C("21222C"), Surface = C("282A36"),
+                        Border = C("3E4152"), Divider = C("353849"), Header = C("343746"),
+                        Text = C("F8F8F2"), Muted = C("818EB6"), Accent = C("8A63D2"),
+                        AccentText = Color.White, Selection = C("44475A"), Hover = C("3A3D4E"), Zebra = C("2C2E3B"),
+                        GridLine = C("383B4A"), RowHead = C("262834"), Link = C("8BE9FD"), Mark = C("FFB86C"),
+                        Danger = C("FF5555"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("F7F2E0"), Chrome = C("F0EAD4"), Surface = C("FFFBEB"),
+                        Border = C("D8D2BC"), Divider = C("E5DFC9"), Header = C("ECE7D5"),
+                        Text = C("1F1F1F"), Muted = C("635D97"), Accent = C("644AC9"),
+                        AccentText = Color.White, Selection = C("CFCFDE"), Hover = C("EDE7D1"), Zebra = C("FAF6E6"),
+                        GridLine = C("E8E2CC"), RowHead = C("F8F4E2"), Link = C("036A96"), Mark = C("A34D14"),
+                        Danger = C("CB3A2A"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    };
+            }
+
+            // 薄荷绿：自定义清新青绿，浅色薄荷白底 / 深色深茶绿底
+            if (skin == UiSkin.Mint)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("14201C"), Chrome = C("1A2924"), Surface = C("1E302A"),
+                        Border = C("2E4A40"), Divider = C("253C35"), Header = C("28423A"),
+                        Text = C("DFF2EA"), Muted = C("8FB5A8"), Accent = C("35A882"),
+                        AccentText = Color.White, Selection = C("2C5245"), Hover = C("264038"), Zebra = C("1B2C26"),
+                        GridLine = C("2A453D"), RowHead = C("1D2F28"), Link = C("6FDDB4"), Mark = C("F0A868"),
+                        Danger = C("FF7B6B"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("EFF7F4"), Chrome = C("E2F0EA"), Surface = C("FFFFFF"),
+                        Border = C("C2DED4"), Divider = C("DCEEE7"), Header = C("E6F3EE"),
+                        Text = C("1E4D40"), Muted = C("5E8A7C"), Accent = C("2E9E7B"),
+                        AccentText = Color.White, Selection = C("D5EEE4"), Hover = C("E0F1EA"), Zebra = C("F4FAF7"),
+                        GridLine = C("DEEFE8"), RowHead = C("EDF7F3"), Link = C("1F7A5E"), Mark = C("E08A3C"),
+                        Danger = C("C44536"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    };
+            }
+
+            // 淑女粉：自定义柔和玫瑰粉，浅色腮红底 / 深色深梅紫底
+            if (skin == UiSkin.Rose)
+            {
+                return dark
+                    ? new UiTheme
+                    {
+                        Window = C("201419"), Chrome = C("2A1B22"), Surface = C("302028"),
+                        Border = C("4A333D"), Divider = C("38252E"), Header = C("402B35"),
+                        Text = C("F5E3E9"), Muted = C("B98E9D"), Accent = C("CC6288"),
+                        AccentText = Color.White, Selection = C("543247"), Hover = C("3A2731"), Zebra = C("2B1C24"),
+                        GridLine = C("3E2A34"), RowHead = C("2D1E26"), Link = C("F0A0BC"), Mark = C("F0A868"),
+                        Danger = C("FF7B8E"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
+                    }
+                    : new UiTheme
+                    {
+                        Window = C("FBF2F4"), Chrome = C("F6E4E8"), Surface = C("FFFFFF"),
+                        Border = C("E8C9D1"), Divider = C("F2DDE2"), Header = C("F7E7EB"),
+                        Text = C("5C2A3A"), Muted = C("A06B7C"), Accent = C("C2557E"),
+                        AccentText = Color.White, Selection = C("F5DCE3"), Hover = C("F8E6EB"), Zebra = C("FCF5F7"),
+                        GridLine = C("F0DCE1"), RowHead = C("F9EEF1"), Link = C("A84466"), Mark = C("D9822B"),
+                        Danger = C("C43C50"),
+                        RowHeight = 24, ButtonHeight = 26, Radius = 4, CellPadX = 6, FontSize = 9f,
                     };
             }
 

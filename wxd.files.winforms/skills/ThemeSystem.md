@@ -1,6 +1,6 @@
 # ThemeSystem 开发指南
 
-> 主题系统：两套皮肤（Sky / Dense）× 深色/浅色，全部取色集中在令牌层
+> 主题系统：八套皮肤（Sky / Dense / Nord / Solarized / Gruvbox / Dracula / Mint / Rose）× 深色/浅色，全部取色集中在令牌层
 
 ---
 
@@ -22,13 +22,30 @@
 | RowHeight / ButtonHeight | 24 / 26 | 24 / 26 | 22 / 24 | 22 / 24 |
 | Radius | 4 | 4 | 3 | 3 |
 
+后六套皮肤度量与 Sky 相同（24 / 26 / 4）：Nord / Solarized / Gruvbox / Dracula 取自市面流行主题的官方色板，Mint / Rose 为自定义清新色板。关键令牌如下，完整 18 令牌见 `Theme.Build`：
+
+| 皮肤 | 模式 | Window | Surface | Text | Accent | Selection |
+|------|------|--------|---------|------|--------|-----------|
+| Nord 北欧蓝灰 | 浅 | #ECEFF4 | #FFFFFF | #2E3440 | #5E81AC | #CFDAE8 |
+| Nord 北欧蓝灰 | 深 | #2E3440 | #434C5E | #ECEFF4 | #5E81AC | #4A5B78 |
+| Solarized 暖沙护眼 | 浅 | #FDF6E3 | #FFFBF0 | #586E75 | #268BD2 | #E4DCC2 |
+| Solarized 暖沙护眼 | 深 | #002B36 | #04313D | #93A1A1 | #268BD2 | #104F6D |
+| Gruvbox 复古暖棕 | 浅 | #F9F5D7 | #FBF1C7 | #3C3836 | #AF3A03 | #E5D5A5 |
+| Gruvbox 复古暖棕 | 深 | #282828 | #3C3836 | #EBDBB2 | #D65D0E | #4E463C |
+| Dracula 德古拉紫 | 浅 | #F7F2E0 | #FFFBEB | #1F1F1F | #644AC9 | #CFCFDE |
+| Dracula 德古拉紫 | 深 | #191A21 | #282A36 | #F8F8F2 | #8A63D2 | #44475A |
+| Mint 薄荷绿 | 浅 | #EFF7F4 | #FFFFFF | #1E4D40 | #2E9E7B | #D5EEE4 |
+| Mint 薄荷绿 | 深 | #14201C | #1E302A | #DFF2EA | #35A882 | #2C5245 |
+| Rose 淑女粉 | 浅 | #FBF2F4 | #FFFFFF | #5C2A3A | #C2557E | #F5DCE3 |
+| Rose 淑女粉 | 深 | #201419 | #302028 | #F5E3E9 | #CC6288 | #543247 |
+
 派生色一律走函数，不要另写常量：`Theme.Mix(a,b,t)` 混合、`Theme.IsDark(c)` 判明暗、
 `Theme.CellTint(pastel)` 深色下压住表格底色、`Theme.Signal(c)` 深色下提亮状态色。
 
 ## 2. 主题切换机制
 
-- 皮肤是 `UiSkin` 枚举（`Sky`=0 / `Dense`=1），深浅色是 bool，两者独立。
-- 存档：`CsvSettings.ThemeSkin`（0/1）、`CsvSettings.ThemeMode`（0=深色，1=浅色）。
+- 皮肤是 `UiSkin` 枚举（`Sky`=0 / `Dense`=1 / `Nord`=2 / `Solarized`=3 / `Gruvbox`=4 / `Dracula`=5 / `Mint`=6 / `Rose`=7），深浅色是 bool，两者独立。
+- 存档：`CsvSettings.ThemeSkin`（0~7）、`CsvSettings.ThemeMode`（0=深色，1=浅色）。
 - 唯一入口 `Theme.Set(skin, dark)`，顺序是：重建 `Theme.P` 和字体 → `ApplyNativeMode`（原生控件明暗）
   → `ApplyCaptions`（DWM 刷已开窗口的标题栏）→ `Broadcast()` 通知订阅方。
 - `Broadcast()` 逐个调用 `Changed` 的订阅方并单独兜异常：某个窗体的 `ApplyTheme` 抛错不会连累其它窗口，
@@ -69,7 +86,9 @@
 
 ## 5. 修改禁区
 
-- **❌ 不要在界面代码里写 `Color.FromArgb(数字)`**——需要新色就加令牌，并一次配齐 4 套（两皮肤 × 深浅色）。
+- **❌ 不要在界面代码里写 `Color.FromArgb(数字)`**——需要新色就加令牌，并一次配齐 16 套（八皮肤 × 深浅色）。
+- **❌ 深色皮肤的 Accent 不能太亮**：`ThemeButton` 实底按钮按 `Theme.IsDark(fill)`（亮度阈值 145）选白字或 `p.Text`，
+  强调色亮度 ≥145 时会拿浅色正文压浅底，字读不出。Dracula 官方紫 #BD93F9 因此加深成 #8A63D2。
 - **❌ 不要只配深色或只配浅色**：任何按明暗分支的取色都要两条分支都写，否则另一套会露出默认色。
 - **❌ 主题切换时不要遗漏任何子控件**：`ApplyTheme` 里漏一个控件，现象是切肤后那块区域保持旧配色，
   重启才正常，很容易被当成"缓存问题"。

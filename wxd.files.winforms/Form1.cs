@@ -596,6 +596,12 @@ namespace wxd.files.winforms
             menu.Items.Add(new ToolStripSeparator());
             AddMenuEntry(menu, "天蓝提质", "skin", 0, () => SetSkin(0));
             AddMenuEntry(menu, "密集工具", "skin", 1, () => SetSkin(1));
+            AddMenuEntry(menu, "北欧蓝灰", "skin", 2, () => SetSkin(2));
+            AddMenuEntry(menu, "暖沙护眼", "skin", 3, () => SetSkin(3));
+            AddMenuEntry(menu, "复古暖棕", "skin", 4, () => SetSkin(4));
+            AddMenuEntry(menu, "德古拉紫", "skin", 5, () => SetSkin(5));
+            AddMenuEntry(menu, "薄荷绿", "skin", 6, () => SetSkin(6));
+            AddMenuEntry(menu, "淑女粉", "skin", 7, () => SetSkin(7));
             CheckGroup(menu, "mode", (int)_currentTheme);
             CheckGroup(menu, "skin", CsvSettings.ThemeSkin);
             return menu;
