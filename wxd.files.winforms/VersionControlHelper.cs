@@ -31,7 +31,9 @@ namespace wxd.files.winforms
             {
                 if (Directory.Exists(Path.Combine(dir, ".svn")))
                     return VcsType.Svn;
-                if (Directory.Exists(Path.Combine(dir, ".git")))
+                // .git 在 worktree/子模块里是文件而非目录，两者都要认，否则入口被误禁用
+                var gitMarker = Path.Combine(dir, ".git");
+                if (Directory.Exists(gitMarker) || File.Exists(gitMarker))
                     return VcsType.Git;
                 var parent = Directory.GetParent(dir);
                 if (parent == null) break;
@@ -47,7 +49,9 @@ namespace wxd.files.winforms
             var dir = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
             while (!string.IsNullOrEmpty(dir))
             {
-                if (Directory.Exists(Path.Combine(dir, marker)))
+                var markerPath = Path.Combine(dir, marker);
+                // .git 在 worktree/子模块里是文件而非目录，两者都要认
+                if (Directory.Exists(markerPath) || (marker == ".git" && File.Exists(markerPath)))
                     return dir;
                 var parent = Directory.GetParent(dir);
                 if (parent == null) break;
@@ -60,8 +64,8 @@ namespace wxd.files.winforms
         public static string GetRelativePath(string filePath, VcsType vcs)
         {
             var root = GetVcsRoot(filePath, vcs);
-            var relative = filePath.Substring(root.Length)
-                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            // 用 Path.GetRelativePath 替代 Substring：对大小写不一致/junction/短路径更健壮，避免越界或错切
+            var relative = Path.GetRelativePath(root, filePath);
             return relative.Replace('\\', '/');
         }
 
@@ -336,27 +340,7 @@ namespace wxd.files.winforms
                     return result;
                 }
 
-                var output = run.Output;
-
-                var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-                int index = 0;
-                foreach (var line in lines)
-                {
-                    var parts = line.Split('|');
-                    if (parts.Length >= 5)
-                    {
-                        result.Entries.Add(new VersionHistoryEntry
-                        {
-                            FullRevision = parts[0].Trim(),
-                            Revision = parts[1].Trim(),
-                            CommitDate = DateTime.Parse(parts[2].Trim()),
-                            Author = parts[3].Trim(),
-                            Message = parts[4].Trim(),
-                            HasFileChange = true,
-                            Index = index++
-                        });
-                    }
-                }
+                result.Entries = ParseGitLogOutput(run.Output);
             }
             catch (System.ComponentModel.Win32Exception)
             {
@@ -375,6 +359,38 @@ namespace wxd.files.winforms
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// 解析 git log --pretty=format:%H|%h|%ai|%an|%s 输出。
+        /// 分割限 5 段以保留 subject 内部的 |；日期用 TryParse，单条坏行跳过而非让整段历史解析失败。
+        /// </summary>
+        internal static List<VersionHistoryEntry> ParseGitLogOutput(string output)
+        {
+            var entries = new List<VersionHistoryEntry>();
+            var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            int index = 0;
+            foreach (var line in lines)
+            {
+                var parts = line.Split('|', 5);
+                if (parts.Length < 5) continue;
+
+                if (!DateTime.TryParse(parts[2].Trim(), CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out var commitDate))
+                    continue;
+
+                entries.Add(new VersionHistoryEntry
+                {
+                    FullRevision = parts[0].Trim(),
+                    Revision = parts[1].Trim(),
+                    CommitDate = commitDate,
+                    Author = parts[3].Trim(),
+                    Message = parts[4].Trim(),
+                    HasFileChange = true,
+                    Index = index++
+                });
+            }
+            return entries;
         }
 
         /// <summary>导出指定版本的文件内容到临时文件</summary>
@@ -458,17 +474,8 @@ namespace wxd.files.winforms
                     return result;
                 }
 
-                if (new FileInfo(tempFile).Length > 0)
-                {
-                    result.TempFile = tempFile;
-                    return result;
-                }
-
-                // 空文件也算失败
-                result.ErrorMessage = $"导出的文件为空：{revision}:{relativePath}";
-                System.Diagnostics.Debug.WriteLine(
-                    $"Export error: empty output for {revision}:{relativePath}");
-                try { File.Delete(tempFile); } catch { }
+                // 进程已成功退出(exit=0)：空文件也是合法版本内容（如新建的空CSV），不再误判为失败
+                result.TempFile = tempFile;
                 return result;
             }
             catch (System.ComponentModel.Win32Exception)
@@ -718,6 +725,28 @@ namespace wxd.files.winforms
             };
         }
 
+        /// <summary>
+        /// 构造 svn update 参数：去掉目录尾部分隔符，避免 "C:\foo\" 的 \" 被 Windows argv 解析为转义引号。
+        /// </summary>
+        internal static string BuildSvnUpdateArguments(string directory)
+            => $"update \"{Path.TrimEndingDirectorySeparator(directory)}\" --non-interactive";
+
+        /// <summary>
+        /// 从更新输出中筛选明确的冲突行：SVN 的 "C " 标记、Git 的 CONFLICT/合并失败等。
+        /// 只认明确模式，避免 "no conflicts" 之类正常输出误报为冲突。
+        /// </summary>
+        internal static List<string> ParseConflictLines(string combined)
+        {
+            return combined
+                .Split(new[] { GlobalConst.Lf, GlobalConst.Cr }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.TrimStart().StartsWith("C ", StringComparison.Ordinal) ||
+                               line.StartsWith("CONFLICT", StringComparison.OrdinalIgnoreCase) ||
+                               line.Contains("Conflict discovered", StringComparison.OrdinalIgnoreCase) ||
+                               line.Contains("Automatic merge failed", StringComparison.OrdinalIgnoreCase) ||
+                               line.StartsWith("Summary of conflicts", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
         /// <summary>执行 VCS 更新操作（SVN update 或 Git pull）</summary>
         /// <param name="directory">要更新的目录路径</param>
         /// <param name="vcs">版本控制类型（Svn 或 Git）</param>
@@ -744,7 +773,7 @@ namespace wxd.files.winforms
                         return result;
                     }
 
-                    run = await RunProcessAsync(svnExe, $"update \"{directory}\" --non-interactive",
+                    run = await RunProcessAsync(svnExe, BuildSvnUpdateArguments(directory),
                         outputEncoding: Encoding.GetEncoding(936),
                         timeoutMs: 120_000,
                         disableInteractivePrompts: true).ConfigureAwait(false);
@@ -782,17 +811,7 @@ namespace wxd.files.winforms
                         : "Git 更新超时（180 秒），已终止。请检查网络或凭据配置。";
 
                 // 检测冲突：只认明确的冲突行，避免 "no conflicts" 之类误报
-                {
-                    var combined = result.Output + GlobalConst.Lf + result.Error;
-                    result.ConflictLines = combined
-                        .Split(new[] { GlobalConst.Lf, GlobalConst.Cr }, StringSplitOptions.RemoveEmptyEntries)
-                        .Where(line => line.TrimStart().StartsWith("C ", StringComparison.Ordinal) ||
-                                       line.StartsWith("CONFLICT", StringComparison.OrdinalIgnoreCase) ||
-                                       line.Contains("Conflict discovered", StringComparison.OrdinalIgnoreCase) ||
-                                       line.Contains("Automatic merge failed", StringComparison.OrdinalIgnoreCase) ||
-                                       line.StartsWith("Summary of conflicts", StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                }
+                result.ConflictLines = ParseConflictLines(result.Output + GlobalConst.Lf + result.Error);
             }
             catch (System.ComponentModel.Win32Exception)
             {

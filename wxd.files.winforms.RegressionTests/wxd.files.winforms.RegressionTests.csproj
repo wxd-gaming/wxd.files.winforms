@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>wxd.files.winforms.RegressionTests</AssemblyName>
+    <RootNamespace>wxd.files.winforms.RegressionTests</RootNamespace>
+    <!-- 回归 runner 不参与发布/打包，仅供本地 dotnet run 验证 -->
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\wxd.files.winforms\wxd.files.winforms.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -70,8 +70,8 @@ namespace wxd.files.winforms
         // ★ 差异行索引集合（0-based，对应 DataTable.Rows 的索引，包含固定行）
         private HashSet<int> _leftDiffRows = new();
         private HashSet<int> _rightDiffRows = new();
-        private HashSet<int> _leftDiffCells = new();    // (row << 16) | col 编码的差异单元格集合（左）
-        private HashSet<int> _rightDiffCells = new();   // (row << 16) | col 编码的差异单元格集合（右）
+        private HashSet<long> _leftDiffCells = new();    // ((long)row << 16) | col 编码的差异单元格集合（左）；用 long 避免 row≥65536 时 int 回绕碰撞
+        private HashSet<long> _rightDiffCells = new();   // ((long)row << 16) | col 编码的差异单元格集合（右）；用 long 避免 row≥65536 时 int 回绕碰撞
 
         // ★ DGV 行索引 → 原始完整 DataTable 行索引（包含固定行）的映射
         private List<int> _leftRowToOriginalIndex = new();
@@ -97,6 +97,7 @@ namespace wxd.files.winforms
         private int _idColumnIndex = -1;                       // ID 列索引（-1 表示未检测到或未启用）
         private HashSet<int> _leftDeletedRows = new();        // 左表删除行集合（右表无对应 ID）
         private HashSet<int> _rightAddedRows = new();         // 右表新增行集合（左表无对应 ID）
+        private int _idAlignSkippedRows;                      // ID对齐因空/重复ID跳过的行数（左右合计），>0 时提示用户取消勾选可看全部
 
         // 配色：底噪走主题令牌，差异色只在浅色皮肤里是原样，深色皮肤里向 Surface 压暗
         private static Color _colorDiffCellBg => Theme.CellTint(Color.FromArgb(255, 200, 200));   // 差异单元格
@@ -842,7 +843,8 @@ namespace wxd.files.winforms
                 }
 
                 // ★ 阶段3.2：ID对齐模式下，构建对齐后的左右 FileTableData（插入空白行使行一一对应）
-                if (_chkIdAlign.Checked && _idColumnIndex >= 0 &&
+                if (IsIdAlignUsable(_chkIdAlign.Checked, _idColumnIndex,
+                        leftData.Columns.Count, rightData.Columns.Count) &&
                     _leftFullFileData != null && _rightFullFileData != null)
                 {
                     var (alignedLeft, alignedRight) = BuildAlignedTables(
@@ -910,6 +912,8 @@ namespace wxd.files.winforms
                 ResetInfoStyle();
                 _lblInfo.Text = $"对比: {leftLabel} ← → {rightLabel}  " +
                                $"(差异行: {_diffRowCount})";
+                if (_idAlignSkippedRows > 0)
+                    _lblInfo.Text += $"  (ID对齐跳过{_idAlignSkippedRows}行:空/重复ID,取消勾选看全部)";
             }
             catch (Exception ex)
             {
@@ -1163,21 +1167,22 @@ namespace wxd.files.winforms
             _rightDiffCells.Clear();
             _leftDeletedRows.Clear();
             _rightAddedRows.Clear();
+            _idAlignSkippedRows = 0;
             _diffRowCount = 0;
             _diffComputed = false;
 
             if (leftData == null || rightData == null) return;
 
-            bool useIdAlign = DetectIdColumn();
+            // ★ ID对齐开关真正接入差异计算：取消勾选回退行号对齐（此前恒用ID模式，开关只控制视觉归并）
+            bool useIdAlign = _chkIdAlign.Checked && DetectIdColumn();
             int dataStartRow = _frozenRows;
             int maxCols = Math.Max(leftData.Columns.Count, rightData.Columns.Count);
 
             await Task.Run(() =>
             {
                 // 唯一列索引必须真实存在于两侧表中，否则退回按行号对齐
-                bool idAlignUsable = useIdAlign && _idColumnIndex >= 0 &&
-                    _idColumnIndex < leftData.Columns.Count &&
-                    _idColumnIndex < rightData.Columns.Count;
+                bool idAlignUsable = IsIdAlignUsable(useIdAlign, _idColumnIndex,
+                    leftData.Columns.Count, rightData.Columns.Count);
 
                 if (idAlignUsable)
                 {
@@ -1213,7 +1218,7 @@ namespace wxd.files.winforms
                             _leftDiffRows.Add(leftRow);
                             _leftDeletedRows.Add(leftRow);
                             for (int c = 0; c < leftData.Columns.Count; c++)
-                                _leftDiffCells.Add((leftRow << 16) | c);
+                                _leftDiffCells.Add(EncodeDiffCell(leftRow, c));
                         }
                         else if (!leftExists && rightExists)
                         {
@@ -1221,7 +1226,7 @@ namespace wxd.files.winforms
                             _rightDiffRows.Add(rightRow);
                             _rightAddedRows.Add(rightRow);
                             for (int c = 0; c < rightData.Columns.Count; c++)
-                                _rightDiffCells.Add((rightRow << 16) | c);
+                                _rightDiffCells.Add(EncodeDiffCell(rightRow, c));
                         }
                         else
                         {
@@ -1248,10 +1253,10 @@ namespace wxd.files.winforms
                             {
                                 _leftDiffRows.Add(leftRow);
                                 foreach (var c in leftDiffCols)
-                                    _leftDiffCells.Add((leftRow << 16) | c);
+                                    _leftDiffCells.Add(EncodeDiffCell(leftRow, c));
                                 _rightDiffRows.Add(rightRow);
                                 foreach (var c in rightDiffCols)
-                                    _rightDiffCells.Add((rightRow << 16) | c);
+                                    _rightDiffCells.Add(EncodeDiffCell(rightRow, c));
                             }
                         }
                     }
@@ -1287,13 +1292,13 @@ namespace wxd.files.winforms
                             {
                                 _leftDiffRows.Add(row);
                                 foreach (var c in leftDiffCols)
-                                    _leftDiffCells.Add((row << 16) | c);
+                                    _leftDiffCells.Add(EncodeDiffCell(row, c));
                             }
                             if (row < rightData.Rows.Count)
                             {
                                 _rightDiffRows.Add(row);
                                 foreach (var c in rightDiffCols)
-                                    _rightDiffCells.Add((row << 16) | c);
+                                    _rightDiffCells.Add(EncodeDiffCell(row, c));
                             }
                         }
                     }
@@ -1327,26 +1332,10 @@ namespace wxd.files.winforms
             int dataStartRow = _frozenRows;
             int idCol = _idColumnIndex;
 
-            // 构建 ID → FileTableData 行索引 的映射
-            var leftIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var rightIdMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-            for (int i = 0; i < leftFd.Rows.Count; i++)
-            {
-                var row = leftFd.Rows[i];
-                if (row.OriginalRowIndex < dataStartRow) continue;
-                string? id = idCol < row.Cells.Count ? row.Cells[idCol]?.Trim() : null;
-                if (!string.IsNullOrEmpty(id) && !leftIdMap.ContainsKey(id))
-                    leftIdMap[id] = i;
-            }
-            for (int i = 0; i < rightFd.Rows.Count; i++)
-            {
-                var row = rightFd.Rows[i];
-                if (row.OriginalRowIndex < dataStartRow) continue;
-                string? id = idCol < row.Cells.Count ? row.Cells[idCol]?.Trim() : null;
-                if (!string.IsNullOrEmpty(id) && !rightIdMap.ContainsKey(id))
-                    rightIdMap[id] = i;
-            }
+            // 构建 ID → FileTableData 行索引 的映射，并统计因空/重复 ID 被排除的行（左右合计）
+            var (leftIdMap, leftSkipped) = BuildIdRowMap(leftFd, dataStartRow, idCol);
+            var (rightIdMap, rightSkipped) = BuildIdRowMap(rightFd, dataStartRow, idCol);
+            _idAlignSkippedRows = leftSkipped + rightSkipped;
 
             var leftAligned = new FileTableData();
             var rightAligned = new FileTableData();
@@ -1369,25 +1358,11 @@ namespace wxd.files.winforms
                     rightAligned.Rows.Add(CloneRow(rightFd.Rows[i], rightFd.ColumnNames.Count));
             }
 
-            // 合并左右 ID 为有序去重列表
-            var leftIdsOrdered = SortIds(leftIdMap.Keys);
-            var rightIdsOrdered = SortIds(rightIdMap.Keys);
-            var allIdsOrdered = new List<string>();
-            int lp = 0, rp = 0;
-            while (lp < leftIdsOrdered.Count || rp < rightIdsOrdered.Count)
-            {
-                if (lp >= leftIdsOrdered.Count)
-                    allIdsOrdered.Add(rightIdsOrdered[rp++]);
-                else if (rp >= rightIdsOrdered.Count)
-                    allIdsOrdered.Add(leftIdsOrdered[lp++]);
-                else
-                {
-                    int cmp = string.Compare(leftIdsOrdered[lp], rightIdsOrdered[rp], StringComparison.OrdinalIgnoreCase);
-                    if (cmp == 0) { allIdsOrdered.Add(leftIdsOrdered[lp]); lp++; rp++; }
-                    else if (cmp < 0) allIdsOrdered.Add(leftIdsOrdered[lp++]);
-                    else allIdsOrdered.Add(rightIdsOrdered[rp++]);
-                }
-            }
+            // 合并左右 ID 为有序去重列表（★ 排序与归并共用同一比较器，避免数字 ID 口径不一致）
+            var idComparison = BuildIdComparison(leftIdMap.Keys.Concat(rightIdMap.Keys));
+            var leftIdsOrdered = SortIds(leftIdMap.Keys, idComparison);
+            var rightIdsOrdered = SortIds(rightIdMap.Keys, idComparison);
+            var allIdsOrdered = MergeOrderedIds(leftIdsOrdered, rightIdsOrdered, idComparison);
 
             // 按有序 ID 遍历
             int colCount = Math.Max(leftData.Columns.Count, rightData.Columns.Count);
@@ -1429,14 +1404,102 @@ namespace wxd.files.winforms
             return (leftAligned, rightAligned);
         }
 
-        /// <summary>按数值或字典序对ID列表排序</summary>
-        private static List<string> SortIds(IEnumerable<string> ids)
+        /// <summary>
+        /// 构建左右 ID 共用的全序比较器：全部 ID 可解析为整数时按数值排序，否则按字典序（忽略大小写）。
+        /// 排序与归并必须共用同一口径，否则两指针归并会重复/漏行/乱序（数字 ID 表必现）。
+        /// 数值相等但字符串不同（如 "02" 与 "2"）用字典序细分，保证仅相同字符串判等，避免归并误合并。
+        /// </summary>
+        internal static Comparison<string> BuildIdComparison(IEnumerable<string> allIds)
+        {
+            var ids = allIds.ToList();
+            bool numeric = ids.Count > 0 && ids.All(id => int.TryParse(id, out _));
+            return (a, b) =>
+            {
+                int cmp;
+                if (numeric && int.TryParse(a, out int na) && int.TryParse(b, out int nb))
+                    cmp = na.CompareTo(nb);
+                else
+                    cmp = string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0) return cmp;
+                return string.Compare(a, b, StringComparison.Ordinal);
+            };
+        }
+
+        /// <summary>按共用比较器对 ID 列表排序（口径与归并一致）</summary>
+        internal static List<string> SortIds(IEnumerable<string> ids, Comparison<string> comparison)
         {
             var list = ids.ToList();
-            if (list.Count == 0) return list;
-            if (list.All(id => int.TryParse(id, out _)))
-                return list.OrderBy(id => int.Parse(id)).ToList();
-            return list.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
+            list.Sort(comparison);
+            return list;
+        }
+
+        /// <summary>
+        /// 两指针归并两个已按同一比较器排序的 ID 列表，输出去重有序全集。
+        /// 排序与归并必须共用比较器，否则数字 ID 表会重复/漏行/乱序。
+        /// </summary>
+        internal static List<string> MergeOrderedIds(
+            List<string> left, List<string> right, Comparison<string> comparison)
+        {
+            var merged = new List<string>();
+            int lp = 0, rp = 0;
+            while (lp < left.Count || rp < right.Count)
+            {
+                if (lp >= left.Count)
+                    merged.Add(right[rp++]);
+                else if (rp >= right.Count)
+                    merged.Add(left[lp++]);
+                else
+                {
+                    int cmp = comparison(left[lp], right[rp]);
+                    if (cmp == 0) { merged.Add(left[lp]); lp++; rp++; }
+                    else if (cmp < 0) merged.Add(left[lp++]);
+                    else merged.Add(right[rp++]);
+                }
+            }
+            return merged;
+        }
+
+        /// <summary>
+        /// 差异单元格编码 (row&lt;&lt;16)|col。必须用 long 计算：row≥65536 时 int 会回绕，导致不同行编码碰撞。
+        /// 编码格式不可变更（见 skills/VersionCompare.md 禁区1），此处仅集中实现，口径不变。
+        /// </summary>
+        internal static long EncodeDiffCell(int row, int col) => ((long)row << 16) | col;
+
+        /// <summary>
+        /// 构建 ID → FileTableData 行索引映射，并统计因空/重复 ID 被跳过的行数。
+        /// 冻结行(OriginalRowIndex &lt; dataStartRow)不参与；跳过数必须对用户可见，避免静默缺行。
+        /// </summary>
+        internal static (Dictionary<string, int> map, int skipped) BuildIdRowMap(
+            FileTableData fd, int dataStartRow, int idCol)
+        {
+            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            int skipped = 0;
+            for (int i = 0; i < fd.Rows.Count; i++)
+            {
+                var row = fd.Rows[i];
+                if (row.OriginalRowIndex < dataStartRow) continue;
+                string? id = idCol < row.Cells.Count ? row.Cells[idCol]?.Trim() : null;
+                if (string.IsNullOrEmpty(id) || map.ContainsKey(id)) { skipped++; continue; }
+                map[id] = i;
+            }
+            return (map, skipped);
+        }
+
+        /// <summary>
+        /// ID 对齐是否可用：开关勾选且唯一列索引在两侧表列范围内。
+        /// 差异计算与对齐表构建必须共用此判定，否则越界列会让一侧回退行号对齐、另一侧产出空表。
+        /// </summary>
+        internal static bool IsIdAlignUsable(bool useIdAlign, int idColumnIndex, int leftColCount, int rightColCount)
+            => useIdAlign && idColumnIndex >= 0 && idColumnIndex < leftColCount && idColumnIndex < rightColCount;
+
+        /// <summary>
+        /// 同步滚动目标行钳制：目标表无行或源索引无效时返回 null(不同步)，否则钳到 [0, RowCount-1]。
+        /// 防止空表/越界索引触发 FirstDisplayedScrollingRowIndex 异常。
+        /// </summary>
+        internal static int? ClampSyncScrollIndex(int index, int targetRowCount)
+        {
+            if (targetRowCount <= 0 || index < 0) return null;
+            return Math.Min(index, targetRowCount - 1);
         }
 
         /// <summary>克隆 TableRow</summary>
@@ -1645,7 +1708,7 @@ namespace wxd.files.winforms
             if (e.ColumnIndex >= 0 && e.ColumnIndex < colMap.Count)
                 originalCol = colMap[e.ColumnIndex];
 
-            int cellKey = (originalRow << 16) | originalCol;
+            long cellKey = EncodeDiffCell(originalRow, originalCol);
             bool isDiffCell = diffCells.Contains(cellKey);
 
             if (isDiffCell)
@@ -1693,8 +1756,9 @@ namespace wxd.files.winforms
                 if (e.ScrollOrientation == ScrollOrientation.VerticalScroll)
                 {
                     int idx = leftDgv.FirstDisplayedScrollingRowIndex;
-                    if (rightDgv.RowCount > 0)
-                        rightDgv.FirstDisplayedScrollingRowIndex = Math.Min(idx, rightDgv.RowCount - 1);
+                    int? target = ClampSyncScrollIndex(idx, rightDgv.RowCount);
+                    if (target.HasValue)
+                        rightDgv.FirstDisplayedScrollingRowIndex = target.Value;
                 }
                 else if (e.ScrollOrientation == ScrollOrientation.HorizontalScroll)
                 {
@@ -1717,8 +1781,9 @@ namespace wxd.files.winforms
                 if (e.ScrollOrientation == ScrollOrientation.VerticalScroll)
                 {
                     int idx = rightDgv.FirstDisplayedScrollingRowIndex;
-                    if (leftDgv.RowCount > 0)
-                        leftDgv.FirstDisplayedScrollingRowIndex = Math.Min(idx, leftDgv.RowCount - 1);
+                    int? target = ClampSyncScrollIndex(idx, leftDgv.RowCount);
+                    if (target.HasValue)
+                        leftDgv.FirstDisplayedScrollingRowIndex = target.Value;
                 }
                 else if (e.ScrollOrientation == ScrollOrientation.HorizontalScroll)
                 {
