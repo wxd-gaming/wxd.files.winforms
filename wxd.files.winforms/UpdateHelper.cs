@@ -60,7 +60,9 @@ namespace wxd.files.winforms
             {
                 Name = "Gitee",
                 LatestApi = "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases/latest",
-                ListApi = "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases?page=1&per_page=50"
+                // Gitee 列表默认按创建时间升序（最旧在前），release 数超过 per_page 后第一页就不含新版本，
+                // 更新日志会停在旧版本；显式 direction=desc 让第一页即最新 N 个
+                ListApi = "https://gitee.com/api/v5/repos/wxd-gaming/wxd.files.winforms/releases?page=1&per_page=50&direction=desc"
             },
             new ReleaseSource
             {
@@ -493,8 +495,11 @@ namespace wxd.files.winforms
                 if (foundSeparator)
                     continue;
 
-                // 跳过版本标题行
-                if (trimmed.Trim().StartsWith("## version", StringComparison.OrdinalIgnoreCase))
+                // 跳过版本标题行：正文实际是 "## v1.0.2.x"，旧判断只认 "## version" 会漏掉它
+                if (trimmed.Trim().StartsWith("## ", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // 跳过发布时间元信息行（带 ** 加粗标记，纯文本日志里不需要）
+                if (trimmed.Trim().StartsWith("**Release Time**", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 sb.AppendLine(trimmed);
