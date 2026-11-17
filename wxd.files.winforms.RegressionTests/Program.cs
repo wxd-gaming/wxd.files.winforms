@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 using wxd.files.winforms;
 
 namespace wxd.files.winforms.RegressionTests
@@ -69,6 +71,18 @@ namespace wxd.files.winforms.RegressionTests
 
             // #7 空文件导出（真实 git 集成，git 不可用则跳过）
             RunIntegration("#7 空文件导出成功", Test_EmptyFileExport);
+
+            // 性能重构：索引映射 / 过滤词预编译 / 排序键预计算
+            Run("映射 反查表基本语义", Test_BuildReverseMap);
+            Run("映射 冻结行与内容行分组", Test_MapMatchCellsFrozenAndBody);
+            Run("映射 被过滤掉的行跳过", Test_MapMatchCellsSkipsHiddenRows);
+            Run("映射 无冻结行按原行号直映", Test_MapMatchCellsDirect);
+            Run("过滤词 单串/OR/AND", Test_ContentFilterMatcher);
+            Run("过滤词 边界与大小写", Test_ContentFilterMatcherEdges);
+            Run("排序 数值升序/降序", Test_SortRowIndicesNumeric);
+            Run("排序 同键稳定/无效列", Test_SortRowIndicesStable);
+            Run("行数据 子集继承物理行号", Test_BuildFileDataSubsetInherit);
+            Run("CSV 写出转义/无BOM", Test_CsvWriteRoundTrip);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -436,6 +450,165 @@ namespace wxd.files.winforms.RegressionTests
             {
                 DeleteTempDir(repo);
                 DeleteTempDir(outDir);
+            }
+        }
+
+        // ==================== 性能重构（索引映射 / 过滤词 / 排序键） ====================
+
+        private static void Test_BuildReverseMap()
+        {
+            var map = TableIndexMapper.BuildReverseMap(new[] { 5, 2, 9 }, 10);
+            AssertEq(0, map[5], "5 → 显示行 0");
+            AssertEq(1, map[2], "2 → 显示行 1");
+            AssertEq(2, map[9], "9 → 显示行 2");
+            AssertEq(-1, map[0], "未出现的索引为 -1");
+
+            var empty = TableIndexMapper.BuildReverseMap(null, 3);
+            AssertEq(-1, empty[0], "null 列表应全部为 -1");
+
+            var outOfRange = TableIndexMapper.BuildReverseMap(new[] { 7 }, 2);
+            AssertEq(-1, outOfRange[1], "越界的原始索引应被忽略而不是抛异常");
+        }
+
+        private static void Test_MapMatchCellsFrozenAndBody()
+        {
+            // 显示列：原始 0 → 显示 0，原始 2 → 显示 1（原始列 1 被隐藏）
+            var visibleCols = new List<int> { 0, 2 };
+            // 内容行显示顺序：原始 10 → 显示 0，原始 12 → 显示 1
+            var visibleRows = new List<int> { 10, 12 };
+            var merged = new Dictionary<int, HashSet<int>>
+            {
+                [1] = new HashSet<int> { 0, 2 },    // 冻结行 1
+                [10] = new HashSet<int> { 2 },      // 内容行 → 显示 0
+                [12] = new HashSet<int> { 0, 2 },   // 内容行 → 显示 1
+            };
+
+            var (header, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, visibleCols, visibleRows, frozenRows: 2, columnCount: 3, rowCount: 20);
+
+            AssertEq(2, header[1].Count, "冻结行应保留两列匹配");
+            Assert(header[1].Contains(0) && header[1].Contains(1), "原始列 0/2 应映射为显示列 0/1");
+
+            AssertEq(2, body.Count, "两行内容行应各有映射");
+            AssertEq(1, body[0].Count, "内容行 10 只命中原始列 2");
+            Assert(body[0].Contains(1), "原始列 2 的显示索引应为 1");
+            AssertEq(2, body[1].Count, "内容行 12 两列都命中");
+        }
+
+        private static void Test_MapMatchCellsSkipsHiddenRows()
+        {
+            var merged = new Dictionary<int, HashSet<int>> { [7] = new HashSet<int> { 0 } };
+            var (header, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, new List<int> { 0 }, new List<int> { 1, 2 },
+                frozenRows: 0, columnCount: 1, rowCount: 10);
+
+            AssertEq(0, header.Count, "无冻结行时不应产生表头映射");
+            AssertEq(0, body.Count, "被过滤掉的行不应出现在结果里");
+        }
+
+        private static void Test_MapMatchCellsDirect()
+        {
+            var merged = new Dictionary<int, HashSet<int>> { [3] = new HashSet<int> { 1 } };
+            var (_, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, new List<int> { 0, 1 }, null,
+                frozenRows: 0, columnCount: 2, rowCount: 5);
+
+            AssertEq(1, body[3].Single(), "无过滤无排序时显示行 = 原始行");
+        }
+
+        private static void Test_ContentFilterMatcher()
+        {
+            Assert(ContentFilterMatcher.Parse("abc").Matches("xxABCxx"), "单串应大小写不敏感");
+            Assert(!ContentFilterMatcher.Parse("abc").Matches("xxabdxx"), "单串不命中应返回 false");
+
+            var or = ContentFilterMatcher.Parse("abc||def");
+            Assert(or.Matches("DEF"), "OR：命中第二个词");
+            Assert(or.Matches("xabcdef"), "OR：命中第一个词");
+            Assert(!or.Matches("xyz"), "OR：都不命中");
+
+            var and = ContentFilterMatcher.Parse("abc&&def");
+            Assert(and.Matches("abcdef"), "AND：两个词都在");
+            Assert(!and.Matches("abc"), "AND：缺一个词不命中");
+        }
+
+        private static void Test_ContentFilterMatcherEdges()
+        {
+            Assert(ContentFilterMatcher.Parse("").Matches("任意"), "空词表 = 全部命中");
+            Assert(!ContentFilterMatcher.Parse("|||").Matches("abc"), "只有分隔符时 OR 不命中");
+            Assert(ContentFilterMatcher.Parse("&&&").Matches("abc"), "只有分隔符时 AND 视为全部通过");
+            Assert(!ContentFilterMatcher.Parse("abc").Matches(""), "空单元格不命中非空过滤词");
+        }
+
+        private static void Test_SortRowIndicesNumeric()
+        {
+            var dt = new DataTable();
+            dt.Columns.Add("v", typeof(string));
+            foreach (var v in new[] { "10", "2", "1" }) dt.Rows.Add(v);
+
+            var asc = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Ascending);
+            AssertSeq(new[] { 2, 1, 0 }, asc, "数值列应按数值升序（1,2,10），不是字典序");
+
+            var desc = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Descending);
+            AssertSeq(new[] { 0, 1, 2 }, desc, "数值列降序");
+        }
+
+        private static void Test_SortRowIndicesStable()
+        {
+            var dt = new DataTable();
+            dt.Columns.Add("v", typeof(string));
+            foreach (var v in new[] { "b", "B", "a" }) dt.Rows.Add(v);
+
+            var sorted = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Ascending);
+            AssertSeq(new[] { 2, 0, 1 }, sorted, "同键按输入顺序稳定排列（b 先于 B）");
+
+            var invalidColumn = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1 }, 9, SortOrder.Ascending);
+            AssertSeq(new[] { 0, 1 }, invalidColumn, "无效排序列应原样返回");
+        }
+
+        private static void Test_BuildFileDataSubsetInherit()
+        {
+            var source = new FileTableData { FilePath = "a.csv", Type = TableFileType.Csv };
+            source.ColumnNames.Add("v");
+            source.Rows.Add(new TableRow { OriginalRowIndex = 0, PhysicalStartLine = 1, PhysicalEndLine = 1, Cells = new List<string> { "a" } });
+            source.Rows.Add(new TableRow { OriginalRowIndex = 1, PhysicalStartLine = 3, PhysicalEndLine = 4, Cells = new List<string> { "b" } });
+            source.Rows.Add(new TableRow { OriginalRowIndex = 2, PhysicalStartLine = 5, PhysicalEndLine = 5, Cells = new List<string> { "c" } });
+
+            var subset = new DataTable();
+            subset.Columns.Add("v", typeof(string));
+            subset.Rows.Add("x");
+            subset.Rows.Add("y");
+            subset.Rows.Add("z");
+
+            var built = TableBrowserControl.BuildFileData(subset, source);
+            AssertEq(3, built.Rows.Count, "子集行数");
+            AssertSeq(new[] { 1, 3, 5 }, built.Rows.Select(r => r.PhysicalStartLine), "子集应继承原行的物理起始行号");
+            AssertSeq(new[] { 0, 1, 2 }, built.Rows.Select(r => r.OriginalRowIndex), "OriginalRowIndex 应指向源行号");
+        }
+
+        private static void Test_CsvWriteRoundTrip()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var dt = new DataTable();
+                dt.Columns.Add("a", typeof(string));
+                dt.Columns.Add("b", typeof(string));
+                dt.Rows.Add("x,y", "line1\nline2");
+                dt.Rows.Add("quote\"d", "");
+
+                var path = Path.Combine(dir, "out.csv");
+                FileDataCache.WriteCsvRows(path, dt, ',');
+
+                var bytes = File.ReadAllBytes(path);
+                Assert(!(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF),
+                    "CSV 不应写 UTF-8 BOM");
+                var text = File.ReadAllText(path);
+                AssertEq("\"x,y\",\"line1\nline2\"\r\n\"quote\"\"d\",\r\n", text,
+                    "CSV 转义与换行格式（含引号、内嵌换行）");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
             }
         }
 

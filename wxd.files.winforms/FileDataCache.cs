@@ -498,14 +498,7 @@ namespace wxd.files.winforms
             {
                 try
                 {
-                    var content = BuildCsvContent(dataTable, delimiter);
-                    var bytes = Encoding.UTF8.GetBytes(content);
-                    using (var fs = new FileStream(fullPath, FileMode.Create,
-                                   FileAccess.Write, FileShare.ReadWrite))
-                    {
-                        fs.Write(bytes, 0, bytes.Length);
-                        fs.Flush();
-                    }
+                    WriteCsvRows(fullPath, dataTable, delimiter);
                     return true;
                 }
                 catch (IOException)
@@ -516,6 +509,41 @@ namespace wxd.files.winforms
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// 逐行流式写 CSV。
+        /// 旧实现先把整表拼成一个字符串、再 GetBytes，大表峰值内存约等于文件的 3 倍；
+        /// 这里直接写流，字节格式保持不变（UTF-8 无 BOM、CRLF、逐格转义）。
+        /// </summary>
+        internal static void WriteCsvRows(string fullPath, DataTable dataTable, char delimiter)
+        {
+            using var fs = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            using var writer = new StreamWriter(fs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            writer.NewLine = GlobalConst.NewLine;
+
+            var sb = new StringBuilder(256);
+            int columnCount = dataTable.Columns.Count;
+            foreach (DataRow row in dataTable.Rows)
+            {
+                sb.Clear();
+                for (int c = 0; c < columnCount; c++)
+                {
+                    if (c > 0) sb.Append(delimiter);
+
+                    var value = row[c]?.ToString() ?? "";
+                    if (value.Contains(delimiter) || value.Contains('"')
+                        || value.Contains(GlobalConst.LfChar) || value.Contains(GlobalConst.CrChar))
+                    {
+                        sb.Append('"').Append(value.Replace("\"", "\"\"")).Append('"');
+                    }
+                    else
+                    {
+                        sb.Append(value);
+                    }
+                }
+                writer.WriteLine(sb.ToString());
+            }
         }
 
         /// <summary>写入 Excel 到磁盘（不写列名，有备份还原+重试）</summary>
@@ -659,24 +687,6 @@ namespace wxd.files.winforms
             int index = columnIndex;
             do { result.Insert(0, (char)('A' + (index % 26))); index = index / 26 - 1; } while (index >= 0);
             return result.ToString();
-        }
-
-        private static string BuildCsvContent(DataTable dataTable, char delimiter)
-        {
-            var sb = new StringBuilder();
-            foreach (DataRow row in dataTable.Rows)
-            {
-                var values = new List<string>();
-                foreach (var item in row.ItemArray)
-                {
-                    var value = item?.ToString() ?? "";
-                    if (value.Contains(delimiter) || value.Contains('"') || value.Contains(GlobalConst.LfChar) || value.Contains(GlobalConst.CrChar))
-                        value = "\"" + value.Replace("\"", "\"\"") + "\"";
-                    values.Add(value);
-                }
-                sb.AppendLine(string.Join(delimiter.ToString(), values));
-            }
-            return sb.ToString();
         }
 
         private static LinkLookupEntry BuildLinkLookupFromMaster(

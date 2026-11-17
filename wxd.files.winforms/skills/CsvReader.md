@@ -398,3 +398,19 @@ public List<int> GetVisibleColumnIndices()
 | `ExtractValues()` | ColumnLinkConfig | 提取关联匹配值（支持多值） |
 | `SetColumnVisibility()` | CsvSettings | 持久化列显隐状态 |
 | `GetColumnLinksByDirectory()` | CsvSettings | 读取目录级列关联配置 |
+| `TableIndexMapper.BuildReverseMap()` / `MapMatchCellsToDisplay()` | TableIndexMapper | 原始索引 → 显示索引的一次性反查（禁止再写 `List.IndexOf` 逐条反查） |
+| `ContentFilterMatcher.Parse()` | ContentFilterMatcher | 内容过滤词预编译（OR/AND/单串），逐单元格只做 `IndexOf` |
+| `BuildFileData()` | TableBrowserControl | DataTable → FileTableData；行数一致按索引继承，行数不一致按 OriginalRowIndex 字典继承（O(n)） |
+| `TryPatchFileDataRow()` / `TryRefreshRowInPlace()` | TableBrowserControl | 单元格编辑后的单行增量更新；仅"无过滤、无排序、非冻结行"时生效，否则回退 `RefreshGridLayout()` |
+
+---
+
+## 13. 性能约定（2026-11 优化）
+
+改这几条路径前先看约定，实测数据见提交说明（3 万行 × 52 列、Release）：
+
+1. **索引映射禁止逐条 `IndexOf`**：过滤/排序后把匹配单元格（原始行列）翻译成显示行列，必须走 `TableIndexMapper`。旧写法在 3 万行表上是 O(n²)（实测 136 ms vs 72 ms），10 万行会放大到秒级。
+2. **过滤词只解析一次**：`ContentFilterMatcher.Parse` 一次，循环里只调 `Matches`。旧写法每个单元格都 `Replace + Split`，OR/AND 过滤下实测 253 ms → 70 ms。
+3. **编辑提交走增量**：无内容过滤、无高级过滤、无排序且编辑的不是冻结行时，只更新 `_fileData` 的单行 + 绑定表的单格并 `InvalidateRow`；**不要**改成每次都 `BuildFileData + RefreshGridLayout`（3 万行实测每次多花约 320 ms）。
+4. **列关联着色先看列标志**：`_columnLinkFlags[原始列]` 为 false 时直接返回，别在 `CellFormatting` 里做通配匹配/拼前缀/`GetLookupsByPrefix` 全字典扫描。配置或文件变化后要调 `RebuildColumnLinkPlans()`。
+5. **CSV 写盘走流式**：`FileDataCache.WriteCsvRows` 直接写 `StreamWriter`（UTF-8 无 BOM、CRLF）。不要再拼整串 + `GetBytes`，大表峰值内存约为文件 3 倍。

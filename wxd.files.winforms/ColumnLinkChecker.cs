@@ -234,13 +234,24 @@ namespace wxd.files.winforms
         }
 
         /// <summary>检查单元格颜色（检查所有有关联的字段）</summary>
+        /// <param name="relevantLinks">
+        /// 已按"是否指向当前文件"预筛过的配置（由 <c>TableBrowserControl</c> 缓存）。
+        /// 传 null 时退回逐格匹配的旧路径。
+        /// </param>
+        /// <param name="linkedColumnFlags">
+        /// 原始列索引 → 该列是否配置了关联。绝大多数列是 false，一次数组判断即可返回，
+        /// 避免逐格做通配匹配、拼字符串和整字典扫描。
+        /// </param>
         public static void CheckCellColor(FileDataCache cache, DataGridViewCellFormattingEventArgs e,
             List<int> visibleColumnIndices, DataGridView dataGrid, string filePath, string rootDir,
-            List<ColumnLinkConfig>? columnLinks = null)
+            List<ColumnLinkConfig>? columnLinks = null,
+            List<ColumnLinkConfig>? relevantLinks = null,
+            bool[]? linkedColumnFlags = null)
         {
             if (string.IsNullOrEmpty(rootDir)) return;
-
-            string currentRel = GetRelativePath(filePath, rootDir);
+            if ((columnLinks == null || columnLinks.Count == 0)
+                && (relevantLinks == null || relevantLinks.Count == 0))
+                return;  // 没有任何关联配置：整列直接跳过
 
             int originalColIndex = e.ColumnIndex;
             if (visibleColumnIndices.Count > 0 && e.ColumnIndex < dataGrid.Columns.Count)
@@ -250,15 +261,25 @@ namespace wxd.files.winforms
                     originalColIndex = visibleColumnIndices[adjustedCol];
             }
 
-            var linkConfig = columnLinks?.FirstOrDefault(l =>
-                LinkSourceMatcher.Matches(l.SourceFile, currentRel, Path.GetFileName(filePath)) &&
-                l.SourceColumnIndex == originalColIndex);
+            // ★ 快路径：该列没有关联配置（宽表里是绝大多数单元格）
+            if (linkedColumnFlags != null
+                && (uint)originalColIndex < (uint)linkedColumnFlags.Length
+                && !linkedColumnFlags[originalColIndex])
+                return;
+
+            var linkConfig = relevantLinks != null
+                ? relevantLinks.FirstOrDefault(l => l.SourceColumnIndex == originalColIndex)
+                : columnLinks?.FirstOrDefault(l =>
+                    LinkSourceMatcher.Matches(l.SourceFile, GetRelativePath(filePath, rootDir), Path.GetFileName(filePath)) &&
+                    l.SourceColumnIndex == originalColIndex);
 
             if (linkConfig == null || linkConfig.FieldLinks == null || linkConfig.FieldLinks.Count == 0)
                 return;
 
             var cellValue = e.Value?.ToString()?.Trim() ?? "";
             if (string.IsNullOrEmpty(cellValue)) return;
+
+            string currentRel = GetRelativePath(filePath, rootDir);
 
             // ★ 切割为"行×字段"，与 ToolTip 显示逻辑一致
             var fieldRows = SplitCellToFieldRows(linkConfig, cellValue);
