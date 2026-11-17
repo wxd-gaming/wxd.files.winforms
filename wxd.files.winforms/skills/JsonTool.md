@@ -1,0 +1,58 @@
+# JSON 面板（JsonTool）
+
+> 主工具栏 **JSON** 打开的独立窗口。定位是"看 JSON、整理 JSON"，不是编辑器：不保存文件，改完复制走。
+
+## 1. 文件与职责
+
+| 文件 | 内容 |
+|------|------|
+| `JsonToolForm.cs` | 窗体：源文本 + 可折叠树 + 工具栏 + 搜索 |
+| `JsonToolEngine.cs` | 纯逻辑：解析、格式化、压缩、递归 key 排序、节点计数 |
+| `TextFileReader` | 打开文件时的编码识别（UTF-8 / GB18030） |
+
+## 2. 关键行为
+
+### 2.1 解析
+
+- `System.Text.Json` 的 `JsonNode`，配置 `AllowTrailingCommas = true`、`CommentHandling = Skip`——
+  JSONC/带注释的配置表能直接打开。
+- 解析失败返回"第 X 行，第 Y 列 + 原始消息"，状态栏红字显示，树清空。
+- 顶层是字面量 `null` 也算解析成功（Root 为 null，树里显示一个 `null` 节点）。
+
+### 2.2 格式化 / 压缩 / key 排序
+
+- 格式化：`WriteIndented = true`、`IndentSize = 2`、`UnsafeRelaxedJsonEscaping`（中文不转成 \uXXXX）。
+- 压缩：不缩进输出为一行。
+- key 排序：**递归**，对象按 key 的 `StringComparer.Ordinal` 升序重排；数组元素顺序不变。
+  排序会把结果重新格式化写回左侧文本（一份文档，两种视图，不维护第二份状态）。
+- 数字保留原写法（走 `JsonNode`/原始 JSON 文本），不经过 double 转换。
+
+### 2.3 树
+
+- 根节点文本 `$ { } (n)` / `$ [ ] (n)`；对象子节点 `"key": 值或 { } (n)`；数组子节点 `[i]: …`。
+- 字符串预览超过 80 字符截断加省略号（完整内容看左侧文本）。
+- 默认只展开根节点；"全部展开/全部折叠"递归处理。
+
+### 2.4 搜索
+
+- 匹配的是**节点文本**（key + 值预览），大小写不敏感；命中节点 `ForeColor` 标红。
+- 当前命中会展开所有祖先并选中、滚动到可见；状态栏显示"第 n/m 处"。
+- 源文本一变（防抖 400ms 重新解析）就清空命中集合，避免指向已释放的 TreeNode。
+
+## 3. 易错点
+
+- **别把 TreeNode 存到字段里跨解析复用**：每次 `ParseAndRender` 都会 `Nodes.Clear()`，
+  旧节点引用会失效。搜索命中集合 `_matches` 必须和树同生命周期。
+- 左侧文本的自动解析走 `_parseTimer`（400ms 防抖）；程序自己改文本时必须置
+  `_suppressTextChanged`，否则格式化后会被 TextChanged 再解析一遍。
+- `SplitContainer` 同样有"句柄创建前按默认尺寸算过子控件宽度"的问题，
+  `Shown` 里 `NormalizePaneLayout()` 按最终面板宽度再钳一次，别删。
+- 树的 `ForeColor` 是唯一能逐节点改色的属性（`BackColor` 要 OwnerDraw 才生效），
+  所以搜索高亮用红字而不是底色。
+
+## 4. 已知取舍
+
+- 只读预览：没有保存按钮，改完用"复制结果"。
+- 每次文本变化都会重建整棵树；超大 JSON（几万节点）会卡，定位是小配置文件。
+- 搜索是线性遍历全部节点，没做索引。
+- key 排序固定递归 + 序数排序，没有"仅当前层 / 忽略大小写"选项。

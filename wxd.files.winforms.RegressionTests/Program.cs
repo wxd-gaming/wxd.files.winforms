@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Windows.Forms;
 using wxd.files.winforms;
 
@@ -97,6 +98,12 @@ namespace wxd.files.winforms.RegressionTests
             Run("表格读取 CSV 引号/换行/分隔符", Test_SimpleTableCsv);
             Run("表格读取 CSV 编码 GBK", Test_SimpleTableCsvGbk);
             Run("表格读取 Excel 往返", Test_SimpleTableExcelRoundTrip);
+
+            // JSON 面板
+            Run("JSON 格式化/压缩/中文不转义", Test_JsonFormatAndMinify);
+            Run("JSON 递归 key 排序", Test_JsonSortKeys);
+            Run("JSON 解析错误与宽松语法", Test_JsonParseErrors);
+            Run("JSON 节点计数与顶层 null", Test_JsonCountAndNull);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -843,6 +850,75 @@ namespace wxd.files.winforms.RegressionTests
             {
                 DeleteTempDir(dir);
             }
+        }
+
+        // ==================== JSON 面板 ====================
+
+        private static void Test_JsonFormatAndMinify()
+        {
+            var result = JsonToolEngine.Parse("""{"b":1,"a":{"d":2,"c":3},"name":"史莱姆"}""");
+            Assert(result.Success, "合法 JSON 应解析成功");
+
+            var formatted = JsonToolEngine.Format(result.Root);
+            Assert(formatted.Contains("\n  \"b\""), "应使用 2 空格缩进");
+            Assert(formatted.Contains("史莱姆"), "中文不应被转义");
+
+            var minified = JsonToolEngine.Minify(result.Root);
+            Assert(!minified.Contains('\n'), "压缩后不应有换行");
+            Assert(!minified.Contains(' '), "压缩后不应有空格");
+            Assert(minified.Contains("\"name\":\"史莱姆\""), "压缩后结构完整");
+        }
+
+        private static void Test_JsonSortKeys()
+        {
+            var result = JsonToolEngine.Parse("""{"b":{"d":1,"c":2},"a":3,"arr":[{"z":1,"y":2}]}""");
+            Assert(result.Success, "解析成功");
+
+            var formatted = JsonToolEngine.Format(result.Root, sortKeys: true);
+            var expected = """
+{
+  "a": 3,
+  "arr": [
+    {
+      "y": 2,
+      "z": 1
+    }
+  ],
+  "b": {
+    "c": 2,
+    "d": 1
+  }
+}
+""";
+            AssertEq(expected.ReplaceLineEndings("\n"), formatted.ReplaceLineEndings("\n"),
+                "递归排序：对象 key 升序、数组顺序不变");
+        }
+
+        private static void Test_JsonParseErrors()
+        {
+            var bad = JsonToolEngine.Parse("""{"a": }""");
+            Assert(!bad.Success, "非法 JSON 应失败");
+            Assert(bad.Error != null && bad.Error.Contains("语法错误"), "错误信息应可读");
+
+            // 尾逗号 + 注释：工具场景里很常见，按宽松模式接受
+            var lenient = JsonToolEngine.Parse("""
+{
+  "a": 1, // 注释
+  "b": 2,
+}
+""");
+            Assert(lenient.Success, "允许注释与尾逗号");
+            Assert(lenient.Root is JsonObject obj && obj.Count == 2, "两个字段");
+        }
+
+        private static void Test_JsonCountAndNull()
+        {
+            var result = JsonToolEngine.Parse("""{"a":1,"b":[2,3]}""");
+            AssertEq(5, JsonToolEngine.CountNodes(result.Root), "对象1 + 值1 + 数组1 + 两项2");
+
+            var nullResult = JsonToolEngine.Parse("null");
+            Assert(nullResult.Success && nullResult.Root == null, "顶层 null 也是合法 JSON");
+            AssertEq("null", JsonToolEngine.Format(nullResult.Root), "null 原样输出");
         }
 
         // ==================== 基础设施 ====================

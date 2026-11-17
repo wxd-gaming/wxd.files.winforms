@@ -31,6 +31,7 @@ namespace wxd.files.winforms
         private Button? _btnNotes;                          // 笔记按钮
         private NoteForm? _noteForm;                        // 笔记窗体（单例）
         private TextCompareForm? _textCompareForm;          // 文本比对窗体（单例）
+        private JsonToolForm? _jsonToolForm;                // JSON 工具窗体（单例）
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
@@ -358,6 +359,15 @@ namespace wxd.files.winforms
             };
             btnTextCompare.Click += OnOpenTextCompareClick;
 
+            // JSON 工具按钮
+            var btnJsonTool = new ThemeButton
+            {
+                Text = "JSON",
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
+            };
+            btnJsonTool.Click += OnOpenJsonToolClick;
+
             // 笔记按钮
             _btnNotes = new ThemeButton
             {
@@ -369,7 +379,7 @@ namespace wxd.files.winforms
 
             _flowPanel.Controls.AddRange(new Control[]
             {
-                lblTitle, _segSettings, _btnOpenCsvReader, btnLargeFileViewer, btnTextCompare, _btnNotes
+                lblTitle, _segSettings, _btnOpenCsvReader, btnLargeFileViewer, btnTextCompare, btnJsonTool, _btnNotes
             });
 
             // 右侧固定区：管理入口 + 关于，从右往左排，宽度随内容自适应
@@ -523,6 +533,22 @@ namespace wxd.files.winforms
             _textCompareForm = new TextCompareForm();
             _textCompareForm.FormClosed += (s, e2) => _textCompareForm = null;
             _textCompareForm.Show(this);
+        }
+
+        // ==================== 打开 JSON 工具（单例） ====================
+        private void OnOpenJsonToolClick(object? sender, EventArgs e)
+        {
+            if (_jsonToolForm != null && !_jsonToolForm.IsDisposed)
+            {
+                if (_jsonToolForm.WindowState == FormWindowState.Minimized)
+                    _jsonToolForm.WindowState = FormWindowState.Normal;
+                _jsonToolForm.Activate();
+                return;
+            }
+
+            _jsonToolForm = new JsonToolForm();
+            _jsonToolForm.FormClosed += (s, e2) => _jsonToolForm = null;
+            _jsonToolForm.Show(this);
         }
 
         // ==================== 打开笔记窗体（单例） ====================
