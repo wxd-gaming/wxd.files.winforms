@@ -14,6 +14,14 @@ namespace wxd.files.winforms
         private const int SampleBytes = 64 * 1024;
         private static bool _providerRegistered;
 
+        /// <summary>读取整个文件文本（带编码识别）。</summary>
+        internal static string ReadAllText(string path)
+        {
+            var encoding = DetectEncoding(path);
+            using var reader = new StreamReader(path, encoding, detectEncodingFromByteOrderMarks: true);
+            return reader.ReadToEnd();
+        }
+
         /// <summary>读取文件全部行（不含行尾换行符）。</summary>
         internal static string[] ReadAllLines(string path)
         {

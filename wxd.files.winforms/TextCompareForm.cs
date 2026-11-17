@@ -4,17 +4,23 @@ using System.Data;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// 文本比对：左右各选一个文件，按行做差分。
+    /// 文本 / 表格比对：左右各选一个文件，按行做差分。
     ///
-    /// 两边网格绑定同一份"按行对齐"的结果（<see cref="TextDiffEngine"/>），
+    /// 两种模式自动切换（看扩展名）：
+    ///   文本（txt/xml/yaml/json/ini/log…）：按行差分，网格是"行号 + 整行内容"；
+    ///   表格（csv/xlsx/xls）：按行号一一对齐、逐单元格比较，网格是"行号 + A/B/C… 列"。
+    ///     表格模式不认表头行、不做冻结行，也不复用阅读器的任何界面逻辑。
+    ///
+    /// 两边网格绑定同一份"按行对齐"的结果（<see cref="TextDiffEngine"/> / <see cref="TableDiffEngine"/>），
     /// 所以行数天然一致、滚动同步不会错位：
-    ///   修改 = 黄色，左侧独有 = 红色，右侧独有 = 绿色，另一侧的空位 = 灰色。
+    ///   修改 = 黄色（表格模式精确到单元格），左侧独有 = 红色，右侧独有 = 绿色，另一侧的空位 = 灰色。
     /// 勾选"只保留差异行"后只显示有差异的行，行号仍是原文件行号。
     /// </summary>
     internal sealed class TextCompareForm : Form
@@ -38,6 +44,10 @@ namespace wxd.files.winforms
 
         private List<TextDiffLine> _diff = new();
         private List<TextDiffLine> _display = new();
+        private List<TableDiffRow> _tableDiff = new();
+        private List<TableDiffRow> _tableDisplay = new();
+        private bool _tableMode;
+        private int _tableColumnCount;
         private int _compareVersion;
         private bool _syncingScroll;
         private bool _busy;
@@ -238,33 +248,85 @@ namespace wxd.files.winforms
             grid.ShowCellToolTips = true;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
 
-            var lineNumberColumn = new DataGridViewTextBoxColumn
-            {
-                Name = "ln",
-                DataPropertyName = "ln",
-                HeaderText = "行号",
-                Width = 64,
-                MinimumWidth = 48,
-                SortMode = DataGridViewColumnSortMode.NotSortable,
-                Resizable = DataGridViewTriState.False
-            };
-            lineNumberColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-
-            var textColumn = new DataGridViewTextBoxColumn
-            {
-                Name = "text",
-                DataPropertyName = "text",
-                HeaderText = "内容",
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-                MinimumWidth = 120,
-                SortMode = DataGridViewColumnSortMode.NotSortable
-            };
-            textColumn.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
-
-            grid.Columns.AddRange(lineNumberColumn, textColumn);
-
+            // 列在每次绑定前按模式重建（文本 = 行号+内容；表格 = 行号+A/B/C…）
             grid.CellFormatting += OnCellFormatting;
             grid.Scroll += OnGridScroll;
+        }
+
+        /// <summary>按模式重建两侧网格的列。表格模式列数取自两边最大列数。</summary>
+        private void ConfigureColumns(bool table, int dataColumnCount)
+        {
+            foreach (var grid in new[] { _gridLeft, _gridRight })
+            {
+                grid.DataSource = null;
+                grid.Columns.Clear();
+
+                var lineNumberColumn = new DataGridViewTextBoxColumn
+                {
+                    Name = "ln",
+                    DataPropertyName = "ln",
+                    HeaderText = "行号",
+                    Width = 64,
+                    MinimumWidth = 48,
+                    SortMode = DataGridViewColumnSortMode.NotSortable,
+                    Resizable = DataGridViewTriState.False
+                };
+                lineNumberColumn.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+                lineNumberColumn.DefaultCellStyle.Font = Theme.Mono;
+                lineNumberColumn.DefaultCellStyle.ForeColor = Theme.P.Muted;
+                grid.Columns.Add(lineNumberColumn);
+
+                if (!table)
+                {
+                    var textColumn = new DataGridViewTextBoxColumn
+                    {
+                        Name = "text",
+                        DataPropertyName = "text",
+                        HeaderText = "内容",
+                        AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                        MinimumWidth = 120,
+                        SortMode = DataGridViewColumnSortMode.NotSortable
+                    };
+                    textColumn.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+                    textColumn.DefaultCellStyle.Font = Theme.Mono;
+                    grid.Columns.Add(textColumn);
+                    continue;
+                }
+
+                for (int i = 0; i < dataColumnCount; i++)
+                {
+                    var cellColumn = new DataGridViewTextBoxColumn
+                    {
+                        Name = "c" + i,
+                        DataPropertyName = "c" + i,
+                        HeaderText = ColumnName(i),
+                        Width = 96,
+                        MinimumWidth = 60,
+                        SortMode = DataGridViewColumnSortMode.NotSortable
+                    };
+                    cellColumn.DefaultCellStyle.Font = Theme.Mono;
+                    cellColumn.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
+                    if (i == dataColumnCount - 1)
+                    {
+                        cellColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                        cellColumn.MinimumWidth = 96;
+                    }
+                    grid.Columns.Add(cellColumn);
+                }
+            }
+        }
+
+        /// <summary>列头字母：A、B…Z、AA…（和 Excel 列口径一致）。</summary>
+        private static string ColumnName(int index)
+        {
+            var sb = new StringBuilder();
+            int value = index;
+            do
+            {
+                sb.Insert(0, (char)('A' + value % 26));
+                value = value / 26 - 1;
+            } while (value >= 0);
+            return sb.ToString();
         }
 
         // ==================== 主题 ====================
@@ -321,12 +383,11 @@ namespace wxd.files.winforms
             grid.BackgroundColor = Theme.P.Surface;
             grid.RowTemplate.Height = Theme.P.RowHeight;
 
-            if (grid.Columns["text"] is { } textColumn)
-                textColumn.DefaultCellStyle.Font = Theme.Mono;
-            if (grid.Columns["ln"] is { } lineNumberColumn)
+            foreach (DataGridViewColumn column in grid.Columns)
             {
-                lineNumberColumn.DefaultCellStyle.Font = Theme.Mono;
-                lineNumberColumn.DefaultCellStyle.ForeColor = Theme.P.Muted;
+                column.DefaultCellStyle.Font = Theme.Mono;
+                if (column.Name == "ln")
+                    column.DefaultCellStyle.ForeColor = Theme.P.Muted;
             }
             grid.Invalidate();
         }
@@ -402,24 +463,53 @@ namespace wxd.files.winforms
                 return;
             }
 
+            bool leftIsTable = SimpleTableReader.IsTableFile(leftPath);
+            bool rightIsTable = SimpleTableReader.IsTableFile(rightPath);
+            if (leftIsTable != rightIsTable)
+            {
+                AlertForm.Show(this,
+                    "两边文件类型不一致：表格（csv/xlsx/xls）请对表格，文本请对文本。",
+                    "文本比对", AlertType.Warning);
+                return;
+            }
+
             int version = ++_compareVersion;
-            SetBusy(true, "正在读取并比对…");
+            SetBusy(true, leftIsTable ? "正在读取并比对表格…" : "正在读取并比对…");
 
             try
             {
-                var leftLines = await Task.Run(() => TextFileReader.ReadAllLines(leftPath));
-                var rightLines = await Task.Run(() => TextFileReader.ReadAllLines(rightPath));
-                var diff = await Task.Run(() => TextDiffEngine.Compare(leftLines, rightLines));
+                if (leftIsTable)
+                {
+                    var leftRows = await Task.Run(() => SimpleTableReader.ReadRows(leftPath));
+                    var rightRows = await Task.Run(() => SimpleTableReader.ReadRows(rightPath));
+                    var tableDiff = await Task.Run(() => TableDiffEngine.Compare(leftRows, rightRows));
 
-                if (version != _compareVersion || IsDisposed) return;
+                    if (version != _compareVersion || IsDisposed) return;
 
-                _leftLineCount = leftLines.Length;
-                _rightLineCount = rightLines.Length;
-                _diff = diff;
-                _lblLeftTitle.Text = "左：" + Path.GetFileName(leftPath);
-                _lblRightTitle.Text = "右：" + Path.GetFileName(rightPath);
+                    _tableMode = true;
+                    _tableDiff = tableDiff;
+                    _leftLineCount = leftRows.Count;
+                    _rightLineCount = rightRows.Count;
+                    _tableColumnCount = TableDiffEngine.MaxColumnCount(tableDiff);
+                    UpdateTitles(leftPath, rightPath);
+                    BindGrids();
+                }
+                else
+                {
+                    var leftLines = await Task.Run(() => TextFileReader.ReadAllLines(leftPath));
+                    var rightLines = await Task.Run(() => TextFileReader.ReadAllLines(rightPath));
+                    var diff = await Task.Run(() => TextDiffEngine.Compare(leftLines, rightLines));
 
-                BindGrids();
+                    if (version != _compareVersion || IsDisposed) return;
+
+                    _tableMode = false;
+                    _tableDiff = new List<TableDiffRow>();
+                    _leftLineCount = leftLines.Length;
+                    _rightLineCount = rightLines.Length;
+                    _diff = diff;
+                    UpdateTitles(leftPath, rightPath);
+                    BindGrids();
+                }
             }
             catch (Exception ex)
             {
@@ -434,6 +524,13 @@ namespace wxd.files.winforms
                     UpdateStatus();
                 }
             }
+        }
+
+        private void UpdateTitles(string leftPath, string rightPath)
+        {
+            string suffix = _tableMode ? "（表格）" : "";
+            _lblLeftTitle.Text = "左：" + Path.GetFileName(leftPath) + suffix;
+            _lblRightTitle.Text = "右：" + Path.GetFileName(rightPath) + suffix;
         }
 
         private void SetBusy(bool busy, string? message = null)
@@ -451,16 +548,26 @@ namespace wxd.files.winforms
 
         private void OnOnlyDifferencesChanged(object? sender, EventArgs e)
         {
-            if (_diff.Count == 0) return;
+            if (_tableMode ? _tableDiff.Count == 0 : _diff.Count == 0) return;
             BindGrids();
         }
 
         private void BindGrids()
         {
-            _display = _chkOnlyDiff.Checked ? TextDiffEngine.OnlyDifferences(_diff) : _diff;
-
-            _gridLeft.DataSource = BuildTable(left: true);
-            _gridRight.DataSource = BuildTable(left: false);
+            if (_tableMode)
+            {
+                _tableDisplay = _chkOnlyDiff.Checked ? TableDiffEngine.OnlyDifferences(_tableDiff) : _tableDiff;
+                ConfigureColumns(table: true, _tableColumnCount);
+                _gridLeft.DataSource = BuildTableGrid(left: true);
+                _gridRight.DataSource = BuildTableGrid(left: false);
+            }
+            else
+            {
+                _display = _chkOnlyDiff.Checked ? TextDiffEngine.OnlyDifferences(_diff) : _diff;
+                ConfigureColumns(table: false, 0);
+                _gridLeft.DataSource = BuildTextTable(left: true);
+                _gridRight.DataSource = BuildTextTable(left: false);
+            }
 
             try
             {
@@ -475,7 +582,7 @@ namespace wxd.files.winforms
             UpdateStatus();
         }
 
-        private DataTable BuildTable(bool left)
+        private DataTable BuildTextTable(bool left)
         {
             var table = new DataTable();
             table.Columns.Add("ln", typeof(string));
@@ -489,8 +596,33 @@ namespace wxd.files.winforms
             return table;
         }
 
+        private DataTable BuildTableGrid(bool left)
+        {
+            var table = new DataTable();
+            table.Columns.Add("ln", typeof(string));
+            for (int i = 0; i < _tableColumnCount; i++)
+                table.Columns.Add("c" + i, typeof(string));
+
+            foreach (var row in _tableDisplay)
+            {
+                var values = new object[_tableColumnCount + 1];
+                values[0] = (left ? row.LeftRowNumber : row.RightRowNumber)?.ToString() ?? "";
+                var cells = left ? row.LeftCells : row.RightCells;
+                for (int i = 0; i < _tableColumnCount; i++)
+                    values[i + 1] = i < cells.Length ? cells[i] : "";
+                table.Rows.Add(values);
+            }
+            return table;
+        }
+
         private void UpdateStatus()
         {
+            if (_tableMode)
+            {
+                UpdateTableStatus();
+                return;
+            }
+
             if (_diff.Count == 0)
             {
                 _lblStatus.Text = "选择左右两个文件后点「比对」";
@@ -530,8 +662,59 @@ namespace wxd.files.winforms
             _lblStatus.Text = string.Join(" · ", parts);
         }
 
+        private void UpdateTableStatus()
+        {
+            if (_tableDiff.Count == 0)
+            {
+                _lblStatus.Text = "两边都是空表";
+                return;
+            }
+
+            int modified = 0, added = 0, deleted = 0, diffCells = 0;
+            foreach (var row in _tableDiff)
+            {
+                switch (row.Kind)
+                {
+                    case TableRowDiffKind.Modified:
+                        modified++;
+                        diffCells += row.DiffColumns.Count;
+                        break;
+                    case TableRowDiffKind.Added: added++; break;
+                    case TableRowDiffKind.Deleted: deleted++; break;
+                }
+            }
+
+            var parts = new List<string>
+            {
+                "表格比对",
+                $"左 {_leftLineCount} 行 × {_tableColumnCount} 列",
+                $"右 {_rightLineCount} 行 × {_tableColumnCount} 列"
+            };
+
+            if (modified + added + deleted == 0)
+            {
+                parts.Add("两边内容一致");
+            }
+            else
+            {
+                parts.Add($"修改 {modified} 行（{diffCells} 处单元格）");
+                parts.Add($"新增 {added} 行");
+                parts.Add($"删除 {deleted} 行");
+                if (_chkOnlyDiff.Checked)
+                    parts.Add($"仅显示差异 {_tableDisplay.Count} 行");
+            }
+
+            _lblStatus.Text = string.Join(" · ", parts);
+        }
+
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
+            if (_tableMode)
+            {
+                FormatTableCell(sender, e);
+                return;
+            }
+
             if (e.RowIndex < 0 || e.RowIndex >= _display.Count) return;
 
             bool left = ReferenceEquals(sender, _gridLeft);
@@ -558,6 +741,41 @@ namespace wxd.files.winforms
                 ? _display[e.RowIndex].LeftLineNumber != null
                 : _display[e.RowIndex].RightLineNumber != null;
             if (!hasLine && e.ColumnIndex == 1)
+                e.CellStyle.ForeColor = Theme.P.Muted;
+        }
+
+        /// <summary>表格模式着色：修改行只染发生变化的单元格，新增/删除整行染色。</summary>
+        private void FormatTableCell(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.RowIndex >= _tableDisplay.Count) return;
+            if (e.ColumnIndex <= 0) return;   // 行号列不染色
+
+            bool left = ReferenceEquals(sender, _gridLeft);
+            var row = _tableDisplay[e.RowIndex];
+            int dataColumn = e.ColumnIndex - 1;
+
+            Color? background = row.Kind switch
+            {
+                TableRowDiffKind.Modified => row.DiffColumns.Contains(dataColumn)
+                    ? Theme.CellTint(Color.FromArgb(255, 200, 200))
+                    : null,
+                TableRowDiffKind.Deleted => left
+                    ? Theme.CellTint(Color.FromArgb(255, 200, 200))
+                    : Theme.CellTint(Color.FromArgb(242, 242, 242)),
+                TableRowDiffKind.Added => left
+                    ? Theme.CellTint(Color.FromArgb(242, 242, 242))
+                    : Theme.CellTint(Color.FromArgb(200, 238, 200)),
+                _ => null
+            };
+
+            if (background.HasValue)
+            {
+                e.CellStyle.BackColor = background.Value;
+                e.CellStyle.SelectionBackColor = Theme.CellTint(Color.FromArgb(210, 220, 235));
+            }
+
+            bool hasRow = left ? row.LeftRowNumber != null : row.RightRowNumber != null;
+            if (!hasRow)
                 e.CellStyle.ForeColor = Theme.P.Muted;
         }
 

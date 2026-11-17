@@ -4,6 +4,7 @@ using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows.Forms;
 using wxd.files.winforms;
 
@@ -89,6 +90,13 @@ namespace wxd.files.winforms.RegressionTests
             Run("文本比对 多段差异可还原", Test_TextDiffMultiHunk);
             Run("文本比对 空侧与只保留差异行", Test_TextDiffEmptyAndFilter);
             Run("文本比对 差异过大退化不崩", Test_TextDiffFallback);
+
+            // 表格比对（csv / excel）
+            Run("表格比对 相同/单元格差异/增删行", Test_TableDiffBasic);
+            Run("表格比对 列数不齐/只保留差异行", Test_TableDiffRaggedAndOnlyDifferences);
+            Run("表格读取 CSV 引号/换行/分隔符", Test_SimpleTableCsv);
+            Run("表格读取 CSV 编码 GBK", Test_SimpleTableCsvGbk);
+            Run("表格读取 Excel 往返", Test_SimpleTableExcelRoundTrip);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -716,6 +724,125 @@ namespace wxd.files.winforms.RegressionTests
             Assert(diff.Count >= 3000, "退化后仍有全部行");
             Assert(diff.All(d => d.Kind == TextDiffKind.Modified), "等长完全不同的文件应两两配成修改行");
             AssertDiffReconstruct(left, right, diff);
+        }
+
+        // ==================== 表格比对 ====================
+
+        private static void Test_TableDiffBasic()
+        {
+            var left = new List<string[]>
+            {
+                new[] { "id", "name", "hp" },
+                new[] { "1", "slime", "10" },
+                new[] { "2", "goblin", "20" }
+            };
+            var right = new List<string[]>
+            {
+                new[] { "id", "name", "hp" },
+                new[] { "1", "slime", "12" },
+                new[] { "2", "goblin", "20" },
+                new[] { "3", "boss", "100" }
+            };
+
+            var diff = TableDiffEngine.Compare(left, right);
+            AssertEq(4, diff.Count, "按行数多的一侧对齐");
+            AssertEq(TableRowDiffKind.Same, diff[0].Kind, "表头行相同");
+            AssertEq(TableRowDiffKind.Modified, diff[1].Kind, "第 2 行有一格变化");
+            Assert(diff[1].DiffColumns.SetEquals(new[] { 2 }), "差异列应为 C 列（索引 2）");
+            AssertEq(TableRowDiffKind.Same, diff[2].Kind, "第 3 行相同");
+            AssertEq(TableRowDiffKind.Added, diff[3].Kind, "右表多出一行");
+            AssertEq(4, diff[3].RightRowNumber, "新增行右侧行号（第 4 行）");
+
+            var reverse = TableDiffEngine.Compare(right, left);
+            AssertEq(TableRowDiffKind.Deleted, reverse[3].Kind, "反向比对最后一行是删除");
+            AssertEq(0, TableDiffEngine.Compare(left, left).Count(d => d.Kind != TableRowDiffKind.Same),
+                "同一个表比对不应有差异");
+        }
+
+        private static void Test_TableDiffRaggedAndOnlyDifferences()
+        {
+            var left = new List<string[]> { new[] { "a" } };
+            var right = new List<string[]> { new[] { "a", "b" } };
+            var diff = TableDiffEngine.Compare(left, right);
+            AssertEq(TableRowDiffKind.Modified, diff[0].Kind, "列数不同也算修改");
+            Assert(diff[0].DiffColumns.Contains(1), "多出来的列应标为差异");
+
+            var only = TableDiffEngine.OnlyDifferences(TableDiffEngine.Compare(
+                new List<string[]> { new[] { "a" }, new[] { "b" } },
+                new List<string[]> { new[] { "a" }, new[] { "x" } }));
+            AssertEq(1, only.Count, "只保留差异行应过滤掉相同行");
+            AssertEq(TableRowDiffKind.Modified, only[0].Kind, "保留的是修改行");
+        }
+
+        private static void Test_SimpleTableCsv()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var path = Path.Combine(dir, "t.csv");
+                File.WriteAllText(path, "id,name,note\n1,\"a,b\",x\n2,\"line1\nline2\",y\n", Encoding.UTF8);
+
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq(3, rows.Count, "三条记录");
+                AssertSeq(new[] { "id", "name", "note" }, rows[0], "第一行原样当数据");
+                AssertSeq(new[] { "1", "a,b", "x" }, rows[1], "引号内的逗号不切列");
+                AssertEq("line1\nline2", rows[2][1], "引号内的换行不切行");
+
+                var tabbed = Path.Combine(dir, "t-tab.csv");
+                File.WriteAllText(tabbed, "a\tb\tc\r\n1\t2\t3\r\n", Encoding.UTF8);
+                var tabRows = SimpleTableReader.ReadRows(tabbed);
+                AssertEq('\t', SimpleTableReader.DetectCsvDelimiter("a\tb\tc\r\n1\t2\t3"), "分隔符应识别为制表符");
+                AssertEq(3, tabRows[1].Length, "制表符分隔应切出三列");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        private static void Test_SimpleTableCsvGbk()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                var gbk = Encoding.GetEncoding(936);
+                var path = Path.Combine(dir, "gbk.csv");
+                File.WriteAllText(path, "编号,名称\r\n1,史莱姆\r\n", gbk);
+
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq("编号", rows[0][0], "GBK 中文列名");
+                AssertEq("史莱姆", rows[1][1], "GBK 中文内容");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        private static void Test_SimpleTableExcelRoundTrip()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var path = Path.Combine(dir, "t.xlsx");
+                var table = new DataTable();
+                table.Columns.Add("c0", typeof(string));
+                table.Columns.Add("c1", typeof(string));
+                table.Rows.Add("id", "name");
+                table.Rows.Add("1", "slime");
+                MiniExcelLibs.MiniExcel.SaveAs(path, table, printHeader: false);
+
+                Assert(SimpleTableReader.IsTableFile(path), "xlsx 应识别为表格");
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq(2, rows.Count, "Excel 两行");
+                AssertEq("id", rows[0][0], "Excel 单元格内容");
+                AssertEq("slime", rows[1][1], "Excel 第二行内容");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
         }
 
         // ==================== 基础设施 ====================

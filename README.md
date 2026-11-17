@@ -41,7 +41,7 @@
 | 版本历史对比 | 文件树右键 **历史记录对比** | SVN/Git 双栏差异，行号同源 |
 | 冲突解决 | 文件树右键 **编辑冲突** | 三栏合并，逐单元格取舍 |
 | 日志分析 | 工具栏 **日志分析** | 超大文本文件浏览、搜索、导出、格式化 |
-| 文本比对 | 工具栏 **文本比对** | 左右各选一个文件按行对比，差异着色，可只看差异行 |
+| 文本比对 | 工具栏 **文本比对** | 文本文件按行对比；csv/xlsx 按表格逐单元格对比，可只看差异行 |
 | 笔记 | 工具栏 **📝 笔记** | 随手记 + 富文本粘贴截图，标题/内容全文搜索 |
 | 自定义命令 | **≡ → 命令管理** | 把常用脚本、网址做成工具栏按钮 |
 | 自动更新 | 工具栏 **关于** | 每天自动检查 Release（Gitee 优先，失败自动改用 GitHub），可跳过版本 |
@@ -216,10 +216,11 @@
 
 ### 文本比对
 - 工具栏 **文本比对** 打开独立窗口；左右两格各选一个文件，也可直接把文件拖进窗口或对应网格
-- 按行差分：修改行黄色、仅左侧有红色、仅右侧有绿色，另一侧用灰色占位行对齐
+- 文本文件（txt/xml/yaml/json/ini/log…）按行差分：修改行黄色、仅左侧有红色、仅右侧有绿色，另一侧用灰色占位行对齐
+- **csv / xlsx / xls 走表格比对**：按行号一一对齐、逐单元格比较，只高亮发生变化的格子；不认表头行、不做冻结行，也不复用阅读器
 - 行号列显示各自源文件行号；两侧滚动同步，长行悬停可看完整内容
 - 勾选 **只保留差异行** 后只显示有差异的行，行号仍是原文件行号
-- 状态栏汇总左右行数、修改/新增/删除数量
+- 状态栏汇总左右行数/列数、修改（差异单元格数）/新增/删除数量
 - 自动识别 UTF-8（含 BOM）与 GB18030（中文 GBK 配置表）
 
 ### 全局
@@ -318,8 +319,10 @@ wxd.files.winforms/
 ├── ConflictResolveControl.cs         # 冲突解决三栏视图
 ├── LargeFileViewer.cs                # 日志分析窗体
 ├── LargeFileReaderControl.cs         # 日志分析核心控件（流式读取 + 格式化）
-├── TextCompareForm.cs                # 文本比对窗体（左右双网格 + 差异着色）
-├── TextDiffEngine.cs                 # 按行差分（裁剪前后缀 + Myers，超限退化整块替换）
+├── TextCompareForm.cs                # 文本/表格比对窗体（左右双网格 + 差异着色）
+├── TextDiffEngine.cs                 # 文本按行差分（裁剪前后缀 + Myers，超限退化整块替换）
+├── TableDiffEngine.cs                # 表格按行对齐、逐单元格差分
+├── SimpleTableReader.cs              # CSV/Excel 原始单元格读取（不认表头、不做冻结行）
 ├── TextFileReader.cs                 # 文本读取（按行 + UTF-8/GB18030 自动识别）
 ├── LineListView.cs                   # 虚拟滚动行列表
 ├── FileSplitter.cs                   # 大文件分块读取
@@ -358,7 +361,7 @@ wxd.files.winforms/
 | [ConfigPersistence.md](wxd.files.winforms/skills/ConfigPersistence.md) | `.wxd-work/config.json` 双层持久化 |
 | [FileBrowserPanel.md](wxd.files.winforms/skills/FileBrowserPanel.md) | 单窗格文件浏览 |
 | [LargeFileViewer.md](wxd.files.winforms/skills/LargeFileViewer.md) | 大文件流式读取与虚拟滚动 |
-| [TextCompare.md](wxd.files.winforms/skills/TextCompare.md) | 文本比对：差分算法、对齐口径、编码识别 |
+| [TextCompare.md](wxd.files.winforms/skills/TextCompare.md) | 文本/表格比对：差分算法、对齐口径、编码识别 |
 | [ThemeSystem.md](wxd.files.winforms/skills/ThemeSystem.md) | 深色 / 浅色主题体系 |
 | [CustomCommand.md](wxd.files.winforms/skills/CustomCommand.md) | 自定义命令系统 |
 
