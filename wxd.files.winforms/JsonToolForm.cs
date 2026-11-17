@@ -24,6 +24,8 @@ namespace wxd.files.winforms
 
         private readonly FlowLayoutPanel _top = new();
         private readonly ThemeButton _btnOpen = new();
+        private readonly ThemeButton _btnSave = new();
+        private readonly ThemeButton _btnSaveAs = new();
         private readonly ThemeButton _btnFormat = new();
         private readonly ThemeButton _btnMinify = new();
         private readonly ThemeButton _btnSort = new();
@@ -43,6 +45,9 @@ namespace wxd.files.winforms
 
         private string _searchTerm = "";
         private int _matchIndex = -1;
+        private string? _currentPath;
+        private System.Text.Encoding? _currentEncoding;
+        private bool _dirty;
         private bool _suppressTextChanged;
         private JsonNode? _root;
 
@@ -53,6 +58,7 @@ namespace wxd.files.winforms
             BuildLayout();
             ApplyTheme();
             Theme.Changed += ApplyTheme;
+            FormClosing += OnFormClosing;
             Disposed += (_, _) =>
             {
                 Theme.Changed -= ApplyTheme;
@@ -88,6 +94,8 @@ namespace wxd.files.winforms
             _top.BackColor = Color.Transparent;
 
             ConfigureButton(_btnOpen, "打开文件…", (_, _) => OpenFile());
+            ConfigureButton(_btnSave, "保存", (_, _) => Save());
+            ConfigureButton(_btnSaveAs, "另存为…", (_, _) => SaveAs());
             ConfigureButton(_btnFormat, "格式化", (_, _) => FormatJson());
             ConfigureButton(_btnMinify, "压缩", (_, _) => MinifyJson());
             ConfigureButton(_btnSort, "key 排序", (_, _) => SortKeys());
@@ -112,8 +120,8 @@ namespace wxd.files.winforms
 
             _top.Controls.AddRange(new Control[]
             {
-                _btnOpen, _btnFormat, _btnMinify, _btnSort, _btnExpand, _btnCollapse, _btnCopy,
-                _fldSearch, _btnPrev, _btnNext
+                _btnOpen, _btnSave, _btnSaveAs, _btnFormat, _btnMinify, _btnSort,
+                _btnExpand, _btnCollapse, _btnCopy, _fldSearch, _btnPrev, _btnNext
             });
 
             _txtSource.Multiline = true;
@@ -217,7 +225,10 @@ namespace wxd.files.winforms
             _top.BackColor = p.Chrome;
 
             foreach (var button in new[]
-                     { _btnOpen, _btnFormat, _btnMinify, _btnSort, _btnExpand, _btnCollapse, _btnCopy, _btnPrev, _btnNext })
+                     {
+                         _btnOpen, _btnSave, _btnSaveAs, _btnFormat, _btnMinify, _btnSort,
+                         _btnExpand, _btnCollapse, _btnCopy, _btnPrev, _btnNext
+                     })
             {
                 button.Font = Theme.Body;
                 button.BackColor = p.Chrome;
@@ -269,19 +280,30 @@ namespace wxd.files.winforms
                 string text = TextFileReader.ReadAllText(path);
                 var result = JsonToolEngine.Parse(text);
 
+                _currentPath = path;
+                _currentEncoding = TextFileReader.DetectEncoding(path);
+
                 if (result.Success)
                 {
-                    // 打开时先格式化一次，方便直接看结构
-                    SetSourceText(JsonToolEngine.Format(result.Root), suppressChanged: true);
+                    // 打开时先格式化一次，方便直接看结构；格式化确实改了内容才算"未保存"
+                    string formatted = JsonToolEngine.Format(result.Root);
+                    SetSourceText(formatted, suppressChanged: true);
+                    _dirty = !string.Equals(
+                        formatted.ReplaceLineEndings("\n"),
+                        text.ReplaceLineEndings("\n"),
+                        StringComparison.Ordinal);
+                    UpdateTitle();
                     ParseAndRender("已打开 " + Path.GetFileName(path) + " · 已格式化");
                 }
                 else
                 {
                     SetSourceText(text, suppressChanged: true);
+                    _dirty = false;
+                    UpdateTitle();
                     ParseAndRender();
                 }
 
-                Text = "JSON 工具 - " + Path.GetFileName(path);
+                UpdateTitle();
             }
             catch (Exception ex)
             {
@@ -289,11 +311,78 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>保存到当前文件；没打开过文件时退化为"另存为"。</summary>
+        private void Save()
+        {
+            if (string.IsNullOrEmpty(_currentPath))
+            {
+                SaveAs();
+                return;
+            }
+            WriteToFile(_currentPath, _currentEncoding ?? new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+
+        private void SaveAs()
+        {
+            using var dialog = new SaveFileDialog
+            {
+                Title = "保存 JSON",
+                Filter = "JSON 文件 (*.json)|*.json|所有文件 (*.*)|*.*",
+                FileName = _currentPath == null ? "untitled.json" : Path.GetFileName(_currentPath),
+                InitialDirectory = _currentPath == null ? "" : Path.GetDirectoryName(_currentPath) ?? ""
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            // 新文件统一 UTF-8 无 BOM
+            WriteToFile(dialog.FileName, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+
+        private void WriteToFile(string path, System.Text.Encoding encoding)
+        {
+            try
+            {
+                File.WriteAllText(path, _txtSource.Text, encoding);
+                _currentPath = path;
+                _currentEncoding = encoding;
+                _dirty = false;
+                UpdateTitle();
+                SetStatus("已保存：" + path);
+            }
+            catch (Exception ex)
+            {
+                SetStatus("保存失败：" + ex.Message, error: true);
+            }
+        }
+
+        private void OnFormClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (!_dirty) return;
+
+            var result = AlertForm.ShowConfirm(this,
+                "有未保存的修改，关闭后丢失。确定关闭吗？", "JSON 工具", AlertType.Warning);
+            if (result != DialogResult.Yes) e.Cancel = true;
+        }
+
         private void OnSourceTextChanged(object? sender, EventArgs e)
         {
             if (_suppressTextChanged) return;
+            MarkDirty();
             _parseTimer.Stop();
             _parseTimer.Start();
+        }
+
+        private void MarkDirty()
+        {
+            if (_dirty) return;
+            _dirty = true;
+            UpdateTitle();
+        }
+
+        private void UpdateTitle()
+        {
+            string suffix = _currentPath == null ? "" : " - " + Path.GetFileName(_currentPath);
+            Text = "JSON 工具" + suffix + (_dirty ? " *" : "");
         }
 
         private void SetSourceText(string text, bool suppressChanged)
@@ -425,6 +514,7 @@ namespace wxd.files.winforms
 
             string transformed = transform(result.Root);
             SetSourceText(transformed, suppressChanged: true);
+            MarkDirty();
             ParseAndRender(successMessage);
         }
 
@@ -566,6 +656,11 @@ namespace wxd.files.winforms
             if (e.Control && e.KeyCode == Keys.O)
             {
                 OpenFile();
+                e.Handled = true;
+            }
+            else if (e.Control && e.KeyCode == Keys.S)
+            {
+                Save();
                 e.Handled = true;
             }
             else if (e.Control && e.KeyCode == Keys.F)

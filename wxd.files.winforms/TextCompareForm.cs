@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -463,6 +464,8 @@ namespace wxd.files.winforms
                 return;
             }
 
+            if (!ConfirmLargeFiles(leftPath, rightPath)) return;
+
             bool leftIsTable = SimpleTableReader.IsTableFile(leftPath);
             bool rightIsTable = SimpleTableReader.IsTableFile(rightPath);
             if (leftIsTable != rightIsTable)
@@ -474,6 +477,7 @@ namespace wxd.files.winforms
             }
 
             int version = ++_compareVersion;
+            var stopwatch = Stopwatch.StartNew();
             SetBusy(true, leftIsTable ? "正在读取并比对表格…" : "正在读取并比对…");
 
             try
@@ -493,6 +497,7 @@ namespace wxd.files.winforms
                     _tableColumnCount = TableDiffEngine.MaxColumnCount(tableDiff);
                     UpdateTitles(leftPath, rightPath);
                     BindGrids();
+                    _lblStatus.Text += $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
                 }
                 else
                 {
@@ -509,6 +514,7 @@ namespace wxd.files.winforms
                     _diff = diff;
                     UpdateTitles(leftPath, rightPath);
                     BindGrids();
+                    _lblStatus.Text += $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
                 }
             }
             catch (Exception ex)
@@ -524,6 +530,18 @@ namespace wxd.files.winforms
                     UpdateStatus();
                 }
             }
+        }
+
+        /// <summary>超过 20MB 先问一句，避免用户以为界面卡死。</summary>
+        private bool ConfirmLargeFiles(string leftPath, string rightPath)
+        {
+            const long limit = 20L * 1024 * 1024;
+            long size = Math.Max(new FileInfo(leftPath).Length, new FileInfo(rightPath).Length);
+            if (size <= limit) return true;
+
+            return AlertForm.ShowConfirm(this,
+                $"文件较大（最大 {size / 1024 / 1024} MB），比对可能需要较长时间，是否继续？",
+                "文本比对", AlertType.Warning) == DialogResult.Yes;
         }
 
         private void UpdateTitles(string leftPath, string rightPath)
