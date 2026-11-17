@@ -84,6 +84,12 @@ namespace wxd.files.winforms.RegressionTests
             Run("行数据 子集继承物理行号", Test_BuildFileDataSubsetInherit);
             Run("CSV 写出转义/无BOM", Test_CsvWriteRoundTrip);
 
+            // 文本比对引擎
+            Run("文本比对 相同/新增/删除/修改", Test_TextDiffBasic);
+            Run("文本比对 多段差异可还原", Test_TextDiffMultiHunk);
+            Run("文本比对 空侧与只保留差异行", Test_TextDiffEmptyAndFilter);
+            Run("文本比对 差异过大退化不崩", Test_TextDiffFallback);
+
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
             return _failed == 0 ? 0 : 1;
@@ -610,6 +616,106 @@ namespace wxd.files.winforms.RegressionTests
             {
                 DeleteTempDir(dir);
             }
+        }
+
+        // ==================== 文本比对引擎 ====================
+
+        private static void AssertDiffReconstruct(string[] left, string[] right, List<TextDiffLine> diff)
+        {
+            var rebuiltLeft = diff.Where(d => d.LeftLineNumber != null).Select(d => d.LeftText).ToArray();
+            var rebuiltRight = diff.Where(d => d.RightLineNumber != null).Select(d => d.RightText).ToArray();
+            AssertSeq(left, rebuiltLeft, "按左侧行号拼回去必须还原左文件");
+            AssertSeq(right, rebuiltRight, "按右侧行号拼回去必须还原右文件");
+
+            int lastLeft = 0, lastRight = 0;
+            foreach (var line in diff)
+            {
+                if (line.LeftLineNumber != null)
+                {
+                    Assert(line.LeftLineNumber.Value == lastLeft + 1, "左侧行号必须连续递增");
+                    lastLeft = line.LeftLineNumber.Value;
+                }
+                if (line.RightLineNumber != null)
+                {
+                    Assert(line.RightLineNumber.Value == lastRight + 1, "右侧行号必须连续递增");
+                    lastRight = line.RightLineNumber.Value;
+                }
+                Assert(!(line.LeftLineNumber == null && line.RightLineNumber == null), "不允许两侧都没有行号的对齐行");
+            }
+        }
+
+        private static void Test_TextDiffBasic()
+        {
+            var same = new[] { "a", "b", "c" };
+            var sameDiff = TextDiffEngine.Compare(same, same);
+            AssertEq(3, sameDiff.Count, "相同文件行数不变");
+            Assert(sameDiff.All(d => d.Kind == TextDiffKind.Same), "相同文件不应有差异");
+            AssertDiffReconstruct(same, same, sameDiff);
+
+            var left = new[] { "a", "b", "c" };
+            var right = new[] { "a", "x", "b", "c" };
+            var inserted = TextDiffEngine.Compare(left, right);
+            AssertEq(1, inserted.Count(d => d.Kind == TextDiffKind.Added), "插入一行");
+            AssertDiffReconstruct(left, right, inserted);
+
+            var deleted = TextDiffEngine.Compare(right, left);
+            AssertEq(1, deleted.Count(d => d.Kind == TextDiffKind.Deleted), "删除一行");
+            AssertDiffReconstruct(right, left, deleted);
+
+            var modifiedLeft = new[] { "a", "b", "c" };
+            var modifiedRight = new[] { "a", "B", "c" };
+            var modified = TextDiffEngine.Compare(modifiedLeft, modifiedRight);
+            AssertEq(1, modified.Count(d => d.Kind == TextDiffKind.Modified), "修改一行");
+            AssertEq(0, modified.Count(d => d.Kind == TextDiffKind.Added || d.Kind == TextDiffKind.Deleted),
+                "一对一替换不应再拆成新增/删除");
+            AssertDiffReconstruct(modifiedLeft, modifiedRight, modified);
+        }
+
+        private static void Test_TextDiffMultiHunk()
+        {
+            var left = new List<string>();
+            var right = new List<string>();
+            for (int i = 0; i < 200; i++)
+            {
+                left.Add("line" + i);
+                right.Add(i == 5 || i == 120 ? "changed" + i : "line" + i);
+            }
+            right.Insert(60, "extra");
+            right.RemoveAt(150);
+
+            var diff = TextDiffEngine.Compare(left, right);
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Modified) >= 2, "两处修改");
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Added) >= 1, "一处新增");
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Deleted) >= 1, "一处删除");
+            AssertDiffReconstruct(left.ToArray(), right.ToArray(), diff);
+        }
+
+        private static void Test_TextDiffEmptyAndFilter()
+        {
+            var emptyDiff = TextDiffEngine.Compare(Array.Empty<string>(), new[] { "a", "b" });
+            AssertEq(2, emptyDiff.Count(d => d.Kind == TextDiffKind.Added), "左空 → 全是新增");
+            AssertDiffReconstruct(Array.Empty<string>(), new[] { "a", "b" }, emptyDiff);
+
+            var rightEmpty = TextDiffEngine.Compare(new[] { "a" }, Array.Empty<string>());
+            AssertEq(1, rightEmpty.Count(d => d.Kind == TextDiffKind.Deleted), "右空 → 全是删除");
+            AssertDiffReconstruct(new[] { "a" }, Array.Empty<string>(), rightEmpty);
+
+            var diff = TextDiffEngine.Compare(new[] { "a", "b" }, new[] { "a", "x" });
+            var only = TextDiffEngine.OnlyDifferences(diff);
+            AssertEq(1, only.Count, "只保留差异行应过滤掉相同行");
+            AssertEq(TextDiffKind.Modified, only[0].Kind, "过滤后保留的是修改行");
+        }
+
+        private static void Test_TextDiffFallback()
+        {
+            // 两侧完全不同、行数超过 MaxEditDistance，走"整块替换"退化路径
+            var left = Enumerable.Range(0, 3000).Select(i => "L" + i).ToArray();
+            var right = Enumerable.Range(0, 3000).Select(i => "R" + i).ToArray();
+
+            var diff = TextDiffEngine.Compare(left, right);
+            Assert(diff.Count >= 3000, "退化后仍有全部行");
+            Assert(diff.All(d => d.Kind == TextDiffKind.Modified), "等长完全不同的文件应两两配成修改行");
+            AssertDiffReconstruct(left, right, diff);
         }
 
         // ==================== 基础设施 ====================

@@ -672,6 +672,17 @@ namespace wxd.files.winforms
             set => SetStringValue(LargeFileViewerDirKey, value);
         }
 
+        private const string TextCompareDirKey = "TextCompareLastDirectory";
+
+        /// <summary>
+        /// 文本比对上次选择文件的目录
+        /// </summary>
+        public static string TextCompareLastDirectory
+        {
+            get => GetStringValue(TextCompareDirKey, "");
+            set => SetStringValue(TextCompareDirKey, value);
+        }
+
         #endregion
 
         #region 自定义命令列表
