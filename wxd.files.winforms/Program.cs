@@ -69,6 +69,19 @@ namespace wxd.files.winforms
             
             ApplicationConfiguration.Initialize();
 
+            // 同一 exe 目录只允许一个实例：settings.json 是整文件读改写，
+            // 同目录双开会互相覆盖；不同目录各有一份锁和设置，可以同时运行。
+            if (!SingleInstanceGuard.TryAcquire())
+            {
+                MessageBox.Show(
+                    "同一目录只允许运行一个实例。" + GlobalConst.NewLine + GlobalConst.NewLine +
+                    "请切换到已打开的窗口；如需多开，请使用另一个目录的程序副本。",
+                    "多窗格文件夹管理器",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
             // 按存档的皮肤+明暗激活令牌（含原生深色模式）
             Theme.Set((UiSkin)CsvSettings.ThemeSkin, CsvSettings.ThemeMode == 0);
 

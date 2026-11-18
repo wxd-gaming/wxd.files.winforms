@@ -114,6 +114,7 @@ namespace wxd.files.winforms.RegressionTests
             // 设置落盘 / CSV 分隔符边界
             Run("设置关窗同步落盘", Test_SettingsFlush);
             Run("CSV 首行空行分隔符", Test_CsvDelimiterLeadingBlankLine);
+            Run("单实例锁", Test_SingleInstanceGuard);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -1023,6 +1024,12 @@ z: 1
         {
             AssertEq('\t', SimpleTableReader.DetectCsvDelimiter("\n\ta\tb\n1\t2\n"), "首行空行不应影响制表符判断");
             AssertEq(';', SimpleTableReader.DetectCsvDelimiter("\r\na;b\r\n1;2\r\n"), "CRLF 空行同样应跳过");
+        }
+
+        private static void Test_SingleInstanceGuard()
+        {
+            Assert(SingleInstanceGuard.TryAcquire(), "首次获取锁应成功");
+            Assert(!SingleInstanceGuard.TryAcquire(), "同一目录第二次获取应失败");
         }
 
         // ==================== 基础设施 ====================

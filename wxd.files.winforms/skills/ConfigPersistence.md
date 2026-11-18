@@ -12,6 +12,7 @@
 | `DirectoryFrozenConfig.cs` | 目录级配置数据模型 |
 | `{exe}/.wxd-work/settings.json` | 全局设置文件（JSON；本机 ConfigurationManager.Save 单次约 11 秒，故不再写它） |
 | `{exe}/.wxd-work/recent-paths.json` | 最近访问路径（独立文件，后台合并写） |
+| `{exe}/.wxd-work/app.lock` | 单实例锁（见 2.1） |
 | `App.config` / `wxd.files.winforms.dll.config` | 旧全局配置，**只读兜底**，新值不再写入 |
 | `{目录}/.wxd-work/config.json` | 目录级配置文件 |
 
@@ -28,10 +29,11 @@
 ├── Pane{N}Filter           — 各窗格过滤条件
 ├── Pane{N}ViewMode         — 各窗格视图模式
 ├── ShowHiddenFiles         — 显示隐藏文件
-├── RecentPaths             — 最近访问路径
 ├── CustomCommands          — 自定义命令
-├── CsvReaderLastDir        — CSV阅读器上次目录
-└── LargeFileViewerLastDir  — 大文件阅读器上次目录
+├── CsvReaderLastDirectory  — CSV阅读器上次目录
+└── LargeFileViewerLastDirectory — 大文件阅读器上次目录
+
+（最近访问路径已独立到 recent-paths.json，不再放 settings.json）
 
 目录级配置 (.wxd-work/config.json)
 ├── CsvFrozenRows           — CSV冻结行数
@@ -50,6 +52,20 @@
 ```
 
 ---
+
+## 2.1 单实例与目录隔离
+
+- 全局设置是**整文件读改写**（`settings.json`），同一目录双开会互相覆盖，所以：
+  - `Program.Main` 启动时通过 `SingleInstanceGuard` 在 `{exe}/.wxd-work/app.lock` 上开 `FileShare.None` 独占句柄
+  - 同目录第二个实例会弹提示并退出；不同目录各有一份锁、各有一份 `settings.json`，可以同时运行
+- 因此**不需要**做跨进程设置合并；如果以后改成允许同目录多实例，必须同时改这里。
+- 目录不可写（只读部署）时锁创建失败会放行，避免应用起不来。
+
+## 2.2 关窗同步落盘
+
+- 常规写入是 300ms 防抖的后台任务，进程退出会把任务带走。
+- `Form1.OnFormClosing` 在写完主题/窗格数/页签状态后调用 `CsvSettings.FlushSettings()` / `FlushRecentPaths()` 同步落盘。
+- `FlushSettings` 会先等待在途的后台任务（最多 2 秒），避免旧快照在 Flush 之后回写。
 
 ## 3. CsvSettings API 分类
 
