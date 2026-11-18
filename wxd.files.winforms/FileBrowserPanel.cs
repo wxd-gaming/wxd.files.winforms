@@ -47,6 +47,11 @@ namespace wxd.files.winforms
         // ==================== 控件声明 ====================
         private ComboBox? _cboPath;      // 路径选择下拉框（替代原先的 TextBox 路径 + 磁盘下拉框）
         private Button? _btnUp;
+        private Button? _btnBack;
+        private Button? _btnForward;
+        private FlowLayoutPanel? _pnlBreadcrumb;
+        private readonly List<string> _navBack = new();
+        private readonly List<string> _navForward = new();
         private ListView _lstFiles = new();
         private TextBox? _txtFilter;
         private ThemeField _pnlFilter = new();
@@ -248,7 +253,10 @@ namespace wxd.files.winforms
         private const uint LVM_ARRANGE = 0x1016;
 
         // 文件操作常量
+        private const uint FO_MOVE = 1;
+        private const uint FO_COPY = 2;
         private const uint FO_DELETE = 3;
+        private const uint FOF_NOCONFIRMMKDIR = 0x200;
         private const uint FOF_ALLOWUNDO = 0x40;
         private const uint FOF_NOCONFIRMATION = 0x10;
         private const uint FOF_SIMPLEPROGRESS = 0x100;   // 显示进度对话框
@@ -505,7 +513,7 @@ namespace wxd.files.winforms
             if (_pnlToolbar != null)
             {
                 _pnlToolbar.BackColor = _colorToolbarBg;
-                _pnlToolbar.Height = ThemeMetrics.BarHeight;
+                _pnlToolbar.Height = ThemeMetrics.BarHeight + 22;
             }
 
             // 更新底部面板
@@ -522,6 +530,14 @@ namespace wxd.files.winforms
                 _cboPath.ForeColor = _colorTextPrimary;
                 _cboPath.Height = ThemeMetrics.RowH;
                 _btnUp?.Height = ThemeMetrics.RowH;
+                _btnBack?.Height = ThemeMetrics.RowH;
+                _btnForward?.Height = ThemeMetrics.RowH;
+            }
+
+            if (_pnlBreadcrumb != null)
+            {
+                _pnlBreadcrumb.BackColor = _colorToolbarBg;
+                RebuildBreadcrumb();
             }
 
             // 更新过滤输入域：行高随皮肤变，尺寸和位置一起重算
@@ -596,7 +612,7 @@ namespace wxd.files.winforms
             _pnlToolbar = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = ThemeMetrics.BarHeight,
+                Height = ThemeMetrics.BarHeight + 22,   // 上排路径/按钮，下排面包屑
                 BackColor = _colorToolbarBg,
                 Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.RowPad,
                                      ThemeMetrics.Margin, ThemeMetrics.RowPad)
@@ -616,6 +632,26 @@ namespace wxd.files.winforms
             _cboPath.KeyDown += OnPathKeyDown;
             _cboPath.SelectedIndexChanged += OnPathComboSelectedIndexChanged;
 
+            _btnBack = new ThemeButton
+            {
+                Text = "←",
+                Size = new Size(ThemeButton.FitWidth("←"), ThemeMetrics.RowH),
+                Font = Theme.Body,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
+            };
+            _btnBack.Click += (s, e) => NavigateBack();
+            _btnBack.Enabled = false;
+
+            _btnForward = new ThemeButton
+            {
+                Text = "→",
+                Size = new Size(ThemeButton.FitWidth("→"), ThemeMetrics.RowH),
+                Font = Theme.Body,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
+            };
+            _btnForward.Click += (s, e) => NavigateForward();
+            _btnForward.Enabled = false;
+
             _btnUp = new ThemeButton
             {
                 Text = "上级",
@@ -625,7 +661,19 @@ namespace wxd.files.winforms
             };
             _btnUp.Click += (s, e) => GoUp();
 
-            _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnUp });
+            _pnlBreadcrumb = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 22,
+                WrapContents = false,
+                AutoScroll = false,   // 不显示横向滚动条：22px 高度再扣掉滚动条会看不清文字
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(2, 0, 2, 0),
+                Margin = Padding.Empty,
+                BackColor = _colorToolbarBg
+            };
+
+            _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnBack, _btnForward, _btnUp, _pnlBreadcrumb });
 
             // 路径框吃满剩余宽度，「上级」钉在右侧；两个条共用同一套度量
             _pnlToolbar.Resize += (s, e) => LayoutToolbar();
@@ -652,6 +700,12 @@ namespace wxd.files.winforms
             _lstFiles.Resize += OnListViewResize;
 
             _lstFiles.DoubleClick += OnFileDoubleClick;
+            _lstFiles.AllowDrop = true;
+            _lstFiles.KeyDown += OnListKeyDown;
+            _lstFiles.ItemDrag += OnListItemDrag;
+            _lstFiles.DragEnter += OnListDragEnter;
+            _lstFiles.DragOver += OnListDragOver;
+            _lstFiles.DragDrop += OnListDragDrop;
             _lstFiles.MouseUp += OnListViewMouseUp;
             _lstFiles.ColumnClick += OnColumnHeaderClick;
             _lstFiles.SelectedIndexChanged += (s, e) =>
@@ -695,6 +749,8 @@ namespace wxd.files.winforms
             _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
             _menuVcsUpdateItem.Enabled = false;
             _menuMoreActions.Items.Add(_menuVcsUpdateItem);
+            _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
+            _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
 
             // 视图模式二级菜单
             _menuViewModeItem = new ToolStripMenuItem("视图模式");
@@ -865,9 +921,19 @@ namespace wxd.files.winforms
             var area = _pnlToolbar.DisplayRectangle;
             int top = area.Top + Math.Max(0, (area.Height - rowH) / 2);
 
+            int x = area.Left;
+            if (_btnBack != null)
+            {
+                _btnBack.SetBounds(x, top, _btnBack.Width, rowH);
+                x += _btnBack.Width + ThemeMetrics.Gap;
+            }
+            if (_btnForward != null)
+            {
+                _btnForward.SetBounds(x, top, _btnForward.Width, rowH);
+                x += _btnForward.Width + ThemeMetrics.Gap;
+            }
             _btnUp.SetBounds(area.Right - _btnUp.Width, top, _btnUp.Width, rowH);
-            _cboPath.SetBounds(area.Left, top,
-                Math.Max(100, _btnUp.Left - ThemeMetrics.Gap - area.Left), rowH);
+            _cboPath.SetBounds(x, top, Math.Max(80, _btnUp.Left - ThemeMetrics.Gap - x), rowH);
         }
 
         /// <summary>
@@ -1013,7 +1079,7 @@ namespace wxd.files.winforms
         }
 
         // ==================== 导航操作 ====================
-        public void NavigateTo(string path, bool restoreFilter = true, bool saveState = true)
+        public void NavigateTo(string path, bool restoreFilter = true, bool saveState = true, bool recordHistory = true)
         {
             try
             {
@@ -1032,13 +1098,22 @@ namespace wxd.files.winforms
                     VcsStatusCache.Invalidate(_currentDir);
                 }
 
+                if (recordHistory && !string.IsNullOrEmpty(_currentDir)
+                    && !string.Equals(_currentDir, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    _navBack.Add(_currentDir);
+                    _navForward.Clear();
+                }
+
                 _currentDir = trimmed;
+                UpdateNavButtons();
                 DirectoryChanged?.Invoke(_currentDir);
                 // 记录到最近访问历史
                 CsvSettings.AddRecentPath(_currentDir);
                 // 重建下拉框选项（刷新驱动器和最近路径）
                 RebuildPathComboItems();
                 RefreshUI();
+                RebuildBreadcrumb();
                 if (saveState)
                 {
                     // 标记需要保存，重启保存定时器
@@ -1058,7 +1133,7 @@ namespace wxd.files.winforms
         }
 
         /// <summary>异步版本的导航，等待文件列表加载完成后再返回</summary>
-        public async Task NavigateToAsync(string path, bool restoreFilter = true, bool saveState = true)
+        public async Task NavigateToAsync(string path, bool restoreFilter = true, bool saveState = true, bool recordHistory = true)
         {
             try
             {
@@ -1066,15 +1141,23 @@ namespace wxd.files.winforms
                     path = Path.GetFullPath(path);
                 if (!Directory.Exists(path)) return;
                 var trimmed = path.TrimEnd(Path.DirectorySeparatorChar);
-                if (trimmed.Length == 2 && trimmed[1] == ':')
-                    _currentDir = trimmed + Path.DirectorySeparatorChar;
-                else
-                    _currentDir = trimmed;
+                var newDir = trimmed.Length == 2 && trimmed[1] == ':'
+                    ? trimmed + Path.DirectorySeparatorChar
+                    : trimmed;
+                if (recordHistory && !string.IsNullOrEmpty(_currentDir)
+                    && !string.Equals(_currentDir, newDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    _navBack.Add(_currentDir);
+                    _navForward.Clear();
+                }
+                _currentDir = newDir;
+                UpdateNavButtons();
                 DirectoryChanged?.Invoke(_currentDir);
                 VcsStatusCache.Invalidate(_currentDir);
                 CsvSettings.AddRecentPath(_currentDir);
                 RebuildPathComboItems();
                 RefreshUI();
+                RebuildBreadcrumb();
                 if (saveState)
                 {
                     _hasUnsavedChanges = true;
@@ -1099,6 +1182,104 @@ namespace wxd.files.winforms
                 if (parent != null) NavigateTo(parent.FullName);
             }
             catch { }
+        }
+
+        private void NavigateBack()
+        {
+            if (_navBack.Count == 0) return;
+            var target = _navBack[^1];
+            _navBack.RemoveAt(_navBack.Count - 1);
+            if (!string.IsNullOrEmpty(_currentDir))
+                _navForward.Add(_currentDir);
+            NavigateTo(target, recordHistory: false);
+        }
+
+        private void NavigateForward()
+        {
+            if (_navForward.Count == 0) return;
+            var target = _navForward[^1];
+            _navForward.RemoveAt(_navForward.Count - 1);
+            if (!string.IsNullOrEmpty(_currentDir))
+                _navBack.Add(_currentDir);
+            NavigateTo(target, recordHistory: false);
+        }
+
+        private void UpdateNavButtons()
+        {
+            if (_btnBack != null) _btnBack.Enabled = _navBack.Count > 0;
+            if (_btnForward != null) _btnForward.Enabled = _navForward.Count > 0;
+        }
+
+        private void RebuildBreadcrumb()
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.SuspendLayout();
+            try
+            {
+                _pnlBreadcrumb.Controls.Clear();
+                if (string.IsNullOrEmpty(_currentDir)) return;
+
+                string root = Path.GetPathRoot(_currentDir) ?? "";
+                if (string.IsNullOrEmpty(root)) return;
+
+                string current = root;
+                AddBreadcrumbLink(DisplaySegment(root), current);
+
+                string rest = _currentDir.Substring(root.Length);
+                foreach (var part in rest.Split(Path.DirectorySeparatorChar,
+                             StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = Path.Combine(current, part);
+                    AddBreadcrumbSeparator();
+                    AddBreadcrumbLink(part, current);
+                }
+            }
+            finally
+            {
+                _pnlBreadcrumb.ResumeLayout();
+            }
+        }
+
+        private static string DisplaySegment(string segment)
+        {
+            var trimmed = segment.TrimEnd(Path.DirectorySeparatorChar);
+            return string.IsNullOrEmpty(trimmed) ? segment : trimmed;
+        }
+
+        private void AddBreadcrumbSeparator()
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.Controls.Add(new Label
+            {
+                Text = "›",
+                AutoSize = true,
+                ForeColor = _colorTextSecondary,
+                Font = Theme.Caption,
+                Margin = new Padding(2, 3, 2, 0)
+            });
+        }
+
+        private void AddBreadcrumbLink(string text, string path)
+        {
+            if (_pnlBreadcrumb == null) return;
+            var link = new LinkLabel
+            {
+                Text = text,
+                AutoSize = true,
+                Font = Theme.Caption,
+                LinkBehavior = LinkBehavior.NeverUnderline,
+                LinkColor = _colorTextPrimary,
+                ActiveLinkColor = Theme.P.Selection,
+                VisitedLinkColor = _colorTextPrimary,
+                Margin = new Padding(1, 3, 1, 0),
+                Tag = path
+            };
+            link.LinkClicked += (s, e) =>
+            {
+                if (s is LinkLabel l && l.Tag is string target && Directory.Exists(target))
+                    NavigateTo(target);
+            };
+            _pnlBreadcrumb.Controls.Add(link);
         }
 
         private void OnPathKeyDown(object? sender, KeyEventArgs e)
@@ -2172,15 +2353,22 @@ namespace wxd.files.winforms
 
                 ToolStripMenuItem itemCopy = new ToolStripMenuItem("复制", null, (s, e) => CopyFilesToClipboard(paths, false));
                 ToolStripMenuItem itemCut = new ToolStripMenuItem("剪切", null, (s, e) => CopyFilesToClipboard(paths, true));
+                ToolStripMenuItem itemPaste = new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard())
+                {
+                    Enabled = HasFileDropInClipboard()
+                };
                 ToolStripMenuItem itemDelete = new ToolStripMenuItem("删除", null, (s, e) => DeleteFiles(paths));
                 ToolStripMenuItem itemCopyPath = new ToolStripMenuItem("复制路径", null, (s, e) => CopyPathsToClipboard(paths));
+                ToolStripMenuItem itemNewFolder = new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder());
 
                 menu.Items.Add(itemCopy);
                 menu.Items.Add(itemCut);
+                menu.Items.Add(itemPaste);
                 menu.Items.Add("-");
                 menu.Items.Add(itemDelete);
                 menu.Items.Add("-");
                 menu.Items.Add(itemCopyPath);
+                menu.Items.Add(itemNewFolder);
 
                 menu.Show(Cursor.Position);
             }
@@ -2202,19 +2390,139 @@ namespace wxd.files.winforms
                 {
                     // 标记剪切操作（通过设置包含 Preferred DropEffect 的 MemoryStream）
                     byte[] dropEffect = new byte[] { (byte)DragDropEffects.Move, 0, 0, 0 };
-                    using (var ms = new System.IO.MemoryStream())
-                    {
-                        ms.Write(dropEffect, 0, dropEffect.Length);
-                        var data = new DataObject();
-                        data.SetFileDropList(collection);
-                        data.SetData("Preferred DropEffect", ms);
-                        Clipboard.SetDataObject(data);
-                    }
+                    // 不能 using：剪贴板可能在 SetDataObject 之后才去读这个流
+                    var ms = new System.IO.MemoryStream();
+                    ms.Write(dropEffect, 0, dropEffect.Length);
+                    ms.Position = 0;
+                    var data = new DataObject();
+                    data.SetFileDropList(collection);
+                    data.SetData("Preferred DropEffect", ms);
+                    Clipboard.SetDataObject(data);
                 }
             }
             catch (Exception ex)
             {
                 AlertForm.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+            }
+        }
+
+        private static bool HasFileDropInClipboard()
+        {
+            try { return Clipboard.ContainsFileDropList(); }
+            catch { return false; }
+        }
+
+        /// <summary>从剪贴板粘贴（支持 Explorer / 本程序复制的 CF_HDROP，剪切按 Preferred DropEffect 判断）</summary>
+        private void PasteFromClipboard()
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            string[]? paths = null;
+            bool move = false;
+            try
+            {
+                var data = Clipboard.GetDataObject();
+                if (data == null) return;
+                paths = data.GetData(DataFormats.FileDrop) as string[];
+                if (data.GetData("Preferred DropEffect") is System.IO.MemoryStream ms)
+                {
+                    ms.Position = 0;
+                    var buf = new byte[4];
+                    if (ms.Read(buf, 0, 4) == 4)
+                        move = (DragDropEffects)BitConverter.ToInt32(buf, 0) == DragDropEffects.Move;
+                }
+            }
+            catch { return; }
+
+            if (paths == null || paths.Length == 0) return;
+            if (RunFileOperation(paths, _currentDir, move) && move)
+            {
+                try { Clipboard.Clear(); } catch { }
+            }
+        }
+
+        /// <summary>复制/移动一组路径到目标目录，使用 Shell 原生操作（带进度、可撤销）</summary>
+        private bool RunFileOperation(string[] paths, string targetDir, bool move)
+        {
+            try
+            {
+                if (!Directory.Exists(targetDir)) return false;
+
+                string normalizedTarget = targetDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var valid = paths
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && (File.Exists(p) || Directory.Exists(p)))
+                    .Where(p =>
+                    {
+                        var full = Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar);
+                        var target = normalizedTarget.TrimEnd(Path.DirectorySeparatorChar);
+                        // 不允许把目录复制/移动到自身或自己的子目录
+                        return !string.Equals(full, target, StringComparison.OrdinalIgnoreCase)
+                               && !target.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                    })
+                    .ToArray();
+                if (valid.Length == 0) return false;
+
+                var from = string.Join("\0", valid) + "\0\0";
+                var to = normalizedTarget + "\0\0";
+                var op = new SHFILEOPSTRUCT
+                {
+                    hwnd = this.Handle,
+                    wFunc = move ? FO_MOVE : FO_COPY,
+                    pFrom = from,
+                    pTo = to,
+                    fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_SIMPLEPROGRESS
+                };
+
+                int ret = SHFileOperation(ref op);
+                if (ret != 0)
+                {
+                    AlertForm.Show(this.FindForm(), $"文件操作失败（代码 {ret}）", "错误", AlertType.Error);
+                    return false;
+                }
+                if (op.fAnyOperationsAborted != 0) return false;
+
+                _ = LoadFileListAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AlertForm.Show(this.FindForm(), "文件操作失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
+                return false;
+            }
+        }
+
+        /// <summary>新建文件夹并进入重命名</summary>
+        private async void CreateNewFolder()
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            try
+            {
+                string name = "新建文件夹";
+                string path = Path.Combine(_currentDir, name);
+                int index = 2;
+                while (Directory.Exists(path) || File.Exists(path))
+                {
+                    name = $"新建文件夹 ({index++})";
+                    path = Path.Combine(_currentDir, name);
+                }
+
+                Directory.CreateDirectory(path);
+                await LoadFileListAsync();
+
+                var item = _lstFiles.Items.Cast<ListViewItem>()
+                    .FirstOrDefault(i => string.Equals(i.Text, name, StringComparison.OrdinalIgnoreCase));
+                if (item != null)
+                {
+                    _lstFiles.SelectedItems.Clear();
+                    item.Selected = true;
+                    item.Focused = true;
+                    StartRename();
+                }
+            }
+            catch (Exception ex)
+            {
+                AlertForm.Show(this.FindForm(), "新建文件夹失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
             }
         }
 
@@ -2423,9 +2731,39 @@ namespace wxd.files.winforms
             InvalidateFocusRing();
         }
 
+        private bool IsTextEditing()
+        {
+            if (_cboPath?.Focused == true || _txtFilter?.Focused == true) return true;
+            foreach (Control control in _lstFiles.Controls)
+            {
+                if (control is TextBoxBase && control.Focused) return true;
+            }
+            return false;
+        }
+
         // ==================== 键盘快捷键 ====================
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            // 任何文本编辑（路径框、过滤框、F2 行内重命名）时，键盘交给输入框，
+            // 否则 Delete/F2/Backspace 会误触发文件操作或导航
+            if (IsTextEditing())
+                return base.ProcessCmdKey(ref msg, keyData);
+
+            if (keyData == (Keys.Alt | Keys.Left))
+            {
+                NavigateBack();
+                return true;
+            }
+            if (keyData == (Keys.Alt | Keys.Right))
+            {
+                NavigateForward();
+                return true;
+            }
+            if (keyData == Keys.Back)
+            {
+                GoUp();
+                return true;
+            }
             if (keyData == Keys.F5)
             {
                 RefreshCurrent();
@@ -2455,7 +2793,96 @@ namespace wxd.files.winforms
                 }
                 return true;
             }
+            if (keyData == (Keys.Control | Keys.Shift | Keys.N))
+            {
+                CreateNewFolder();
+                return true;
+            }
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void OnListKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.C)
+            {
+                var paths = GetSelectedFullPaths();
+                if (paths.Count > 0)
+                {
+                    CopyFilesToClipboard(paths, cut: false);
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            }
+            else if (e.Control && e.KeyCode == Keys.X)
+            {
+                var paths = GetSelectedFullPaths();
+                if (paths.Count > 0)
+                {
+                    CopyFilesToClipboard(paths, cut: true);
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            }
+            else if (e.Control && e.KeyCode == Keys.V)
+            {
+                PasteFromClipboard();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        }
+
+        // ==================== 拖拽复制/移动 ====================
+        private void OnListItemDrag(object? sender, ItemDragEventArgs e)
+        {
+            var paths = GetSelectedFullPaths();
+            if (paths.Count == 0) return;
+
+            var data = new DataObject();
+            data.SetData(DataFormats.FileDrop, paths.ToArray());
+            var effect = (ModifierKeys & Keys.Shift) != 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+            var ms = new System.IO.MemoryStream();
+            ms.Write(BitConverter.GetBytes((int)effect), 0, 4);
+            ms.Position = 0;
+            data.SetData("Preferred DropEffect", ms);
+
+            var result = DoDragDrop(data, DragDropEffects.Copy | DragDropEffects.Move);
+            if (result == DragDropEffects.Move)
+                _ = LoadFileListAsync();
+        }
+
+        private void OnListDragEnter(object? sender, DragEventArgs e)
+        {
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true)
+            {
+                e.Effect = DragDropEffects.None;
+                return;
+            }
+            e.Effect = (ModifierKeys & Keys.Shift) != 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+        }
+
+        private void OnListDragOver(object? sender, DragEventArgs e)
+        {
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true)
+            {
+                e.Effect = DragDropEffects.None;
+                return;
+            }
+            e.Effect = (ModifierKeys & Keys.Shift) != 0 ? DragDropEffects.Move : DragDropEffects.Copy;
+        }
+
+        private void OnListDragDrop(object? sender, DragEventArgs e)
+        {
+            var paths = e.Data?.GetData(DataFormats.FileDrop) as string[];
+            if (paths == null || paths.Length == 0) return;
+
+            string target = _currentDir;
+            var point = _lstFiles.PointToClient(new Point(e.X, e.Y));
+            var item = _lstFiles.GetItemAt(point.X, point.Y);
+            if (item?.Tag is FileItemTag tag && tag.IsDir)
+                target = tag.FullName;
+
+            bool move = e.Effect == DragDropEffects.Move;
+            RunFileOperation(paths, target, move);
         }
 
         // ==================== F2 重命名 ====================
