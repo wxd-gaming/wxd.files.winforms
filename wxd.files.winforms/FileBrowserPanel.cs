@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -1539,16 +1539,15 @@ namespace wxd.files.winforms
             int dirCount = 0;
             int fileCount = 0;
 
-            foreach (var dir in FilterItems(_allDirs.Select(d => d.Name)))
+            // 直接过滤对象本身：旧写法先取名字、再 First(...) 反查，n 个文件就是 n² 次字符串比较
+            foreach (var info in FilterItems(_allDirs, d => d.Name))
             {
-                var info = _allDirs.First(d => d.Name.Equals(dir, StringComparison.OrdinalIgnoreCase));
                 AddListViewItem(info.Name, info.FullName, isDir: true);
                 dirCount++;
             }
 
-            foreach (var fn in FilterItems(_allFiles.Select(f => f.Name)))
+            foreach (var fi in FilterItems(_allFiles, f => f.Name))
             {
-                var fi = _allFiles.First(f => f.Name.Equals(fn, StringComparison.OrdinalIgnoreCase));
                 AddListViewItem(fi.Name, fi.FullName, isDir: false, fi.LastWriteTime, fi.Length);
                 fileCount++;
             }
@@ -1585,26 +1584,26 @@ namespace wxd.files.winforms
             PopulateListView();
         }
 
-        private IEnumerable<string> FilterItems(IEnumerable<string> names)
+        private IEnumerable<T> FilterItems<T>(IEnumerable<T> items, Func<T, string> nameSelector)
         {
             var filter = _filterText.Trim();
-            if (string.IsNullOrEmpty(filter)) return names;
+            if (string.IsNullOrEmpty(filter)) return items;
 
             filter = filter.Replace("||", " | ").Replace("&&", " & ");
 
             if (filter.Contains('|'))
             {
                 var terms = filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return names.Where(n => terms.Any(t => MatchTerm(n, t)));
+                return items.Where(i => terms.Any(t => MatchTerm(nameSelector(i), t)));
             }
             else if (filter.Contains('&'))
             {
                 var terms = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return names.Where(n => terms.All(t => MatchTerm(n, t)));
+                return items.Where(i => terms.All(t => MatchTerm(nameSelector(i), t)));
             }
             else
             {
-                return names.Where(n => MatchTerm(n, filter));
+                return items.Where(i => MatchTerm(nameSelector(i), filter));
             }
         }
 

@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json.Nodes;
+using System.Windows.Forms;
 using wxd.files.winforms;
 
 namespace wxd.files.winforms.RegressionTests
@@ -69,6 +73,51 @@ namespace wxd.files.winforms.RegressionTests
 
             // #7 空文件导出（真实 git 集成，git 不可用则跳过）
             RunIntegration("#7 空文件导出成功", Test_EmptyFileExport);
+
+            // 性能重构：索引映射 / 过滤词预编译 / 排序键预计算
+            Run("映射 反查表基本语义", Test_BuildReverseMap);
+            Run("映射 冻结行与内容行分组", Test_MapMatchCellsFrozenAndBody);
+            Run("映射 被过滤掉的行跳过", Test_MapMatchCellsSkipsHiddenRows);
+            Run("映射 无冻结行按原行号直映", Test_MapMatchCellsDirect);
+            Run("过滤词 单串/OR/AND", Test_ContentFilterMatcher);
+            Run("过滤词 边界与大小写", Test_ContentFilterMatcherEdges);
+            Run("排序 数值升序/降序", Test_SortRowIndicesNumeric);
+            Run("排序 同键稳定/无效列", Test_SortRowIndicesStable);
+            Run("行数据 子集继承物理行号", Test_BuildFileDataSubsetInherit);
+            Run("CSV 写出转义/无BOM", Test_CsvWriteRoundTrip);
+
+            // 文本比对引擎
+            Run("文本比对 相同/新增/删除/修改", Test_TextDiffBasic);
+            Run("文本比对 多段差异可还原", Test_TextDiffMultiHunk);
+            Run("文本比对 空侧与只保留差异行", Test_TextDiffEmptyAndFilter);
+            Run("文本比对 差异过大退化不崩", Test_TextDiffFallback);
+
+            // 表格比对（csv / excel）
+            Run("表格比对 相同/单元格差异/增删行", Test_TableDiffBasic);
+            Run("表格比对 列数不齐/只保留差异行", Test_TableDiffRaggedAndOnlyDifferences);
+            Run("表格读取 CSV 引号/换行/分隔符", Test_SimpleTableCsv);
+            Run("表格读取 CSV 编码 GBK", Test_SimpleTableCsvGbk);
+            Run("表格读取 Excel 往返", Test_SimpleTableExcelRoundTrip);
+
+            // JSON 面板
+            Run("JSON 格式化/压缩/中文不转义", Test_JsonFormatAndMinify);
+            Run("JSON 递归 key 排序", Test_JsonSortKeys);
+            Run("JSON 解析错误与宽松语法", Test_JsonParseErrors);
+            Run("JSON 节点计数与顶层 null", Test_JsonCountAndNull);
+            Run("JSON 注释检测", Test_JsonContainsComments);
+            Run("编码 BOM 识别与原子写", Test_EncodingBomAndAtomicWrite);
+
+            // YAML key 排序（比对前归一顺序）
+            Run("YAML 嵌套 key 排序", Test_YamlSortNested);
+            Run("YAML 序列顺序不动", Test_YamlSortSequence);
+            Run("YAML 注释跟随 key", Test_YamlSortComments);
+            Run("YAML 锚点/块标量保护", Test_YamlSortBailAndBlock);
+
+            // 设置落盘 / CSV 分隔符边界
+            Run("设置关窗同步落盘", Test_SettingsFlush);
+            Run("CSV 首行空行分隔符", Test_CsvDelimiterLeadingBlankLine);
+            Run("单实例锁", Test_SingleInstanceGuard);
+            Run("表格排序与旧比较器等价", Test_SortRowIndicesMatchesComparer);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -436,6 +485,615 @@ namespace wxd.files.winforms.RegressionTests
             {
                 DeleteTempDir(repo);
                 DeleteTempDir(outDir);
+            }
+        }
+
+        // ==================== 性能重构（索引映射 / 过滤词 / 排序键） ====================
+
+        private static void Test_BuildReverseMap()
+        {
+            var map = TableIndexMapper.BuildReverseMap(new[] { 5, 2, 9 }, 10);
+            AssertEq(0, map[5], "5 → 显示行 0");
+            AssertEq(1, map[2], "2 → 显示行 1");
+            AssertEq(2, map[9], "9 → 显示行 2");
+            AssertEq(-1, map[0], "未出现的索引为 -1");
+
+            var empty = TableIndexMapper.BuildReverseMap(null, 3);
+            AssertEq(-1, empty[0], "null 列表应全部为 -1");
+
+            var outOfRange = TableIndexMapper.BuildReverseMap(new[] { 7 }, 2);
+            AssertEq(-1, outOfRange[1], "越界的原始索引应被忽略而不是抛异常");
+        }
+
+        private static void Test_MapMatchCellsFrozenAndBody()
+        {
+            // 显示列：原始 0 → 显示 0，原始 2 → 显示 1（原始列 1 被隐藏）
+            var visibleCols = new List<int> { 0, 2 };
+            // 内容行显示顺序：原始 10 → 显示 0，原始 12 → 显示 1
+            var visibleRows = new List<int> { 10, 12 };
+            var merged = new Dictionary<int, HashSet<int>>
+            {
+                [1] = new HashSet<int> { 0, 2 },    // 冻结行 1
+                [10] = new HashSet<int> { 2 },      // 内容行 → 显示 0
+                [12] = new HashSet<int> { 0, 2 },   // 内容行 → 显示 1
+            };
+
+            var (header, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, visibleCols, visibleRows, frozenRows: 2, columnCount: 3, rowCount: 20);
+
+            AssertEq(2, header[1].Count, "冻结行应保留两列匹配");
+            Assert(header[1].Contains(0) && header[1].Contains(1), "原始列 0/2 应映射为显示列 0/1");
+
+            AssertEq(2, body.Count, "两行内容行应各有映射");
+            AssertEq(1, body[0].Count, "内容行 10 只命中原始列 2");
+            Assert(body[0].Contains(1), "原始列 2 的显示索引应为 1");
+            AssertEq(2, body[1].Count, "内容行 12 两列都命中");
+        }
+
+        private static void Test_MapMatchCellsSkipsHiddenRows()
+        {
+            var merged = new Dictionary<int, HashSet<int>> { [7] = new HashSet<int> { 0 } };
+            var (header, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, new List<int> { 0 }, new List<int> { 1, 2 },
+                frozenRows: 0, columnCount: 1, rowCount: 10);
+
+            AssertEq(0, header.Count, "无冻结行时不应产生表头映射");
+            AssertEq(0, body.Count, "被过滤掉的行不应出现在结果里");
+        }
+
+        private static void Test_MapMatchCellsDirect()
+        {
+            var merged = new Dictionary<int, HashSet<int>> { [3] = new HashSet<int> { 1 } };
+            var (_, body) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, new List<int> { 0, 1 }, null,
+                frozenRows: 0, columnCount: 2, rowCount: 5);
+
+            AssertEq(1, body[3].Single(), "无过滤无排序时显示行 = 原始行");
+        }
+
+        private static void Test_ContentFilterMatcher()
+        {
+            Assert(ContentFilterMatcher.Parse("abc").Matches("xxABCxx"), "单串应大小写不敏感");
+            Assert(!ContentFilterMatcher.Parse("abc").Matches("xxabdxx"), "单串不命中应返回 false");
+
+            var or = ContentFilterMatcher.Parse("abc||def");
+            Assert(or.Matches("DEF"), "OR：命中第二个词");
+            Assert(or.Matches("xabcdef"), "OR：命中第一个词");
+            Assert(!or.Matches("xyz"), "OR：都不命中");
+
+            var and = ContentFilterMatcher.Parse("abc&&def");
+            Assert(and.Matches("abcdef"), "AND：两个词都在");
+            Assert(!and.Matches("abc"), "AND：缺一个词不命中");
+        }
+
+        private static void Test_ContentFilterMatcherEdges()
+        {
+            Assert(ContentFilterMatcher.Parse("").Matches("任意"), "空词表 = 全部命中");
+            Assert(!ContentFilterMatcher.Parse("|||").Matches("abc"), "只有分隔符时 OR 不命中");
+            Assert(ContentFilterMatcher.Parse("&&&").Matches("abc"), "只有分隔符时 AND 视为全部通过");
+            Assert(!ContentFilterMatcher.Parse("abc").Matches(""), "空单元格不命中非空过滤词");
+        }
+
+        private static void Test_SortRowIndicesNumeric()
+        {
+            var dt = new DataTable();
+            dt.Columns.Add("v", typeof(string));
+            foreach (var v in new[] { "10", "2", "1" }) dt.Rows.Add(v);
+
+            var asc = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Ascending);
+            AssertSeq(new[] { 2, 1, 0 }, asc, "数值列应按数值升序（1,2,10），不是字典序");
+
+            var desc = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Descending);
+            AssertSeq(new[] { 0, 1, 2 }, desc, "数值列降序");
+        }
+
+        private static void Test_SortRowIndicesStable()
+        {
+            var dt = new DataTable();
+            dt.Columns.Add("v", typeof(string));
+            foreach (var v in new[] { "b", "B", "a" }) dt.Rows.Add(v);
+
+            var sorted = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1, 2 }, 0, SortOrder.Ascending);
+            AssertSeq(new[] { 2, 0, 1 }, sorted, "同键按输入顺序稳定排列（b 先于 B）");
+
+            var invalidColumn = TableBrowserControl.SortRowIndices(dt, new List<int> { 0, 1 }, 9, SortOrder.Ascending);
+            AssertSeq(new[] { 0, 1 }, invalidColumn, "无效排序列应原样返回");
+        }
+
+        private static void Test_BuildFileDataSubsetInherit()
+        {
+            var source = new FileTableData { FilePath = "a.csv", Type = TableFileType.Csv };
+            source.ColumnNames.Add("v");
+            source.Rows.Add(new TableRow { OriginalRowIndex = 0, PhysicalStartLine = 1, PhysicalEndLine = 1, Cells = new List<string> { "a" } });
+            source.Rows.Add(new TableRow { OriginalRowIndex = 1, PhysicalStartLine = 3, PhysicalEndLine = 4, Cells = new List<string> { "b" } });
+            source.Rows.Add(new TableRow { OriginalRowIndex = 2, PhysicalStartLine = 5, PhysicalEndLine = 5, Cells = new List<string> { "c" } });
+
+            var subset = new DataTable();
+            subset.Columns.Add("v", typeof(string));
+            subset.Rows.Add("x");
+            subset.Rows.Add("y");
+            subset.Rows.Add("z");
+
+            var built = TableBrowserControl.BuildFileData(subset, source);
+            AssertEq(3, built.Rows.Count, "子集行数");
+            AssertSeq(new[] { 1, 3, 5 }, built.Rows.Select(r => r.PhysicalStartLine), "子集应继承原行的物理起始行号");
+            AssertSeq(new[] { 0, 1, 2 }, built.Rows.Select(r => r.OriginalRowIndex), "OriginalRowIndex 应指向源行号");
+        }
+
+        private static void Test_CsvWriteRoundTrip()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var dt = new DataTable();
+                dt.Columns.Add("a", typeof(string));
+                dt.Columns.Add("b", typeof(string));
+                dt.Rows.Add("x,y", "line1\nline2");
+                dt.Rows.Add("quote\"d", "");
+
+                var path = Path.Combine(dir, "out.csv");
+                FileDataCache.WriteCsvRows(path, dt, ',');
+
+                var bytes = File.ReadAllBytes(path);
+                Assert(!(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF),
+                    "CSV 不应写 UTF-8 BOM");
+                var text = File.ReadAllText(path);
+                AssertEq("\"x,y\",\"line1\nline2\"\r\n\"quote\"\"d\",\r\n", text,
+                    "CSV 转义与换行格式（含引号、内嵌换行）");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        // ==================== 文本比对引擎 ====================
+
+        private static void AssertDiffReconstruct(string[] left, string[] right, List<TextDiffLine> diff)
+        {
+            var rebuiltLeft = diff.Where(d => d.LeftLineNumber != null).Select(d => d.LeftText).ToArray();
+            var rebuiltRight = diff.Where(d => d.RightLineNumber != null).Select(d => d.RightText).ToArray();
+            AssertSeq(left, rebuiltLeft, "按左侧行号拼回去必须还原左文件");
+            AssertSeq(right, rebuiltRight, "按右侧行号拼回去必须还原右文件");
+
+            int lastLeft = 0, lastRight = 0;
+            foreach (var line in diff)
+            {
+                if (line.LeftLineNumber != null)
+                {
+                    Assert(line.LeftLineNumber.Value == lastLeft + 1, "左侧行号必须连续递增");
+                    lastLeft = line.LeftLineNumber.Value;
+                }
+                if (line.RightLineNumber != null)
+                {
+                    Assert(line.RightLineNumber.Value == lastRight + 1, "右侧行号必须连续递增");
+                    lastRight = line.RightLineNumber.Value;
+                }
+                Assert(!(line.LeftLineNumber == null && line.RightLineNumber == null), "不允许两侧都没有行号的对齐行");
+            }
+        }
+
+        private static void Test_TextDiffBasic()
+        {
+            var same = new[] { "a", "b", "c" };
+            var sameDiff = TextDiffEngine.Compare(same, same);
+            AssertEq(3, sameDiff.Count, "相同文件行数不变");
+            Assert(sameDiff.All(d => d.Kind == TextDiffKind.Same), "相同文件不应有差异");
+            AssertDiffReconstruct(same, same, sameDiff);
+
+            var left = new[] { "a", "b", "c" };
+            var right = new[] { "a", "x", "b", "c" };
+            var inserted = TextDiffEngine.Compare(left, right);
+            AssertEq(1, inserted.Count(d => d.Kind == TextDiffKind.Added), "插入一行");
+            AssertDiffReconstruct(left, right, inserted);
+
+            var deleted = TextDiffEngine.Compare(right, left);
+            AssertEq(1, deleted.Count(d => d.Kind == TextDiffKind.Deleted), "删除一行");
+            AssertDiffReconstruct(right, left, deleted);
+
+            var modifiedLeft = new[] { "a", "b", "c" };
+            var modifiedRight = new[] { "a", "B", "c" };
+            var modified = TextDiffEngine.Compare(modifiedLeft, modifiedRight);
+            AssertEq(1, modified.Count(d => d.Kind == TextDiffKind.Modified), "修改一行");
+            AssertEq(0, modified.Count(d => d.Kind == TextDiffKind.Added || d.Kind == TextDiffKind.Deleted),
+                "一对一替换不应再拆成新增/删除");
+            AssertDiffReconstruct(modifiedLeft, modifiedRight, modified);
+        }
+
+        private static void Test_TextDiffMultiHunk()
+        {
+            var left = new List<string>();
+            var right = new List<string>();
+            for (int i = 0; i < 200; i++)
+            {
+                left.Add("line" + i);
+                right.Add(i == 5 || i == 120 ? "changed" + i : "line" + i);
+            }
+            right.Insert(60, "extra");
+            right.RemoveAt(150);
+
+            var diff = TextDiffEngine.Compare(left, right);
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Modified) >= 2, "两处修改");
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Added) >= 1, "一处新增");
+            Assert(diff.Count(d => d.Kind == TextDiffKind.Deleted) >= 1, "一处删除");
+            AssertDiffReconstruct(left.ToArray(), right.ToArray(), diff);
+        }
+
+        private static void Test_TextDiffEmptyAndFilter()
+        {
+            var emptyDiff = TextDiffEngine.Compare(Array.Empty<string>(), new[] { "a", "b" });
+            AssertEq(2, emptyDiff.Count(d => d.Kind == TextDiffKind.Added), "左空 → 全是新增");
+            AssertDiffReconstruct(Array.Empty<string>(), new[] { "a", "b" }, emptyDiff);
+
+            var rightEmpty = TextDiffEngine.Compare(new[] { "a" }, Array.Empty<string>());
+            AssertEq(1, rightEmpty.Count(d => d.Kind == TextDiffKind.Deleted), "右空 → 全是删除");
+            AssertDiffReconstruct(new[] { "a" }, Array.Empty<string>(), rightEmpty);
+
+            var diff = TextDiffEngine.Compare(new[] { "a", "b" }, new[] { "a", "x" });
+            var only = TextDiffEngine.OnlyDifferences(diff);
+            AssertEq(1, only.Count, "只保留差异行应过滤掉相同行");
+            AssertEq(TextDiffKind.Modified, only[0].Kind, "过滤后保留的是修改行");
+        }
+
+        private static void Test_TextDiffFallback()
+        {
+            // 两侧完全不同、行数超过 MaxEditDistance，走"整块替换"退化路径
+            var left = Enumerable.Range(0, 3000).Select(i => "L" + i).ToArray();
+            var right = Enumerable.Range(0, 3000).Select(i => "R" + i).ToArray();
+
+            var diff = TextDiffEngine.Compare(left, right);
+            Assert(diff.Count >= 3000, "退化后仍有全部行");
+            Assert(diff.All(d => d.Kind == TextDiffKind.Modified), "等长完全不同的文件应两两配成修改行");
+            AssertDiffReconstruct(left, right, diff);
+        }
+
+        // ==================== 表格比对 ====================
+
+        private static void Test_TableDiffBasic()
+        {
+            var left = new List<string[]>
+            {
+                new[] { "id", "name", "hp" },
+                new[] { "1", "slime", "10" },
+                new[] { "2", "goblin", "20" }
+            };
+            var right = new List<string[]>
+            {
+                new[] { "id", "name", "hp" },
+                new[] { "1", "slime", "12" },
+                new[] { "2", "goblin", "20" },
+                new[] { "3", "boss", "100" }
+            };
+
+            var diff = TableDiffEngine.Compare(left, right);
+            AssertEq(4, diff.Count, "按行数多的一侧对齐");
+            AssertEq(TableRowDiffKind.Same, diff[0].Kind, "表头行相同");
+            AssertEq(TableRowDiffKind.Modified, diff[1].Kind, "第 2 行有一格变化");
+            Assert(diff[1].DiffColumns.SetEquals(new[] { 2 }), "差异列应为 C 列（索引 2）");
+            AssertEq(TableRowDiffKind.Same, diff[2].Kind, "第 3 行相同");
+            AssertEq(TableRowDiffKind.Added, diff[3].Kind, "右表多出一行");
+            AssertEq(4, diff[3].RightRowNumber, "新增行右侧行号（第 4 行）");
+
+            var reverse = TableDiffEngine.Compare(right, left);
+            AssertEq(TableRowDiffKind.Deleted, reverse[3].Kind, "反向比对最后一行是删除");
+            AssertEq(0, TableDiffEngine.Compare(left, left).Count(d => d.Kind != TableRowDiffKind.Same),
+                "同一个表比对不应有差异");
+        }
+
+        private static void Test_TableDiffRaggedAndOnlyDifferences()
+        {
+            var left = new List<string[]> { new[] { "a" } };
+            var right = new List<string[]> { new[] { "a", "b" } };
+            var diff = TableDiffEngine.Compare(left, right);
+            AssertEq(TableRowDiffKind.Modified, diff[0].Kind, "列数不同也算修改");
+            Assert(diff[0].DiffColumns.Contains(1), "多出来的列应标为差异");
+
+            var only = TableDiffEngine.OnlyDifferences(TableDiffEngine.Compare(
+                new List<string[]> { new[] { "a" }, new[] { "b" } },
+                new List<string[]> { new[] { "a" }, new[] { "x" } }));
+            AssertEq(1, only.Count, "只保留差异行应过滤掉相同行");
+            AssertEq(TableRowDiffKind.Modified, only[0].Kind, "保留的是修改行");
+        }
+
+        private static void Test_SimpleTableCsv()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var path = Path.Combine(dir, "t.csv");
+                File.WriteAllText(path, "id,name,note\n1,\"a,b\",x\n2,\"line1\nline2\",y\n", Encoding.UTF8);
+
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq(3, rows.Count, "三条记录");
+                AssertSeq(new[] { "id", "name", "note" }, rows[0], "第一行原样当数据");
+                AssertSeq(new[] { "1", "a,b", "x" }, rows[1], "引号内的逗号不切列");
+                AssertEq("line1\nline2", rows[2][1], "引号内的换行不切行");
+
+                var tabbed = Path.Combine(dir, "t-tab.csv");
+                File.WriteAllText(tabbed, "a\tb\tc\r\n1\t2\t3\r\n", Encoding.UTF8);
+                var tabRows = SimpleTableReader.ReadRows(tabbed);
+                AssertEq('\t', SimpleTableReader.DetectCsvDelimiter("a\tb\tc\r\n1\t2\t3"), "分隔符应识别为制表符");
+                AssertEq(3, tabRows[1].Length, "制表符分隔应切出三列");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        private static void Test_SimpleTableCsvGbk()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                var gbk = Encoding.GetEncoding(936);
+                var path = Path.Combine(dir, "gbk.csv");
+                File.WriteAllText(path, "编号,名称\r\n1,史莱姆\r\n", gbk);
+
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq("编号", rows[0][0], "GBK 中文列名");
+                AssertEq("史莱姆", rows[1][1], "GBK 中文内容");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        private static void Test_SimpleTableExcelRoundTrip()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var path = Path.Combine(dir, "t.xlsx");
+                var table = new DataTable();
+                table.Columns.Add("c0", typeof(string));
+                table.Columns.Add("c1", typeof(string));
+                table.Rows.Add("id", "name");
+                table.Rows.Add("1", "slime");
+                MiniExcelLibs.MiniExcel.SaveAs(path, table, printHeader: false);
+
+                Assert(SimpleTableReader.IsTableFile(path), "xlsx 应识别为表格");
+                var rows = SimpleTableReader.ReadRows(path);
+                AssertEq(2, rows.Count, "Excel 两行");
+                AssertEq("id", rows[0][0], "Excel 单元格内容");
+                AssertEq("slime", rows[1][1], "Excel 第二行内容");
+            }
+            finally
+            {
+                DeleteTempDir(dir);
+            }
+        }
+
+        // ==================== JSON 面板 ====================
+
+        private static void Test_JsonFormatAndMinify()
+        {
+            var result = JsonToolEngine.Parse("""{"b":1,"a":{"d":2,"c":3},"name":"史莱姆"}""");
+            Assert(result.Success, "合法 JSON 应解析成功");
+
+            var formatted = JsonToolEngine.Format(result.Root);
+            Assert(formatted.Contains("\n  \"b\""), "应使用 2 空格缩进");
+            Assert(formatted.Contains("史莱姆"), "中文不应被转义");
+
+            var minified = JsonToolEngine.Minify(result.Root);
+            Assert(!minified.Contains('\n'), "压缩后不应有换行");
+            Assert(!minified.Contains(' '), "压缩后不应有空格");
+            Assert(minified.Contains("\"name\":\"史莱姆\""), "压缩后结构完整");
+        }
+
+        private static void Test_JsonSortKeys()
+        {
+            var result = JsonToolEngine.Parse("""{"b":{"d":1,"c":2},"a":3,"arr":[{"z":1,"y":2}]}""");
+            Assert(result.Success, "解析成功");
+
+            var formatted = JsonToolEngine.Format(result.Root, sortKeys: true);
+            var expected = """
+{
+  "a": 3,
+  "arr": [
+    {
+      "y": 2,
+      "z": 1
+    }
+  ],
+  "b": {
+    "c": 2,
+    "d": 1
+  }
+}
+""";
+            AssertEq(expected.ReplaceLineEndings("\n"), formatted.ReplaceLineEndings("\n"),
+                "递归排序：对象 key 升序、数组顺序不变");
+        }
+
+        private static void Test_JsonParseErrors()
+        {
+            var bad = JsonToolEngine.Parse("""{"a": }""");
+            Assert(!bad.Success, "非法 JSON 应失败");
+            Assert(bad.Error != null && bad.Error.Contains("语法错误"), "错误信息应可读");
+
+            // 尾逗号 + 注释：工具场景里很常见，按宽松模式接受
+            var lenient = JsonToolEngine.Parse("""
+{
+  "a": 1, // 注释
+  "b": 2,
+}
+""");
+            Assert(lenient.Success, "允许注释与尾逗号");
+            Assert(lenient.Root is JsonObject obj && obj.Count == 2, "两个字段");
+        }
+
+        private static void Test_JsonCountAndNull()
+        {
+            var result = JsonToolEngine.Parse("""{"a":1,"b":[2,3]}""");
+            AssertEq(5, JsonToolEngine.CountNodes(result.Root), "对象1 + 值1 + 数组1 + 两项2");
+
+            var nullResult = JsonToolEngine.Parse("null");
+            Assert(nullResult.Success && nullResult.Root == null, "顶层 null 也是合法 JSON");
+            AssertEq("null", JsonToolEngine.Format(nullResult.Root), "null 原样输出");
+        }
+
+        // ==================== YAML key 排序 ====================
+
+        private static void Test_YamlSortNested()
+        {
+            var input = """
+b: 2
+a:
+  z: 1
+  y: 2
+""";
+            var expected = """
+a:
+  y: 2
+  z: 1
+b: 2
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "简单嵌套映射应支持排序");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "嵌套映射逐层排序");
+        }
+
+        private static void Test_YamlSortSequence()
+        {
+            var input = """
+list:
+  - third
+  - first
+name: x
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "含序列的映射应可排序（序列本身不动）");
+            AssertEq(input.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "序列元素顺序必须保持原样");
+        }
+
+        private static void Test_YamlSortComments()
+        {
+            var input = """
+# b comment
+b: 2
+# a comment
+a: 1
+""";
+            var expected = """
+# a comment
+a: 1
+# b comment
+b: 2
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "注释应跟随所属 key");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "注释随 key 一起移动");
+        }
+
+        private static void Test_YamlSortBailAndBlock()
+        {
+            Assert(!YamlKeySorter.TrySort("x: &a 1\n", out _), "含锚点应放弃排序");
+            Assert(!YamlKeySorter.TrySort("- a\n- b\n", out _), "根是序列时放弃排序");
+
+            var input = """
+z: 1
+text: |
+  b: 2
+  a: 1
+a: 2
+""";
+            var expected = """
+a: 2
+text: |
+  b: 2
+  a: 1
+z: 1
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "块标量内容应原样保留");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "块标量里的 a/b 不能被排序");
+        }
+
+        // ==================== 设置落盘 / CSV 边界 ====================
+
+        private static void Test_SettingsFlush()
+        {
+            CsvSettings.ThemeMode = 0;
+            CsvSettings.ThemeMode = 1;
+            CsvSettings.FlushSettings();
+
+            var file = Path.Combine(AppContext.BaseDirectory, ".wxd-work", "settings.json");
+            Assert(File.Exists(file), "FlushSettings 应生成 settings.json");
+
+            var text = File.ReadAllText(file);
+            Assert(text.Contains("\"ThemeMode\":\"1\"", StringComparison.Ordinal), "同步落盘应包含最新 ThemeMode");
+        }
+
+        private static void Test_CsvDelimiterLeadingBlankLine()
+        {
+            AssertEq('\t', SimpleTableReader.DetectCsvDelimiter("\n\ta\tb\n1\t2\n"), "首行空行不应影响制表符判断");
+            AssertEq(';', SimpleTableReader.DetectCsvDelimiter("\r\na;b\r\n1;2\r\n"), "CRLF 空行同样应跳过");
+        }
+
+        private static void Test_SingleInstanceGuard()
+        {
+            Assert(SingleInstanceGuard.TryAcquire(), "首次获取锁应成功");
+            Assert(!SingleInstanceGuard.TryAcquire(), "同一目录第二次获取应失败");
+        }
+
+        private static void Test_SortRowIndicesMatchesComparer()
+        {
+            var table = new DataTable();
+            table.Columns.Add("c", typeof(string));
+            string[] values = { "1", "2", "10", "a", "A", "b", "", "x y", "3.5", "1,000", "-2", "02" };
+            var random = new Random(12345);
+            for (int i = 0; i < 200; i++)
+                table.Rows.Add(values[random.Next(values.Length)]);
+
+            var indices = Enumerable.Range(0, table.Rows.Count).ToList();
+            foreach (var order in new[] { SortOrder.Ascending, SortOrder.Descending })
+            {
+                var expected = indices
+                    .OrderBy(i => table.Rows[i][0]?.ToString() ?? "", new NaturalStringComparer(order))
+                    .ToList();
+                var actual = TableBrowserControl.SortRowIndices(table, indices, 0, order);
+                AssertEq(string.Join(",", expected), string.Join(",", actual),
+                    order == SortOrder.Ascending ? "升序应与旧 OrderBy 稳定顺序一致" : "降序应与旧 OrderBy 稳定顺序一致");
+            }
+        }
+
+        private static void Test_JsonContainsComments()
+        {
+            Assert(JsonToolEngine.ContainsComments("{\"a\":1 // x\n}"), "行注释应识别");
+            Assert(JsonToolEngine.ContainsComments("{\"a\":1 /* x */}"), "块注释应识别");
+            Assert(!JsonToolEngine.ContainsComments("{\"a\":\"// not comment\"}"), "字符串里的 // 不算");
+            Assert(!JsonToolEngine.ContainsComments("{\"a\":\"/* not */\"}"), "字符串里的 /* 不算");
+            Assert(!JsonToolEngine.ContainsComments("{}"), "无注释");
+        }
+
+        private static void Test_EncodingBomAndAtomicWrite()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var utf8Bom = Path.Combine(dir, "u8.json");
+                File.WriteAllText(utf8Bom, "{\"a\":1}", new UTF8Encoding(true));
+                AssertEq(65001, TextFileReader.DetectEncoding(utf8Bom).CodePage, "UTF-8 BOM 识别");
+                AssertEq("{\"a\":1}", TextFileReader.ReadAllText(utf8Bom), "UTF-8 BOM 读取去掉 BOM");
+
+                var utf16 = Path.Combine(dir, "u16.json");
+                File.WriteAllText(utf16, "{\"a\":\"中文\"}", Encoding.Unicode);
+                AssertEq(1200, TextFileReader.DetectEncoding(utf16).CodePage, "UTF-16 LE BOM 识别");
+                AssertEq("{\"a\":\"中文\"}", TextFileReader.ReadAllText(utf16), "UTF-16 读取");
+
+                var utf16be = Path.Combine(dir, "u16be.json");
+                File.WriteAllText(utf16be, "{\"a\":1}", new UnicodeEncoding(true, true));
+                AssertEq(1201, TextFileReader.DetectEncoding(utf16be).CodePage, "UTF-16 BE BOM 识别");
+
+                Assert(AtomicFileWriter.TryWriteAllText(utf16, "{\"a\":\"改\"}", Encoding.Unicode, out var error),
+                    "原子写 UTF-16 失败：" + error);
+                var bytes = File.ReadAllBytes(utf16);
+                Assert(bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE, "原子写应保留 UTF-16 BOM");
+                AssertEq("{\"a\":\"改\"}", File.ReadAllText(utf16, Encoding.Unicode), "原子写内容");
+                Assert(Directory.GetFiles(dir, "*.tmp").Length == 0, "原子写不应遗留临时文件");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
             }
         }
 

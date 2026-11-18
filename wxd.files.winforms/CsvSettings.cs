@@ -582,69 +582,229 @@ namespace wxd.files.winforms
 
         #region 基础配置方法
 
-        private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
+        // 全局设置的写入不再走 ConfigurationManager：本机实测 ConfigurationManager.Save
+        // 单次要 ~11 秒，导致"选个文件/切个主题"都像卡死。
+        // 现在：内存字典 + .wxd-work/settings.json + 后台合并写；ConfigurationManager 只作为旧数据只读兜底。
+        private static Dictionary<string, string>? _settingsCache;
+        private static bool _settingsLoaded;
+        private static int _settingsVersion;
+        private static readonly object _settingsLock = new();
+        private static readonly object _settingsSaveLock = new();
+        private static bool _settingsSaveRunning;
+        private static Task? _settingsSaveTask;
+
+        private static string SettingsFilePath
         {
-            try
+            get
             {
-                var value = ConfigurationManager.AppSettings[key];
-                if (int.TryParse(value, out int result))
+                try
                 {
-                    return Math.Max(minValue, Math.Min(maxValue, result));
+                    return Path.Combine(AppContext.BaseDirectory, ".wxd-work", "settings.json");
+                }
+                catch
+                {
+                    return Path.Combine(Path.GetTempPath(), "wxd-settings.json");
                 }
             }
-            catch { }
+        }
+
+        private static void EnsureSettingsLoaded()
+        {
+            if (_settingsLoaded) return;
+            _settingsLoaded = true;
+
+            try
+            {
+                var file = SettingsFilePath;
+                if (File.Exists(file))
+                {
+                    var json = File.ReadAllText(file);
+                    _settingsCache = System.Text.Json.JsonSerializer
+                        .Deserialize<Dictionary<string, string>>(json);
+                }
+            }
+            catch
+            {
+                // 文件存在但读不出来（损坏/占用）：先留一份备份，避免后续写入把它彻底覆盖
+                try
+                {
+                    var file = SettingsFilePath;
+                    if (File.Exists(file))
+                        File.Copy(file, file + ".bad", overwrite: true);
+                }
+                catch { }
+            }
+
+            _settingsCache ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
+        {
+            var raw = GetStringValue(key, "");
+            if (int.TryParse(raw, out int result))
+                return Math.Max(minValue, Math.Min(maxValue, result));
             return defaultValue;
         }
 
-        private static void SetIntValue(string key, int value)
-        {
-            try
-            {
-                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                var appSettings = config.AppSettings;
-
-                if (appSettings.Settings[key] == null)
-                    appSettings.Settings.Add(key, value.ToString());
-                else
-                    appSettings.Settings[key].Value = value.ToString();
-
-                config.Save(ConfigurationSaveMode.Modified);
-                ConfigurationManager.RefreshSection("appSettings");
-            }
-            catch { }
-        }
+        private static void SetIntValue(string key, int value) => SetStringValue(key, value.ToString());
 
         internal static string GetStringValue(string key, string defaultValue)
         {
+            lock (_settingsLock)
+            {
+                EnsureSettingsLoaded();
+                if (_settingsCache!.TryGetValue(key, out var cached))
+                    return cached;
+            }
+
+            // 旧配置只读兜底（读取很快，实测 <1ms）
             try
             {
-                var value = ConfigurationManager.AppSettings[key];
-                return value ?? defaultValue;
+                var legacy = ConfigurationManager.AppSettings[key];
+                if (legacy != null)
+                {
+                    lock (_settingsLock) { _settingsCache![key] = legacy; }
+                    return legacy;
+                }
             }
             catch { }
+
             return defaultValue;
         }
 
         internal static void SetStringValue(string key, string value)
         {
+            lock (_settingsLock)
+            {
+                EnsureSettingsLoaded();
+                if (_settingsCache!.TryGetValue(key, out var existing)
+                    && string.Equals(existing, value, StringComparison.Ordinal))
+                    return;   // 值没变就不写盘
+
+                _settingsCache[key] = value;
+                _settingsVersion++;
+            }
+
+            ScheduleSettingsSave();
+        }
+
+        /// <summary>
+        /// 同步落盘：关窗/退出前调用。settings 的常规写入是 300ms 防抖的后台任务，
+        /// 进程退出会把还没跑完的任务带走，导致关窗前的主题/窗格/页签状态丢失。
+        /// 这里直接按当前缓存写一次（JSON 文件，毫秒级），不依赖后台任务。
+        /// </summary>
+        internal static void FlushSettings()
+        {
             try
             {
-                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                var appSettings = config.AppSettings;
+                // 先等后台防抖任务跑完，避免它拿着旧快照在 Flush 之后又把旧内容写回去
+                Task? pending;
+                lock (_settingsSaveLock) { pending = _settingsSaveTask; }
+                if (pending != null && !pending.IsCompleted)
+                {
+                    try { pending.Wait(2000); } catch { }
+                }
 
-                if (appSettings.Settings[key] == null)
-                    appSettings.Settings.Add(key, value);
-                else
-                    appSettings.Settings[key].Value = value;
+                string json;
+                lock (_settingsLock)
+                {
+                    if (!_settingsLoaded || _settingsCache == null) return;
+                    json = System.Text.Json.JsonSerializer.Serialize(_settingsCache);
+                }
 
-                config.Save(ConfigurationSaveMode.Modified);
-                ConfigurationManager.RefreshSection("appSettings");
+                var file = SettingsFilePath;
+                var dir = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                AtomicFileWriter.TryWriteAllText(file, json);
             }
-            catch (Exception ex)
+            catch { }
+        }
+
+        /// <summary>同步落盘最近访问路径（关窗前调用，避免最后一条路径丢失）。</summary>
+        internal static void FlushRecentPaths()
+        {
+            try
             {
-                System.Diagnostics.Debug.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
-                System.Diagnostics.Trace.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
+                Task? pending;
+                lock (_recentPathsSaveLock) { pending = _recentPathsSaveTask; }
+                if (pending != null && !pending.IsCompleted)
+                {
+                    try { pending.Wait(2000); } catch { }
+                }
+
+                string json;
+                lock (_recentPathsLock)
+                {
+                    if (!_recentPathsLoaded || _recentPathsCache == null) return;
+                    json = System.Text.Json.JsonSerializer.Serialize(_recentPathsCache);
+                }
+
+                var file = RecentPathsFilePath;
+                var dir = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                AtomicFileWriter.TryWriteAllText(file, json);
             }
+            catch { }
+        }
+
+        private static void ScheduleSettingsSave()
+        {
+            lock (_settingsSaveLock)
+            {
+                if (_settingsSaveRunning) return;
+                _settingsSaveRunning = true;
+            }
+
+            _settingsSaveTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(300).ConfigureAwait(false);   // 合并同一批设置变更
+
+                    int savedVersion;
+                    while (true)
+                    {
+                        string json;
+                        int version;
+                        lock (_settingsLock)
+                        {
+                            version = _settingsVersion;
+                            json = System.Text.Json.JsonSerializer.Serialize(
+                                _settingsCache ?? new Dictionary<string, string>());
+                        }
+
+                        var file = SettingsFilePath;
+                        var dir = Path.GetDirectoryName(file);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        AtomicFileWriter.TryWriteAllText(file, json);
+                        savedVersion = version;
+
+                        lock (_settingsLock)
+                        {
+                            if (version == _settingsVersion) break;
+                        }
+                    }
+
+                    lock (_settingsSaveLock)
+                    {
+                        _settingsSaveRunning = false;
+                    }
+
+                    bool changed;
+                    lock (_settingsLock)
+                    {
+                        changed = savedVersion != _settingsVersion;
+                    }
+                    if (changed) ScheduleSettingsSave();
+                }
+                catch
+                {
+                    lock (_settingsSaveLock) { _settingsSaveRunning = false; }
+                }
+            });
         }
 
         #endregion
@@ -670,6 +830,17 @@ namespace wxd.files.winforms
         {
             get => GetStringValue(LargeFileViewerDirKey, "");
             set => SetStringValue(LargeFileViewerDirKey, value);
+        }
+
+        private const string TextCompareDirKey = "TextCompareLastDirectory";
+
+        /// <summary>
+        /// 文本比对上次选择文件的目录
+        /// </summary>
+        public static string TextCompareLastDirectory
+        {
+            get => GetStringValue(TextCompareDirKey, "");
+            set => SetStringValue(TextCompareDirKey, value);
         }
 
         #endregion
@@ -706,38 +877,148 @@ namespace wxd.files.winforms
 
         private const string RecentPathsKey = "RecentPaths";
 
-        /// <summary>获取最近访问的路径列表（最多15条）</summary>
-        public static List<string> GetRecentPaths()
+        // 最近路径走"内存缓存 + 后台合并写"。
+        // ConfigurationManager.Save 在这台机器上单次要 ~11 秒，启动时 5 个窗格各写一次
+        // 会把主界面卡住近一分钟；现在同一批导航只落一次配置，而且不占 UI 线程。
+        private static List<string>? _recentPathsCache;
+        private static bool _recentPathsLoaded;
+        private static int _recentPathsVersion;
+        private static readonly object _recentPathsLock = new();
+        private static readonly object _recentPathsSaveLock = new();
+        private static bool _recentPathsSaveRunning;
+        private static Task? _recentPathsSaveTask;
+
+        /// <summary>
+        /// 最近路径单独存一个 JSON 文件：不走 ConfigurationManager。
+        /// 这台机器上 ConfigurationManager.Save 单次要 ~11 秒，启动时写它会把 UI 卡住。
+        /// </summary>
+        private static string RecentPathsFilePath
         {
-            try
+            get
             {
-                var json = GetStringValue(RecentPathsKey, "[]");
-                var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
-                return list ?? new List<string>();
-            }
-            catch
-            {
-                return new List<string>();
+                try
+                {
+                    return Path.Combine(AppContext.BaseDirectory, ".wxd-work", "recent-paths.json");
+                }
+                catch
+                {
+                    return Path.Combine(Path.GetTempPath(), "wxd-recent-paths.json");
+                }
             }
         }
 
-        /// <summary>添加一条路径到最近访问记录，保留最近15条</summary>
+        /// <summary>获取最近访问的路径列表（最多15条）</summary>
+        public static List<string> GetRecentPaths()
+        {
+            lock (_recentPathsLock)
+            {
+                EnsureRecentPathsLoaded();
+                return new List<string>(_recentPathsCache!);
+            }
+        }
+
+        /// <summary>添加一条路径到最近访问记录，保留最近15条；落盘在后台合并执行</summary>
         public static void AddRecentPath(string path)
         {
+            lock (_recentPathsLock)
+            {
+                EnsureRecentPathsLoaded();
+
+                // 已经在最前面就不用改，也就不触发配置写入
+                if (_recentPathsCache!.Count > 0
+                    && string.Equals(_recentPathsCache[0], path, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                _recentPathsCache.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
+                _recentPathsCache.Insert(0, path);
+                if (_recentPathsCache.Count > 15)
+                    _recentPathsCache.RemoveRange(15, _recentPathsCache.Count - 15);
+                _recentPathsVersion++;
+            }
+
+            ScheduleRecentPathsSave();
+        }
+
+        private static void EnsureRecentPathsLoaded()
+        {
+            if (_recentPathsLoaded) return;
+            _recentPathsLoaded = true;
+
             try
             {
-                var list = GetRecentPaths();
-                // 如果已存在则移除旧记录
-                list.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
-                // 插入到最前面
-                list.Insert(0, path);
-                // 只保留15条
-                if (list.Count > 15)
-                    list.RemoveRange(15, list.Count - 15);
-                var json = System.Text.Json.JsonSerializer.Serialize(list);
-                SetStringValue(RecentPathsKey, json);
+                string? json = null;
+                var file = RecentPathsFilePath;
+                if (File.Exists(file))
+                    json = File.ReadAllText(file);
+
+                // 兼容旧版本：第一次从 ConfigurationManager 里迁移出来
+                if (json == null)
+                    json = GetStringValue(RecentPathsKey, "[]");
+
+                _recentPathsCache = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
             }
-            catch { }
+            catch
+            {
+                _recentPathsCache = new List<string>();
+            }
+        }
+
+        private static void ScheduleRecentPathsSave()
+        {
+            lock (_recentPathsSaveLock)
+            {
+                if (_recentPathsSaveRunning) return;
+                _recentPathsSaveRunning = true;
+            }
+
+            _recentPathsSaveTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(600).ConfigureAwait(false);   // 合并同一批导航
+
+                    int savedVersion;
+                    while (true)
+                    {
+                        string json;
+                        int version;
+                        lock (_recentPathsLock)
+                        {
+                            version = _recentPathsVersion;
+                            json = System.Text.Json.JsonSerializer.Serialize(_recentPathsCache ?? new List<string>());
+                        }
+
+                        var file = RecentPathsFilePath;
+                        var dir = Path.GetDirectoryName(file);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        AtomicFileWriter.TryWriteAllText(file, json);
+                        savedVersion = version;
+
+                        lock (_recentPathsLock)
+                        {
+                            if (version == _recentPathsVersion) break;
+                        }
+                    }
+
+                    lock (_recentPathsSaveLock)
+                    {
+                        _recentPathsSaveRunning = false;
+                    }
+
+                    // 收尾窗口里又有新路径：再排一次
+                    bool changed;
+                    lock (_recentPathsLock)
+                    {
+                        changed = savedVersion != _recentPathsVersion;
+                    }
+                    if (changed) ScheduleRecentPathsSave();
+                }
+                catch
+                {
+                    lock (_recentPathsSaveLock) { _recentPathsSaveRunning = false; }
+                }
+            });
         }
 
         #endregion

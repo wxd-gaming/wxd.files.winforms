@@ -41,6 +41,8 @@
 | 版本历史对比 | 文件树右键 **历史记录对比** | SVN/Git 双栏差异，行号同源 |
 | 冲突解决 | 文件树右键 **编辑冲突** | 三栏合并，逐单元格取舍 |
 | 日志分析 | 工具栏 **日志分析** | 超大文本文件浏览、搜索、导出、格式化 |
+| 文本比对 | 工具栏 **文本比对** | 文本文件按行对比；csv/xlsx 按表格逐单元格对比，可只看差异行 |
+| JSON 工具 | 工具栏 **JSON** | 格式化 / 折叠 / 搜索 / 递归 key 排序，只读预览 |
 | 笔记 | 工具栏 **📝 笔记** | 随手记 + 富文本粘贴截图，标题/内容全文搜索 |
 | 自定义命令 | **≡ → 命令管理** | 把常用脚本、网址做成工具栏按钮 |
 | 自动更新 | 工具栏 **关于** | 每天自动检查 Release（Gitee 优先，失败自动改用 GitHub），可跳过版本 |
@@ -213,6 +215,24 @@
 ### 日志分析
 - 流式读取、虚拟滚动、行索引、行号跳转、搜索（含正则/上下文行）、导出与反向导出、JSON 格式化、文件分块
 
+### 文本比对
+- 工具栏 **文本比对** 打开独立窗口；左右两格各选一个文件，也可直接把文件拖进窗口或对应网格
+- 文本文件（txt/xml/yaml/json/ini/log…）按行差分：修改行黄色、仅左侧有红色、仅右侧有绿色，另一侧用灰色占位行对齐
+- **csv / xlsx / xls 走表格比对**：按行号一一对齐、逐单元格比较，只高亮发生变化的格子；不认表头行、不做冻结行，也不复用阅读器
+- 行号列显示各自源文件行号；两侧滚动同步，长行悬停可看完整内容
+- 勾选 **只保留差异行** 后只显示有差异的行，行号仍是原文件行号
+- JSON / YAML 可勾选 **对比前按 key 排序**：JSON 递归排序并统一缩进，YAML 对块状映射保守排序（序列/块标量/锚点不排），只影响比对、不改磁盘文件
+- 状态栏汇总左右行数/列数、修改（差异单元格数）/新增/删除数量
+- 自动识别 UTF-8（含 BOM）与 GB18030（中文 GBK 配置表）
+
+### JSON 工具
+- 工具栏 **JSON** 打开独立窗口：左侧源文本、右侧可折叠 JSON 树
+- 格式化（2 空格缩进）、压缩为一行、递归按 key 排序；中文不转义、数字保留原写法
+- 搜索 key / 值：命中节点标红并展开祖先，上下切换命中（F3 / Shift+F3）
+- 全部展开 / 全部折叠、复制结果、打开文件或直接拖入；Ctrl+O / Ctrl+F
+- 保存 / 另存为（Ctrl+S）：按原文件编码写回，标题用 `*` 标未保存，关闭前提示
+- 解析允许注释与尾逗号；语法错误给出行列位置
+
 ### 全局
 - 深色 / 浅色主题即时切换（深色近 Visual Studio 风格，浅色清爽天蓝）
 - 状态记忆：各窗格目录/过滤/视图、窗格数、布局、主题、显示隐藏开关、阅读器与日志分析上次目录、最近路径、自定义命令；关窗自动保存，重启自动恢复
@@ -252,7 +272,8 @@ dotnet run --project wxd.files.winforms/wxd.files.winforms.csproj
 
 | 层级 | 位置 | 内容 |
 | --- | --- | --- |
-| 全局设置 | `wxd.files.winforms.dll.config` | 主题、窗格数量、布局、各窗格页签状态、最近路径、自定义命令、更新检查时间 |
+| 全局设置 | `{exe}/.wxd-work/settings.json`（旧 `dll.config` 只读兼容） | 主题、窗格数量、布局、各窗格页签状态、自定义命令、更新检查时间 |
+| 最近路径 | `{exe}/.wxd-work/recent-paths.json` | 最近访问目录（最多 15 条），后台合并写 |
 | 目录级配置 | 每个目录的 `.wxd-work/config.json` | 冻结行、表头行、映射行、唯一列、列关联、关联模板、文件别名、列显隐、冻结列数 |
 
 目录级配置和数据放在一起，**跟着文件夹移植**，换台机器不用重配；`.wxd-work` 首次配置时自动创建。最近路径全局最多保留 15 条。
@@ -309,6 +330,13 @@ wxd.files.winforms/
 ├── ConflictResolveControl.cs         # 冲突解决三栏视图
 ├── LargeFileViewer.cs                # 日志分析窗体
 ├── LargeFileReaderControl.cs         # 日志分析核心控件（流式读取 + 格式化）
+├── TextCompareForm.cs                # 文本/表格比对窗体（左右双网格 + 差异着色）
+├── TextDiffEngine.cs                 # 文本按行差分（裁剪前后缀 + Myers，超限退化整块替换）
+├── TableDiffEngine.cs                # 表格按行对齐、逐单元格差分
+├── SimpleTableReader.cs              # CSV/Excel 原始单元格读取（不认表头、不做冻结行）
+├── TextFileReader.cs                 # 文本读取（按行 + UTF-8/GB18030 自动识别）
+├── JsonToolForm.cs                   # JSON 工具窗体（源文本 + 可折叠树 + 搜索）
+├── JsonToolEngine.cs                 # JSON 解析/格式化/压缩/递归 key 排序
 ├── LineListView.cs                   # 虚拟滚动行列表
 ├── FileSplitter.cs                   # 大文件分块读取
 ├── FileCacheStore.cs                 # 搜索结果缓存（内存 LRU + 磁盘）
@@ -346,6 +374,8 @@ wxd.files.winforms/
 | [ConfigPersistence.md](wxd.files.winforms/skills/ConfigPersistence.md) | `.wxd-work/config.json` 双层持久化 |
 | [FileBrowserPanel.md](wxd.files.winforms/skills/FileBrowserPanel.md) | 单窗格文件浏览 |
 | [LargeFileViewer.md](wxd.files.winforms/skills/LargeFileViewer.md) | 大文件流式读取与虚拟滚动 |
+| [TextCompare.md](wxd.files.winforms/skills/TextCompare.md) | 文本/表格比对：差分算法、对齐口径、编码识别 |
+| [JsonTool.md](wxd.files.winforms/skills/JsonTool.md) | JSON 面板：格式化/折叠/搜索/key 排序 |
 | [ThemeSystem.md](wxd.files.winforms/skills/ThemeSystem.md) | 深色 / 浅色主题体系 |
 | [CustomCommand.md](wxd.files.winforms/skills/CustomCommand.md) | 自定义命令系统 |
 

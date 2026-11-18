@@ -150,36 +150,13 @@ namespace wxd.files.winforms
 
         private static string GetConfigString(string key, string defaultValue)
         {
-            try
-            {
-                var value = ConfigurationManager.AppSettings[key];
-                return value ?? defaultValue;
-            }
-            catch
-            {
-                return defaultValue;
-            }
+            // 统一走 CsvSettings 的 JSON 设置存储（旧 ConfigurationManager 值自动兜底）
+            return CsvSettings.GetStringValue(key, defaultValue);
         }
 
         private static void SetConfigString(string key, string value)
         {
-            try
-            {
-                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                var appSettings = config.AppSettings;
-
-                if (appSettings.Settings[key] == null)
-                    appSettings.Settings.Add(key, value);
-                else
-                    appSettings.Settings[key].Value = value;
-
-                config.Save(ConfigurationSaveMode.Modified);
-                ConfigurationManager.RefreshSection("appSettings");
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"AppStateStore.SetConfigString Error: {ex.Message}");
-            }
+            CsvSettings.SetStringValue(key, value);
         }
 
         // ==================== JSON 序列化辅助类 ====================

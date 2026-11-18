@@ -31,6 +31,13 @@ namespace wxd.files.winforms
         private Label _lblCellPos = new();
         private Label _lblRowNumber = new();      // 选中标记行的源文件行号区间
         private Font _rowNumberFont = Theme.Mono;  // 行号区等宽字体，多位行号对齐便于扫读
+        // 行号重绘每帧都跑：刷子/对齐格式缓存成字段，避免每行 new 一个 GDI 对象
+        private SolidBrush? _rowNumberBrush;
+        private readonly StringFormat _rowNumberFormat = new()
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center
+        };
         private static readonly Font AdvHelpGlyphFont = new("Microsoft YaHei UI", 12f, FontStyle.Bold);
         private ThemeCheckBox _chkFilterKeepAll = new();
         private Panel _pnlLoading = new();
@@ -58,6 +65,9 @@ namespace wxd.files.winforms
         private bool[] _columnCheckStates = Array.Empty<bool>();
         private string _initialContentFilter = "";
         private List<ColumnLinkConfig> _columnLinks = new();
+        // CellFormatting 逐单元格跑：预先算好"哪些原始列有列关联"，无关联的列直接跳过
+        private List<ColumnLinkConfig> _relevantColumnLinks = new();
+        private bool[] _columnLinkFlags = Array.Empty<bool>();
         private List<(string display, string fullPath)> _fileEntries = new();
         private List<int> _visibleColumnIndices = new();
         /// <summary>冻结列数（显示列口径，冻结最左侧 N 列；0 = 不冻结），按文件持久化</summary>
@@ -1310,6 +1320,9 @@ namespace wxd.files.winforms
             if (IsDisposed) return;
             ThemeRecolor.Apply(this);
             _rowNumberFont = Theme.Mono;
+            // 行号刷子的颜色来自 Theme.P，换肤后必须重建
+            _rowNumberBrush?.Dispose();
+            _rowNumberBrush = null;
             StyleGrid(_dataGrid);
             StyleGrid(_dataGridHeader, frozenHeader: true);
             _dataGrid.Invalidate();
@@ -1521,6 +1534,7 @@ namespace wxd.files.winforms
             {
                 link.RefreshFromTemplate();
             }
+            RebuildColumnLinkPlans();
             // ★ 后台异步构建关联 lookup，不阻塞表格显示
             if (_columnLinks.Count > 0)
                 FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
@@ -2342,37 +2356,12 @@ namespace wxd.files.winforms
                 _filterMatchCells.Clear();
                 _headerFilterMatchCells.Clear();
                 var mergedOrigMatch = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
-                foreach (var (origRow, origCols) in mergedOrigMatch)
-                {
-                    // 冻结行区域（origRow < _frozenRows）：直接存入 _headerFilterMatchCells
-                    if (origRow < _frozenRows)
-                    {
-                        var displayCols = new HashSet<int>();
-                        foreach (var origCol in origCols)
-                        {
-                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                            if (displayCol >= 0)
-                                displayCols.Add(displayCol);
-                        }
-                        if (displayCols.Count > 0)
-                            _headerFilterMatchCells[origRow] = displayCols;
-                    }
-                    else
-                    {
-                        // 内容行区域：转换为显示行索引存入 _filterMatchCells
-                        int displayRow = visibleRowIndices.IndexOf(origRow);
-                        if (displayRow < 0) continue;
-                        var displayCols = new HashSet<int>();
-                        foreach (var origCol in origCols)
-                        {
-                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                            if (displayCol >= 0)
-                                displayCols.Add(displayCol);
-                        }
-                        if (displayCols.Count > 0)
-                            _filterMatchCells[displayRow] = displayCols;
-                    }
-                }
+                // 原始行列 → 显示行列：一次建反查表，避免大表上逐行 List.IndexOf（O(n²)）
+                var (headerCells, bodyCells) = TableIndexMapper.MapMatchCellsToDisplay(
+                    mergedOrigMatch, _visibleColumnIndices, visibleRowIndices, _frozenRows,
+                    _dataTable.Columns.Count, _fileData.Rows.Count);
+                _headerFilterMatchCells = headerCells;
+                _filterMatchCells = bodyCells;
                 RefreshFilteredDisplay(visibleRowIndices);
             }
             else
@@ -2389,19 +2378,10 @@ namespace wxd.files.winforms
                 {
                     // ★ 排序视图：只重排显示表，_dataTable 保持原始行序
                     var sortedRows = ApplySortToRowIndices(Enumerable.Range(0, _dataTable.Rows.Count).ToList());
-                    foreach (var (origRow, origCols) in mergedNoFreeze)
-                    {
-                        int displayRow = sortedRows.IndexOf(origRow);
-                        if (displayRow < 0) continue;
-                        var displayCols = new HashSet<int>();
-                        foreach (var origCol in origCols)
-                        {
-                            int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                            if (displayCol >= 0) displayCols.Add(displayCol);
-                        }
-                        if (displayCols.Count > 0)
-                            _filterMatchCells[displayRow] = displayCols;
-                    }
+                    var (_, sortedBody) = TableIndexMapper.MapMatchCellsToDisplay(
+                        mergedNoFreeze, _visibleColumnIndices, sortedRows, 0,
+                        _dataTable.Columns.Count, _fileData.Rows.Count);
+                    _filterMatchCells = sortedBody;
                     RefreshFilteredDisplay(sortedRows);
                     ApplyFrozenColumns();
                     RebuildSelectedRowIndices();
@@ -2429,18 +2409,10 @@ namespace wxd.files.winforms
                 RebuildRowMap();
 
                 // ★ 无冻结行模式下计算过滤匹配单元格（全表作为 DataSource，显示行 i 对应原始行 i）
-                foreach (var (origRow, origCols) in mergedNoFreeze)
-                {
-                    if (origRow < 0 || origRow >= _dataGrid.Rows.Count) continue;
-                    var displayCols = new HashSet<int>();
-                    foreach (var origCol in origCols)
-                    {
-                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                        if (displayCol >= 0) displayCols.Add(displayCol);
-                    }
-                    if (displayCols.Count > 0)
-                        _filterMatchCells[origRow] = displayCols;
-                }
+                var (_, directBody) = TableIndexMapper.MapMatchCellsToDisplay(
+                    mergedNoFreeze, _visibleColumnIndices, null, 0,
+                    _dataTable.Columns.Count, _dataTable.Rows.Count);
+                _filterMatchCells = directBody;
             }
 
             ApplyFrozenColumns();
@@ -2717,6 +2689,7 @@ namespace wxd.files.winforms
                 {
                     link.RefreshFromTemplate();
                 }
+                RebuildColumnLinkPlans();
                 // ★ 后台异步构建关联 lookup
                 if (_columnLinks.Count > 0)
                     FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
@@ -2919,28 +2892,10 @@ namespace wxd.files.winforms
 
             // 合并匹配单元格 → 转换显示行列索引
             var merged = MergeMatchCells(contentMatches, advMatches);
-            var headerMatchCells = new Dictionary<int, HashSet<int>>();
-            var dataMatchCells = new Dictionary<int, HashSet<int>>();
-
-            foreach (var (origRow, origCols) in merged)
-            {
-                var displayCols = new HashSet<int>();
-                foreach (var origCol in origCols)
-                {
-                    int displayCol = visibleColIndices.IndexOf(origCol);
-                    if (displayCol >= 0) displayCols.Add(displayCol);
-                }
-                if (displayCols.Count == 0) continue;
-
-                if (origRow < frozenRows)
-                    headerMatchCells[origRow] = displayCols;
-                else
-                {
-                    int displayRow = visibleRowIndices.IndexOf(origRow);
-                    if (displayRow >= 0)
-                        dataMatchCells[displayRow] = displayCols;
-                }
-            }
+            // 原始行列 → 显示行列：一次建反查表，避免 3 万行表上逐行 List.IndexOf（O(n²)）
+            var (headerMatchCells, dataMatchCells) = TableIndexMapper.MapMatchCellsToDisplay(
+                merged, visibleColIndices, visibleRowIndices, frozenRows,
+                dataTable.Columns.Count, dataTable.Rows.Count);
 
             return new FilterResult
             {
@@ -2961,8 +2916,8 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(contentFilter))
                 return new Dictionary<int, HashSet<int>>();
 
-            string processedFilter = contentFilter
-                .Replace("||", " | ").Replace("&&", " & ");
+            // 过滤词只解析一次：逐单元格再 Split 会产生上百万个临时数组
+            var matcher = ContentFilterMatcher.Parse(contentFilter);
             var matchCells = new Dictionary<int, HashSet<int>>();
 
             for (int i = 0; i < fileData.Rows.Count; i++)
@@ -2974,8 +2929,7 @@ namespace wxd.files.winforms
                 HashSet<int>? rowMatchCols = null;
                 foreach (var colIdx in visibleColIndices)
                 {
-                    if (colIdx < cells.Count &&
-                        MatchesFilter(cells[colIdx], processedFilter))
+                    if (colIdx < cells.Count && matcher.Matches(cells[colIdx]))
                     {
                         (rowMatchCols ??= new HashSet<int>()).Add(colIdx);
                     }
@@ -3242,8 +3196,7 @@ namespace wxd.files.winforms
             if (string.IsNullOrEmpty(contentFilter))
                 return new Dictionary<int, HashSet<int>>();
 
-            string processedContentFilter = contentFilter
-                .Replace("||", " | ").Replace("&&", " & ");
+            var matcher = ContentFilterMatcher.Parse(contentFilter);
             var matchCells = new Dictionary<int, HashSet<int>>();
 
             // 搜索所有行：从 0 到 _fileData.Rows.Count（包括冻结行）
@@ -3253,8 +3206,7 @@ namespace wxd.files.winforms
                 HashSet<int>? rowMatchCols = null;
                 foreach (var colIdx in _visibleColumnIndices)
                 {
-                    if (colIdx < cells.Count &&
-                        MatchesFilter(cells[colIdx], processedContentFilter))
+                    if (colIdx < cells.Count && matcher.Matches(cells[colIdx]))
                     {
                         (rowMatchCols ??= new HashSet<int>()).Add(colIdx);
                     }
@@ -3682,35 +3634,11 @@ namespace wxd.files.winforms
             _filterMatchCells.Clear();
             _headerFilterMatchCells.Clear();
             var mergedOrig = MergeMatchCells(_contentSearchMatchCells, _advFilterMatchCells);
-            foreach (var (origRow, origCols) in mergedOrig)
-            {
-                if (origRow < _frozenRows)
-                {
-                    var displayCols = new HashSet<int>();
-                    foreach (var origCol in origCols)
-                    {
-                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                        if (displayCol >= 0)
-                            displayCols.Add(displayCol);
-                    }
-                    if (displayCols.Count > 0)
-                        _headerFilterMatchCells[origRow] = displayCols;
-                }
-                else
-                {
-                    int displayRow = visibleRowIndices.IndexOf(origRow);
-                    if (displayRow < 0) continue;
-                    var displayCols = new HashSet<int>();
-                    foreach (var origCol in origCols)
-                    {
-                        int displayCol = _visibleColumnIndices.IndexOf(origCol);
-                        if (displayCol >= 0)
-                            displayCols.Add(displayCol);
-                    }
-                    if (displayCols.Count > 0)
-                        _filterMatchCells[displayRow] = displayCols;
-                }
-            }
+            var (progressHeaderCells, progressBodyCells) = TableIndexMapper.MapMatchCellsToDisplay(
+                mergedOrig, _visibleColumnIndices, visibleRowIndices, _frozenRows,
+                _dataTable.Columns.Count, _fileData.Rows.Count);
+            _headerFilterMatchCells = progressHeaderCells;
+            _filterMatchCells = progressBodyCells;
             var progress = new Progress<(int percent, string text)>(p => UpdateLoadingProgress(p.percent, p.text));
 
             // ★ 捕获后台线程需要的只读引用（避免后台线程访问 UI 控件）
@@ -3941,18 +3869,64 @@ namespace wxd.files.winforms
             return SortRowIndices(_dataTable, rowIndices, GetSourceColumnIndex(_sortColumnIndex), _sortOrder);
         }
 
-        /// <summary>按指定源列排序原始行索引（后台线程安全：只读传入的 DataTable）</summary>
-        private static List<int> SortRowIndices(DataTable sourceTable, List<int> rowIndices, int sourceColumnIndex, SortOrder sortOrder)
+        /// <summary>
+        /// 按指定列对显示行索引排序。
+        /// 排序键在比较前算一次：旧实现每比较一次就要做两次 double.TryParse，
+        /// 3 万行排序约 45 万次比较 = 90 万次解析；这里改成"先算键、再排序"。
+        /// 同键按原始顺序稳定排列（与 OrderBy 的稳定性一致）。
+        /// </summary>
+        internal static List<int> SortRowIndices(DataTable sourceTable, List<int> rowIndices, int sourceColumnIndex, SortOrder sortOrder)
         {
             if (sourceColumnIndex < 0 || sourceColumnIndex >= sourceTable.Columns.Count || rowIndices.Count == 0)
                 return rowIndices;
 
-            var comparer = new NaturalStringComparer(sortOrder);
-            return rowIndices
-                .OrderBy(i => i >= 0 && i < sourceTable.Rows.Count
-                    ? sourceTable.Rows[i][sourceColumnIndex]?.ToString() ?? ""
-                    : "", comparer)
-                .ToList();
+            int count = rowIndices.Count;
+            var entries = new SortEntry[count];
+            for (int i = 0; i < count; i++)
+            {
+                int rowIndex = rowIndices[i];
+                string text = rowIndex >= 0 && rowIndex < sourceTable.Rows.Count
+                    ? sourceTable.Rows[rowIndex][sourceColumnIndex]?.ToString() ?? ""
+                    : "";
+                entries[i] = new SortEntry(text, i);
+            }
+
+            Array.Sort(entries, (a, b) => CompareSortEntries(a, b, sortOrder));
+
+            var result = new List<int>(count);
+            foreach (var entry in entries)
+                result.Add(rowIndices[entry.DisplayIndex]);
+            return result;
+        }
+
+        /// <summary>排序键：文本 + 预先解析好的数值（解析失败 IsNumber=false）。</summary>
+        private readonly struct SortEntry
+        {
+            internal SortEntry(string text, int displayIndex)
+            {
+                Text = text;
+                DisplayIndex = displayIndex;
+                IsNumber = double.TryParse(text,
+                    System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands,
+                    System.Globalization.CultureInfo.CurrentCulture, out double number);
+                Number = number;
+            }
+
+            internal string Text { get; }
+            internal int DisplayIndex { get; }
+            internal bool IsNumber { get; }
+            internal double Number { get; }
+        }
+
+        private static int CompareSortEntries(SortEntry x, SortEntry y, SortOrder sortOrder)
+        {
+            int result = x.IsNumber && y.IsNumber
+                ? x.Number.CompareTo(y.Number)
+                : string.Compare(x.Text, y.Text, StringComparison.OrdinalIgnoreCase);
+
+            // 同键按输入顺序（稳定排序），不参与升降序翻转
+            if (result == 0) return x.DisplayIndex.CompareTo(y.DisplayIndex);
+            return sortOrder == SortOrder.Ascending ? result : -result;
         }
 
         private void UpdateColumnHeaderSortGlyph()
@@ -4122,8 +4096,12 @@ namespace wxd.files.winforms
                         if (originalRowIndex >= 0 && originalRowIndex < _dataTable.Rows.Count &&
                             originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                         {
-                            // 1. 更新内存中的数据
+                            // 1. 更新内存中的数据（_fileData 是过滤/行号的数据源，必须同步，
+                            //    否则弹窗改完值后按行过滤/关联校验仍读旧值）
                             _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+                            if (originalRowIndex < _fileData.Rows.Count
+                                && originalColumnIndex < _fileData.Rows[originalRowIndex].Cells.Count)
+                                _fileData.Rows[originalRowIndex].Cells[originalColumnIndex] = newValue;
 
                             // 2. 回写文件
                             SaveCsvFile();
@@ -4164,6 +4142,9 @@ namespace wxd.files.winforms
                                     originalColumnIndex >= 0 && originalColumnIndex < _dataTable.Columns.Count)
                                 {
                                     _dataTable.Rows[originalRowIndex][originalColumnIndex] = newValue;
+                                    if (originalRowIndex < _fileData.Rows.Count
+                                        && originalColumnIndex < _fileData.Rows[originalRowIndex].Cells.Count)
+                                        _fileData.Rows[originalRowIndex].Cells[originalColumnIndex] = newValue;
                                     SaveExcelFile();
 
                                     int displayColIndex = _visibleColumnIndices.Count > 0
@@ -4577,7 +4558,8 @@ namespace wxd.files.winforms
                     if (!isUnsavedRow)
                     {
                         // ★ 列关联颜色检查
-                        ColumnLinkChecker.CheckCellColor(_cache, e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir, _columnLinks);
+                        ColumnLinkChecker.CheckCellColor(_cache, e, _visibleColumnIndices, _dataGrid, _filePath, FrozenDir,
+                            _columnLinks, _relevantColumnLinks, _columnLinkFlags);
                         if (_highlightsReady && _highlightRows.Contains(e.RowIndex))
                         {
                             e.CellStyle.BackColor = Theme.CellTint(Color.FromArgb(255, 255, 200));
@@ -4869,6 +4851,31 @@ namespace wxd.files.winforms
             return Path.GetFileName(_filePath);
         }
 
+        /// <summary>
+        /// 重建列关联的快速索引：只保留指向当前文件的配置，并标记"原始列 → 是否有关联"。
+        /// CellFormatting 每帧要检查上百个单元格，逐格做 SourceFile 通配匹配 + GetRelativePath 太贵；
+        /// 这里在配置/文件变化时算一次，逐格只剩一次 bool 数组判断。
+        /// </summary>
+        private void RebuildColumnLinkPlans()
+        {
+            _relevantColumnLinks = new List<ColumnLinkConfig>();
+            _columnLinkFlags = new bool[_dataTable?.Columns.Count ?? 0];
+            if (_columnLinks.Count == 0 || _dataTable == null) return;
+
+            string currentRel = GetCurrentRelativePath();
+            string fileName = Path.GetFileName(_filePath);
+
+            foreach (var link in _columnLinks)
+            {
+                if (link.FieldLinks == null || link.FieldLinks.Count == 0) continue;
+                if (!LinkSourceMatcher.Matches(link.SourceFile, currentRel, fileName)) continue;
+
+                _relevantColumnLinks.Add(link);
+                if ((uint)link.SourceColumnIndex < (uint)_columnLinkFlags.Length)
+                    _columnLinkFlags[link.SourceColumnIndex] = true;
+            }
+        }
+
         /// <summary>后台异步构建关联 lookup，不阻塞 UI（fire-and-forget，内部防重入）</summary>
         private void FireAndForgetBuildLinkLookups(List<ColumnLinkConfig> columnLinks, string filePath)
         {
@@ -5018,11 +5025,8 @@ namespace wxd.files.winforms
             // ★ 行号取值单点化：优先源文件物理行号
             var lineNumber = GetDisplayLineNumber(e.RowIndex);
             var rowHeaderBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, _dataGrid.RowHeadersWidth, e.RowBounds.Height);
-            using (var brush = new SolidBrush(_colorRowNumberText))
-            {
-                var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                e.Graphics.DrawString(FormatRowNumber(lineNumber), _rowNumberFont, brush, rowHeaderBounds, format);
-            }
+            e.Graphics.DrawString(FormatRowNumber(lineNumber), _rowNumberFont,
+                _rowNumberBrush ??= new SolidBrush(_colorRowNumberText), rowHeaderBounds, _rowNumberFormat);
         }
 
         /// <summary>行号的显示文本：null（占位行/无对应源行）画破折号</summary>
@@ -5144,11 +5148,8 @@ namespace wxd.files.winforms
         {
             var rowIndex = GetFrozenDisplayLineNumber(e.RowIndex);
             var rowHeaderBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, _dataGridHeader.RowHeadersWidth, e.RowBounds.Height);
-            using (var brush = new SolidBrush(_colorRowNumberText))
-            {
-                var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                e.Graphics.DrawString(FormatRowNumber(rowIndex), _rowNumberFont, brush, rowHeaderBounds, format);
-            }
+            e.Graphics.DrawString(FormatRowNumber(rowIndex), _rowNumberFont,
+                _rowNumberBrush ??= new SolidBrush(_colorRowNumberText), rowHeaderBounds, _rowNumberFormat);
         }
 
         // ==================== 高亮重建 ====================
@@ -5260,22 +5261,6 @@ namespace wxd.files.winforms
                 default:
                     return cellValue.IndexOf(filterValue, StringComparison.OrdinalIgnoreCase) >= 0;
             }
-        }
-
-        private bool MatchesFilter(string text, string filter)
-        {
-            if (string.IsNullOrEmpty(filter)) return true;
-            if (filter.Contains('|'))
-            {
-                var terms = filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return terms.Any(t => text.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            else if (filter.Contains('&'))
-            {
-                var terms = filter.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                return terms.All(t => text.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            return text.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // ==================== 工具方法 ====================
@@ -5397,11 +5382,23 @@ namespace wxd.files.winforms
         }
 
         /// <summary>从 DataTable 构建 FileTableData（用于行号追踪）</summary>
-        private static FileTableData BuildFileData(DataTable dt, FileTableData? inheritFrom = null)
+        internal static FileTableData BuildFileData(DataTable dt, FileTableData? inheritFrom = null)
         {
             var fd = new FileTableData();
             foreach (DataColumn col in dt.Columns)
                 fd.ColumnNames.Add(col.ColumnName);
+
+            // 行数不一致（筛选子集/插删行）时按 OriginalRowIndex 反查。
+            // 旧写法在循环里 FirstOrDefault 扫全表，N 行就是 O(N²)；
+            // 这里先建一次字典，单行继承变成 O(1)。
+            bool inheritByIndex = inheritFrom != null && dt.Rows.Count == inheritFrom.Rows.Count;
+            Dictionary<int, TableRow>? inheritByOrigIndex = null;
+            if (inheritFrom != null && !inheritByIndex)
+            {
+                inheritByOrigIndex = new Dictionary<int, TableRow>(inheritFrom.Rows.Count);
+                foreach (var oldRow in inheritFrom.Rows)
+                    inheritByOrigIndex.TryAdd(oldRow.OriginalRowIndex, oldRow);
+            }
 
             for (int r = 0; r < dt.Rows.Count; r++)
             {
@@ -5416,7 +5413,7 @@ namespace wxd.files.winforms
                 if (inheritFrom != null)
                 {
                     // ★ 如果新旧表行数一致 → 按索引继承（排序场景）
-                    if (dt.Rows.Count == inheritFrom.Rows.Count && r < inheritFrom.Rows.Count)
+                    if (inheritByIndex && r < inheritFrom.Rows.Count)
                     {
                         origRowIdx = inheritFrom.Rows[r].OriginalRowIndex;
                         isDiff = inheritFrom.Rows[r].IsDiffRow;
@@ -5430,9 +5427,7 @@ namespace wxd.files.winforms
                     else
                     {
                         origRowIdx = r;
-                        // 在 inheritFrom 中查找 OriginalRowIndex == r 的行
-                        var matched = inheritFrom.Rows.FirstOrDefault(x => x.OriginalRowIndex == r);
-                        if (matched != null)
+                        if (inheritByOrigIndex != null && inheritByOrigIndex.TryGetValue(r, out var matched))
                         {
                             isDiff = matched.IsDiffRow;
                             diffCols = matched.DiffColumns;
@@ -5588,6 +5583,7 @@ namespace wxd.files.winforms
                 {
                     link.RefreshFromTemplate();
                 }
+                RebuildColumnLinkPlans();
                 if (_columnLinks.Count > 0)
                     FireAndForgetBuildLinkLookups(_columnLinks, _filePath);
             }
@@ -5741,6 +5737,7 @@ namespace wxd.files.winforms
                 {
                     bool hasChanges = false;
                     var row = _dataGrid.Rows[editingRow];
+                    var changedCells = new List<(int OrigCol, string Value)>();
 
                     // 将 DataGridView 中的修改写回 _dataTable
                     for (int col = 0; col < row.Cells.Count; col++)
@@ -5757,14 +5754,20 @@ namespace wxd.files.winforms
                                 origCol = _visibleColumnIndices[col];
 
                             if (origIndex < _dataTable.Rows.Count && origCol < _dataTable.Columns.Count)
+                            {
                                 _dataTable.Rows[origIndex][origCol] = newValue;
+                                changedCells.Add((origCol, newValue));
+                            }
                         }
                     }
 
                     if (hasChanges || wasNewRow)
                     {
-                        // 重建 _fileData；行数未变时按索引继承物理行号（编辑不应让行号区退化）
-                        _fileData = BuildFileData(_dataTable, inheritFrom: _fileData);
+                        // 行数未变时只补这一行，避免整表重建（3 万行×52 列 = 156 万次 ToString）；
+                        // 插入/删除行会改变行集合，仍走全量重建
+                        bool patchedFileData = !wasNewRow && TryPatchFileDataRow(origIndex, changedCells);
+                        if (!patchedFileData)
+                            _fileData = BuildFileData(_dataTable, inheritFrom: _fileData);
 
                         // 重建关联缓存
                         if (_columnLinks.Count > 0)
@@ -5786,12 +5789,16 @@ namespace wxd.files.winforms
                             _unsavedRowIndices.Add(origIndex);
                         }
 
-                        // 刷新显示（重建 Grid 以反映 _dataTable 的变更）
-                        int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
-                        int currentRow = _dataGrid.CurrentRow?.Index ?? -1;
-                        int currentCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
-                        RefreshGridLayout();
-                        RestoreScrollAndCurrentCell(scrollRow, currentRow, currentCol);
+                        // 刷新显示：无过滤/无排序时只改绑定表的这一格并重画该行，
+                        // 其余情况才重建 Grid（过滤、排序、列显隐都可能因这次编辑而变）
+                        if (!(patchedFileData && TryRefreshRowInPlace(origIndex, changedCells)))
+                        {
+                            int scrollRow = _dataGrid.FirstDisplayedScrollingRowIndex;
+                            int currentRow = _dataGrid.CurrentRow?.Index ?? -1;
+                            int currentCol = _dataGrid.CurrentCell?.ColumnIndex ?? -1;
+                            RefreshGridLayout();
+                            RestoreScrollAndCurrentCell(scrollRow, currentRow, currentCol);
+                        }
 
                         // 如果保存失败，刷新后需要恢复状态栏提示（RefreshGridLayout 会清空 _lblInfo.Text）
                         if (!saved && _unsavedRowIndices.Count > 0)
@@ -5823,6 +5830,69 @@ namespace wxd.files.winforms
                 }
             }
             finally { _enteringEditMode = false; }
+        }
+
+        /// <summary>
+        /// 单元格编辑提交后原地更新 <c>_fileData</c> 的单行。
+        /// 行数不变时不必整表重建（旧实现每改一格都要把全表 156 万个单元格重新 ToString 一遍）；
+        /// 行数变化（插入/删除行）返回 false，交回 <see cref="BuildFileData"/> 全量重建。
+        /// </summary>
+        private bool TryPatchFileDataRow(int originalRowIndex, List<(int OrigCol, string Value)> changedCells)
+        {
+            if (changedCells.Count == 0) return false;
+            if (originalRowIndex < 0 || originalRowIndex >= _fileData.Rows.Count) return false;
+            if (_fileData.Rows.Count != _dataTable.Rows.Count) return false;
+
+            var cells = _fileData.Rows[originalRowIndex].Cells;
+            foreach (var (origCol, value) in changedCells)
+            {
+                if (origCol < 0 || origCol >= _dataTable.Columns.Count) continue;
+                while (cells.Count <= origCol) cells.Add("");
+                cells[origCol] = value;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 无过滤、无排序时，一次编辑只影响一个单元格：直接改绑定表的对应格并重画该行。
+        /// 否则退回 <see cref="RefreshGridLayout"/>（过滤命中、排序位置、列显隐都可能变化）。
+        /// </summary>
+        private bool TryRefreshRowInPlace(int originalRowIndex, List<(int OrigCol, string Value)> changedCells)
+        {
+            if (changedCells.Count == 0) return false;
+            if (_sortColumnIndex >= 0) return false;
+            if (!string.IsNullOrEmpty(_txtContentFilter.Text.Trim())) return false;
+            if (!string.IsNullOrEmpty(_txtAdvancedFilter.Text.Trim())) return false;
+            // 冻结行显示在独立网格里，改的是另一份 _headerTable，走完整刷新更稳
+            if (originalRowIndex < _frozenRows) return false;
+
+            if (_dataGrid.DataSource is DataTable displayTable && !ReferenceEquals(displayTable, _dataTable))
+            {
+                int displayRow = FindDisplayRowByOrigIndex(originalRowIndex);
+                if (displayRow < 0 || displayRow >= displayTable.Rows.Count) return false;
+
+                // 先校验全部目标格，再统一写，避免写一半失败留下半更新的显示表
+                var targets = new List<(int DisplayCol, string Value)>(changedCells.Count);
+                foreach (var (origCol, value) in changedCells)
+                {
+                    int displayCol = _visibleColumnIndices.IndexOf(origCol);
+                    if (displayCol < 0 || displayCol >= displayTable.Columns.Count) return false;
+                    targets.Add((displayCol, value));
+                }
+                foreach (var (displayCol, value) in targets)
+                    displayTable.Rows[displayRow][displayCol] = value;
+
+                _dataGrid.InvalidateRow(displayRow);
+                return true;
+            }
+
+            // 无冻结行模式：网格直接绑 _dataTable，行号即显示行号；_dataTable 已在提交时写过
+            if (originalRowIndex < _dataGrid.Rows.Count)
+            {
+                _dataGrid.InvalidateRow(originalRowIndex);
+                return true;
+            }
+            return false;
         }
 
         /// <summary>取消行编辑模式（Esc，恢复原始值）</summary>
@@ -6248,6 +6318,9 @@ namespace wxd.files.winforms
                 _linkToolTip = null;
                 _btnHistory?.Dispose();
                 _btnHistory = null;
+                _rowNumberBrush?.Dispose();
+                _rowNumberBrush = null;
+                _rowNumberFormat.Dispose();
                 // ★ 只释放自建的缓存；宿主传入的缓存由宿主窗口统一释放
                 if (_ownsCache) _cache.Dispose();
             }

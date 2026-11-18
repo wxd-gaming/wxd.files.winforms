@@ -10,7 +10,10 @@
 |------|------|
 | `CsvSettings.cs` | 全局/目录级配置读写（~23KB） |
 | `DirectoryFrozenConfig.cs` | 目录级配置数据模型 |
-| `App.config` / `wxd.files.winforms.dll.config` | 全局配置文件 |
+| `{exe}/.wxd-work/settings.json` | 全局设置文件（JSON；本机 ConfigurationManager.Save 单次约 11 秒，故不再写它） |
+| `{exe}/.wxd-work/recent-paths.json` | 最近访问路径（独立文件，后台合并写） |
+| `{exe}/.wxd-work/app.lock` | 单实例锁（见 2.1） |
+| `App.config` / `wxd.files.winforms.dll.config` | 旧全局配置，**只读兜底**，新值不再写入 |
 | `{目录}/.wxd-work/config.json` | 目录级配置文件 |
 
 ---
@@ -18,7 +21,7 @@
 ## 2. 双层存储架构
 
 ```
-全局配置 (dll.config)
+全局配置 (.wxd-work/settings.json，旧 dll.config 只读兜底)
 ├── ThemeMode               — 主题模式
 ├── PaneCount               — 窗格数量
 ├── LayoutIndex             — 布局索引
@@ -26,10 +29,11 @@
 ├── Pane{N}Filter           — 各窗格过滤条件
 ├── Pane{N}ViewMode         — 各窗格视图模式
 ├── ShowHiddenFiles         — 显示隐藏文件
-├── RecentPaths             — 最近访问路径
 ├── CustomCommands          — 自定义命令
-├── CsvReaderLastDir        — CSV阅读器上次目录
-└── LargeFileViewerLastDir  — 大文件阅读器上次目录
+├── CsvReaderLastDirectory  — CSV阅读器上次目录
+└── LargeFileViewerLastDirectory — 大文件阅读器上次目录
+
+（最近访问路径已独立到 recent-paths.json，不再放 settings.json）
 
 目录级配置 (.wxd-work/config.json)
 ├── CsvFrozenRows           — CSV冻结行数
@@ -49,14 +53,31 @@
 
 ---
 
+## 2.1 单实例与目录隔离
+
+- 全局设置是**整文件读改写**（`settings.json`），同一目录双开会互相覆盖，所以：
+  - `Program.Main` 启动时通过 `SingleInstanceGuard` 在 `{exe}/.wxd-work/app.lock` 上开 `FileShare.None` 独占句柄
+  - 同目录第二个实例会弹提示并退出；不同目录各有一份锁、各有一份 `settings.json`，可以同时运行
+- 因此**不需要**做跨进程设置合并；如果以后改成允许同目录多实例，必须同时改这里。
+- 目录不可写（只读部署）时锁创建失败会放行，避免应用起不来。
+
+## 2.2 关窗同步落盘
+
+- 常规写入是 300ms 防抖的后台任务，进程退出会把任务带走。
+- `Form1.OnFormClosing` 在写完主题/窗格数/页签状态后调用 `CsvSettings.FlushSettings()` / `FlushRecentPaths()` 同步落盘。
+- `FlushSettings` 会先等待在途的后台任务（最多 2 秒），避免旧快照在 Flush 之后回写。
+
 ## 3. CsvSettings API 分类
 
-### 3.1 全局配置（读/写 dll.config）
+### 3.1 全局配置（读/写 .wxd-work/settings.json）
 
-- 使用 `ConfigurationManager.AppSettings` 读写
-- 基础方法：`GetIntValue(key, default, min, max)` / `SetIntValue(key, value)`
-- 基础方法：`GetStringValue(key, default)` / `SetStringValue(key, value)`
-- 保存：`CsvSettings.Save()` → `config.Save()`
+- 内存 `Dictionary<string,string>` + JSON 文件：`GetStringValue` 先查字典，未命中再读旧 `ConfigurationManager`（兼容旧配置）
+- `SetStringValue` 只更新字典并排一次后台合并写（300ms 防抖），**不阻塞 UI**
+- 基础方法：`GetIntValue(key, default, min, max)` / `SetIntValue(key, value)` 都走上面的 JSON 存储
+- `CsvSettings.Save()` 是空实现（写入已由 setter 负责）
+- `AppStateStore` 的读写也委托给 `CsvSettings`，页签状态同样落到 settings.json
+- ⚠️ 不要再在 UI 线程直接调 `ConfigurationManager.Save`：这台机器上单次约 11 秒，
+  曾经导致“选个文件/切个主题”卡十几秒（最近路径/全局设置都因此迁走）
 
 ### 3.2 目录级配置（读/写 .wxd-work/config.json）
 

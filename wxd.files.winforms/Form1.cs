@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -30,6 +30,8 @@ namespace wxd.files.winforms
         private Button? _btnOpenCsvReader;
         private Button? _btnNotes;                          // 笔记按钮
         private NoteForm? _noteForm;                        // 笔记窗体（单例）
+        private TextCompareForm? _textCompareForm;          // 文本比对窗体（单例）
+        private JsonToolForm? _jsonToolForm;                // JSON 工具窗体（单例）
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
@@ -301,6 +303,7 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
+                AutoScroll = true,   // 窄窗口时按钮可横向滚动，避免被裁掉
                 AutoSize = false,
                 Padding = new Padding(0),
                 BackColor = Color.Transparent
@@ -348,6 +351,24 @@ namespace wxd.files.winforms
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
 
+            // 文本比对按钮
+            var btnTextCompare = new ThemeButton
+            {
+                Text = "文本比对",
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
+            };
+            btnTextCompare.Click += OnOpenTextCompareClick;
+
+            // JSON 工具按钮
+            var btnJsonTool = new ThemeButton
+            {
+                Text = "JSON",
+                Font = Theme.Body,
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
+            };
+            btnJsonTool.Click += OnOpenJsonToolClick;
+
             // 笔记按钮
             _btnNotes = new ThemeButton
             {
@@ -359,7 +380,7 @@ namespace wxd.files.winforms
 
             _flowPanel.Controls.AddRange(new Control[]
             {
-                lblTitle, _segSettings, _btnOpenCsvReader, btnLargeFileViewer, _btnNotes
+                lblTitle, _segSettings, _btnOpenCsvReader, btnLargeFileViewer, btnTextCompare, btnJsonTool, _btnNotes
             });
 
             // 右侧固定区：管理入口 + 关于，从右往左排，宽度随内容自适应
@@ -474,8 +495,17 @@ namespace wxd.files.winforms
             // 记忆本次选择的目录
             CsvSettings.CsvReaderLastDirectory = dialog.SelectedPath;
 
-            var csvForm = new CsvReaderForm(dialog.SelectedPath);
-            csvForm.Show();
+            try
+            {
+                var csvForm = new CsvReaderForm(dialog.SelectedPath);
+                csvForm.Show();
+            }
+            catch (Exception ex)
+            {
+                ReaderLog.Exception($"打开阅读器失败 dir={dialog.SelectedPath}", ex);
+                AlertForm.Show(this, "打开阅读器失败：" + GlobalConst.NewLine + ex.Message,
+                    "阅读器", AlertType.Error, exception: ex);
+            }
         }
 
         // ==================== 打开大文件阅读器（先选目录） ====================
@@ -497,6 +527,38 @@ namespace wxd.files.winforms
 
             var f = new LargeFileViewer(dialog.SelectedPath);
             f.Show();
+        }
+
+        // ==================== 打开文本比对（单例） ====================
+        private void OnOpenTextCompareClick(object? sender, EventArgs e)
+        {
+            if (_textCompareForm != null && !_textCompareForm.IsDisposed)
+            {
+                if (_textCompareForm.WindowState == FormWindowState.Minimized)
+                    _textCompareForm.WindowState = FormWindowState.Normal;
+                _textCompareForm.Activate();
+                return;
+            }
+
+            _textCompareForm = new TextCompareForm();
+            _textCompareForm.FormClosed += (s, e2) => _textCompareForm = null;
+            _textCompareForm.Show(this);
+        }
+
+        // ==================== 打开 JSON 工具（单例） ====================
+        private void OnOpenJsonToolClick(object? sender, EventArgs e)
+        {
+            if (_jsonToolForm != null && !_jsonToolForm.IsDisposed)
+            {
+                if (_jsonToolForm.WindowState == FormWindowState.Minimized)
+                    _jsonToolForm.WindowState = FormWindowState.Normal;
+                _jsonToolForm.Activate();
+                return;
+            }
+
+            _jsonToolForm = new JsonToolForm();
+            _jsonToolForm.FormClosed += (s, e2) => _jsonToolForm = null;
+            _jsonToolForm.Show(this);
         }
 
         // ==================== 打开笔记窗体（单例） ====================
@@ -977,6 +1039,10 @@ namespace wxd.files.winforms
             CsvSettings.PaneCount = _panels.Length;
             CsvSettings.LayoutIndex = _layoutIndex;
             CsvSettings.ThemeMode = (int)_currentTheme;
+
+            // 设置/最近路径是防抖后台写，退出前必须同步落盘，否则关窗前改的状态会丢
+            CsvSettings.FlushSettings();
+            CsvSettings.FlushRecentPaths();
 
             _menuPane?.Dispose();
             _menuLayout?.Dispose();
