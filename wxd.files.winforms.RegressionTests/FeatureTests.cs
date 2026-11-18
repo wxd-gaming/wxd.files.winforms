@@ -39,6 +39,17 @@ internal static partial class Program
         Run("搜索 取消与非法正则", Test_SearchCancelAndBadRegex);
         Run("搜索 二进制文件跳过", Test_SearchBinarySkip);
         Run("搜索 目录名命中", Test_SearchDirectoryHit);
+
+        Console.WriteLine("--- 批量重命名 ---");
+        Run("重命名 普通替换", Test_RenamePlainReplace);
+        Run("重命名 正则捕获组", Test_RenameRegexCapture);
+        Run("重命名 模板序号/扩展名", Test_RenameTemplateCounterAndExt);
+        Run("重命名 仅大小写变化", Test_RenameCaseOnly);
+        Run("重命名 非法名与保留名", Test_RenameInvalidAndReserved);
+        Run("重命名 重名与已存在冲突", Test_RenameDuplicateAndConflict);
+        Run("重命名 存在错误时整体拒绝", Test_RenameRefusesOnError);
+        Run("重命名 执行与撤销", Test_RenameApplyAndUndo);
+        Run("重命名 扩展名参与替换", Test_RenameIncludeExtension);
     }
 
     // ==================== 复制 ====================
@@ -688,6 +699,225 @@ internal static partial class Program
             var result = FileSearchService.Search(
                 new FileSearchQuery { Roots = new[] { root }, Pattern = "sub" }, null, CancellationToken.None);
             Assert(result.Hits.Any(h => h.IsDirectory && h.Name == "sub"), "目录名应参与匹配");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    // ==================== 批量重命名 ====================
+
+    private static void Test_RenamePlainReplace()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var file = Path.Combine(root, "a.txt");
+            File.WriteAllText(file, "x");
+            var plan = BatchRenameEngine.BuildPlan(new[] { file },
+                new RenameRule { Find = "A", Replace = "b" });
+            AssertEq(1, plan.Items.Count, "计划项数");
+            AssertEq("b.txt", plan.Items[0].TargetName, "忽略大小写替换");
+            AssertEq(RenamePlanStatus.Ready, plan.Items[0].Status, "状态");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameRegexCapture()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var file = Path.Combine(root, "item_12.txt");
+            File.WriteAllText(file, "x");
+            var plan = BatchRenameEngine.BuildPlan(new[] { file },
+                new RenameRule { Find = "item_(\\d+)", Replace = "entry_$1", UseRegex = true });
+            AssertEq("entry_12.txt", plan.Items[0].TargetName, "正则捕获组替换");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameTemplateCounterAndExt()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var files = new[] { "a.txt", "b.txt", "c.txt" }
+                .Select(n => { var p = Path.Combine(root, n); File.WriteAllText(p, "x"); return p; })
+                .ToArray();
+
+            var plan = BatchRenameEngine.BuildPlan(files, new RenameRule
+            {
+                Template = "{name}_{counter}",
+                CounterStart = 5,
+                CounterStep = 5,
+                CounterDigits = 3
+            });
+            AssertSeq(new[] { "a_005.txt", "b_010.txt", "c_015.txt" },
+                plan.Items.Select(i => i.TargetName), "模板序号与扩展名保留");
+
+            var extPlan = BatchRenameEngine.BuildPlan(new[] { files[0] },
+                new RenameRule { Template = "pre_{name}" });
+            AssertEq("pre_a.txt", extPlan.Items[0].TargetName, "模板不含 {ext} 时自动保留扩展名");
+
+            var explicitExt = BatchRenameEngine.BuildPlan(new[] { files[0] },
+                new RenameRule { Template = "{name}.{ext}" });
+            AssertEq("a.txt", explicitExt.Items[0].TargetName, "显式 {ext} 不重复追加");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameCaseOnly()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var file = Path.Combine(root, "case.txt");
+            File.WriteAllText(file, "x");
+
+            var plan = BatchRenameEngine.BuildPlan(new[] { file },
+                new RenameRule { Template = "{name}", CaseMode = RenameCaseMode.Upper });
+            AssertEq("CASE.txt", plan.Items[0].TargetName, "仅大小写变化");
+            AssertEq(RenamePlanStatus.Ready, plan.Items[0].Status, "不应与自身冲突");
+
+            var applied = BatchRenameEngine.Apply(plan);
+            Assert(applied.Success, "仅大小写变化应能执行: " + string.Join(";", applied.Errors));
+
+            var actual = Path.GetFileName(Directory.GetFiles(root, "*.txt").Single());
+            AssertEq("CASE.txt", actual, "磁盘上的实际名称");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameInvalidAndReserved()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var file = Path.Combine(root, "a.txt");
+            File.WriteAllText(file, "x");
+
+            var invalid = BatchRenameEngine.BuildPlan(new[] { file },
+                new RenameRule { Template = "{name}*" });
+            AssertEq(RenamePlanStatus.Invalid, invalid.Items[0].Status, "非法字符");
+            Assert(invalid.HasErrors, "非法字符应视为错误");
+
+            var reserved = BatchRenameEngine.BuildPlan(new[] { file },
+                new RenameRule { Template = "CON" });
+            AssertEq(RenamePlanStatus.Invalid, reserved.Items[0].Status, "保留名");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameDuplicateAndConflict()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var a = Path.Combine(root, "a.txt");
+            var b = Path.Combine(root, "b.txt");
+            var c = Path.Combine(root, "c.txt");
+            File.WriteAllText(a, "a");
+            File.WriteAllText(b, "b");
+            File.WriteAllText(c, "c");
+
+            var duplicate = BatchRenameEngine.BuildPlan(new[] { a, b },
+                new RenameRule { Template = "same" });
+            Assert(duplicate.Items.All(i => i.Status == RenamePlanStatus.Duplicate), "两个文件指向同一名称");
+
+            var conflict = BatchRenameEngine.BuildPlan(new[] { a },
+                new RenameRule { Find = "a", Replace = "c" });
+            AssertEq(RenamePlanStatus.Conflict, conflict.Items[0].Status, "目标已存在应冲突");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameRefusesOnError()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var a = Path.Combine(root, "a.txt");
+            var b = Path.Combine(root, "b.txt");
+            File.WriteAllText(a, "a");
+            File.WriteAllText(b, "b");
+
+            var plan = BatchRenameEngine.BuildPlan(new[] { a, b }, new RenameRule { Template = "same" });
+            var result = BatchRenameEngine.Apply(plan);
+            Assert(!result.Success, "存在冲突时不应执行");
+            Assert(File.Exists(a) && File.Exists(b), "原文件应保持不变");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameApplyAndUndo()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var a = Path.Combine(root, "a.txt");
+            var b = Path.Combine(root, "b.txt");
+            File.WriteAllText(a, "A");
+            File.WriteAllText(b, "B");
+
+            var plan = BatchRenameEngine.BuildPlan(new[] { a, b },
+                new RenameRule { Template = "{name}_new" });
+            var result = BatchRenameEngine.Apply(plan);
+            Assert(result.Success, "执行失败: " + string.Join(";", result.Errors));
+            AssertEq(2, result.Journal.Count, "日志条数");
+
+            var aNew = Path.Combine(root, "a_new.txt");
+            var bNew = Path.Combine(root, "b_new.txt");
+            Assert(File.Exists(aNew) && File.Exists(bNew), "应生成新名称");
+            Assert(!File.Exists(a) && !File.Exists(b), "旧名称应消失");
+
+            Assert(BatchRenameEngine.Undo(result.Journal, out var error), "撤销失败: " + error);
+            Assert(File.Exists(a) && File.Exists(b), "撤销后应恢复原名");
+            Assert(!File.Exists(aNew) && !File.Exists(bNew), "撤销后新名称应消失");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_RenameIncludeExtension()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var file = Path.Combine(root, "a.txt");
+            File.WriteAllText(file, "x");
+
+            var plan = BatchRenameEngine.BuildPlan(new[] { file }, new RenameRule
+            {
+                Find = ".txt",
+                Replace = ".md",
+                IncludeExtensionInFind = true
+            });
+            AssertEq("a.md", plan.Items[0].TargetName, "扩展名参与替换后不应重复追加");
         }
         finally
         {

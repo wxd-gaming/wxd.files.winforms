@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace wxd.files.winforms;
 
 /// <summary>
-/// 文件操作队列：任务排队执行，支持并发上限、暂停/继续/取消、失败项收集。
+/// 文件操作队列：任务按入队顺序执行，支持并发上限、暂停/继续/取消、失败项收集。
 /// 所有进度字段由引擎在后台线程写入，UI 只读轮询，避免跨线程事件风暴。
 /// </summary>
 public sealed class FileOperationQueue : IDisposable
@@ -17,7 +17,8 @@ public sealed class FileOperationQueue : IDisposable
 
     private readonly object _sync = new();
     private readonly List<FileOperationJob> _jobs = new();
-    private readonly SemaphoreSlim _slots;
+    private readonly Queue<FileOperationJob> _pending = new();
+    private int _running;
     private int _runSequence;
     private bool _disposed;
 
@@ -25,7 +26,6 @@ public sealed class FileOperationQueue : IDisposable
     {
         if (maxConcurrentJobs < 1) maxConcurrentJobs = 1;
         MaxConcurrentJobs = maxConcurrentJobs;
-        _slots = new SemaphoreSlim(maxConcurrentJobs, maxConcurrentJobs);
     }
 
     public int MaxConcurrentJobs { get; }
@@ -59,9 +59,14 @@ public sealed class FileOperationQueue : IDisposable
             Ask = ask
         };
 
-        lock (_sync) _jobs.Add(job);
+        lock (_sync)
+        {
+            _jobs.Add(job);
+            _pending.Enqueue(job);
+        }
+
         Raise(job);
-        _ = Task.Run(() => RunAsync(job));
+        Pump();
         return job;
     }
 
@@ -99,6 +104,7 @@ public sealed class FileOperationQueue : IDisposable
         if (job.State is FileOperationState.Pending)
         {
             Finish(job, FileOperationState.Cancelled);
+            Pump();
         }
         return true;
     }
@@ -131,9 +137,35 @@ public sealed class FileOperationQueue : IDisposable
         }
     }
 
+    /// <summary>按入队顺序派发；并发上限以内的任务才真正启动。</summary>
+    private void Pump()
+    {
+        lock (_sync)
+        {
+            while (_running < MaxConcurrentJobs && _pending.Count > 0)
+            {
+                var job = _pending.Dequeue();
+                if (job.State != FileOperationState.Pending) continue;
+
+                _running++;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await RunAsync(job).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_sync) _running--;
+                        Pump();
+                    }
+                });
+            }
+        }
+    }
+
     private async Task RunAsync(FileOperationJob job)
     {
-        await _slots.WaitAsync().ConfigureAwait(false);
         try
         {
             if (job.Cancellation.IsCancellationRequested)
@@ -209,10 +241,6 @@ public sealed class FileOperationQueue : IDisposable
             job.Errors.Add(ex.Message);
             Finish(job, FileOperationState.Failed);
         }
-        finally
-        {
-            _slots.Release();
-        }
     }
 
     private void Finish(FileOperationJob job, FileOperationState state)
@@ -240,12 +268,12 @@ public sealed class FileOperationQueue : IDisposable
         _disposed = true;
         lock (_sync)
         {
+            _pending.Clear();
             foreach (var job in _jobs)
             {
                 try { job.Cancellation.Cancel(); } catch { }
                 job.Pause.Resume();
             }
         }
-        _slots.Dispose();
     }
 }

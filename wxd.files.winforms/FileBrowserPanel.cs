@@ -761,6 +761,7 @@ namespace wxd.files.winforms
             _menuVcsUpdateItem.Enabled = false;
             _menuMoreActions.Items.Add(_menuVcsUpdateItem);
             _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
+            _menuMoreActions.Items.Add("批量重命名", null, (s, e) => OpenBatchRename());
             _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
@@ -2562,10 +2563,26 @@ namespace wxd.files.winforms
             else form.Show();
         }
 
+        /// <summary>批量重命名选中的文件；目录暂不支持。</summary>
+        private void OpenBatchRename()
+        {
+            var files = GetSelectedFullPaths().Where(File.Exists).ToList();
+            if (files.Count == 0)
+            {
+                AlertForm.Show(FindForm(), "请先选择要重命名的文件（暂不支持批量重命名文件夹）。",
+                    "批量重命名", AlertType.Warning);
+                return;
+            }
+
+            using var form = new BatchRenameForm(files);
+            form.ShowDialog(FindForm());
+            _ = LoadFileListAsync();
+        }
+
         /// <summary>定位到指定文件/目录：必要时先导航，再等列表加载完选中。</summary>
         public void SelectPath(string path)
         {
-            if (string.IsNullOrWhiteSpace(path)) return;
+            if (IsDisposed || string.IsNullOrWhiteSpace(path)) return;
 
             string full;
             try { full = Path.GetFullPath(path); }
@@ -2961,7 +2978,8 @@ namespace wxd.files.winforms
             }
             if (keyData == Keys.F2)
             {
-                StartRename();
+                if (_lstFiles.SelectedItems.Count > 1) OpenBatchRename();
+                else StartRename();
                 return true;
             }
             if (keyData == Keys.Delete)
