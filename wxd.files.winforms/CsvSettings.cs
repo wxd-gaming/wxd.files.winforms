@@ -582,69 +582,157 @@ namespace wxd.files.winforms
 
         #region 基础配置方法
 
-        private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
+        // 全局设置的写入不再走 ConfigurationManager：本机实测 ConfigurationManager.Save
+        // 单次要 ~11 秒，导致"选个文件/切个主题"都像卡死。
+        // 现在：内存字典 + .wxd-work/settings.json + 后台合并写；ConfigurationManager 只作为旧数据只读兜底。
+        private static Dictionary<string, string>? _settingsCache;
+        private static bool _settingsLoaded;
+        private static int _settingsVersion;
+        private static readonly object _settingsLock = new();
+        private static readonly object _settingsSaveLock = new();
+        private static bool _settingsSaveRunning;
+
+        private static string SettingsFilePath
         {
+            get
+            {
+                try
+                {
+                    return Path.Combine(AppContext.BaseDirectory, ".wxd-work", "settings.json");
+                }
+                catch
+                {
+                    return Path.Combine(Path.GetTempPath(), "wxd-settings.json");
+                }
+            }
+        }
+
+        private static void EnsureSettingsLoaded()
+        {
+            if (_settingsLoaded) return;
+            _settingsLoaded = true;
+
             try
             {
-                var value = ConfigurationManager.AppSettings[key];
-                if (int.TryParse(value, out int result))
+                var file = SettingsFilePath;
+                if (File.Exists(file))
                 {
-                    return Math.Max(minValue, Math.Min(maxValue, result));
+                    var json = File.ReadAllText(file);
+                    _settingsCache = System.Text.Json.JsonSerializer
+                        .Deserialize<Dictionary<string, string>>(json);
                 }
             }
             catch { }
+
+            _settingsCache ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static int GetIntValue(string key, int defaultValue, int minValue, int maxValue)
+        {
+            var raw = GetStringValue(key, "");
+            if (int.TryParse(raw, out int result))
+                return Math.Max(minValue, Math.Min(maxValue, result));
             return defaultValue;
         }
 
-        private static void SetIntValue(string key, int value)
-        {
-            try
-            {
-                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                var appSettings = config.AppSettings;
-
-                if (appSettings.Settings[key] == null)
-                    appSettings.Settings.Add(key, value.ToString());
-                else
-                    appSettings.Settings[key].Value = value.ToString();
-
-                config.Save(ConfigurationSaveMode.Modified);
-                ConfigurationManager.RefreshSection("appSettings");
-            }
-            catch { }
-        }
+        private static void SetIntValue(string key, int value) => SetStringValue(key, value.ToString());
 
         internal static string GetStringValue(string key, string defaultValue)
         {
+            lock (_settingsLock)
+            {
+                EnsureSettingsLoaded();
+                if (_settingsCache!.TryGetValue(key, out var cached))
+                    return cached;
+            }
+
+            // 旧配置只读兜底（读取很快，实测 <1ms）
             try
             {
-                var value = ConfigurationManager.AppSettings[key];
-                return value ?? defaultValue;
+                var legacy = ConfigurationManager.AppSettings[key];
+                if (legacy != null)
+                {
+                    lock (_settingsLock) { _settingsCache![key] = legacy; }
+                    return legacy;
+                }
             }
             catch { }
+
             return defaultValue;
         }
 
         internal static void SetStringValue(string key, string value)
         {
-            try
+            lock (_settingsLock)
             {
-                var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
-                var appSettings = config.AppSettings;
+                EnsureSettingsLoaded();
+                if (_settingsCache!.TryGetValue(key, out var existing)
+                    && string.Equals(existing, value, StringComparison.Ordinal))
+                    return;   // 值没变就不写盘
 
-                if (appSettings.Settings[key] == null)
-                    appSettings.Settings.Add(key, value);
-                else
-                    appSettings.Settings[key].Value = value;
-
-                config.Save(ConfigurationSaveMode.Modified);
-                ConfigurationManager.RefreshSection("appSettings");
+                _settingsCache[key] = value;
+                _settingsVersion++;
             }
-            catch (Exception ex)
+
+            ScheduleSettingsSave();
+        }
+
+        private static void ScheduleSettingsSave()
+        {
+            lock (_settingsSaveLock)
             {
-                System.Diagnostics.Debug.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
-                System.Diagnostics.Trace.WriteLine($"CsvSettings.SetStringValue Error: {ex.Message}");
+                if (_settingsSaveRunning) return;
+                _settingsSaveRunning = true;
             }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(300).ConfigureAwait(false);   // 合并同一批设置变更
+
+                    int savedVersion;
+                    while (true)
+                    {
+                        string json;
+                        int version;
+                        lock (_settingsLock)
+                        {
+                            version = _settingsVersion;
+                            json = System.Text.Json.JsonSerializer.Serialize(
+                                _settingsCache ?? new Dictionary<string, string>());
+                        }
+
+                        var file = SettingsFilePath;
+                        var dir = Path.GetDirectoryName(file);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        AtomicFileWriter.TryWriteAllText(file, json);
+                        savedVersion = version;
+
+                        lock (_settingsLock)
+                        {
+                            if (version == _settingsVersion) break;
+                        }
+                    }
+
+                    lock (_settingsSaveLock)
+                    {
+                        _settingsSaveRunning = false;
+                    }
+
+                    bool changed;
+                    lock (_settingsLock)
+                    {
+                        changed = savedVersion != _settingsVersion;
+                    }
+                    if (changed) ScheduleSettingsSave();
+                }
+                catch
+                {
+                    lock (_settingsSaveLock) { _settingsSaveRunning = false; }
+                }
+            });
         }
 
         #endregion
