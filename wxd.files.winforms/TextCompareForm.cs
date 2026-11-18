@@ -641,6 +641,7 @@ namespace wxd.files.winforms
             _btnBrowseLeft.Enabled = !busy;
             _btnBrowseRight.Enabled = !busy;
             _chkOnlyDiff.Enabled = !busy;
+            _chkSortKeys.Enabled = !busy;
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
             if (message != null) _lblStatus.Text = message;
         }

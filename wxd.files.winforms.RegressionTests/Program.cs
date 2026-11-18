@@ -111,6 +111,10 @@ namespace wxd.files.winforms.RegressionTests
             Run("YAML 注释跟随 key", Test_YamlSortComments);
             Run("YAML 锚点/块标量保护", Test_YamlSortBailAndBlock);
 
+            // 设置落盘 / CSV 分隔符边界
+            Run("设置关窗同步落盘", Test_SettingsFlush);
+            Run("CSV 首行空行分隔符", Test_CsvDelimiterLeadingBlankLine);
+
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
             return _failed == 0 ? 0 : 1;
@@ -998,6 +1002,27 @@ z: 1
 """;
             Assert(YamlKeySorter.TrySort(input, out var sorted), "块标量内容应原样保留");
             AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "块标量里的 a/b 不能被排序");
+        }
+
+        // ==================== 设置落盘 / CSV 边界 ====================
+
+        private static void Test_SettingsFlush()
+        {
+            CsvSettings.ThemeMode = 0;
+            CsvSettings.ThemeMode = 1;
+            CsvSettings.FlushSettings();
+
+            var file = Path.Combine(AppContext.BaseDirectory, ".wxd-work", "settings.json");
+            Assert(File.Exists(file), "FlushSettings 应生成 settings.json");
+
+            var text = File.ReadAllText(file);
+            Assert(text.Contains("\"ThemeMode\":\"1\"", StringComparison.Ordinal), "同步落盘应包含最新 ThemeMode");
+        }
+
+        private static void Test_CsvDelimiterLeadingBlankLine()
+        {
+            AssertEq('\t', SimpleTableReader.DetectCsvDelimiter("\n\ta\tb\n1\t2\n"), "首行空行不应影响制表符判断");
+            AssertEq(';', SimpleTableReader.DetectCsvDelimiter("\r\na;b\r\n1;2\r\n"), "CRLF 空行同样应跳过");
         }
 
         // ==================== 基础设施 ====================

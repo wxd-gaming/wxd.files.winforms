@@ -53,7 +53,10 @@ namespace wxd.files.winforms
             };
 
             bool inQuotes = false;
-            for (int i = 0; i < text.Length; i++)
+            int start = 0;
+            while (start < text.Length && (text[start] == '\n' || text[start] == '\r')) start++;
+
+            for (int i = start; i < text.Length; i++)
             {
                 char c = text[i];
                 if (c == '"')

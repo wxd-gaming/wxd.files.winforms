@@ -1039,6 +1039,10 @@ namespace wxd.files.winforms
             CsvSettings.LayoutIndex = _layoutIndex;
             CsvSettings.ThemeMode = (int)_currentTheme;
 
+            // 设置/最近路径是防抖后台写，退出前必须同步落盘，否则关窗前改的状态会丢
+            CsvSettings.FlushSettings();
+            CsvSettings.FlushRecentPaths();
+
             _menuPane?.Dispose();
             _menuLayout?.Dispose();
             _menuTheme?.Dispose();

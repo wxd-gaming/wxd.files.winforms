@@ -591,6 +591,7 @@ namespace wxd.files.winforms
         private static readonly object _settingsLock = new();
         private static readonly object _settingsSaveLock = new();
         private static bool _settingsSaveRunning;
+        private static Task? _settingsSaveTask;
 
         private static string SettingsFilePath
         {
@@ -622,7 +623,17 @@ namespace wxd.files.winforms
                         .Deserialize<Dictionary<string, string>>(json);
                 }
             }
-            catch { }
+            catch
+            {
+                // 文件存在但读不出来（损坏/占用）：先留一份备份，避免后续写入把它彻底覆盖
+                try
+                {
+                    var file = SettingsFilePath;
+                    if (File.Exists(file))
+                        File.Copy(file, file + ".bad", overwrite: true);
+                }
+                catch { }
+            }
 
             _settingsCache ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
@@ -677,6 +688,67 @@ namespace wxd.files.winforms
             ScheduleSettingsSave();
         }
 
+        /// <summary>
+        /// 同步落盘：关窗/退出前调用。settings 的常规写入是 300ms 防抖的后台任务，
+        /// 进程退出会把还没跑完的任务带走，导致关窗前的主题/窗格/页签状态丢失。
+        /// 这里直接按当前缓存写一次（JSON 文件，毫秒级），不依赖后台任务。
+        /// </summary>
+        internal static void FlushSettings()
+        {
+            try
+            {
+                // 先等后台防抖任务跑完，避免它拿着旧快照在 Flush 之后又把旧内容写回去
+                Task? pending;
+                lock (_settingsSaveLock) { pending = _settingsSaveTask; }
+                if (pending != null && !pending.IsCompleted)
+                {
+                    try { pending.Wait(2000); } catch { }
+                }
+
+                string json;
+                lock (_settingsLock)
+                {
+                    if (!_settingsLoaded || _settingsCache == null) return;
+                    json = System.Text.Json.JsonSerializer.Serialize(_settingsCache);
+                }
+
+                var file = SettingsFilePath;
+                var dir = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                AtomicFileWriter.TryWriteAllText(file, json);
+            }
+            catch { }
+        }
+
+        /// <summary>同步落盘最近访问路径（关窗前调用，避免最后一条路径丢失）。</summary>
+        internal static void FlushRecentPaths()
+        {
+            try
+            {
+                Task? pending;
+                lock (_recentPathsSaveLock) { pending = _recentPathsSaveTask; }
+                if (pending != null && !pending.IsCompleted)
+                {
+                    try { pending.Wait(2000); } catch { }
+                }
+
+                string json;
+                lock (_recentPathsLock)
+                {
+                    if (!_recentPathsLoaded || _recentPathsCache == null) return;
+                    json = System.Text.Json.JsonSerializer.Serialize(_recentPathsCache);
+                }
+
+                var file = RecentPathsFilePath;
+                var dir = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                AtomicFileWriter.TryWriteAllText(file, json);
+            }
+            catch { }
+        }
+
         private static void ScheduleSettingsSave()
         {
             lock (_settingsSaveLock)
@@ -685,7 +757,7 @@ namespace wxd.files.winforms
                 _settingsSaveRunning = true;
             }
 
-            _ = Task.Run(async () =>
+            _settingsSaveTask = Task.Run(async () =>
             {
                 try
                 {
@@ -814,6 +886,7 @@ namespace wxd.files.winforms
         private static readonly object _recentPathsLock = new();
         private static readonly object _recentPathsSaveLock = new();
         private static bool _recentPathsSaveRunning;
+        private static Task? _recentPathsSaveTask;
 
         /// <summary>
         /// 最近路径单独存一个 JSON 文件：不走 ConfigurationManager。
@@ -898,7 +971,7 @@ namespace wxd.files.winforms
                 _recentPathsSaveRunning = true;
             }
 
-            _ = Task.Run(async () =>
+            _recentPathsSaveTask = Task.Run(async () =>
             {
                 try
                 {
