@@ -61,6 +61,8 @@ namespace wxd.files.winforms
         private Panel? _pnlToolbar;
         private Panel? _pnlBottom;
         private Button? _btnMoreActions;
+        private ThemeButton? _btnNewItem;
+        private ContextMenuStrip? _menuNew;
         private ContextMenuStrip? _menuMoreActions;
         private Button? _btnOpenCsvReader;
         private ToolStripMenuItem? _menuViewModeItem;
@@ -553,6 +555,7 @@ namespace wxd.files.winforms
             {
                 _pnlFilter.ApplyTheme();
                 _btnMoreActions?.Height = ThemeMetrics.RowH;
+                _btnNewItem?.Height = ThemeMetrics.RowH;
                 _btnOpenCsvReader?.Height = ThemeMetrics.RowH;
                 LayoutBottomBar();
             }
@@ -590,6 +593,11 @@ namespace wxd.files.winforms
             {
                 _menuMoreActions.BackColor = Theme.P.Surface;
                 _menuMoreActions.ForeColor = _colorTextPrimary;
+            }
+            if (_menuNew != null)
+            {
+                _menuNew.BackColor = Theme.P.Surface;
+                _menuNew.ForeColor = _colorTextPrimary;
             }
 
             Invalidate();
@@ -753,6 +761,19 @@ namespace wxd.files.winforms
                 Font = Theme.Body
             };
 
+            // 新建按钮：放在「···」左边，避免新功能藏在二级菜单里找不到
+            _btnNewItem = new ThemeButton
+            {
+                Size = new Size(ThemeButton.FitWidth("＋", 30), ThemeMetrics.RowH),
+                Text = "＋",
+                Font = Theme.Body
+            };
+            _btnNewItem.Click += (s, e) => ShowNewItemMenu();
+
+            _menuNew = new ContextMenuStrip { Font = Theme.Body };
+            _menuNew.Items.Add("新建文件夹", null, (s, e) => CreateNewFolder());
+            _menuNew.Items.Add("新建文件", null, (s, e) => CreateNewFile());
+
             // 创建下拉菜单
             _menuMoreActions = new ContextMenuStrip { Font = Theme.Body };
             _menuMoreActions.Items.Add("打开目录", null, OnOpenExplorerClick);
@@ -763,7 +784,16 @@ namespace wxd.files.winforms
             _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
             _menuMoreActions.Items.Add("批量重命名", null, (s, e) => OpenBatchRename());
             _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
-            _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
+            var menuNew = new ToolStripMenuItem("新建");
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件夹", null, (s, e) => CreateNewFolder())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Shift+N"
+            });
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件", null, (s, e) => CreateNewFile())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Alt+N"
+            });
+            _menuMoreActions.Items.Insert(0, menuNew);
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
 
             // 视图模式二级菜单
@@ -904,6 +934,7 @@ namespace wxd.files.winforms
             _pnlBottom.Controls.Add(_lblFileCount);
             _pnlBottom.Controls.Add(_pnlFilter);
             _pnlBottom.Controls.Add(_btnOpenCsvReader);
+            _pnlBottom.Controls.Add(_btnNewItem);
             _pnlBottom.Controls.Add(_btnMoreActions);
 
             // 底部面板大小改变时按主题度量重排
@@ -1004,6 +1035,11 @@ namespace wxd.files.winforms
             {
                 _btnMoreActions.SetBounds(right - _btnMoreActions.Width, top, _btnMoreActions.Width, rowH);
                 right = _btnMoreActions.Left - ThemeMetrics.Gap;
+            }
+            if (_btnNewItem != null)
+            {
+                _btnNewItem.SetBounds(right - _btnNewItem.Width, top, _btnNewItem.Width, rowH);
+                right = _btnNewItem.Left - ThemeMetrics.Gap;
             }
             if (_btnOpenCsvReader != null)
             {
@@ -2714,6 +2750,36 @@ namespace wxd.files.winforms
             }
         }
 
+        /// <summary>弹出「＋」下的新建菜单（文件夹 / 文件）。</summary>
+        private void ShowNewItemMenu()
+        {
+            if (_btnNewItem == null || _menuNew == null) return;
+            _menuNew.Show(_btnNewItem, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+        }
+
+        /// <summary>新建空文件，创建后定位到它。</summary>
+        private void CreateNewFile()
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            using var dialog = new NewItemDialog(
+                "新建文件",
+                "文件名（含扩展名，例如 cfg_quest.csv）",
+                "新建文件.txt",
+                name => NewItemService.Validate(_currentDir, name));
+
+            if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
+
+            if (!NewItemService.TryCreateFile(_currentDir, dialog.Value, out var path, out var error))
+            {
+                AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
+                return;
+            }
+
+            _ = LoadFileListAsync();
+            SelectPath(path);
+        }
+
         /// <summary>新建文件夹并进入重命名</summary>
         private async void CreateNewFolder()
         {
@@ -3022,6 +3088,11 @@ namespace wxd.files.winforms
                 CreateNewFolder();
                 return true;
             }
+            if (keyData == (Keys.Control | Keys.Alt | Keys.N))
+            {
+                CreateNewFile();
+                return true;
+            }
             if (keyData == (Keys.Control | Keys.F))
             {
                 OpenSearch();
@@ -3261,6 +3332,8 @@ namespace wxd.files.winforms
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
                 _imagePreviewTip?.Dispose();
+                _menuNew?.Dispose();
+                _menuMoreActions?.Dispose();
                 _imgList?.Dispose();
                 _imgListLarge?.Dispose();
                 _lstFiles?.Dispose();

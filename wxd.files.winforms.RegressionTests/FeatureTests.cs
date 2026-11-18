@@ -52,6 +52,11 @@ internal static partial class Program
         Run("重命名 执行与撤销", Test_RenameApplyAndUndo);
         Run("重命名 扩展名参与替换", Test_RenameIncludeExtension);
 
+        Console.WriteLine("--- 新建文件/文件夹 ---");
+        Run("新建 名称校验", Test_NewItemValidate);
+        Run("新建 文件与文件夹创建", Test_NewItemCreate);
+        Run("新建 重名与非法名拒绝", Test_NewItemReject);
+
         Console.WriteLine("--- 文件操作失败提示 ---");
         Run("失败提示 权限错误给出中文建议", Test_OperationErrorPermission);
         Run("失败提示 普通错误保留原始信息", Test_OperationErrorGeneric);
@@ -971,6 +976,63 @@ internal static partial class Program
         File.SetAttributes(hidden, FileAttributes.Hidden);
     }
 
+    private static void Test_NewItemValidate()
+    {
+        var root = NewTempDir();
+        try
+        {
+            Assert(NewItemService.Validate(root, "a.txt") == null, "普通名称应可用");
+            Assert(NewItemService.Validate(root, "") != null, "空名称应拒绝");
+            Assert(NewItemService.Validate(root, "a*b.txt") != null, "非法字符应拒绝");
+            Assert(NewItemService.Validate(root, "CON") != null, "保留名应拒绝");
+            Assert(NewItemService.Validate(root, "a.") != null, "点结尾应拒绝");
+
+            File.WriteAllText(Path.Combine(root, "exists.txt"), "x");
+            Assert(NewItemService.Validate(root, "exists.txt") != null, "重名应拒绝");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_NewItemCreate()
+    {
+        var root = NewTempDir();
+        try
+        {
+            Assert(NewItemService.TryCreateFile(root, "new.txt", out var file, out var fileError),
+                "创建文件失败: " + fileError);
+            Assert(File.Exists(file), "文件应存在");
+
+            Assert(NewItemService.TryCreateDirectory(root, "newdir", out var directory, out var dirError),
+                "创建文件夹失败: " + dirError);
+            Assert(Directory.Exists(directory), "文件夹应存在");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_NewItemReject()
+    {
+        var root = NewTempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "dup.txt"), "x");
+            Assert(!NewItemService.TryCreateFile(root, "dup.txt", out _, out var error), "重名文件应拒绝");
+            Assert(error != null, "应返回原因");
+
+            Assert(!NewItemService.TryCreateDirectory(root, "bad*name", out _, out var dirError), "非法名应拒绝");
+            Assert(dirError != null, "应返回原因");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
     private static void Test_OperationErrorPermission()
     {
         var job = new FileOperationJob
@@ -1011,6 +1073,8 @@ internal static partial class Program
             {
                 using var search = new FileSearchForm("C:\\", _ => { });
                 Assert(!search.IsModifiedTimeFilterEnabled, "搜索窗口默认不应勾选修改时间过滤");
+                using var newItem = new NewItemDialog("新建文件", "名称", "新建文件.txt",
+                    name => NewItemService.Validate("C:\\", name));
                 using var batch = new BatchRenameForm(new[]
                 {
                     Path.Combine(Path.GetTempPath(), "wxd_not_exists_" + Guid.NewGuid().ToString("N") + ".txt")
