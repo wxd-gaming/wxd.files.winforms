@@ -35,6 +35,9 @@ internal sealed class FileSearchForm : Form
     private CancellationTokenSource? _cts;
     private bool _running;
 
+    /// <summary>修改时间过滤是否启用；默认关闭，供 UI 冒烟测试断言。</summary>
+    internal bool IsModifiedTimeFilterEnabled => _dtpFrom.Checked || _dtpTo.Checked;
+
     public FileSearchForm(string startDirectory, Action<string> onNavigate)
     {
         _startDirectory = string.IsNullOrWhiteSpace(startDirectory)
@@ -119,9 +122,11 @@ internal sealed class FileSearchForm : Form
 
         _dtpFrom.Format = DateTimePickerFormat.Short;
         _dtpFrom.ShowCheckBox = true;
+        _dtpFrom.Checked = false;
         _dtpFrom.Width = 112;
         _dtpTo.Format = DateTimePickerFormat.Short;
         _dtpTo.ShowCheckBox = true;
+        _dtpTo.Checked = false;
         _dtpTo.Width = 112;
 
         options.Controls.AddRange(new Control[]

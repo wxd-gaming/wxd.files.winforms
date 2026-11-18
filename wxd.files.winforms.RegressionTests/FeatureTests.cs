@@ -975,6 +975,7 @@ internal static partial class Program
             try
             {
                 using var search = new FileSearchForm("C:\\", _ => { });
+                Assert(!search.IsModifiedTimeFilterEnabled, "搜索窗口默认不应勾选修改时间过滤");
                 using var batch = new BatchRenameForm(new[]
                 {
                     Path.Combine(Path.GetTempPath(), "wxd_not_exists_" + Guid.NewGuid().ToString("N") + ".txt")
