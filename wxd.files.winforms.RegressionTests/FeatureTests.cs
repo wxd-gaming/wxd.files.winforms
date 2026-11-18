@@ -50,6 +50,9 @@ internal static partial class Program
         Run("重命名 存在错误时整体拒绝", Test_RenameRefusesOnError);
         Run("重命名 执行与撤销", Test_RenameApplyAndUndo);
         Run("重命名 扩展名参与替换", Test_RenameIncludeExtension);
+
+        Console.WriteLine("--- UI 构造冒烟 ---");
+        Run("搜索/批量重命名窗体可在 STA 线程构造", Test_UiFormsConstruct);
     }
 
     // ==================== 复制 ====================
@@ -249,9 +252,11 @@ internal static partial class Program
             File.WriteAllText(Path.Combine(sourceDir, "a.txt"), "A");
             File.WriteAllText(Path.Combine(sourceDir, "folder", "b.txt"), "B");
 
+            long movedBytes = 0;
             FileTransferEngine.MovePath(Path.Combine(sourceDir, "a.txt"), targetDir,
                 new FileOperationOptions { Conflict = ConflictPolicy.Overwrite },
-                null, null, new PauseToken(), CancellationToken.None);
+                null, bytes => movedBytes += bytes, new PauseToken(), CancellationToken.None);
+            AssertEq(1L, movedBytes, "同卷移动的进度字节数不应重复上报");
             Assert(!File.Exists(Path.Combine(sourceDir, "a.txt")), "移动后源文件应消失");
             AssertEq("A", File.ReadAllText(Path.Combine(targetDir, "a.txt")), "移动后目标内容");
 
@@ -936,6 +941,34 @@ internal static partial class Program
         var hidden = Path.Combine(root, "hidden.txt");
         File.WriteAllText(hidden, "alpha hidden\n");
         File.SetAttributes(hidden, FileAttributes.Hidden);
+    }
+
+    private static void Test_UiFormsConstruct()
+    {
+        Exception? captured = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var search = new FileSearchForm("C:\\", _ => { });
+                using var batch = new BatchRenameForm(new[]
+                {
+                    Path.Combine(Path.GetTempPath(), "wxd_not_exists_" + Guid.NewGuid().ToString("N") + ".txt")
+                });
+            }
+            catch (Exception ex)
+            {
+                captured = ex;
+            }
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert(thread.Join(10000), "UI 构造线程超时");
+        if (captured != null) throw new Exception("窗体构造失败: " + captured);
     }
 
     private static void AssertThrows<T>(Action action) where T : Exception

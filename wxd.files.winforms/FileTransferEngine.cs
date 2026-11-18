@@ -349,14 +349,15 @@ public static class FileTransferEngine
         if (SameVolume(source, target))
         {
             File.Move(X(source), X(target));
+            onBytes?.Invoke(size);
         }
         else
         {
+            // 跨卷移动复用复制流程，字节数由 CopyFileInternal 逐块上报，不能再补一次
             var copyOptions = CloneForOverwrite(options);
             CopyFileInternal(source, target, copyOptions, ask: null, onBytes, pause, token);
             DeletePath(source, pause, token);
         }
-        onBytes?.Invoke(size);
     }
 
     /// <summary>彻底删除文件或目录（递归，可取消）。</summary>
