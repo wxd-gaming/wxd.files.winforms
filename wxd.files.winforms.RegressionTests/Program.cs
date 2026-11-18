@@ -105,6 +105,12 @@ namespace wxd.files.winforms.RegressionTests
             Run("JSON 解析错误与宽松语法", Test_JsonParseErrors);
             Run("JSON 节点计数与顶层 null", Test_JsonCountAndNull);
 
+            // YAML key 排序（比对前归一顺序）
+            Run("YAML 嵌套 key 排序", Test_YamlSortNested);
+            Run("YAML 序列顺序不动", Test_YamlSortSequence);
+            Run("YAML 注释跟随 key", Test_YamlSortComments);
+            Run("YAML 锚点/块标量保护", Test_YamlSortBailAndBlock);
+
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
             return _failed == 0 ? 0 : 1;
@@ -919,6 +925,79 @@ namespace wxd.files.winforms.RegressionTests
             var nullResult = JsonToolEngine.Parse("null");
             Assert(nullResult.Success && nullResult.Root == null, "顶层 null 也是合法 JSON");
             AssertEq("null", JsonToolEngine.Format(nullResult.Root), "null 原样输出");
+        }
+
+        // ==================== YAML key 排序 ====================
+
+        private static void Test_YamlSortNested()
+        {
+            var input = """
+b: 2
+a:
+  z: 1
+  y: 2
+""";
+            var expected = """
+a:
+  y: 2
+  z: 1
+b: 2
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "简单嵌套映射应支持排序");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "嵌套映射逐层排序");
+        }
+
+        private static void Test_YamlSortSequence()
+        {
+            var input = """
+list:
+  - third
+  - first
+name: x
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "含序列的映射应可排序（序列本身不动）");
+            AssertEq(input.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "序列元素顺序必须保持原样");
+        }
+
+        private static void Test_YamlSortComments()
+        {
+            var input = """
+# b comment
+b: 2
+# a comment
+a: 1
+""";
+            var expected = """
+# a comment
+a: 1
+# b comment
+b: 2
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "注释应跟随所属 key");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "注释随 key 一起移动");
+        }
+
+        private static void Test_YamlSortBailAndBlock()
+        {
+            Assert(!YamlKeySorter.TrySort("x: &a 1\n", out _), "含锚点应放弃排序");
+            Assert(!YamlKeySorter.TrySort("- a\n- b\n", out _), "根是序列时放弃排序");
+
+            var input = """
+z: 1
+text: |
+  b: 2
+  a: 1
+a: 2
+""";
+            var expected = """
+a: 2
+text: |
+  b: 2
+  a: 1
+z: 1
+""";
+            Assert(YamlKeySorter.TrySort(input, out var sorted), "块标量内容应原样保留");
+            AssertEq(expected.ReplaceLineEndings("\n"), sorted.ReplaceLineEndings("\n"), "块标量里的 a/b 不能被排序");
         }
 
         // ==================== 基础设施 ====================

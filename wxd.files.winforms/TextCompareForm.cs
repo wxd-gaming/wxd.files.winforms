@@ -34,6 +34,7 @@ namespace wxd.files.winforms
         private readonly ThemeButton _btnBrowseRight = new();
         private readonly ThemeButton _btnCompare = new();
         private readonly ThemeCheckBox _chkOnlyDiff = new();
+        private readonly ThemeCheckBox _chkSortKeys = new();
         private readonly Label _lblLeftCaption = new();
         private readonly Label _lblRightCaption = new();
         private readonly Label _lblStatus = new();
@@ -50,6 +51,7 @@ namespace wxd.files.winforms
         private bool _tableMode;
         private int _tableColumnCount;
         private int _compareVersion;
+        private string _compareNote = "";
         private bool _syncingScroll;
         private bool _busy;
         private int _leftLineCount;
@@ -137,6 +139,13 @@ namespace wxd.files.winforms
             _chkOnlyDiff.Margin = new Padding(0, 7, ThemeMetrics.Group, 0);
             _chkOnlyDiff.CheckedChanged += OnOnlyDifferencesChanged;
 
+            _chkSortKeys.Text = "对比前按 key 排序";
+            _chkSortKeys.AutoSize = true;
+            _chkSortKeys.Font = Theme.Body;
+            _chkSortKeys.Margin = new Padding(0, 7, ThemeMetrics.Group, 0);
+            _chkSortKeys.Visible = false;
+            _chkSortKeys.CheckedChanged += OnSortKeysChanged;
+
             _lblStatus.AutoSize = true;
             _lblStatus.Font = Theme.Caption;
             _lblStatus.Margin = new Padding(0, 9, 0, 0);
@@ -147,7 +156,7 @@ namespace wxd.files.winforms
             _actionRow.WrapContents = false;
             _actionRow.BackColor = Color.Transparent;
             _actionRow.Margin = new Padding(0, 4, 0, 0);
-            _actionRow.Controls.AddRange(new Control[] { _btnCompare, _chkOnlyDiff, _lblStatus });
+            _actionRow.Controls.AddRange(new Control[] { _btnCompare, _chkOnlyDiff, _chkSortKeys, _lblStatus });
 
             _top.Controls.Add(_lblLeftCaption, 0, 0);
             _top.Controls.Add(_fldLeft, 1, 0);
@@ -360,6 +369,9 @@ namespace wxd.files.winforms
 
             _lblStatus.Font = Theme.Caption;
             _lblStatus.ForeColor = p.Muted;
+            _chkSortKeys.BackColor = p.Chrome;
+            _chkSortKeys.ForeColor = p.Text;
+            _chkSortKeys.Invalidate();
 
             _split.BackColor = p.Divider;
             _split.Panel1.BackColor = p.Surface;
@@ -431,9 +443,62 @@ namespace wxd.files.winforms
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) CsvSettings.TextCompareLastDirectory = dir;
 
+            UpdateSortKeysVisibility();
+
             if (File.Exists(_fldLeft.Edit.Text.Trim()) && File.Exists(_fldRight.Edit.Text.Trim())
                 && _diff.Count == 0)
                 BeginCompare();   // 两个文件都齐了就先比一次，省一次点击
+        }
+
+        private void UpdateSortKeysVisibility()
+        {
+            var leftPath = _fldLeft.Edit.Text.Trim();
+            var rightPath = _fldRight.Edit.Text.Trim();
+            _chkSortKeys.Visible = File.Exists(leftPath) && File.Exists(rightPath)
+                                   && IsKeySortable(leftPath) && IsKeySortable(rightPath);
+        }
+
+        private void OnSortKeysChanged(object? sender, EventArgs e)
+        {
+            var leftPath = _fldLeft.Edit.Text.Trim();
+            var rightPath = _fldRight.Edit.Text.Trim();
+            if (File.Exists(leftPath) && File.Exists(rightPath))
+                BeginCompare();
+        }
+
+        private static bool IsKeySortable(string path)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            return ext is ".json" or ".yaml" or ".yml";
+        }
+
+        /// <summary>比对前把 key 顺序归一（JSON 递归排序；YAML 保守排序，不支持就返回原文）。</summary>
+        private static (string[] Lines, string? Error) SortLinesForCompare(string path, string[] lines)
+        {
+            if (!IsKeySortable(path)) return (lines, null);
+
+            string text = string.Join("\n", lines);
+            try
+            {
+                if (string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parsed = JsonToolEngine.Parse(text);
+                    if (!parsed.Success) return (lines, parsed.Error ?? "JSON 解析失败");
+                    text = JsonToolEngine.Format(parsed.Root, sortKeys: true);
+                }
+                else
+                {
+                    if (!YamlKeySorter.TrySort(text, out string sorted))
+                        return (lines, "YAML 结构暂不支持排序（含锚点/根序列/多文档等）");
+                    text = sorted;
+                }
+
+                return (text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'), null);
+            }
+            catch (Exception ex)
+            {
+                return (lines, ex.Message);
+            }
         }
 
         private void OnCompareClick(object? sender, EventArgs e) => BeginCompare();
@@ -476,7 +541,10 @@ namespace wxd.files.winforms
                 return;
             }
 
+            _chkSortKeys.Visible = !leftIsTable && IsKeySortable(leftPath) && IsKeySortable(rightPath);
+
             int version = ++_compareVersion;
+            _compareNote = "";
             var stopwatch = Stopwatch.StartNew();
             SetBusy(true, leftIsTable ? "正在读取并比对表格…" : "正在读取并比对…");
 
@@ -496,13 +564,24 @@ namespace wxd.files.winforms
                     _rightLineCount = rightRows.Count;
                     _tableColumnCount = TableDiffEngine.MaxColumnCount(tableDiff);
                     UpdateTitles(leftPath, rightPath);
+                    _compareNote = $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
                     BindGrids();
-                    _lblStatus.Text += $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
                 }
                 else
                 {
                     var leftLines = await Task.Run(() => TextFileReader.ReadAllLines(leftPath));
                     var rightLines = await Task.Run(() => TextFileReader.ReadAllLines(rightPath));
+
+                    string? sortError = null;
+                    if (_chkSortKeys.Checked)
+                    {
+                        var leftSorted = await Task.Run(() => SortLinesForCompare(leftPath, leftLines));
+                        var rightSorted = await Task.Run(() => SortLinesForCompare(rightPath, rightLines));
+                        leftLines = leftSorted.Lines;
+                        rightLines = rightSorted.Lines;
+                        sortError = leftSorted.Error ?? rightSorted.Error;
+                    }
+
                     var diff = await Task.Run(() => TextDiffEngine.Compare(leftLines, rightLines));
 
                     if (version != _compareVersion || IsDisposed) return;
@@ -513,8 +592,12 @@ namespace wxd.files.winforms
                     _rightLineCount = rightLines.Length;
                     _diff = diff;
                     UpdateTitles(leftPath, rightPath);
+                    _compareNote = $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
+                    if (_chkSortKeys.Checked)
+                        _compareNote += sortError == null
+                            ? " · 已按 key 排序"
+                            : " · key 排序失败：" + sortError;
                     BindGrids();
-                    _lblStatus.Text += $" · 用时 {stopwatch.ElapsedMilliseconds} ms";
                 }
             }
             catch (Exception ex)
@@ -643,7 +726,9 @@ namespace wxd.files.winforms
 
             if (_diff.Count == 0)
             {
-                _lblStatus.Text = "选择左右两个文件后点「比对」";
+                _lblStatus.Text = _compareNote.Length > 0
+                    ? "两文件内容一致" + _compareNote
+                    : "选择左右两个文件后点「比对」";
                 return;
             }
 
@@ -677,14 +762,14 @@ namespace wxd.files.winforms
                     parts.Add($"仅显示差异 {_display.Count} 行");
             }
 
-            _lblStatus.Text = string.Join(" · ", parts);
+            _lblStatus.Text = string.Join(" · ", parts) + _compareNote;
         }
 
         private void UpdateTableStatus()
         {
             if (_tableDiff.Count == 0)
             {
-                _lblStatus.Text = "两边都是空表";
+                _lblStatus.Text = "两边都是空表" + _compareNote;
                 return;
             }
 
@@ -722,7 +807,7 @@ namespace wxd.files.winforms
                     parts.Add($"仅显示差异 {_tableDisplay.Count} 行");
             }
 
-            _lblStatus.Text = string.Join(" · ", parts);
+            _lblStatus.Text = string.Join(" · ", parts) + _compareNote;
         }
 
         private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
