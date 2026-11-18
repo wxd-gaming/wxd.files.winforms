@@ -1026,6 +1026,20 @@ namespace wxd.files.winforms
                 e.Graphics.FillPolygon(glyphBrush, arrow);
             }
 
+            // 绘制节点图标：OwnerDrawText 模式下控件先画图，但上面整行背景 FillRectangle(0..)
+            // 会把图标盖掉，所以这里按 ImageList 自己补画一次
+            var imageList = _treeFiles.ImageList;
+            int imageIndex = e.Node.ImageIndex;
+            if (imageIndex < 0 && imageList != null && !string.IsNullOrEmpty(e.Node.ImageKey))
+                imageIndex = imageList.Images.IndexOfKey(e.Node.ImageKey);
+            if (imageList != null && imageIndex >= 0 && imageIndex < imageList.Images.Count)
+            {
+                var image = imageList.Images[imageIndex];
+                int iconX = Math.Max(2, e.Bounds.Left - image.Width - 4);
+                int iconY = e.Bounds.Top + (e.Bounds.Height - image.Height) / 2;
+                e.Graphics.DrawImage(image, new Rectangle(iconX, iconY, image.Width, image.Height));
+            }
+
             // 绘制文字
             var text = e.Node.Text;
             var textRect = e.Bounds;
