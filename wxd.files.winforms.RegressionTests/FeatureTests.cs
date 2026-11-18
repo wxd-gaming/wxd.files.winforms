@@ -26,6 +26,19 @@ internal static partial class Program
         Run("暂停闸门", Test_PauseToken);
         Run("唯一命名与长路径前缀", Test_UniqueAndLongPath);
         Run("统计文件数与字节", Test_Measure);
+
+        Console.WriteLine("--- 文件搜索 ---");
+        Run("搜索 文件名包含匹配(忽略大小写)", Test_SearchNameContains);
+        Run("搜索 通配符与正则", Test_SearchWildcardAndRegex);
+        Run("搜索 是否递归子目录", Test_SearchRecursiveToggle);
+        Run("搜索 隐藏文件开关", Test_SearchHiddenToggle);
+        Run("搜索 内容命中与行号", Test_SearchContentLineNumbers);
+        Run("搜索 内容大小写与正则", Test_SearchContentCaseAndRegex);
+        Run("搜索 大小与修改时间过滤", Test_SearchSizeAndDate);
+        Run("搜索 结果上限截断", Test_SearchMaxResults);
+        Run("搜索 取消与非法正则", Test_SearchCancelAndBadRegex);
+        Run("搜索 二进制文件跳过", Test_SearchBinarySkip);
+        Run("搜索 目录名命中", Test_SearchDirectoryHit);
     }
 
     // ==================== 复制 ====================
@@ -416,6 +429,300 @@ internal static partial class Program
         {
             DeleteTempDir(root);
         }
+    }
+
+    // ==================== 搜索 ====================
+
+    private static void Test_SearchNameContains()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+            var result = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "alpha" }, null, CancellationToken.None);
+
+            var names = result.Hits.Select(h => h.Name).OrderBy(n => n, StringComparer.Ordinal);
+            AssertSeq(new[] { "alpha.txt", "alpha2.txt" }, names, "包含匹配应忽略大小写");
+            Assert(result.FilesScanned > 0, "应统计扫描文件数");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchWildcardAndRegex()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+
+            var wildcard = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "*.txt" }, null, CancellationToken.None);
+            AssertSeq(new[] { "alpha.txt", "alpha2.txt" },
+                wildcard.Hits.Select(h => h.Name).OrderBy(n => n, StringComparer.Ordinal),
+                "通配符 *.txt");
+
+            var regex = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    Pattern = "^alpha\\d*\\.txt$",
+                    UseRegex = true
+                }, null, CancellationToken.None);
+            AssertSeq(new[] { "alpha.txt", "alpha2.txt" },
+                regex.Hits.Select(h => h.Name).OrderBy(n => n, StringComparer.Ordinal),
+                "正则锚定匹配");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchRecursiveToggle()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+
+            var recursive = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "*.txt" }, null, CancellationToken.None);
+            AssertEq(2, recursive.Hits.Count, "递归时应命中根目录与子目录的 txt");
+
+            var flat = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    Pattern = "*.txt",
+                    IncludeSubdirectories = false
+                }, null, CancellationToken.None);
+            AssertSeq(new[] { "alpha.txt" }, flat.Hits.Select(h => h.Name), "不递归只返回根目录文件");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchHiddenToggle()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+
+            var withoutHidden = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "hidden*" }, null, CancellationToken.None);
+            AssertEq(0, withoutHidden.Hits.Count, "默认不返回隐藏文件");
+
+            var withHidden = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    Pattern = "hidden*",
+                    IncludeHidden = true
+                }, null, CancellationToken.None);
+            AssertEq(1, withHidden.Hits.Count, "包含隐藏文件时应命中");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchContentLineNumbers()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+            var result = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, ContentPattern = "alpha" }, null, CancellationToken.None);
+
+            var hits = result.Hits
+                .Select(h => h.Name + ":" + h.LineNumber)
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .ToArray();
+            AssertSeq(new[] { "alpha.txt:1", "alpha2.txt:1" }, hits, "内容命中应带物理行号");
+            Assert(result.Hits.All(h => !h.IsDirectory), "内容搜索不应返回目录");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchContentCaseAndRegex()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+
+            var insensitive = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, ContentPattern = "beta" }, null, CancellationToken.None);
+            AssertEq(1, insensitive.Hits.Count, "默认忽略大小写");
+            AssertEq(2, insensitive.Hits[0].LineNumber, "Beta two 在第 2 行");
+
+            var sensitive = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    ContentPattern = "beta",
+                    CaseSensitive = true
+                }, null, CancellationToken.None);
+            AssertEq(0, sensitive.Hits.Count, "区分大小写时 beta 不应命中 Beta");
+
+            var regex = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    ContentPattern = "^Beta two$",
+                    ContentRegex = true
+                }, null, CancellationToken.None);
+            AssertEq(1, regex.Hits.Count, "内容正则锚定");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchSizeAndDate()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var small = Path.Combine(root, "small.txt");
+            File.WriteAllText(small, "x");
+            var big = Path.Combine(root, "big.txt");
+            File.WriteAllText(big, new string('y', 100));
+
+            var bySize = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "*.txt", MinSize = 2 },
+                null, CancellationToken.None);
+            AssertSeq(new[] { "big.txt" }, bySize.Hits.Select(h => h.Name), "大小过滤");
+
+            File.SetLastWriteTimeUtc(small, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            var byDate = FileSearchService.Search(
+                new FileSearchQuery
+                {
+                    Roots = new[] { root },
+                    Pattern = "small.txt",
+                    ModifiedAfter = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                }, null, CancellationToken.None);
+            AssertEq(0, byDate.Hits.Count, "修改时间过滤");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchMaxResults()
+    {
+        var root = NewTempDir();
+        try
+        {
+            for (int i = 0; i < 5; i++)
+                File.WriteAllText(Path.Combine(root, "f" + i + ".txt"), "x");
+
+            var result = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "*.txt", MaxResults = 2 },
+                null, CancellationToken.None);
+            AssertEq(2, result.Hits.Count, "结果数应被上限截断");
+            Assert(result.Truncated, "应标记为截断");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchCancelAndBadRegex()
+    {
+        var root = NewTempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "a.txt"), "x");
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            AssertThrows<OperationCanceledException>(() => FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "*" }, null, cts.Token));
+
+            AssertThrows<ArgumentException>(() => FileSearchService.BuildNameRegex("[", true, false));
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchBinarySkip()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var binary = Path.Combine(root, "data.bin");
+            File.WriteAllBytes(binary, new byte[] { 0x61, 0x00, 0x62, 0x63 });
+            var result = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, ContentPattern = "a" }, null, CancellationToken.None);
+            AssertEq(0, result.Hits.Count, "含 NUL 的二进制文件不应做内容命中");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_SearchDirectoryHit()
+    {
+        var root = NewTempDir();
+        try
+        {
+            CreateSearchTree(root);
+            var result = FileSearchService.Search(
+                new FileSearchQuery { Roots = new[] { root }, Pattern = "sub" }, null, CancellationToken.None);
+            Assert(result.Hits.Any(h => h.IsDirectory && h.Name == "sub"), "目录名应参与匹配");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void CreateSearchTree(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "sub", "deep"));
+        File.WriteAllText(Path.Combine(root, "alpha.txt"), "alpha one\nBeta two\n");
+        File.WriteAllText(Path.Combine(root, "b.csv"), "x,y\n");
+        File.WriteAllText(Path.Combine(root, "sub", "alpha2.txt"), "alpha in sub\n");
+        File.WriteAllText(Path.Combine(root, "sub", "deep", "c.log"), "gamma\n");
+
+        var hidden = Path.Combine(root, "hidden.txt");
+        File.WriteAllText(hidden, "alpha hidden\n");
+        File.SetAttributes(hidden, FileAttributes.Hidden);
+    }
+
+    private static void AssertThrows<T>(Action action) where T : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (T)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("期望抛出 " + typeof(T).Name + "，实际 " + ex.GetType().Name);
+        }
+        throw new Exception("期望抛出 " + typeof(T).Name + "，但没有异常");
     }
 
     private static (string Source, string Target) CreateConflict(string root, string sourceText, string targetText)

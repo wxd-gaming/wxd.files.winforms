@@ -760,6 +760,7 @@ namespace wxd.files.winforms
             _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
             _menuVcsUpdateItem.Enabled = false;
             _menuMoreActions.Items.Add(_menuVcsUpdateItem);
+            _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
             _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
@@ -2551,6 +2552,68 @@ namespace wxd.files.winforms
             }
         }
 
+        // ==================== 搜索 ====================
+        /// <summary>打开搜索窗口，结果双击定位到本窗格。</summary>
+        private void OpenSearch()
+        {
+            var form = new FileSearchForm(_currentDir, SelectPath);
+            var owner = FindForm();
+            if (owner != null) form.Show(owner);
+            else form.Show();
+        }
+
+        /// <summary>定位到指定文件/目录：必要时先导航，再等列表加载完选中。</summary>
+        public void SelectPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            string full;
+            try { full = Path.GetFullPath(path); }
+            catch { return; }
+
+            if (Directory.Exists(full))
+            {
+                if (!string.Equals(_currentDir, full, StringComparison.OrdinalIgnoreCase))
+                    NavigateTo(full);
+                return;
+            }
+
+            var directory = Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return;
+            if (!string.Equals(_currentDir, directory, StringComparison.OrdinalIgnoreCase))
+                NavigateTo(directory);
+
+            int ticks = 0;
+            var timer = new System.Windows.Forms.Timer { Interval = 120 };
+            timer.Tick += (_, _) =>
+            {
+                ticks++;
+                if (IsDisposed || _lstFiles.IsDisposed)
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    return;
+                }
+
+                var found = _lstFiles.Items.Cast<ListViewItem>().FirstOrDefault(i =>
+                    i.Tag is FileItemTag tag &&
+                    string.Equals(tag.FullName, full, StringComparison.OrdinalIgnoreCase));
+
+                if (found == null && ticks < 40) return;
+
+                timer.Stop();
+                timer.Dispose();
+                if (found == null) return;
+
+                _lstFiles.SelectedItems.Clear();
+                found.Selected = true;
+                found.Focused = true;
+                found.EnsureVisible();
+                _lstFiles.Focus();
+            };
+            timer.Start();
+        }
+
         // ==================== 传输队列 ====================
         /// <summary>把复制/移动交给共享传输队列后立即返回；同名冲突回到 UI 线程询问。</summary>
         private bool EnqueueFileOperation(string[] paths, string targetDir, bool move)
@@ -2923,6 +2986,11 @@ namespace wxd.files.winforms
             if (keyData == (Keys.Control | Keys.Shift | Keys.N))
             {
                 CreateNewFolder();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.F))
+            {
+                OpenSearch();
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
