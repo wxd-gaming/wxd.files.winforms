@@ -6,7 +6,9 @@
 
 param(
     [string]$Version = "",
-    [string]$ReleaseNotes = ""
+    [string]$ReleaseNotes = "",
+    [switch]$Yes,
+    [switch]$GiteeOnly
 )
 
 # ============================================
@@ -14,7 +16,7 @@ param(
 # ============================================
 $GiteeOwner = "wxd-gaming"              # Gitee username/organization
 $GiteeRepo  = "wxd.files.winforms"      # Repository name
-$GiteeRemoteName = "origin"             # Gitee git remote
+$GiteeRemoteName = "origin"             # Gitee git remote (falls back to "gitee")
 
 $GithubOwner = "wxd-gaming"             # GitHub username/organization
 $GithubRepo  = "wxd.files.winforms"     # Repository name
@@ -23,6 +25,14 @@ $GithubRepoUrl = "https://github.com/$GithubOwner/$GithubRepo.git"
 $ProjectDir  = Join-Path $PSScriptRoot "wxd.files.winforms"
 $CsprojPath  = Join-Path $ProjectDir "wxd.files.winforms.csproj"
 $PublishDir  = Join-Path $PSScriptRoot "publish"
+
+# 本仓库实际 remote 可能叫 gitee 而不是 origin，按存在的那个推
+try {
+    $remotes = @(git remote)
+    if ($remotes -notcontains $GiteeRemoteName -and $remotes -contains "gitee") {
+        $GiteeRemoteName = "gitee"
+    }
+} catch { }
 
 
 # ============================================
@@ -96,7 +106,9 @@ if (-not $GiteeToken) {
 }
 
 # GitHub is optional: without a token the script still publishes to Gitee only.
-$GithubToken = Resolve-ApiToken -EnvName "GITHUB_TOKEN" -DisplayName "GitHub" -ScopeHint "repo (classic token)"
+$GithubToken = if ($GiteeOnly) { $null } else {
+    Resolve-ApiToken -EnvName "GITHUB_TOKEN" -DisplayName "GitHub" -ScopeHint "repo (classic token)"
+}
 
 # Check csproj file
 if (-not (Test-Path $CsprojPath)) {
@@ -192,11 +204,13 @@ foreach ($line in ($ReleaseNotes -split "`n")) {
 Write-Host "========================================"
 Write-Host
 
-$confirm = Read-Host "Confirm release? (y/n)"
-if ($confirm -ne 'y' -and $confirm -ne 'Y') {
-    Write-Host "Release cancelled." -ForegroundColor Yellow
-    Read-Host "Press any key to exit..."
-    exit 0
+if (-not $Yes) {
+    $confirm = Read-Host "Confirm release? (y/n)"
+    if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+        Write-Host "Release cancelled." -ForegroundColor Yellow
+        Read-Host "Press any key to exit..."
+        exit 0
+    }
 }
 
 # ============================================
