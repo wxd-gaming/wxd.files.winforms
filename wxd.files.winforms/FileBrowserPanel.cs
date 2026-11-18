@@ -420,6 +420,7 @@ namespace wxd.files.winforms
             InitImageList();
             CreateControls();
             RebuildPathComboItems();
+            FileOperationQueue.Shared.JobChanged += OnSharedJobChanged;
 
             // ==== 第一步：恢复视图模式 ====
             _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedState.ViewMode));
@@ -759,6 +760,7 @@ namespace wxd.files.winforms
             _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
             _menuVcsUpdateItem.Enabled = false;
             _menuMoreActions.Items.Add(_menuVcsUpdateItem);
+            _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
 
@@ -2491,7 +2493,7 @@ namespace wxd.files.winforms
             catch { return; }
 
             if (paths == null || paths.Length == 0) return;
-            if (RunFileOperation(paths, _currentDir, move) && move)
+            if (EnqueueFileOperation(paths, _currentDir, move) && move)
             {
                 try { Clipboard.Clear(); } catch { }
             }
@@ -2546,6 +2548,73 @@ namespace wxd.files.winforms
             {
                 AlertForm.Show(this.FindForm(), "文件操作失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
                 return false;
+            }
+        }
+
+        // ==================== 传输队列 ====================
+        /// <summary>把复制/移动交给共享传输队列后立即返回；同名冲突回到 UI 线程询问。</summary>
+        private bool EnqueueFileOperation(string[] paths, string targetDir, bool move)
+        {
+            if (string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir)) return false;
+
+            string normalizedTarget = targetDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var valid = paths
+                .Where(p => !string.IsNullOrWhiteSpace(p) && (File.Exists(p) || Directory.Exists(p)))
+                .Where(p =>
+                {
+                    var full = Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar);
+                    var target = normalizedTarget.TrimEnd(Path.DirectorySeparatorChar);
+                    return !string.Equals(full, target, StringComparison.OrdinalIgnoreCase)
+                           && !target.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                })
+                .ToArray();
+
+            if (valid.Length == 0) return false;
+
+            var options = new FileOperationOptions { Conflict = ConflictPolicy.Ask };
+            FileOperationQueue.Shared.Enqueue(
+                move ? FileOperationKind.Move : FileOperationKind.Copy,
+                valid,
+                targetDir,
+                options,
+                AskConflict);
+            return true;
+        }
+
+        /// <summary>冲突回调：工作线程 → UI 线程弹框；窗口已销毁时按跳过处理。</summary>
+        private ConflictAnswer AskConflict(ConflictInfo info)
+        {
+            if (IsDisposed || !IsHandleCreated) return new ConflictAnswer(ConflictDecision.Skip);
+            try
+            {
+                return (ConflictAnswer)Invoke(new Func<ConflictAnswer>(
+                    () => ConflictDialog.Ask(FindForm(), info)));
+            }
+            catch
+            {
+                return new ConflictAnswer(ConflictDecision.Skip);
+            }
+        }
+
+        /// <summary>任务结束后，若源目录或目标目录就是本窗格，就刷新列表。</summary>
+        private void OnSharedJobChanged(object? sender, FileOperationJob job)
+        {
+            if (job.State is not (FileOperationState.Completed or FileOperationState.Failed)) return;
+            if (IsDisposed) return;
+
+            bool affected = string.Equals(job.Destination, _currentDir, StringComparison.OrdinalIgnoreCase)
+                || job.Sources.Any(s => string.Equals(
+                    Path.GetDirectoryName(s), _currentDir, StringComparison.OrdinalIgnoreCase));
+            if (!affected) return;
+
+            try
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(() => { if (!IsDisposed) _ = LoadFileListAsync(); }));
+            }
+            catch
+            {
+                // 窗口正在关闭
             }
         }
 
@@ -2940,7 +3009,7 @@ namespace wxd.files.winforms
                 target = tag.FullName;
 
             bool move = e.Effect == DragDropEffects.Move;
-            RunFileOperation(paths, target, move);
+            EnqueueFileOperation(paths, target, move);
         }
 
         // ==================== F2 重命名 ====================
@@ -3071,8 +3140,9 @@ namespace wxd.files.winforms
 
         protected override void Dispose(bool disposing)
         {
-            // 取消 VCS 状态事件订阅
+            // 取消 VCS 状态与传输队列事件订阅
             VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
+            FileOperationQueue.Shared.JobChanged -= OnSharedJobChanged;
 
             // 停止定时器并立即保存
             _saveDebounceTimer?.Stop();
