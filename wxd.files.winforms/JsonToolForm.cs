@@ -351,7 +351,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                SetStatus("保存失败：" + ex.Message, error: true);
+                SetStatus("保存失败（没有写权限或文件被占用）：" + ex.Message, error: true);
             }
         }
 
