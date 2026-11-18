@@ -50,6 +50,8 @@ namespace wxd.files.winforms
         private Button? _btnBack;
         private Button? _btnForward;
         private FlowLayoutPanel? _pnlBreadcrumb;
+        private int _breadcrumbHeight = 28;
+        private bool _breadcrumbVisible = true;
         private readonly List<string> _navBack = new();
         private readonly List<string> _navForward = new();
         private ListView _lstFiles = new();
@@ -512,8 +514,10 @@ namespace wxd.files.winforms
             // 更新工具栏
             if (_pnlToolbar != null)
             {
+                _breadcrumbHeight = Math.Max(26, Theme.Caption.Height + 8);
                 _pnlToolbar.BackColor = _colorToolbarBg;
-                _pnlToolbar.Height = ThemeMetrics.BarHeight + 22;
+                _pnlToolbar.Height = _pnlToolbar.Padding.Vertical + 2 + ThemeMetrics.RowH
+                    + (_breadcrumbVisible ? 4 + _breadcrumbHeight : 0);
             }
 
             // 更新底部面板
@@ -536,9 +540,12 @@ namespace wxd.files.winforms
 
             if (_pnlBreadcrumb != null)
             {
+                _pnlBreadcrumb.Height = _breadcrumbHeight;
                 _pnlBreadcrumb.BackColor = _colorToolbarBg;
                 RebuildBreadcrumb();
             }
+
+            LayoutToolbar();
 
             // 更新过滤输入域：行高随皮肤变，尺寸和位置一起重算
             if (_txtFilter != null)
@@ -612,10 +619,10 @@ namespace wxd.files.winforms
             _pnlToolbar = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = ThemeMetrics.BarHeight + 22,   // 上排路径/按钮，下排面包屑
+                Height = ThemeMetrics.BarHeight + 34,   // 创建后再按字体高度重算
                 BackColor = _colorToolbarBg,
-                Padding = new Padding(ThemeMetrics.Margin, ThemeMetrics.RowPad,
-                                     ThemeMetrics.Margin, ThemeMetrics.RowPad)
+                Padding = new Padding(ThemeMetrics.Margin, 0,
+                                     ThemeMetrics.Margin, 0)
             };
 
             _cboPath = new ThemeComboBox
@@ -623,7 +630,7 @@ namespace wxd.files.winforms
                 Width = 200,
                 Height = ThemeMetrics.RowH,
                 Font = Theme.Body,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
                 DropDownStyle = ComboBoxStyle.DropDown,
                 FlatStyle = FlatStyle.Flat,
                 AutoCompleteMode = AutoCompleteMode.SuggestAppend,
@@ -657,18 +664,21 @@ namespace wxd.files.winforms
                 Text = "上级",
                 Size = new Size(ThemeButton.FitWidth("上级"), ThemeMetrics.RowH),
                 Font = Theme.Body,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
+                Anchor = AnchorStyles.Top | AnchorStyles.Left
             };
             _btnUp.Click += (s, e) => GoUp();
 
+            _breadcrumbHeight = Math.Max(26, Theme.Caption.Height + 8);
+            _pnlToolbar.Height = _pnlToolbar.Padding.Vertical + 2 + ThemeMetrics.RowH
+                + 4 + _breadcrumbHeight;
             _pnlBreadcrumb = new FlowLayoutPanel
             {
-                Dock = DockStyle.Bottom,
-                Height = 22,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Height = _breadcrumbHeight,
                 WrapContents = false,
                 AutoScroll = false,   // 不显示横向滚动条：22px 高度再扣掉滚动条会看不清文字
                 FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(2, 0, 2, 0),
+                Padding = new Padding(2, 4, 2, 0),
                 Margin = Padding.Empty,
                 BackColor = _colorToolbarBg
             };
@@ -917,9 +927,15 @@ namespace wxd.files.winforms
         {
             if (_pnlToolbar == null || _cboPath == null || _btnUp == null) return;
 
-            int rowH = ThemeMetrics.RowH;
+            // ComboBox 的实际高度由字体决定，可能比 RowH 高
+            int rowH = Math.Max(22, _cboPath.PreferredHeight);
+            int neededHeight = _pnlToolbar.Padding.Vertical + 2 + rowH
+                + (_breadcrumbVisible ? 4 + _breadcrumbHeight : 0);
+            if (_pnlToolbar.Height != neededHeight)
+                _pnlToolbar.Height = neededHeight;
+
             var area = _pnlToolbar.DisplayRectangle;
-            int top = area.Top + Math.Max(0, (area.Height - rowH) / 2);
+            int top = area.Top + 2;   // 离顶部 2px
 
             int x = area.Left;
             if (_btnBack != null)
@@ -934,6 +950,17 @@ namespace wxd.files.winforms
             }
             _btnUp.SetBounds(area.Right - _btnUp.Width, top, _btnUp.Width, rowH);
             _cboPath.SetBounds(x, top, Math.Max(80, _btnUp.Left - ThemeMetrics.Gap - x), rowH);
+
+            if (_pnlBreadcrumb != null)
+            {
+                _pnlBreadcrumb.Visible = _breadcrumbVisible;
+                if (_breadcrumbVisible)
+                {
+                    int breadcrumbTop = top + rowH + 4;
+                    _pnlBreadcrumb.SetBounds(area.Left, breadcrumbTop,
+                        Math.Max(0, area.Width), _breadcrumbHeight);
+                }
+            }
         }
 
         /// <summary>
@@ -1223,11 +1250,29 @@ namespace wxd.files.winforms
                 if (string.IsNullOrEmpty(root)) return;
 
                 string current = root;
+                _pnlBreadcrumb.Controls.Add(new Label
+                {
+                    Text = "路径",
+                    AutoSize = true,
+                    Font = Theme.Caption,
+                    ForeColor = _colorTextSecondary,
+                    Margin = new Padding(1, 5, 3, 0)
+                });
                 AddBreadcrumbLink(DisplaySegment(root), current);
 
                 string rest = _currentDir.Substring(root.Length);
-                foreach (var part in rest.Split(Path.DirectorySeparatorChar,
-                             StringSplitOptions.RemoveEmptyEntries))
+                var parts = rest.Split(Path.DirectorySeparatorChar,
+                    StringSplitOptions.RemoveEmptyEntries);
+                // 根目录只有 "D:" 一段，面包屑没有信息量；直接隐藏，把高度还给列表
+                _breadcrumbVisible = parts.Length > 0;
+                _pnlBreadcrumb.Visible = _breadcrumbVisible;
+                if (!_breadcrumbVisible)
+                {
+                    LayoutToolbar();
+                    return;
+                }
+
+                foreach (var part in parts)
                 {
                     current = Path.Combine(current, part);
                     AddBreadcrumbSeparator();
@@ -1237,6 +1282,7 @@ namespace wxd.files.winforms
             finally
             {
                 _pnlBreadcrumb.ResumeLayout();
+                LayoutToolbar();
             }
         }
 
@@ -1262,16 +1308,23 @@ namespace wxd.files.winforms
         private void AddBreadcrumbLink(string text, string path)
         {
             if (_pnlBreadcrumb == null) return;
+            // 做成可点的"胶囊"：蓝字 + 下划线 + 浅色底，hover 加深，避免看起来像普通文字
+            var linkColor = Theme.Signal(Color.FromArgb(0, 102, 204));
+            var baseBack = Theme.CellTint(Color.FromArgb(234, 243, 252));
+            var hoverBack = Theme.CellTint(Color.FromArgb(210, 230, 250));
             var link = new LinkLabel
             {
                 Text = text,
                 AutoSize = true,
                 Font = Theme.Caption,
-                LinkBehavior = LinkBehavior.NeverUnderline,
-                LinkColor = _colorTextPrimary,
-                ActiveLinkColor = Theme.P.Selection,
-                VisitedLinkColor = _colorTextPrimary,
-                Margin = new Padding(1, 3, 1, 0),
+                LinkBehavior = LinkBehavior.AlwaysUnderline,
+                LinkColor = linkColor,
+                ActiveLinkColor = linkColor,
+                VisitedLinkColor = linkColor,
+                BackColor = baseBack,
+                Cursor = Cursors.Hand,
+                Padding = new Padding(4, 1, 4, 1),
+                Margin = new Padding(1, 2, 1, 0),
                 Tag = path
             };
             link.LinkClicked += (s, e) =>
@@ -1279,6 +1332,9 @@ namespace wxd.files.winforms
                 if (s is LinkLabel l && l.Tag is string target && Directory.Exists(target))
                     NavigateTo(target);
             };
+            link.MouseEnter += (s, e) => { if (s is LinkLabel l) l.BackColor = hoverBack; };
+            link.MouseLeave += (s, e) => { if (s is LinkLabel l) l.BackColor = baseBack; };
+            _pathToolTip.SetToolTip(link, "点击跳转到 " + path);
             _pnlBreadcrumb.Controls.Add(link);
         }
 
@@ -2474,12 +2530,14 @@ namespace wxd.files.winforms
                 };
 
                 int ret = SHFileOperation(ref op);
+                // 1223 = ERROR_CANCELLED：用户在系统“目标文件夹访问被拒绝”等对话框里点了取消，
+                // 不是程序错误，不要弹“文件操作失败”
+                if (ret == 1223 || op.fAnyOperationsAborted != 0) return false;
                 if (ret != 0)
                 {
                     AlertForm.Show(this.FindForm(), $"文件操作失败（代码 {ret}）", "错误", AlertType.Error);
                     return false;
                 }
-                if (op.fAnyOperationsAborted != 0) return false;
 
                 _ = LoadFileListAsync();
                 return true;
