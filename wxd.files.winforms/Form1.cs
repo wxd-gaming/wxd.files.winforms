@@ -1033,18 +1033,7 @@ namespace wxd.files.winforms
             void ShowAlert()
             {
                 if (IsDisposed) return;
-                var first = job.Errors.FirstOrDefault() ?? job.Error ?? "未知错误";
-                var hint = job.Errors.Any(error =>
-                    error.Contains("UnauthorizedAccess", StringComparison.OrdinalIgnoreCase)
-                    || error.Contains("拒绝访问", StringComparison.Ordinal))
-                    ? GlobalConst.NewLine + GlobalConst.NewLine
-                      + "目标目录没有写入权限（常见于磁盘根目录、系统目录）。请换到有权限的目录，或以管理员身份运行本程序。"
-                    : "";
-
-                AlertForm.Show(this,
-                    job.KindText + "失败：" + job.FailedItems + " 项未完成。"
-                    + GlobalConst.NewLine + first + hint,
-                    "文件操作失败", AlertType.Error);
+                AlertForm.Show(this, OperationErrorPresenter.Build(job), "文件操作失败", AlertType.Error);
             }
 
             if (InvokeRequired)

@@ -52,6 +52,10 @@ internal static partial class Program
         Run("重命名 执行与撤销", Test_RenameApplyAndUndo);
         Run("重命名 扩展名参与替换", Test_RenameIncludeExtension);
 
+        Console.WriteLine("--- 文件操作失败提示 ---");
+        Run("失败提示 权限错误给出中文建议", Test_OperationErrorPermission);
+        Run("失败提示 普通错误保留原始信息", Test_OperationErrorGeneric);
+
         Console.WriteLine("--- UI 构造冒烟 ---");
         Run("搜索/批量重命名窗体可在 STA 线程构造", Test_UiFormsConstruct);
     }
@@ -965,6 +969,37 @@ internal static partial class Program
         var hidden = Path.Combine(root, "hidden.txt");
         File.WriteAllText(hidden, "alpha hidden\n");
         File.SetAttributes(hidden, FileAttributes.Hidden);
+    }
+
+    private static void Test_OperationErrorPermission()
+    {
+        var job = new FileOperationJob
+        {
+            Kind = FileOperationKind.Copy,
+            Destination = @"D:\xxx"
+        };
+        job.FailedItems = 1;
+        job.Errors.Add(@"D:\策划配置\cfg_monster.csv: Access to the path 'D:\xxx\cfg_monster.csv.wxd-tmp-c005c002' is denied.");
+
+        var text = OperationErrorPresenter.Build(job);
+        Assert(text.Contains("没有写入权限"), "应说明是权限问题");
+        Assert(text.Contains("以管理员身份"), "应给出下一步操作建议");
+        Assert(text.Contains(@"D:\xxx"), "应回显目标位置");
+    }
+
+    private static void Test_OperationErrorGeneric()
+    {
+        var job = new FileOperationJob
+        {
+            Kind = FileOperationKind.Copy,
+            Destination = @"D:\dst"
+        };
+        job.FailedItems = 1;
+        job.Errors.Add(@"D:\a.txt: 源不存在");
+
+        var text = OperationErrorPresenter.Build(job);
+        Assert(text.Contains("源不存在"), "普通错误应保留原始信息");
+        Assert(!text.Contains("以管理员身份"), "非权限错误不应给管理员建议");
     }
 
     private static void Test_UiFormsConstruct()
