@@ -33,6 +33,9 @@ public sealed class FileOperationQueue : IDisposable
     /// <summary>任务状态变化（入队/开始/暂停/结束）；进度变化请轮询。</summary>
     public event EventHandler<FileOperationJob>? JobChanged;
 
+    /// <summary>任务失败（有失败项或整体异常），供主窗体统一提示。</summary>
+    public event EventHandler<FileOperationJob>? JobFailed;
+
     public IReadOnlyList<FileOperationJob> Jobs
     {
         get
@@ -65,6 +68,8 @@ public sealed class FileOperationQueue : IDisposable
             _pending.Enqueue(job);
         }
 
+        OperationLog.Write("enqueue " + job.Id[..6] + " " + job.KindText + " -> " + (destination ?? "-")
+            + " 来源 " + job.Sources.Count + " 项");
         Raise(job);
         Pump();
         return job;
@@ -148,6 +153,7 @@ public sealed class FileOperationQueue : IDisposable
                 if (job.State != FileOperationState.Pending) continue;
 
                 _running++;
+                OperationLog.Write("dispatch " + job.Id[..6] + " (running=" + _running + ")");
                 _ = Task.Run(async () =>
                 {
                     try
@@ -177,6 +183,8 @@ public sealed class FileOperationQueue : IDisposable
             job.State = FileOperationState.Running;
             job.StartedAt = DateTime.Now;
             job.RunOrder = Interlocked.Increment(ref _runSequence);
+            OperationLog.Write("start " + job.Id[..6] + " " + job.KindText + " -> " + (job.Destination ?? "-")
+                + " : " + string.Join("; ", job.Sources));
             Raise(job);
 
             var measured = FileTransferEngine.Measure(job.Sources);
@@ -218,6 +226,7 @@ public sealed class FileOperationQueue : IDisposable
                 {
                     job.FailedItems++;
                     job.Errors.Add(source + ": " + ex.Message);
+                    OperationLog.Write("fail " + job.Id[..6] + " " + source + " : " + ex);
                 }
             }
 
@@ -245,16 +254,29 @@ public sealed class FileOperationQueue : IDisposable
 
     private void Finish(FileOperationJob job, FileOperationState state)
     {
+        OperationLog.Write("finish " + job.Id[..6] + " " + state + " failed=" + job.FailedItems
+            + " error=" + (job.Error ?? "-"));
         job.State = state;
         job.FinishedAt = DateTime.Now;
         job.CurrentItem = null;
         Raise(job);
+        if (state == FileOperationState.Failed) RaiseFailed(job);
         job.Finished.TrySetResult(true);
     }
 
     private void Raise(FileOperationJob job)
     {
         var handlers = JobChanged;
+        if (handlers == null) return;
+        foreach (EventHandler<FileOperationJob> handler in handlers.GetInvocationList())
+        {
+            try { handler(this, job); } catch { }
+        }
+    }
+
+    private void RaiseFailed(FileOperationJob job)
+    {
+        var handlers = JobFailed;
         if (handlers == null) return;
         foreach (EventHandler<FileOperationJob> handler in handlers.GetInvocationList())
         {

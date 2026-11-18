@@ -23,6 +23,7 @@ internal static partial class Program
         Run("取消后清理临时文件", Test_CancelCleansTemp);
         Run("队列 顺序执行与完成状态", Test_QueueSequential);
         Run("队列 失败收集", Test_QueueFailure);
+        Run("队列 失败事件", Test_QueueFailedEvent);
         Run("暂停闸门", Test_PauseToken);
         Run("唯一命名与长路径前缀", Test_UniqueAndLongPath);
         Run("统计文件数与字节", Test_Measure);
@@ -377,6 +378,29 @@ internal static partial class Program
             WaitJob(job);
             AssertEq(FileOperationState.Failed, job.State, "不存在的源应失败");
             Assert(job.Errors.Count > 0, "应收集失败明细");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_QueueFailedEvent()
+    {
+        var root = NewTempDir();
+        try
+        {
+            using var queue = new FileOperationQueue(1);
+            FileOperationJob? failed = null;
+            queue.JobFailed += (_, job) => failed = job;
+
+            var job = queue.Enqueue(FileOperationKind.Copy,
+                new[] { Path.Combine(root, "missing.txt") }, root,
+                new FileOperationOptions { Conflict = ConflictPolicy.Overwrite });
+
+            WaitJob(job);
+            AssertEq(FileOperationState.Failed, job.State, "任务应失败");
+            AssertEq(job.Id, failed?.Id, "失败事件应携带同一任务");
         }
         finally
         {

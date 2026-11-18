@@ -283,6 +283,7 @@ dotnet run --project wxd.files.winforms/wxd.files.winforms.csproj
 | 全局设置 | `{exe}/.wxd-work/settings.json`（旧 `dll.config` 只读兼容） | 主题、窗格数量、布局、各窗格页签状态、自定义命令、更新检查时间 |
 | 最近路径 | `{exe}/.wxd-work/recent-paths.json` | 最近访问目录（最多 15 条），后台合并写 |
 | 目录级配置 | 每个目录的 `.wxd-work/config.json` | 冻结行、表头行、映射行、唯一列、列关联、关联模板、文件别名、列显隐、冻结列数 |
+| 诊断日志 | `{exe}/.wxd-work/logs/` | `crash_*.log` 崩溃现场；`operations.log` 文件操作入队/开始/失败原因（超过 2MB 自动重建） |
 
 目录级配置和数据放在一起，**跟着文件夹移植**，换台机器不用重配；`.wxd-work` 首次配置时自动创建。最近路径全局最多保留 15 条。
 

@@ -2495,6 +2495,7 @@ namespace wxd.files.winforms
             catch { return; }
 
             if (paths == null || paths.Length == 0) return;
+            OperationLog.Write("paste " + paths.Length + " 项 -> " + _currentDir + " move=" + move);
             if (EnqueueFileOperation(paths, _currentDir, move) && move)
             {
                 try { Clipboard.Clear(); } catch { }
@@ -2635,7 +2636,12 @@ namespace wxd.files.winforms
         /// <summary>把复制/移动交给共享传输队列后立即返回；同名冲突回到 UI 线程询问。</summary>
         private bool EnqueueFileOperation(string[] paths, string targetDir, bool move)
         {
-            if (string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir)) return false;
+            OperationLog.Write("enqueue-request " + paths.Length + " 项 -> " + targetDir + " move=" + move);
+            if (string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir))
+            {
+                OperationLog.Write("enqueue-rejected: 目标目录不存在 " + targetDir);
+                return false;
+            }
 
             string normalizedTarget = targetDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var valid = paths
@@ -2649,7 +2655,11 @@ namespace wxd.files.winforms
                 })
                 .ToArray();
 
-            if (valid.Length == 0) return false;
+            if (valid.Length == 0)
+            {
+                OperationLog.Write("enqueue-rejected: 过滤后没有有效来源");
+                return false;
+            }
 
             var options = new FileOperationOptions { Conflict = ConflictPolicy.Ask };
             FileOperationQueue.Shared.Enqueue(
@@ -2664,7 +2674,12 @@ namespace wxd.files.winforms
         /// <summary>冲突回调：工作线程 → UI 线程弹框；窗口已销毁时按跳过处理。</summary>
         private ConflictAnswer AskConflict(ConflictInfo info)
         {
-            if (IsDisposed || !IsHandleCreated) return new ConflictAnswer(ConflictDecision.Skip);
+            OperationLog.Write("conflict-ask " + info.TargetPath);
+            if (IsDisposed || !IsHandleCreated)
+            {
+                OperationLog.Write("conflict-skip: 窗体已释放");
+                return new ConflictAnswer(ConflictDecision.Skip);
+            }
             try
             {
                 return (ConflictAnswer)Invoke(new Func<ConflictAnswer>(
@@ -2686,6 +2701,7 @@ namespace wxd.files.winforms
                 || job.Sources.Any(s => string.Equals(
                     Path.GetDirectoryName(s), _currentDir, StringComparison.OrdinalIgnoreCase));
             if (!affected) return;
+            OperationLog.Write("job-changed " + job.State + " dest=" + (job.Destination ?? "-"));
 
             try
             {
@@ -3095,6 +3111,7 @@ namespace wxd.files.winforms
                 target = tag.FullName;
 
             bool move = e.Effect == DragDropEffects.Move;
+            OperationLog.Write("drop " + paths.Length + " 项 -> " + target + " move=" + move);
             EnqueueFileOperation(paths, target, move);
         }
 
