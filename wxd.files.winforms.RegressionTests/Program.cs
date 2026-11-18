@@ -115,6 +115,7 @@ namespace wxd.files.winforms.RegressionTests
             Run("设置关窗同步落盘", Test_SettingsFlush);
             Run("CSV 首行空行分隔符", Test_CsvDelimiterLeadingBlankLine);
             Run("单实例锁", Test_SingleInstanceGuard);
+            Run("表格排序与旧比较器等价", Test_SortRowIndicesMatchesComparer);
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -1030,6 +1031,27 @@ z: 1
         {
             Assert(SingleInstanceGuard.TryAcquire(), "首次获取锁应成功");
             Assert(!SingleInstanceGuard.TryAcquire(), "同一目录第二次获取应失败");
+        }
+
+        private static void Test_SortRowIndicesMatchesComparer()
+        {
+            var table = new DataTable();
+            table.Columns.Add("c", typeof(string));
+            string[] values = { "1", "2", "10", "a", "A", "b", "", "x y", "3.5", "1,000", "-2", "02" };
+            var random = new Random(12345);
+            for (int i = 0; i < 200; i++)
+                table.Rows.Add(values[random.Next(values.Length)]);
+
+            var indices = Enumerable.Range(0, table.Rows.Count).ToList();
+            foreach (var order in new[] { SortOrder.Ascending, SortOrder.Descending })
+            {
+                var expected = indices
+                    .OrderBy(i => table.Rows[i][0]?.ToString() ?? "", new NaturalStringComparer(order))
+                    .ToList();
+                var actual = TableBrowserControl.SortRowIndices(table, indices, 0, order);
+                AssertEq(string.Join(",", expected), string.Join(",", actual),
+                    order == SortOrder.Ascending ? "升序应与旧 OrderBy 稳定顺序一致" : "降序应与旧 OrderBy 稳定顺序一致");
+            }
         }
 
         // ==================== 基础设施 ====================
