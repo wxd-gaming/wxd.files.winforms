@@ -30,6 +30,11 @@ namespace wxd.files.winforms
                     {
                         AlertForm.ShowException(null, e.Exception, "UI 线程异常");
                     }
+                    catch (Exception alertEx)
+                    {
+                        // GDI/句柄耗尽时连错误框都可能建不出来，别让它覆盖原始异常
+                        LogFatal(alertEx, "显示 UI 异常对话框失败");
+                    }
                     finally
                     {
                         System.Threading.Interlocked.Exchange(ref _handlingFatal, 0);
@@ -42,21 +47,13 @@ namespace wxd.files.winforms
             {
                 var ex = e.ExceptionObject as Exception;
                 LogFatal(ex, "非 UI 线程未处理异常");
-                if (System.Threading.Interlocked.Exchange(ref _handlingFatal, 1) == 0)
-                {
-                    try
-                    {
-                        if (ex != null)
-                            AlertForm.ShowException(null, ex, "非 UI 线程未处理异常");
-                    }
-                    catch { }
-                    finally
-                    {
-                        System.Threading.Interlocked.Exchange(ref _handlingFatal, 0);
-                    }
-                }
-                // 不再显式 Environment.Exit：立即强退可能把正在写的配置文件/表格写坏，
-                // 交给 CLR 的默认终止流程
+
+                // ★ 不要在这里创建 WinForms 对话框。
+                // 非 UI 线程没有消息循环，而且走到这里时往往已经 GDI/句柄耗尽：
+                // RichTextBox/Font 创建会再抛 ExternalException，覆盖掉真正的原始异常，
+                // 之前的 crash 日志就是这么只剩一个“对象无法创建”的。
+                // 只写日志，交给 CLR 终止；原始堆栈在 crash_*.log 里。
+                // 不再显式 Environment.Exit：立即强退可能把正在写的配置文件/表格写坏。
             };
 
             // 全局异常捕获：Task 中未观察的异常

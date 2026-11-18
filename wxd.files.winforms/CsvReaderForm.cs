@@ -128,6 +128,9 @@ namespace wxd.files.winforms
         private const uint SHGFI_SMALLICON = 0x000000001;
         private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
+
         public CsvReaderForm(string? initialDir = null, int paneIndex = -1)
         {
             ReaderLog.Write($"CsvReaderForm 构造开始 dir={initialDir}");
@@ -345,13 +348,21 @@ namespace wxd.files.winforms
             SHGetFileInfo("folder", FILE_ATTRIBUTE_DIRECTORY, out folderShfi, (uint)Marshal.SizeOf(folderShfi),
                           SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
             if (folderShfi.hIcon != IntPtr.Zero)
-                _imgList.Images.Add("folder", Icon.FromHandle(folderShfi.hIcon));
+            {
+                using (var icon = Icon.FromHandle(folderShfi.hIcon))
+                    _imgList.Images.Add("folder", icon.ToBitmap());
+                DestroyIcon(folderShfi.hIcon);
+            }
             // 添加默认CSV文件图标
             var csvShfi = default(SHFILEINFO);
             SHGetFileInfo(".csv", 0, out csvShfi, (uint)Marshal.SizeOf(csvShfi),
                           SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
             if (csvShfi.hIcon != IntPtr.Zero)
-                _imgList.Images.Add("default", Icon.FromHandle(csvShfi.hIcon));
+            {
+                using (var icon = Icon.FromHandle(csvShfi.hIcon))
+                    _imgList.Images.Add("default", icon.ToBitmap());
+                DestroyIcon(csvShfi.hIcon);
+            }
 
             _treeFiles = new TreeView
             {
@@ -559,33 +570,49 @@ namespace wxd.files.winforms
         /// <summary>获取系统图标的索引（返回ImageList中的索引）</summary>
         private int GetSystemIconIndex(string path, bool isDir)
         {
-            var shfi = default(SHFILEINFO);
-            uint flags = SHGFI_ICON | SHGFI_SMALLICON;
+            // 先算 key 并查缓存：同一扩展名只调一次 Shell。
+            // 旧实现每次调用都 SHGetFileInfo 拿一个 HICON，命中缓存时既不 Add 也不 Destroy，
+            // 打开上千个 CSV 就把进程 GDI 句柄耗尽，随后 TextBox/Font 创建失败、进程崩溃。
+            string key;
             string searchPath;
-
             if (isDir)
             {
-                // 文件夹使用特殊路径 + FILE_ATTRIBUTE_DIRECTORY 获取
+                key = "dir_" + path.GetHashCode();
                 searchPath = path;
-                SHGetFileInfo(searchPath, FILE_ATTRIBUTE_DIRECTORY, out shfi, (uint)Marshal.SizeOf(shfi), flags);
             }
             else
             {
-                // 文件使用扩展名获取
                 var ext = Path.GetExtension(path).ToLowerInvariant();
+                key = "file_" + ext;
                 searchPath = string.IsNullOrEmpty(ext) ? ".csv" : ext;
-                SHGetFileInfo(searchPath, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags | SHGFI_USEFILEATTRIBUTES);
             }
+
+            int existing = _imgList.Images.IndexOfKey(key);
+            if (existing >= 0) return existing;
+
+            var shfi = default(SHFILEINFO);
+            uint flags = SHGFI_ICON | SHGFI_SMALLICON;
+            if (isDir)
+                SHGetFileInfo(searchPath, FILE_ATTRIBUTE_DIRECTORY, out shfi, (uint)Marshal.SizeOf(shfi), flags);
+            else
+                SHGetFileInfo(searchPath, 0, out shfi, (uint)Marshal.SizeOf(shfi), flags | SHGFI_USEFILEATTRIBUTES);
 
             if (shfi.hIcon != IntPtr.Zero)
             {
-                var key = isDir ? "dir_" + path.GetHashCode() : "file_" + Path.GetExtension(path).ToLowerInvariant();
-                if (!_imgList.Images.ContainsKey(key))
+                try
                 {
-                    _imgList.Images.Add(key, Icon.FromHandle(shfi.hIcon));
+                    // 必须立刻转成 Bitmap 再加入：ImageList 会延迟到 CreateHandle 才真正转图标，
+                    // 如果先把 HICON 销毁，TreeView 创建句柄时会报“无法将图像添加到 ImageList”
+                    using (var icon = Icon.FromHandle(shfi.hIcon))
+                        _imgList.Images.Add(key, icon.ToBitmap());
+                }
+                finally
+                {
+                    DestroyIcon(shfi.hIcon);   // Icon.FromHandle 不拥有句柄，必须手动释放
                 }
                 return _imgList.Images.IndexOfKey(key);
             }
+
             return isDir ? _imgList.Images.IndexOfKey("folder") : _imgList.Images.IndexOfKey("default");
         }
 
