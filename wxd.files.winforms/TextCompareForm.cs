@@ -529,7 +529,15 @@ namespace wxd.files.winforms
                 return;
             }
 
-            if (!ConfirmLargeFiles(leftPath, rightPath)) return;
+            try
+            {
+                if (!ConfirmLargeFiles(leftPath, rightPath)) return;
+            }
+            catch (Exception ex)
+            {
+                AlertForm.Show(this, "读取文件信息失败：" + ex.Message, "文本比对", AlertType.Error);
+                return;
+            }
 
             bool leftIsTable = SimpleTableReader.IsTableFile(leftPath);
             bool rightIsTable = SimpleTableReader.IsTableFile(rightPath);

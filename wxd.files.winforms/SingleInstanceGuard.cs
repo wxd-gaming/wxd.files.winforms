@@ -33,9 +33,11 @@ namespace wxd.files.winforms
                     FileOptions.None);
                 return true;
             }
-            catch (IOException)
+            catch (IOException ex)
             {
-                return false;   // 锁被占用：同目录已有实例
+                // 只有共享冲突/锁冲突才说明"已有实例"；磁盘满、路径被同名文件占用等不能误报
+                int code = ex.HResult & 0xFFFF;
+                return code != 32 && code != 33;
             }
             catch
             {

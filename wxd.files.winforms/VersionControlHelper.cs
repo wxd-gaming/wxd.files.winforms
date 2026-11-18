@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -36,7 +36,8 @@ namespace wxd.files.winforms
                 if (Directory.Exists(gitMarker) || File.Exists(gitMarker))
                     return VcsType.Git;
                 var parent = Directory.GetParent(dir);
-                if (parent == null) break;
+                if (parent == null || string.Equals(parent.FullName, dir, StringComparison.OrdinalIgnoreCase))
+                    break;
                 dir = parent.FullName;
             }
             return VcsType.None;
@@ -54,7 +55,8 @@ namespace wxd.files.winforms
                 if (Directory.Exists(markerPath) || (marker == ".git" && File.Exists(markerPath)))
                     return dir;
                 var parent = Directory.GetParent(dir);
-                if (parent == null) break;
+                if (parent == null || string.Equals(parent.FullName, dir, StringComparison.OrdinalIgnoreCase))
+                    break;
                 dir = parent.FullName;
             }
             return Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? "");

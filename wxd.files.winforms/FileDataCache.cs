@@ -518,31 +518,48 @@ namespace wxd.files.winforms
         /// </summary>
         internal static void WriteCsvRows(string fullPath, DataTable dataTable, char delimiter)
         {
-            using var fs = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-            using var writer = new StreamWriter(fs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            writer.NewLine = GlobalConst.NewLine;
+            // 先写同目录临时文件，写完再替换：中途失败不会把原 CSV 截断成半截
+            var dir = Path.GetDirectoryName(fullPath);
+            if (string.IsNullOrEmpty(dir)) dir = ".";
+            var tempPath = Path.Combine(dir, $"{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
 
-            var sb = new StringBuilder(256);
-            int columnCount = dataTable.Columns.Count;
-            foreach (DataRow row in dataTable.Rows)
+            try
             {
-                sb.Clear();
-                for (int c = 0; c < columnCount; c++)
+                using (var fs = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var writer = new StreamWriter(fs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
                 {
-                    if (c > 0) sb.Append(delimiter);
+                    writer.NewLine = GlobalConst.NewLine;
 
-                    var value = row[c]?.ToString() ?? "";
-                    if (value.Contains(delimiter) || value.Contains('"')
-                        || value.Contains(GlobalConst.LfChar) || value.Contains(GlobalConst.CrChar))
+                    var sb = new StringBuilder(256);
+                    int columnCount = dataTable.Columns.Count;
+                    foreach (DataRow row in dataTable.Rows)
                     {
-                        sb.Append('"').Append(value.Replace("\"", "\"\"")).Append('"');
-                    }
-                    else
-                    {
-                        sb.Append(value);
+                        sb.Clear();
+                        for (int c = 0; c < columnCount; c++)
+                        {
+                            if (c > 0) sb.Append(delimiter);
+
+                            var value = row[c]?.ToString() ?? "";
+                            if (value.Contains(delimiter) || value.Contains('"')
+                                || value.Contains(GlobalConst.LfChar) || value.Contains(GlobalConst.CrChar))
+                            {
+                                sb.Append('"').Append(value.Replace("\"", "\"\"")).Append('"');
+                            }
+                            else
+                            {
+                                sb.Append(value);
+                            }
+                        }
+                        writer.WriteLine(sb.ToString());
                     }
                 }
-                writer.WriteLine(sb.ToString());
+
+                File.Move(tempPath, fullPath, overwrite: true);
+            }
+            catch
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                throw;
             }
         }
 

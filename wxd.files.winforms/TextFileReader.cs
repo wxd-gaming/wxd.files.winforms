@@ -51,6 +51,19 @@ namespace wxd.files.winforms
                 read = fs.Read(sample, 0, size);
             }
 
+            // BOM 优先：UTF-16/UTF-32 的字节在严格 UTF-8 下可能"能解"（NUL 合法）或落到 GBK，
+            // 不先认 BOM 会把保存编码判断错，导致 JSON 保存后编码被改坏。
+            if (read >= 3 && sample[0] == 0xEF && sample[1] == 0xBB && sample[2] == 0xBF)
+                return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            if (read >= 4 && sample[0] == 0xFF && sample[1] == 0xFE && sample[2] == 0x00 && sample[3] == 0x00)
+                return new UTF32Encoding(bigEndian: false, byteOrderMark: true);
+            if (read >= 4 && sample[0] == 0x00 && sample[1] == 0x00 && sample[2] == 0xFE && sample[3] == 0xFF)
+                return new UTF32Encoding(bigEndian: true, byteOrderMark: true);
+            if (read >= 2 && sample[0] == 0xFF && sample[1] == 0xFE)
+                return new UnicodeEncoding(bigEndian: false, byteOrderMark: true);
+            if (read >= 2 && sample[0] == 0xFE && sample[1] == 0xFF)
+                return new UnicodeEncoding(bigEndian: true, byteOrderMark: true);
+
             for (int trim = 0; trim <= 3 && trim < read; trim++)
             {
                 try

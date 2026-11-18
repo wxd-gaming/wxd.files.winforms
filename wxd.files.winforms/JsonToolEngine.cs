@@ -98,7 +98,34 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>节点总数（对象/数组本身算一个，字面量 null 也算一个）。</summary>
+        /// <summary>
+        /// 检测文本里是否有 // 或 /* 注释（字符串内部的 // 不算）。
+        /// JsonNode 序列化会丢掉注释，所以在"自动格式化/格式化/排序"之前必须先问一句。
+        /// </summary>
+        internal static bool ContainsComments(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            bool inString = false;
+            bool escaped = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (inString)
+                {
+                    if (escaped) escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+
+                if (c == '"') { inString = true; continue; }
+                if (c == '/' && i + 1 < text.Length && (text[i + 1] == '/' || text[i + 1] == '*'))
+                    return true;
+            }
+            return false;
+        }
+
         internal static int CountNodes(JsonNode? node)
         {
             switch (node)

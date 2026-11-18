@@ -303,6 +303,7 @@ namespace wxd.files.winforms
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
+                AutoScroll = true,   // 窄窗口时按钮可横向滚动，避免被裁掉
                 AutoSize = false,
                 Padding = new Padding(0),
                 BackColor = Color.Transparent

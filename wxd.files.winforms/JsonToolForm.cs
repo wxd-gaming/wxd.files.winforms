@@ -49,6 +49,7 @@ namespace wxd.files.winforms
         private System.Text.Encoding? _currentEncoding;
         private bool _dirty;
         private bool _suppressTextChanged;
+        private bool _hasComments;
         private JsonNode? _root;
 
         internal JsonToolForm()
@@ -90,6 +91,7 @@ namespace wxd.files.winforms
             _top.Height = 46;
             _top.FlowDirection = FlowDirection.LeftToRight;
             _top.WrapContents = false;
+            _top.AutoScroll = true;   // 窗口窄时按钮可横向滚动，避免被裁掉
             _top.Padding = new Padding(ThemeMetrics.Margin, 9, 0, 0);
             _top.BackColor = Color.Transparent;
 
@@ -273,8 +275,13 @@ namespace wxd.files.winforms
             LoadFile(dialog.FileName);
         }
 
-        private void LoadFile(string path)
+        private bool LoadFile(string path)
         {
+            if (_dirty
+                && !string.Equals(path, _currentPath, StringComparison.OrdinalIgnoreCase)
+                && !ConfirmDiscardChanges())
+                return false;
+
             try
             {
                 string text = TextFileReader.ReadAllText(path);
@@ -282,18 +289,19 @@ namespace wxd.files.winforms
 
                 _currentPath = path;
                 _currentEncoding = TextFileReader.DetectEncoding(path);
+                _hasComments = JsonToolEngine.ContainsComments(text);
 
                 if (result.Success)
                 {
-                    // 打开时先格式化一次，方便直接看结构；格式化确实改了内容才算"未保存"
-                    string formatted = JsonToolEngine.Format(result.Root);
-                    SetSourceText(formatted, suppressChanged: true);
-                    _dirty = !string.Equals(
-                        formatted.ReplaceLineEndings("\n"),
-                        text.ReplaceLineEndings("\n"),
-                        StringComparison.Ordinal);
+                    // 含注释的 JSONC 不能自动格式化：JsonNode 序列化会丢掉注释。
+                    // 其余文件先格式化方便看结构；打开不算"未保存"（磁盘文件没动）。
+                    string display = _hasComments ? text : JsonToolEngine.Format(result.Root);
+                    SetSourceText(display, suppressChanged: true);
+                    _dirty = false;
                     UpdateTitle();
-                    ParseAndRender("已打开 " + Path.GetFileName(path) + " · 已格式化");
+                    ParseAndRender(_hasComments
+                        ? "已打开 " + Path.GetFileName(path) + " · 含注释，未自动格式化"
+                        : "已打开 " + Path.GetFileName(path) + " · 已格式化");
                 }
                 else
                 {
@@ -304,12 +312,19 @@ namespace wxd.files.winforms
                 }
 
                 UpdateTitle();
+                return true;
             }
             catch (Exception ex)
             {
                 SetStatus("读取失败：" + ex.Message, error: true);
+                return false;
             }
         }
+
+        private bool ConfirmDiscardChanges()
+            => AlertForm.ShowConfirm(this,
+                "当前文件有未保存的修改，打开新文件会丢失，是否继续？",
+                "JSON 工具", AlertType.Warning) == DialogResult.Yes;
 
         /// <summary>保存到当前文件；没打开过文件时退化为"另存为"。</summary>
         private void Save()
@@ -340,19 +355,18 @@ namespace wxd.files.winforms
 
         private void WriteToFile(string path, System.Text.Encoding encoding)
         {
-            try
+            // 先写同目录临时文件再替换：写到一半崩溃不会把原文件截断
+            if (!AtomicFileWriter.TryWriteAllText(path, _txtSource.Text, encoding, out string error))
             {
-                File.WriteAllText(path, _txtSource.Text, encoding);
-                _currentPath = path;
-                _currentEncoding = encoding;
-                _dirty = false;
-                UpdateTitle();
-                SetStatus("已保存：" + path);
+                SetStatus("保存失败（没有写权限或文件被占用）：" + error, error: true);
+                return;
             }
-            catch (Exception ex)
-            {
-                SetStatus("保存失败（没有写权限或文件被占用）：" + ex.Message, error: true);
-            }
+
+            _currentPath = path;
+            _currentEncoding = encoding;
+            _dirty = false;
+            UpdateTitle();
+            SetStatus("已保存：" + path);
         }
 
         private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -403,6 +417,7 @@ namespace wxd.files.winforms
         private void ParseAndRender(string? successMessage = null)
         {
             var result = JsonToolEngine.Parse(_txtSource.Text);
+            _hasComments = JsonToolEngine.ContainsComments(_txtSource.Text);
 
             _matches.Clear();
             _searchTerm = "";
@@ -512,7 +527,19 @@ namespace wxd.files.winforms
                 return;
             }
 
+            if (_hasComments && AlertForm.ShowConfirm(this,
+                    "当前 JSON 包含注释，此操作会移除注释，是否继续？",
+                    "JSON 工具", AlertType.Warning) != DialogResult.Yes)
+                return;
+
             string transformed = transform(result.Root);
+            if (string.Equals(transformed, _txtSource.Text, StringComparison.Ordinal))
+            {
+                // 已经是目标格式：不标脏，避免"点一下格式化就被问保存"
+                ParseAndRender(successMessage);
+                return;
+            }
+
             SetSourceText(transformed, suppressChanged: true);
             MarkDirty();
             ParseAndRender(successMessage);

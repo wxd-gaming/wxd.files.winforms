@@ -104,6 +104,8 @@ namespace wxd.files.winforms.RegressionTests
             Run("JSON 递归 key 排序", Test_JsonSortKeys);
             Run("JSON 解析错误与宽松语法", Test_JsonParseErrors);
             Run("JSON 节点计数与顶层 null", Test_JsonCountAndNull);
+            Run("JSON 注释检测", Test_JsonContainsComments);
+            Run("编码 BOM 识别与原子写", Test_EncodingBomAndAtomicWrite);
 
             // YAML key 排序（比对前归一顺序）
             Run("YAML 嵌套 key 排序", Test_YamlSortNested);
@@ -1051,6 +1053,47 @@ z: 1
                 var actual = TableBrowserControl.SortRowIndices(table, indices, 0, order);
                 AssertEq(string.Join(",", expected), string.Join(",", actual),
                     order == SortOrder.Ascending ? "升序应与旧 OrderBy 稳定顺序一致" : "降序应与旧 OrderBy 稳定顺序一致");
+            }
+        }
+
+        private static void Test_JsonContainsComments()
+        {
+            Assert(JsonToolEngine.ContainsComments("{\"a\":1 // x\n}"), "行注释应识别");
+            Assert(JsonToolEngine.ContainsComments("{\"a\":1 /* x */}"), "块注释应识别");
+            Assert(!JsonToolEngine.ContainsComments("{\"a\":\"// not comment\"}"), "字符串里的 // 不算");
+            Assert(!JsonToolEngine.ContainsComments("{\"a\":\"/* not */\"}"), "字符串里的 /* 不算");
+            Assert(!JsonToolEngine.ContainsComments("{}"), "无注释");
+        }
+
+        private static void Test_EncodingBomAndAtomicWrite()
+        {
+            var dir = NewTempDir();
+            try
+            {
+                var utf8Bom = Path.Combine(dir, "u8.json");
+                File.WriteAllText(utf8Bom, "{\"a\":1}", new UTF8Encoding(true));
+                AssertEq(65001, TextFileReader.DetectEncoding(utf8Bom).CodePage, "UTF-8 BOM 识别");
+                AssertEq("{\"a\":1}", TextFileReader.ReadAllText(utf8Bom), "UTF-8 BOM 读取去掉 BOM");
+
+                var utf16 = Path.Combine(dir, "u16.json");
+                File.WriteAllText(utf16, "{\"a\":\"中文\"}", Encoding.Unicode);
+                AssertEq(1200, TextFileReader.DetectEncoding(utf16).CodePage, "UTF-16 LE BOM 识别");
+                AssertEq("{\"a\":\"中文\"}", TextFileReader.ReadAllText(utf16), "UTF-16 读取");
+
+                var utf16be = Path.Combine(dir, "u16be.json");
+                File.WriteAllText(utf16be, "{\"a\":1}", new UnicodeEncoding(true, true));
+                AssertEq(1201, TextFileReader.DetectEncoding(utf16be).CodePage, "UTF-16 BE BOM 识别");
+
+                Assert(AtomicFileWriter.TryWriteAllText(utf16, "{\"a\":\"改\"}", Encoding.Unicode, out var error),
+                    "原子写 UTF-16 失败：" + error);
+                var bytes = File.ReadAllBytes(utf16);
+                Assert(bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE, "原子写应保留 UTF-16 BOM");
+                AssertEq("{\"a\":\"改\"}", File.ReadAllText(utf16, Encoding.Unicode), "原子写内容");
+                Assert(Directory.GetFiles(dir, "*.tmp").Length == 0, "原子写不应遗留临时文件");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
             }
         }
 
