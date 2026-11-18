@@ -494,8 +494,17 @@ namespace wxd.files.winforms
             // 记忆本次选择的目录
             CsvSettings.CsvReaderLastDirectory = dialog.SelectedPath;
 
-            var csvForm = new CsvReaderForm(dialog.SelectedPath);
-            csvForm.Show();
+            try
+            {
+                var csvForm = new CsvReaderForm(dialog.SelectedPath);
+                csvForm.Show();
+            }
+            catch (Exception ex)
+            {
+                ReaderLog.Exception($"打开阅读器失败 dir={dialog.SelectedPath}", ex);
+                AlertForm.Show(this, "打开阅读器失败：" + GlobalConst.NewLine + ex.Message,
+                    "阅读器", AlertType.Error, exception: ex);
+            }
         }
 
         // ==================== 打开大文件阅读器（先选目录） ====================

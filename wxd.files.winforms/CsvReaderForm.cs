@@ -130,6 +130,7 @@ namespace wxd.files.winforms
 
         public CsvReaderForm(string? initialDir = null, int paneIndex = -1)
         {
+            ReaderLog.Write($"CsvReaderForm 构造开始 dir={initialDir}");
             _currentDir = initialDir ?? "";
             _paneIndex = paneIndex;
             InitializeComponent();
@@ -161,6 +162,7 @@ namespace wxd.files.winforms
             }
 
             UpdateTitle();
+            ReaderLog.Write("CsvReaderForm 构造完成");
         }
 
         private void InitializeComponent()
@@ -867,8 +869,18 @@ namespace wxd.files.winforms
                 if (string.Equals(refreshDir, _currentDir, StringComparison.OrdinalIgnoreCase))
                 {
                     _treeFiles.BeginUpdate();
-                    UpdateNodeTextWithVcsStatus(_treeFiles.Nodes);
-                    _treeFiles.EndUpdate();
+                    try
+                    {
+                        UpdateNodeTextWithVcsStatus(_treeFiles.Nodes);
+                    }
+                    catch (Exception ex)
+                    {
+                        ReaderLog.Exception("UpdateNodeTextWithVcsStatus(根)", ex);
+                    }
+                    finally
+                    {
+                        _treeFiles.EndUpdate();
+                    }
                     _treeFiles.Invalidate(); // 触发 DrawNode 重绘，使用新颜色
                 }
                 // 非根目录找不到节点（节点可能还未展开），不做更新
@@ -877,8 +889,18 @@ namespace wxd.files.winforms
 
             // 更新该节点下的所有文件节点的文本（添加 VCS 状态前缀）
             _treeFiles.BeginUpdate();
-            UpdateNodeTextWithVcsStatus(targetNode.Nodes);
-            _treeFiles.EndUpdate();
+            try
+            {
+                UpdateNodeTextWithVcsStatus(targetNode.Nodes);
+            }
+            catch (Exception ex)
+            {
+                ReaderLog.Exception("UpdateNodeTextWithVcsStatus(子目录)", ex);
+            }
+            finally
+            {
+                _treeFiles.EndUpdate();
+            }
 
             // 同时更新该节点本身的文本（如果是文件夹且没有直接文件，文本不会变化，这没问题）
             UpdateNodeTextWithVcsStatusForSingleNode(targetNode);
@@ -1395,6 +1417,7 @@ namespace wxd.files.winforms
         // ==================== 异步加载文件 ====================
         private async void LoadFilesAsync()
         {
+            ReaderLog.Write($"LoadFilesAsync 开始 dir={_currentDir}");
             // 重新扫描目录，大小缓存作废
             _fileSizes.Clear();
 
@@ -1420,13 +1443,23 @@ namespace wxd.files.winforms
                 });
                 if (!token.IsCancellationRequested)
                 {
+                    ReaderLog.Write($"目录扫描完成 dir={_currentDir}");
                     this.Invoke(() =>
                     {
-                        _fileRemarks = CsvSettings.GetFileRemarksByDirectory(_currentDir);
-                        BuildTreeFromRoot();
-                        ApplyFileFilter();
-                        // VCS 状态检测
-                        _ = InitializeVcsStatusAsync();
+                        try
+                        {
+                            _fileRemarks = CsvSettings.GetFileRemarksByDirectory(_currentDir);
+                            BuildTreeFromRoot();
+                            ApplyFileFilter();
+                            ReaderLog.Write($"树构建完成 dir={_currentDir}");
+                            // VCS 状态检测
+                            _ = InitializeVcsStatusAsync();
+                        }
+                        catch (Exception uiEx)
+                        {
+                            ReaderLog.Exception("LoadFilesAsync UI 更新", uiEx);
+                            throw;
+                        }
                     });
                 }
             }
@@ -1436,6 +1469,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
+                ReaderLog.Exception("LoadFilesAsync", ex);
                 this.Invoke(() =>
                 {
                     AlertForm.Show(this, $"加载文件失败:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
