@@ -1015,14 +1015,15 @@ namespace wxd.files.winforms
             e.Graphics.FillRectangle(bgBrush, new Rectangle(0, e.Bounds.Top, rowRight, e.Bounds.Height));
 
             // 展开/收起标记：主题化 TreeView 的箭头只在悬停时出现，这里自绘常驻三角
+            int glyphLeft = -1;
             if (e.Node.Nodes.Count > 0)
             {
-                int gx = Math.Max(2, e.Bounds.Left - TreeGlyphOffset);
+                glyphLeft = Math.Max(2, e.Bounds.Left - TreeGlyphOffset);
                 int gy = e.Bounds.Top + (e.Bounds.Height - 8) / 2;
                 using var glyphBrush = new SolidBrush(Theme.P.Muted);
                 Point[] arrow = e.Node.IsExpanded
-                    ? new[] { new Point(gx, gy), new Point(gx + 8, gy), new Point(gx + 4, gy + 7) }
-                    : new[] { new Point(gx, gy), new Point(gx, gy + 8), new Point(gx + 7, gy + 4) };
+                    ? new[] { new Point(glyphLeft, gy), new Point(glyphLeft + 8, gy), new Point(glyphLeft + 4, gy + 7) }
+                    : new[] { new Point(glyphLeft, gy), new Point(glyphLeft, gy + 8), new Point(glyphLeft + 7, gy + 4) };
                 e.Graphics.FillPolygon(glyphBrush, arrow);
             }
 
@@ -1036,6 +1037,9 @@ namespace wxd.files.winforms
             {
                 var image = imageList.Images[imageIndex];
                 int iconX = Math.Max(2, e.Bounds.Left - image.Width - 4);
+                // 有展开箭头时把图标右移，保证箭头和图标之间留 2px，不能互相遮挡
+                if (glyphLeft >= 0)
+                    iconX = Math.Max(iconX, glyphLeft + 8 + 2);
                 int iconY = e.Bounds.Top + (e.Bounds.Height - image.Height) / 2;
                 e.Graphics.DrawImage(image, new Rectangle(iconX, iconY, image.Width, image.Height));
             }
