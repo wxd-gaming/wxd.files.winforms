@@ -717,38 +717,147 @@ namespace wxd.files.winforms
 
         private const string RecentPathsKey = "RecentPaths";
 
-        /// <summary>获取最近访问的路径列表（最多15条）</summary>
-        public static List<string> GetRecentPaths()
+        // 最近路径走"内存缓存 + 后台合并写"。
+        // ConfigurationManager.Save 在这台机器上单次要 ~11 秒，启动时 5 个窗格各写一次
+        // 会把主界面卡住近一分钟；现在同一批导航只落一次配置，而且不占 UI 线程。
+        private static List<string>? _recentPathsCache;
+        private static bool _recentPathsLoaded;
+        private static int _recentPathsVersion;
+        private static readonly object _recentPathsLock = new();
+        private static readonly object _recentPathsSaveLock = new();
+        private static bool _recentPathsSaveRunning;
+
+        /// <summary>
+        /// 最近路径单独存一个 JSON 文件：不走 ConfigurationManager。
+        /// 这台机器上 ConfigurationManager.Save 单次要 ~11 秒，启动时写它会把 UI 卡住。
+        /// </summary>
+        private static string RecentPathsFilePath
         {
-            try
+            get
             {
-                var json = GetStringValue(RecentPathsKey, "[]");
-                var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
-                return list ?? new List<string>();
-            }
-            catch
-            {
-                return new List<string>();
+                try
+                {
+                    return Path.Combine(AppContext.BaseDirectory, ".wxd-work", "recent-paths.json");
+                }
+                catch
+                {
+                    return Path.Combine(Path.GetTempPath(), "wxd-recent-paths.json");
+                }
             }
         }
 
-        /// <summary>添加一条路径到最近访问记录，保留最近15条</summary>
+        /// <summary>获取最近访问的路径列表（最多15条）</summary>
+        public static List<string> GetRecentPaths()
+        {
+            lock (_recentPathsLock)
+            {
+                EnsureRecentPathsLoaded();
+                return new List<string>(_recentPathsCache!);
+            }
+        }
+
+        /// <summary>添加一条路径到最近访问记录，保留最近15条；落盘在后台合并执行</summary>
         public static void AddRecentPath(string path)
         {
+            lock (_recentPathsLock)
+            {
+                EnsureRecentPathsLoaded();
+
+                // 已经在最前面就不用改，也就不触发配置写入
+                if (_recentPathsCache!.Count > 0
+                    && string.Equals(_recentPathsCache[0], path, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                _recentPathsCache.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
+                _recentPathsCache.Insert(0, path);
+                if (_recentPathsCache.Count > 15)
+                    _recentPathsCache.RemoveRange(15, _recentPathsCache.Count - 15);
+                _recentPathsVersion++;
+            }
+
+            ScheduleRecentPathsSave();
+        }
+
+        private static void EnsureRecentPathsLoaded()
+        {
+            if (_recentPathsLoaded) return;
+            _recentPathsLoaded = true;
+
             try
             {
-                var list = GetRecentPaths();
-                // 如果已存在则移除旧记录
-                list.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase));
-                // 插入到最前面
-                list.Insert(0, path);
-                // 只保留15条
-                if (list.Count > 15)
-                    list.RemoveRange(15, list.Count - 15);
-                var json = System.Text.Json.JsonSerializer.Serialize(list);
-                SetStringValue(RecentPathsKey, json);
+                string? json = null;
+                var file = RecentPathsFilePath;
+                if (File.Exists(file))
+                    json = File.ReadAllText(file);
+
+                // 兼容旧版本：第一次从 ConfigurationManager 里迁移出来
+                if (json == null)
+                    json = GetStringValue(RecentPathsKey, "[]");
+
+                _recentPathsCache = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
             }
-            catch { }
+            catch
+            {
+                _recentPathsCache = new List<string>();
+            }
+        }
+
+        private static void ScheduleRecentPathsSave()
+        {
+            lock (_recentPathsSaveLock)
+            {
+                if (_recentPathsSaveRunning) return;
+                _recentPathsSaveRunning = true;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(600).ConfigureAwait(false);   // 合并同一批导航
+
+                    int savedVersion;
+                    while (true)
+                    {
+                        string json;
+                        int version;
+                        lock (_recentPathsLock)
+                        {
+                            version = _recentPathsVersion;
+                            json = System.Text.Json.JsonSerializer.Serialize(_recentPathsCache ?? new List<string>());
+                        }
+
+                        var file = RecentPathsFilePath;
+                        var dir = Path.GetDirectoryName(file);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        AtomicFileWriter.TryWriteAllText(file, json);
+                        savedVersion = version;
+
+                        lock (_recentPathsLock)
+                        {
+                            if (version == _recentPathsVersion) break;
+                        }
+                    }
+
+                    lock (_recentPathsSaveLock)
+                    {
+                        _recentPathsSaveRunning = false;
+                    }
+
+                    // 收尾窗口里又有新路径：再排一次
+                    bool changed;
+                    lock (_recentPathsLock)
+                    {
+                        changed = savedVersion != _recentPathsVersion;
+                    }
+                    if (changed) ScheduleRecentPathsSave();
+                }
+                catch
+                {
+                    lock (_recentPathsSaveLock) { _recentPathsSaveRunning = false; }
+                }
+            });
         }
 
         #endregion
