@@ -28,6 +28,7 @@ namespace wxd.files.winforms
         private readonly List<ThemeButton> _barButtons = new();
         private readonly ThemeButton? _btnCopy;
         private readonly ThemeButton _defaultButton;
+        private readonly Font _iconFont;
         private readonly Label _lblIcon;
         private readonly Label _lblTitle;
         private readonly Panel _sep;
@@ -72,10 +73,11 @@ namespace wxd.files.winforms
             ShowIcon = false;
             ShowInTaskbar = false;
 
+            _iconFont = new Font("Segoe UI", 20f, FontStyle.Regular);
             _lblIcon = new Label
             {
                 AutoSize = true,
-                Font = new Font("Segoe UI", 20f, FontStyle.Regular),
+                Font = _iconFont,
                 BackColor = Color.Transparent
             };
             _lblTitle = new Label
@@ -157,7 +159,11 @@ namespace wxd.files.winforms
             ApplyTheme();
             // 独立弹窗，主窗翻明暗时遍历不到，只能自己订阅
             Theme.Changed += ApplyTheme;
-            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+            Disposed += (_, _) =>
+            {
+                Theme.Changed -= ApplyTheme;
+                try { _iconFont.Dispose(); } catch { }
+            };
         }
 
         private void LayoutBar() => DialogButtonBar.LayoutRight(_bar, _barButtons.ToArray());

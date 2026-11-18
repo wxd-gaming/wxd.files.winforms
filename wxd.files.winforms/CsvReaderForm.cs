@@ -141,7 +141,11 @@ namespace wxd.files.winforms
             ApplyTheme();
             // 独立窗口不在主窗的传播链里，切皮肤只能靠订阅自己重取令牌
             Theme.Changed += ApplyTheme;
-            Disposed += (_, _) => Theme.Changed -= ApplyTheme;
+            Disposed += (_, _) =>
+            {
+                Theme.Changed -= ApplyTheme;
+                try { _imgList.Dispose(); } catch { }
+            };
 
             // 窗体加载完成后设置splitter距离，并补充 VCS 状态初始化
             this.Shown += async (s, e) =>
@@ -2334,8 +2338,7 @@ namespace wxd.files.winforms
                     Tag = i,
                     Checked = isCurrent,
                     CheckState = isCurrent ? CheckState.Checked : CheckState.Unchecked,
-                    Font = new Font(Theme.Body.FontFamily, Theme.Body.Size,
-                                    isCurrent ? FontStyle.Bold : FontStyle.Regular)
+                    Font = isCurrent ? Theme.BodyBold : Theme.Body
                 };
                 item.Click += (s, e) =>
                 {

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -9,6 +10,12 @@ namespace wxd.files.winforms
     {
         /// <summary>防止同一异常在弹窗/记录过程中再次触发，形成递归</summary>
         private static int _handlingFatal;
+
+        [DllImport("user32.dll")]
+        private static extern uint GetGuiResources(IntPtr hProcess, uint uiFlags);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
 
         /// <summary>
         ///  The main entry point for the application.
@@ -91,8 +98,10 @@ namespace wxd.files.winforms
             try
             {
                 var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                uint gdi = 0;
+                try { gdi = GetGuiResources(GetCurrentProcess(), 0); } catch { }
                 var content =
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {source}{GlobalConst.NewLine}" +
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {source} (v{Application.ProductVersion}, GDI={gdi}){GlobalConst.NewLine}" +
                     $"{ex}{GlobalConst.NewLine}{GlobalConst.NewLine}";
 
                 var dirs = new[]
