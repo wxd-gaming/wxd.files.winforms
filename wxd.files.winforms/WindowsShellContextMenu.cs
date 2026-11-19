@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms
@@ -21,6 +22,10 @@ namespace wxd.files.winforms
         private const int CMF_NORMAL = 0x00000000;
         private const int CMF_EXPLORE = 0x00000004;
         private const int CMIC_MASK_UNICODE = 0x00004000;
+        private const uint MF_BYPOSITION = 0x00000400;
+        private const uint MF_POPUP = 0x00000010;
+        private const uint ShellNewMenuIdFirst = 20000;
+        private static readonly Guid CLSID_NewMenu = new("D969A300-E7FF-11D0-A93B-00A0C90F2719");
         private const int TPM_RETURNCMD = 0x0100;
         private const int TPM_RIGHTBUTTON = 0x0002;
         private const int TPM_NONOTIFY = 0x0080;
@@ -318,6 +323,7 @@ namespace wxd.files.winforms
             IContextMenu? contextMenu = null;
             IContextMenu2? contextMenu2 = null;
             IContextMenu3? contextMenu3 = null;
+            ShellNewMenu? shellNewMenu = null;
             IntPtr hMenu = IntPtr.Zero;
 
             try
@@ -384,6 +390,17 @@ namespace wxd.files.winforms
                 OperationLog.Write("background-menu query=" + queryResult + " folder=" + folderPath);
                 if (queryResult < 0) return;
 
+                // 系统背景菜单里的“新建”子菜单在第三方宿主中为空。
+                // 单独实例化 Shell 的 New 处理程序，把真正有内容的子菜单换进去。
+                shellNewMenu = ShellNewMenu.Create(folderPath);
+                if (shellNewMenu != null)
+                {
+                    int newIndex = FindMenuItemPosition(hMenu, "新建");
+                    if (newIndex >= 0) User32.RemoveMenu(hMenu, (uint)newIndex, MF_BYPOSITION);
+                    User32.AppendMenu(hMenu, MF_POPUP, shellNewMenu.DetachMenu(), "新建");
+                    OperationLog.Write("background-menu new-items=" + shellNewMenu.Count);
+                }
+
                 // 背景菜单用独立隐藏窗口做宿主：ListView 自己的 WndProc 会吞掉
                 // WM_INITMENUPOPUP，导致“新建”子菜单没人填充。
                 var window = new MenuHostWindow(contextMenu2, contextMenu3);
@@ -404,7 +421,12 @@ namespace wxd.files.winforms
                 }
 
                 OperationLog.Write("background-menu command=" + commandId);
-                if (commandId > 0)
+                if (commandId >= ShellNewMenuIdFirst && shellNewMenu != null)
+                {
+                    int invokeHr = shellNewMenu.Invoke(commandId, control.Handle, screenX, screenY, folderPath);
+                    OperationLog.Write("background-menu new-invoke hr=" + invokeHr);
+                }
+                else if (commandId > 0)
                 {
                     var invokeInfo = new CMINVOKECOMMANDINFOEX
                     {
@@ -437,6 +459,8 @@ namespace wxd.files.winforms
 
                 if (contextMenu != null)
                     Marshal.ReleaseComObject(contextMenu);
+
+                shellNewMenu?.Dispose();
 
                 if (viewFolder != null)
                     Marshal.ReleaseComObject(viewFolder);
@@ -476,6 +500,19 @@ namespace wxd.files.winforms
         private static bool IsWindows()
         {
             return Path.DirectorySeparatorChar == '\\';
+        }
+
+        private static int FindMenuItemPosition(IntPtr hMenu, string prefix)
+        {
+            int count = User32.GetMenuItemCount(hMenu);
+            for (uint i = 0; i < (uint)count; i++)
+            {
+                var buffer = new StringBuilder(128);
+                User32.GetMenuString(hMenu, i, buffer, buffer.Capacity, MF_BYPOSITION);
+                var text = buffer.ToString().Replace("&", "");
+                if (text.StartsWith(prefix, StringComparison.Ordinal)) return (int)i;
+            }
+            return -1;
         }
 
         #region Win32 API 声明
@@ -536,6 +573,18 @@ namespace wxd.files.winforms
 
             [DllImport("user32.dll")]
             public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+            [DllImport("user32.dll")]
+            public static extern int GetMenuItemCount(IntPtr hMenu);
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            public static extern int GetMenuString(IntPtr hMenu, uint uIDItem, StringBuilder lpString, int cchMax, uint uFlags);
+
+            [DllImport("user32.dll")]
+            public static extern bool RemoveMenu(IntPtr hMenu, uint uPosition, uint uFlags);
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            public static extern bool AppendMenu(IntPtr hMenu, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
         }
 
         #endregion
@@ -654,6 +703,15 @@ namespace wxd.files.winforms
         }
 
         [ComImport]
+        [Guid("000214E8-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellExtInit
+        {
+            [PreserveSig]
+            int Initialize(IntPtr pidlFolder, IntPtr lpdobj, IntPtr hKeyProgID);
+        }
+
+        [ComImport]
         [Guid("000214E6-0000-0000-C000-000000000046")]
         [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IShellFolder
@@ -751,6 +809,143 @@ namespace wxd.files.winforms
         }
 
         #endregion
+
+        /// <summary>
+        /// 系统“新建”子菜单。直接实例化 Shell 的 New 菜单处理程序（CLSID_NewMenu），
+        /// 它会按 HKCR\ShellNew 填出“文件夹 / 文本文档 / Office 文档 / 压缩包”等模板。
+        /// 这个处理程序原本是 Explorer 背景菜单里“新建”子菜单的实现。
+        /// </summary>
+        internal sealed class ShellNewMenu : IDisposable
+        {
+            private IContextMenu? _contextMenu;
+            private IContextMenu2? _contextMenu2;
+            private IContextMenu3? _contextMenu3;
+            private IntPtr _pidlFolder;
+            private bool _comInitialized;
+
+            public IntPtr Menu { get; private set; }
+            public int Count { get; private set; }
+
+            public static ShellNewMenu? Create(string folderPath)
+            {
+                var host = new ShellNewMenu();
+                try
+                {
+                    if (host.Initialize(folderPath)) return host;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("创建系统新建菜单失败: " + ex);
+                }
+
+                host.Dispose();
+                return null;
+            }
+
+            private bool Initialize(string folderPath)
+            {
+                try
+                {
+                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
+                    _comInitialized = hr == 0 || hr == 1;
+                }
+                catch
+                {
+                    _comInitialized = false;
+                }
+
+                if (Shell32.SHParseDisplayName(folderPath, IntPtr.Zero, out _pidlFolder, 0, out _) != 0
+                    || _pidlFolder == IntPtr.Zero)
+                    return false;
+
+                var type = Type.GetTypeFromCLSID(CLSID_NewMenu);
+                if (type == null) return false;
+
+                object? instance = Activator.CreateInstance(type);
+                if (instance is not IShellExtInit shellExtInit) return false;
+
+                if (shellExtInit.Initialize(_pidlFolder, IntPtr.Zero, IntPtr.Zero) != 0)
+                    return false;
+
+                _contextMenu = instance as IContextMenu;
+                if (_contextMenu == null) return false;
+
+                IntPtr ptr;
+                Guid contextMenu3Guid = IID_IContextMenu3;
+                if (_contextMenu.QueryInterface(ref contextMenu3Guid, out ptr) == 0)
+                {
+                    _contextMenu3 = (IContextMenu3)Marshal.GetObjectForIUnknown(ptr);
+                    Marshal.Release(ptr);
+                    _contextMenu2 = _contextMenu3;
+                }
+                else
+                {
+                    Guid contextMenu2Guid = IID_IContextMenu2;
+                    if (_contextMenu.QueryInterface(ref contextMenu2Guid, out ptr) == 0)
+                    {
+                        _contextMenu2 = (IContextMenu2)Marshal.GetObjectForIUnknown(ptr);
+                        Marshal.Release(ptr);
+                    }
+                }
+
+                Menu = User32.CreatePopupMenu();
+                if (Menu == IntPtr.Zero) return false;
+
+                Count = _contextMenu.QueryContextMenu(Menu, 0, ShellNewMenuIdFirst,
+                    ShellNewMenuIdFirst + 0x7FFF, CMF_NORMAL);
+                return Count > 0;
+            }
+
+            /// <summary>把子菜单句柄交给父菜单，之后由父菜单负责销毁。</summary>
+            public IntPtr DetachMenu()
+            {
+                var menu = Menu;
+                Menu = IntPtr.Zero;
+                return menu;
+            }
+
+            public int Invoke(uint commandId, IntPtr hwnd, int screenX, int screenY, string folderPath)
+            {
+                if (_contextMenu == null || commandId < ShellNewMenuIdFirst) return -1;
+
+                var invokeInfo = new CMINVOKECOMMANDINFOEX
+                {
+                    cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
+                    fMask = CMIC_MASK_UNICODE,
+                    hwnd = hwnd,
+                    lpVerbW = (IntPtr)(commandId - ShellNewMenuIdFirst),
+                    lpDirectoryW = folderPath,
+                    nShow = 1,
+                    ptInvoke = new POINT { x = screenX, y = screenY }
+                };
+                return _contextMenu.InvokeCommand(ref invokeInfo);
+            }
+
+            public void Dispose()
+            {
+                if (Menu != IntPtr.Zero)
+                {
+                    User32.DestroyMenu(Menu);
+                    Menu = IntPtr.Zero;
+                }
+
+                if (_contextMenu3 != null) Marshal.ReleaseComObject(_contextMenu3);
+                if (_contextMenu2 != null && _contextMenu2 != _contextMenu3) Marshal.ReleaseComObject(_contextMenu2);
+                if (_contextMenu != null) Marshal.ReleaseComObject(_contextMenu);
+
+                if (_pidlFolder != IntPtr.Zero)
+                {
+                    Ole32.CoTaskMemFree(_pidlFolder);
+                    _pidlFolder = IntPtr.Zero;
+                }
+
+                if (_comInitialized)
+                {
+                    try { Ole32.CoUninitialize(); } catch { }
+                    _comInitialized = false;
+                }
+            }
+        }
 
         #region 菜单消息处理窗口
 

@@ -2912,12 +2912,30 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>
-        /// 文件夹背景菜单。系统背景菜单里的“新建”子菜单依赖 Explorer 自己的视图宿主，
-        /// 第三方进程拿到的 IContextMenu 只会给出一个空的新建子菜单；
-        /// 所以背景菜单由本程序提供，新建/查看/排序/粘贴/刷新/属性全部落到现有实现。
-        /// </summary>
+        /// <summary>显示系统文件夹背景菜单；失败时退回内置菜单。</summary>
         private void ShowBackgroundMenu(Point? screenPoint = null)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            var point = screenPoint ?? Cursor.Position;
+            try
+            {
+                WindowsShellContextMenu.ShowBackground(_currentDir, this, point.X, point.Y);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("显示系统背景菜单失败: " + ex);
+                ShowBuiltInBackgroundMenu(point);
+            }
+            finally
+            {
+                if (!IsDisposed) _ = LoadFileListAsync();
+            }
+        }
+
+        /// <summary>内置背景菜单：系统背景菜单不可用时的兜底。</summary>
+        private void ShowBuiltInBackgroundMenu(Point? screenPoint = null)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
 
