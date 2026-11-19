@@ -1244,8 +1244,7 @@ namespace wxd.files.winforms
         {
             if (string.IsNullOrEmpty(_currentDir) || _currentVcsType == VcsType.None)
             {
-                AlertForm.Show(this, "当前目录不受 SVN 或 Git 管控，无法执行更新操作。",
-                    "提示", AlertType.Information);
+                ToastForm.ShowToast("当前目录不受 SVN 或 Git 管控", ToastKind.Warning);
                 return;
             }
 
@@ -1259,12 +1258,9 @@ namespace wxd.files.winforms
 
                 if (!result.Started)
                 {
-                    AlertForm.Show(this, result.ErrorMessage ?? "更新失败", "错误", AlertType.Error);
+                    ToastForm.ShowToast(result.ErrorMessage ?? "更新失败", ToastKind.Error, 5000);
                     return;
                 }
-
-                string msg;
-                AlertType alertType;
 
                 if (result.HasConflicts)
                 {
@@ -1272,26 +1268,19 @@ namespace wxd.files.winforms
                     if (result.ConflictLines.Count > 20)
                         conflictSummary += $"{GlobalConst.NewLine}... 以及另外 {result.ConflictLines.Count - 20} 行冲突信息";
 
-                    msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.NewLine}请手动解决冲突后提交。{GlobalConst.NewLine}{GlobalConst.NewLine}冲突详情：{GlobalConst.NewLine}{conflictSummary}";
-                    alertType = AlertType.Warning;
+                    var msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.NewLine}请手动解决冲突后提交。{GlobalConst.NewLine}{GlobalConst.NewLine}冲突详情：{GlobalConst.NewLine}{conflictSummary}";
+                    AlertForm.Show(this, msg, $"{vcsName} 更新", AlertType.Warning);
                 }
                 else if (result.Success)
                 {
-                    msg = $"{vcsName} 更新成功!{GlobalConst.NewLine}{GlobalConst.NewLine}{result.Output}";
-                    if (result.Output.Length > 2000)
-                        msg = msg.Substring(0, 2000) + $"{GlobalConst.NewLine}{GlobalConst.NewLine}...(输出过长已截断)";
-                    alertType = AlertType.Information;
+                    ToastForm.ShowToast($"{vcsName} 更新成功", ToastKind.Info);
                 }
                 else
                 {
-                    var errMsg = $"{vcsName} 更新失败:{GlobalConst.NewLine}{result.Error}";
-                    AlertForm.Show(this, errMsg, "更新失败", AlertType.Warning);
+                    ToastForm.ShowToast($"{vcsName} 更新失败：{ToastForm.Shorten(result.Error)}",
+                        ToastKind.Error, 5000);
                     return;
                 }
-
-                // 不控制可见性，始终显示
-
-                AlertForm.Show(this, msg, "更新完成", alertType);
 
                 // 刷新 VCS 状态和文件列表
                 VcsStatusCache.Invalidate(_currentDir);
@@ -1300,7 +1289,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"更新操作异常: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast($"更新操作异常: {ex.Message}", ToastKind.Error, 5000);
             }
             finally
             {

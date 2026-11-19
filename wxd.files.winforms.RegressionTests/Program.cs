@@ -15,7 +15,7 @@ namespace wxd.files.winforms.RegressionTests
     /// 零依赖回归 runner：验证最近修复中可纯逻辑/文件系统验证的部分。
     /// 退出码 0=全通过，1=有失败。UI 耦合项(#3/#4/#9a)与 svn 进程项(#9b)留人工验收。
     /// </summary>
-    internal static class Program
+    internal static partial class Program
     {
         private static int _passed;
         private static int _failed;
@@ -118,6 +118,8 @@ namespace wxd.files.winforms.RegressionTests
             Run("CSV 首行空行分隔符", Test_CsvDelimiterLeadingBlankLine);
             Run("单实例锁", Test_SingleInstanceGuard);
             Run("表格排序与旧比较器等价", Test_SortRowIndicesMatchesComparer);
+
+            RunFeatureTests();
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
@@ -1111,6 +1113,7 @@ z: 1
             {
                 _failed++;
                 Console.WriteLine($"  FAIL  {name}: {ex.Message}");
+                Console.WriteLine("        " + ex.StackTrace?.Replace("\r\n", "\r\n        "));
             }
         }
 
@@ -1160,7 +1163,14 @@ z: 1
 
         private static string NewTempDir()
         {
-            var dir = Path.Combine(Path.GetTempPath(), "wxd_reg_" + Guid.NewGuid().ToString("N"));
+            // 某些受限令牌下 %TEMP% 根目录不可写，默认落到 exe 目录下的 .testtmp；
+            // 需要放回系统临时目录时设置 WXD_TEST_TEMP 覆盖。
+            var root = Environment.GetEnvironmentVariable("WXD_TEST_TEMP");
+            if (string.IsNullOrWhiteSpace(root))
+                root = Path.Combine(AppContext.BaseDirectory, ".testtmp");
+            Directory.CreateDirectory(root);
+
+            var dir = Path.Combine(root, "wxd_reg_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             return dir;
         }

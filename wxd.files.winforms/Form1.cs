@@ -61,6 +61,9 @@ namespace wxd.files.winforms
             if (ver != null)
                 Text = $"{Text} v{ver}";
 
+            if (ProcessIntegrity.IsLow)
+                Text += "（低权限：SVN 右键可能不可用）";
+
             // 先按存档恢复窗格数量/布局/明暗，再激活令牌，后面控件创建期取色和菜单勾选才是最终值
             _paneCount = Math.Clamp(CsvSettings.PaneCount, 1, 10);
             _layoutIndex = Math.Clamp(CsvSettings.LayoutIndex, 0, 2);
@@ -69,6 +72,7 @@ namespace wxd.files.winforms
 
             CreateTopBar();
             InitControlPanel();
+            FileOperationQueue.Shared.JobFailed += OnFileOperationFailed;
 
             // 应用主题（面板创建后再应用到面板）
             ApplyTheme();
@@ -503,8 +507,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 ReaderLog.Exception($"打开阅读器失败 dir={dialog.SelectedPath}", ex);
-                AlertForm.Show(this, "打开阅读器失败：" + GlobalConst.NewLine + ex.Message,
-                    "阅读器", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("打开阅读器失败：" + ex.Message, ToastKind.Error, 5000);
             }
         }
 
@@ -1024,6 +1027,29 @@ namespace wxd.files.winforms
         }
 
         // ==================== 关闭时保存全局状态 ====================
+        /// <summary>传输任务失败时统一提示；以前失败只写传输中心，用户不打开就完全无感。</summary>
+        private void OnFileOperationFailed(object? sender, FileOperationJob job)
+        {
+            if (IsDisposed) return;
+
+            void ShowAlert()
+            {
+                if (IsDisposed) return;
+                var message = OperationErrorPresenter.Build(job);
+                if (message.Length > 300) message = message[..300] + "…";
+                ToastForm.ShowToast(message, ToastKind.Error, 6000);
+            }
+
+            if (InvokeRequired)
+            {
+                try { BeginInvoke(new Action(ShowAlert)); } catch { }
+            }
+            else
+            {
+                ShowAlert();
+            }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             System.Diagnostics.Debug.WriteLine("OnFormClosing called");
@@ -1047,6 +1073,7 @@ namespace wxd.files.winforms
             _menuPane?.Dispose();
             _menuLayout?.Dispose();
             _menuTheme?.Dispose();
+            FileOperationQueue.Shared.JobFailed -= OnFileOperationFailed;
             base.OnFormClosing(e);
         }
 
@@ -1228,7 +1255,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(null, $"执行命令 [{item.Name}] 失败：{ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast($"执行命令 [{item.Name}] 失败：{ex.Message}", ToastKind.Error, 5000);
             }
         }
 

@@ -51,6 +51,9 @@ namespace wxd.files.winforms
         private Button? _btnForward;
         private FlowLayoutPanel? _pnlBreadcrumb;
         private int _breadcrumbHeight = 28;
+        private System.Windows.Forms.Timer? _breadcrumbRebuildTimer;
+        private int _breadcrumbBuiltWidth = -1;
+        private bool _rebuildingBreadcrumb;
         private bool _breadcrumbVisible = true;
         private readonly List<string> _navBack = new();
         private readonly List<string> _navForward = new();
@@ -96,7 +99,10 @@ namespace wxd.files.winforms
         private bool _hasUnsavedChanges = false;
         private bool _menuMoreActionsVisible = false;
         private string _savedFilterForCompare = "";
-        private ToolStripMenuItem? _menuVcsUpdateItem;
+        private ToolStripMenuItem? _menuSvnUpdateItem;
+        private ToolStripMenuItem? _menuSvnCleanupItem;
+        private ToolStripMenuItem? _menuGitUpdateItem;
+        private ToolStripMenuItem? _menuGitCleanupItem;
 
         // ==================== VCS 状态字段 ====================
         private VcsDirectoryStatus? _vcsStatus;
@@ -420,6 +426,7 @@ namespace wxd.files.winforms
             InitImageList();
             CreateControls();
             RebuildPathComboItems();
+            FileOperationQueue.Shared.JobChanged += OnSharedJobChanged;
 
             // ==== 第一步：恢复视图模式 ====
             _viewMode = (FileListViewMode)Math.Max(0, Math.Min(4, savedState.ViewMode));
@@ -683,6 +690,20 @@ namespace wxd.files.winforms
                 BackColor = _colorToolbarBg
             };
 
+            _breadcrumbRebuildTimer = new System.Windows.Forms.Timer { Interval = 150 };
+            _breadcrumbRebuildTimer.Tick += (_, _) =>
+            {
+                _breadcrumbRebuildTimer?.Stop();
+                if (!_rebuildingBreadcrumb) RebuildBreadcrumb();
+            };
+            _pnlBreadcrumb.SizeChanged += (_, _) =>
+            {
+                if (_rebuildingBreadcrumb) return;
+                if (_breadcrumbBuiltWidth == _pnlBreadcrumb.ClientSize.Width) return;
+                _breadcrumbRebuildTimer?.Stop();
+                _breadcrumbRebuildTimer?.Start();
+            };
+
             _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnBack, _btnForward, _btnUp, _pnlBreadcrumb });
 
             // 路径框吃满剩余宽度，「上级」钉在右侧；两个条共用同一套度量
@@ -752,15 +773,36 @@ namespace wxd.files.winforms
                 Font = Theme.Body
             };
 
-            // 创建下拉菜单
+            // 创建下拉菜单：按「文件 / 查找 / 视图 / 工具」分组
             _menuMoreActions = new ContextMenuStrip { Font = Theme.Body };
+
             _menuMoreActions.Items.Add("打开目录", null, OnOpenExplorerClick);
-            _menuMoreActions.Items.Add("日志分析", null, OnLogAnalysisClick);
-            _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
-            _menuVcsUpdateItem.Enabled = false;
-            _menuMoreActions.Items.Add(_menuVcsUpdateItem);
-            _menuMoreActions.Items.Add(new ToolStripMenuItem("新建文件夹", null, (s, e) => CreateNewFolder()));
+
+            var menuNew = new ToolStripMenuItem("新建");
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件夹", null, (s, e) => CreateNewFolder())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Shift+N"
+            });
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文本文档", null, (s, e) => CreateNewFile("新建文本文档.txt")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Excel 工作表", null, (s, e) => CreateNewFile("新建工作表.xlsx")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Word 文档", null, (s, e) => CreateNewFile("新建文档.docx")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("CSV 表格", null, (s, e) => CreateNewFile("新建表格.csv")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("JSON 文件", null, (s, e) => CreateNewFile("新建文件.json")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Markdown 文档", null, (s, e) => CreateNewFile("新建文档.md")));
+            menuNew.DropDownItems.Add(new ToolStripSeparator());
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("其他文件…", null, (s, e) => CreateNewFile())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Alt+N"
+            });
+            _menuMoreActions.Items.Add(menuNew);
+
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
+
+            _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
+            _menuMoreActions.Items.Add("批量重命名", null, (s, e) => OpenBatchRename());
+            _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
 
             // 视图模式二级菜单
             _menuViewModeItem = new ToolStripMenuItem("视图模式");
@@ -775,11 +817,9 @@ namespace wxd.files.winforms
                 _menuViewModeItem.DropDownItems.Add(_viewModeSubItems[i]);
             }
             _viewModeSubItems[(int)_viewMode].Checked = true;
-            _menuMoreActions.Items.Add(_menuViewModeItem);
 
             // 排序方式二级菜单
             _menuSortFieldItem = new ToolStripMenuItem("排序方式");
-
             string[] sortFieldNames = { "名称", "文件大小", "修改日期" };
             for (int i = 0; i < sortFieldNames.Length; i++)
             {
@@ -791,7 +831,6 @@ namespace wxd.files.winforms
                 _menuSortFieldItem.DropDownItems.Add(_sortFieldSubItems[i]);
             }
 
-            // 分隔线 + 排序方向
             _menuSortFieldItem.DropDownItems.Add(new ToolStripSeparator());
             string[] sortDirNames = { "递增", "递减" };
             for (int i = 0; i < sortDirNames.Length; i++)
@@ -806,7 +845,32 @@ namespace wxd.files.winforms
 
             _sortFieldSubItems[(int)_sortField].Checked = true;
             _sortDirectionSubItems[(int)_sortDirection].Checked = true;
-            _menuMoreActions.Items.Add(_menuSortFieldItem);
+
+            var menuViewGroup = new ToolStripMenuItem("视图");
+            menuViewGroup.DropDownItems.Add(_menuViewModeItem);
+            menuViewGroup.DropDownItems.Add(_menuSortFieldItem);
+            _menuMoreActions.Items.Add(menuViewGroup);
+
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
+
+            // 工具：VCS 更新 + 日志分析
+            var menuTools = new ToolStripMenuItem("工具");
+            _menuSvnUpdateItem = new ToolStripMenuItem("SVN 更新", null, (s, e) => OnVcsUpdateClick(VcsType.Svn));
+            _menuSvnCleanupItem = new ToolStripMenuItem("SVN 清理", null, (s, e) => OnVcsCleanupClick(VcsType.Svn));
+            _menuGitUpdateItem = new ToolStripMenuItem("Git 更新", null, (s, e) => OnVcsUpdateClick(VcsType.Git));
+            _menuGitCleanupItem = new ToolStripMenuItem("Git 清理", null, (s, e) => OnVcsCleanupClick(VcsType.Git));
+            _menuSvnUpdateItem.Enabled = false;
+            _menuSvnCleanupItem.Enabled = false;
+            _menuGitUpdateItem.Enabled = false;
+            _menuGitCleanupItem.Enabled = false;
+            menuTools.DropDownItems.Add(_menuSvnUpdateItem);
+            menuTools.DropDownItems.Add(_menuSvnCleanupItem);
+            menuTools.DropDownItems.Add(new ToolStripSeparator());
+            menuTools.DropDownItems.Add(_menuGitUpdateItem);
+            menuTools.DropDownItems.Add(_menuGitCleanupItem);
+            menuTools.DropDownItems.Add(new ToolStripSeparator());
+            menuTools.DropDownItems.Add(new ToolStripMenuItem("日志分析", null, OnLogAnalysisClick));
+            _menuMoreActions.Items.Add(menuTools);
 
             _menuMoreActions.Font = Theme.Body;
 
@@ -1155,7 +1219,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
+                ToastForm.ShowToast("无法访问：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1197,7 +1261,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
+                ToastForm.ShowToast("无法访问：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1239,7 +1303,9 @@ namespace wxd.files.winforms
 
         private void RebuildBreadcrumb()
         {
-            if (_pnlBreadcrumb == null) return;
+            if (_pnlBreadcrumb == null || _rebuildingBreadcrumb) return;
+
+            _rebuildingBreadcrumb = true;
             _pnlBreadcrumb.SuspendLayout();
             try
             {
@@ -1249,39 +1315,91 @@ namespace wxd.files.winforms
                 string root = Path.GetPathRoot(_currentDir) ?? "";
                 if (string.IsNullOrEmpty(root)) return;
 
-                string current = root;
-                _pnlBreadcrumb.Controls.Add(new Label
-                {
-                    Text = "路径",
-                    AutoSize = true,
-                    Font = Theme.Caption,
-                    ForeColor = _colorTextSecondary,
-                    Margin = new Padding(1, 5, 3, 0)
-                });
-                AddBreadcrumbLink(DisplaySegment(root), current);
-
                 string rest = _currentDir.Substring(root.Length);
                 var parts = rest.Split(Path.DirectorySeparatorChar,
                     StringSplitOptions.RemoveEmptyEntries);
+
                 // 根目录只有 "D:" 一段，面包屑没有信息量；直接隐藏，把高度还给列表
                 _breadcrumbVisible = parts.Length > 0;
                 _pnlBreadcrumb.Visible = _breadcrumbVisible;
                 if (!_breadcrumbVisible)
                 {
-                    LayoutToolbar();
+                    _breadcrumbBuiltWidth = _pnlBreadcrumb.ClientSize.Width;
                     return;
                 }
 
+                var segments = new List<(string Text, string Path)>
+                {
+                    (DisplaySegment(root), root)
+                };
+                string current = root;
                 foreach (var part in parts)
                 {
                     current = Path.Combine(current, part);
-                    AddBreadcrumbSeparator();
-                    AddBreadcrumbLink(part, current);
+                    segments.Add((part, current));
                 }
+
+                int available = _pnlBreadcrumb.ClientSize.Width - _pnlBreadcrumb.Padding.Horizontal;
+                if (available <= 0) available = _pnlBreadcrumb.Width > 0 ? _pnlBreadcrumb.Width : 1000;
+
+                const int linkPadding = 10;
+                const int separatorWidth = 13;
+                int labelWidth = TextRenderer.MeasureText("路径", Theme.Caption).Width + 3;
+                int maxSegmentWidth = Math.Max(80, Math.Min(240, available / 3));
+
+                var widths = segments
+                    .Select(s => Math.Min(
+                        TextRenderer.MeasureText(s.Text, Theme.Caption).Width + linkPadding,
+                        maxSegmentWidth))
+                    .ToArray();
+
+                int total = labelWidth + widths.Sum() + separatorWidth * (segments.Count - 1);
+                int tailStart = 1;
+                bool hasHidden = false;
+
+                if (total > available)
+                {
+                    // 从末尾往前塞，塞不下就把中间段折叠成“…”下拉
+                    const int ellipsisWidth = 26;
+                    int remaining = available - labelWidth - widths[0] - separatorWidth - ellipsisWidth;
+                    int used = 0;
+                    int start = segments.Count;
+
+                    for (int i = segments.Count - 1; i >= 1; i--)
+                    {
+                        int cost = widths[i] + separatorWidth;
+                        if (used + cost > remaining && start != segments.Count) break;
+                        used += cost;
+                        start = i;
+                    }
+
+                    if (start >= segments.Count) start = segments.Count - 1;
+                    tailStart = start;
+                    hasHidden = start > 1;
+                }
+
+                AddBreadcrumbLabel("路径", labelWidth);
+                AddBreadcrumbLinkFixed(segments[0].Text, segments[0].Path, widths[0], false);
+
+                if (hasHidden)
+                {
+                    AddBreadcrumbSeparatorFixed(separatorWidth);
+                    AddBreadcrumbEllipsis(segments.Skip(1).Take(tailStart - 1).ToList());
+                }
+
+                for (int i = tailStart; i < segments.Count; i++)
+                {
+                    AddBreadcrumbSeparatorFixed(separatorWidth);
+                    AddBreadcrumbLinkFixed(segments[i].Text, segments[i].Path, widths[i],
+                        i == segments.Count - 1);
+                }
+
+                _breadcrumbBuiltWidth = _pnlBreadcrumb.ClientSize.Width;
             }
             finally
             {
                 _pnlBreadcrumb.ResumeLayout();
+                _rebuildingBreadcrumb = false;
                 LayoutToolbar();
             }
         }
@@ -1291,6 +1409,118 @@ namespace wxd.files.winforms
             var trimmed = segment.TrimEnd(Path.DirectorySeparatorChar);
             return string.IsNullOrEmpty(trimmed) ? segment : trimmed;
         }
+
+        private void AddBreadcrumbLabel(string text, int width)
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.Controls.Add(new Label
+            {
+                Text = text,
+                AutoSize = false,
+                Width = width,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = Theme.Caption,
+                ForeColor = _colorTextSecondary,
+                Margin = new Padding(1, 2, 3, 0)
+            });
+        }
+
+        private void AddBreadcrumbLinkFixed(string text, string path, int width, bool isCurrent)
+        {
+            if (_pnlBreadcrumb == null) return;
+
+            var linkColor = Theme.Signal(Color.FromArgb(0, 102, 204));
+            var baseBack = Theme.CellTint(Color.FromArgb(234, 243, 252));
+            var hoverBack = Theme.CellTint(Color.FromArgb(210, 230, 250));
+
+            var link = new LinkLabel
+            {
+                Text = text,
+                AutoSize = false,
+                Width = Math.Max(24, width),
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = Theme.Caption,
+                LinkBehavior = LinkBehavior.AlwaysUnderline,
+                LinkColor = linkColor,
+                ActiveLinkColor = linkColor,
+                VisitedLinkColor = linkColor,
+                BackColor = isCurrent ? hoverBack : baseBack,
+                Cursor = Cursors.Hand,
+                Padding = new Padding(4, 0, 4, 0),
+                Margin = new Padding(1, 2, 1, 0),
+                Tag = path
+            };
+
+            link.LinkClicked += (s, e) =>
+            {
+                if (s is LinkLabel l && l.Tag is string target && Directory.Exists(target))
+                    NavigateTo(target);
+            };
+            link.MouseEnter += (s, e) => { if (s is LinkLabel l) l.BackColor = hoverBack; };
+            link.MouseLeave += (s, e) =>
+            {
+                if (s is LinkLabel l) l.BackColor = isCurrent ? hoverBack : baseBack;
+            };
+            _pathToolTip.SetToolTip(link, path);
+            _pnlBreadcrumb.Controls.Add(link);
+        }
+
+        private void AddBreadcrumbSeparatorFixed(int width)
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.Controls.Add(new Label
+            {
+                Text = "›",
+                AutoSize = false,
+                Width = width,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.Caption,
+                ForeColor = _colorTextSecondary,
+                Margin = new Padding(0, 2, 0, 0)
+            });
+        }
+
+        private void AddBreadcrumbEllipsis(List<(string Text, string Path)> hidden)
+        {
+            if (_pnlBreadcrumb == null || hidden.Count == 0) return;
+
+            var menu = new ContextMenuStrip { Font = Theme.Body };
+            foreach (var (text, path) in hidden)
+            {
+                var item = new ToolStripMenuItem(text) { ToolTipText = path, Tag = path };
+                item.Click += (_, _) =>
+                {
+                    if (Directory.Exists(path)) NavigateTo(path);
+                };
+                menu.Items.Add(item);
+            }
+
+            var link = new LinkLabel
+            {
+                Text = "…",
+                AutoSize = false,
+                Width = 26,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.Caption,
+                LinkBehavior = LinkBehavior.NeverUnderline,
+                LinkColor = _colorTextSecondary,
+                ActiveLinkColor = _colorTextPrimary,
+                BackColor = Theme.CellTint(Color.FromArgb(240, 244, 248)),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(1, 2, 1, 0)
+            };
+
+            link.Click += (_, _) => menu.Show(link, new Point(0, link.Height));
+            link.Disposed += (_, _) => menu.Dispose();
+            _pathToolTip.SetToolTip(link, "展开被折叠的 " + hidden.Count + " 层目录");
+            _pnlBreadcrumb.Controls.Add(link);
+        }
+
 
         private void AddBreadcrumbSeparator()
         {
@@ -1522,7 +1752,7 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    AlertForm.Show(this.FindForm(), $"无法打开资源管理器: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                    ToastForm.ShowToast("无法打开资源管理器：" + ShortText(ex.Message), ToastKind.Error, 5000);
                 }
             }
         }
@@ -1537,7 +1767,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开 CSV 阅读器：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1551,53 +1781,52 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开日志分析: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开日志分析：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
-        // ==================== SVN更新 ====================
-        /// <summary>根据当前目录的 VCS 类型更新更多按钮菜单中的 VCS 更新项文本和启用状态</summary>
+        // ==================== VCS 更新 / 清理 ====================
+        /// <summary>根据当前目录的 VCS 类型启用/禁用 SVN、Git 的更新与清理项</summary>
         private void UpdateVcsMenuText()
         {
-            if (_menuVcsUpdateItem == null) return;
-
-            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
-            {
-                _menuVcsUpdateItem.Text = "VCS更新";
-                _menuVcsUpdateItem.Enabled = false;
+            if (_menuSvnUpdateItem == null || _menuSvnCleanupItem == null ||
+                _menuGitUpdateItem == null || _menuGitCleanupItem == null)
                 return;
-            }
 
-            var vcsType = VersionControlHelper.DetectVcs(_currentDir);
-            switch (vcsType)
-            {
-                case VcsType.Svn:
-                    _menuVcsUpdateItem.Text = "SVN更新";
-                    _menuVcsUpdateItem.Enabled = true;
-                    break;
-                case VcsType.Git:
-                    _menuVcsUpdateItem.Text = "Git更新";
-                    _menuVcsUpdateItem.Enabled = true;
-                    break;
-                default:
-                    _menuVcsUpdateItem.Text = "VCS更新";
-                    _menuVcsUpdateItem.Enabled = false;
-                    break;
-            }
+            var vcsType = (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
+                ? VersionControlHelper.DetectVcs(_currentDir)
+                : VcsType.None;
+
+            var isSvn = vcsType == VcsType.Svn;
+            var isGit = vcsType == VcsType.Git;
+
+            _menuSvnUpdateItem.Enabled = isSvn;
+            _menuSvnCleanupItem.Enabled = isSvn;
+            _menuGitUpdateItem.Enabled = isGit;
+            _menuGitCleanupItem.Enabled = isGit;
         }
 
-        private async void OnSvnUpdateClick(object? sender, EventArgs e)
+        /// <summary>取错误信息第一行，避免飘窗被长 stderr 撑得过高。</summary>
+        private static string ShortText(string? text, int max = 160)
+        {
+            var line = (text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? "";
+            return line.Length <= max ? line : line[..max] + "…";
+        }
+
+        private async void OnVcsUpdateClick(VcsType vcsType)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
                 return;
+
+            var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
 
             try
             {
-                var vcsType = VersionControlHelper.DetectVcs(_currentDir);
-                if (vcsType == VcsType.None)
+                var detected = VersionControlHelper.DetectVcs(_currentDir);
+                if (detected != vcsType)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(), "当前目录不受版本控制（未检测到 .svn 或 .git 目录）。", "提示", AlertType.Information));
+                    ToastForm.ShowToast($"当前目录不是 {vcsName} 工作副本", ToastKind.Warning);
                     return;
                 }
 
@@ -1605,14 +1834,9 @@ namespace wxd.files.winforms
 
                 if (!result.Started)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(), result.ErrorMessage ?? "更新失败", "错误", AlertType.Error));
+                    ToastForm.ShowToast(result.ErrorMessage ?? $"{vcsName} 更新失败", ToastKind.Error, 5000);
                     return;
                 }
-
-                var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
-                string msg;
-                AlertType alertType;
 
                 if (result.HasConflicts)
                 {
@@ -1620,27 +1844,75 @@ namespace wxd.files.winforms
                     if (result.ConflictLines.Count > 20)
                         conflictSummary += $"{GlobalConst.Lf}... 以及另外 {result.ConflictLines.Count - 20} 行冲突信息";
 
-                    msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
-                    alertType = AlertType.Warning;
+                    var msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
+                    AlertForm.Show(this.FindForm(), msg, $"{vcsName} 更新", AlertType.Warning);
                 }
                 else if (result.Success)
                 {
-                    msg = $"{vcsName} 更新完成。{GlobalConst.Lf}{result.Output}";
-                    alertType = AlertType.Information;
+                    ToastForm.ShowToast($"{vcsName} 更新完成", ToastKind.Info);
                 }
                 else
                 {
-                    msg = $"{vcsName} 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}";
-                    alertType = AlertType.Error;
+                    ToastForm.ShowToast(
+                        $"{vcsName} 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{ShortText(result.Error)}",
+                        ToastKind.Error, 5000);
                 }
-
-                this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), msg, $"{vcsName} 更新", alertType));
             }
             catch (Exception ex)
             {
-                this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), $"更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
+                ToastForm.ShowToast($"更新出错: {ex.Message}", ToastKind.Error, 5000);
+            }
+        }
+
+        private async void OnVcsCleanupClick(VcsType vcsType)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
+                return;
+
+            var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
+
+            try
+            {
+                var detected = VersionControlHelper.DetectVcs(_currentDir);
+                if (detected != vcsType)
+                {
+                    ToastForm.ShowToast($"当前目录不是 {vcsName} 工作副本", ToastKind.Warning);
+                    return;
+                }
+
+                if (vcsType == VcsType.Git)
+                {
+                    var confirm = MessageBox.Show(FindForm(),
+                        "Git 清理将执行 git gc --prune=now，压缩仓库并清理不可达对象。" + GlobalConst.Lf
+                        + "不会删除工作区中未跟踪的文件。是否继续？",
+                        "Git 清理", MessageBoxButtons.OKCancel, MessageBoxIcon.Question,
+                        MessageBoxDefaultButton.Button2);
+                    if (confirm != DialogResult.OK)
+                        return;
+                }
+
+                var result = await VersionControlHelper.CleanupAsync(_currentDir, vcsType);
+
+                if (!result.Started)
+                {
+                    ToastForm.ShowToast(result.ErrorMessage ?? $"{vcsName} 清理失败", ToastKind.Error, 5000);
+                    return;
+                }
+
+                if (result.Success)
+                {
+                    ToastForm.ShowToast($"{vcsName} 清理完成", ToastKind.Info);
+                }
+                else
+                {
+                    ToastForm.ShowToast(
+                        $"{vcsName} 清理失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{ShortText(result.Error)}",
+                        ToastKind.Error, 5000);
+                }
+            }
+            catch (Exception ex)
+            {
+                ToastForm.ShowToast($"清理出错: {ex.Message}", ToastKind.Error, 5000);
             }
         }
 
@@ -2381,6 +2653,7 @@ namespace wxd.files.winforms
                 Debug.WriteLine($"显示系统右键菜单失败: {ex.Message}");
                 ShowFallbackContextMenu(itemPath);
             }
+
         }
 
         /// <summary>显示系统右键上下文菜单（支持多路径——仅当仅一个路径时使用 Shell API）</summary>
@@ -2434,31 +2707,34 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>复制或剪切文件到剪贴板</summary>
+        /// <summary>复制或剪切文件/文件夹到剪贴板</summary>
         private void CopyFilesToClipboard(List<string> paths, bool cut)
         {
+            if (paths.Count == 0) return;
+
             try
             {
                 var collection = new System.Collections.Specialized.StringCollection();
                 collection.AddRange(paths.ToArray());
-                Clipboard.SetFileDropList(collection);
-                if (cut)
-                {
-                    // 标记剪切操作（通过设置包含 Preferred DropEffect 的 MemoryStream）
-                    byte[] dropEffect = new byte[] { (byte)DragDropEffects.Move, 0, 0, 0 };
-                    // 不能 using：剪贴板可能在 SetDataObject 之后才去读这个流
-                    var ms = new System.IO.MemoryStream();
-                    ms.Write(dropEffect, 0, dropEffect.Length);
-                    ms.Position = 0;
-                    var data = new DataObject();
-                    data.SetFileDropList(collection);
-                    data.SetData("Preferred DropEffect", ms);
-                    Clipboard.SetDataObject(data);
-                }
+
+                var data = new DataObject();
+                data.SetFileDropList(collection);
+
+                // 显式写 Preferred DropEffect：复制=Copy，剪切=Move。
+                // 不能 using：剪贴板在 SetDataObject 之后才去读这个流。
+                var ms = new System.IO.MemoryStream();
+                var effect = cut ? (int)DragDropEffects.Move : (int)DragDropEffects.Copy;
+                ms.Write(BitConverter.GetBytes(effect), 0, 4);
+                ms.Position = 0;
+                data.SetData("Preferred DropEffect", ms);
+                Clipboard.SetDataObject(data);
+
+                OperationLog.Write("clipboard-copy " + paths.Count + " 项 cut=" + cut
+                    + " dirs=" + paths.Count(Directory.Exists));
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("复制到剪贴板失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -2491,7 +2767,9 @@ namespace wxd.files.winforms
             catch { return; }
 
             if (paths == null || paths.Length == 0) return;
-            if (RunFileOperation(paths, _currentDir, move) && move)
+            OperationLog.Write("paste " + paths.Length + " 项 -> " + _currentDir + " move=" + move
+                + " dirs=" + paths.Count(Directory.Exists));
+            if (EnqueueFileOperation(paths, _currentDir, move) && move)
             {
                 try { Clipboard.Clear(); } catch { }
             }
@@ -2535,7 +2813,7 @@ namespace wxd.files.winforms
                 if (ret == 1223 || op.fAnyOperationsAborted != 0) return false;
                 if (ret != 0)
                 {
-                    AlertForm.Show(this.FindForm(), $"文件操作失败（代码 {ret}）", "错误", AlertType.Error);
+                    ToastForm.ShowToast("文件操作失败（代码 " + ret + "）", ToastKind.Error, 5000);
                     return false;
                 }
 
@@ -2544,9 +2822,225 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), "文件操作失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("文件操作失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
                 return false;
             }
+        }
+
+        // ==================== 搜索 ====================
+        /// <summary>打开搜索窗口，结果双击定位到本窗格。</summary>
+        private void OpenSearch()
+        {
+            var form = new FileSearchForm(_currentDir, SelectPath);
+            var owner = FindForm();
+            if (owner != null) form.Show(owner);
+            else form.Show();
+        }
+
+        /// <summary>批量重命名选中的文件；目录暂不支持。</summary>
+        private void OpenBatchRename()
+        {
+            var files = GetSelectedFullPaths().Where(File.Exists).ToList();
+            if (files.Count == 0)
+            {
+                ToastForm.ShowToast("请先选择要重命名的文件（暂不支持文件夹）", ToastKind.Warning);
+                return;
+            }
+
+            using var form = new BatchRenameForm(files);
+            form.ShowDialog(FindForm());
+            _ = LoadFileListAsync();
+        }
+
+        /// <summary>定位到指定文件/目录：必要时先导航，再等列表加载完选中。</summary>
+        public void SelectPath(string path)
+        {
+            if (IsDisposed || string.IsNullOrWhiteSpace(path)) return;
+
+            string full;
+            try { full = Path.GetFullPath(path); }
+            catch { return; }
+
+            if (Directory.Exists(full))
+            {
+                if (!string.Equals(_currentDir, full, StringComparison.OrdinalIgnoreCase))
+                    NavigateTo(full);
+                return;
+            }
+
+            var directory = Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return;
+            if (!string.Equals(_currentDir, directory, StringComparison.OrdinalIgnoreCase))
+                NavigateTo(directory);
+
+            int ticks = 0;
+            var timer = new System.Windows.Forms.Timer { Interval = 120 };
+            timer.Tick += (_, _) =>
+            {
+                ticks++;
+                if (IsDisposed || _lstFiles.IsDisposed)
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    return;
+                }
+
+                var found = _lstFiles.Items.Cast<ListViewItem>().FirstOrDefault(i =>
+                    i.Tag is FileItemTag tag &&
+                    string.Equals(tag.FullName, full, StringComparison.OrdinalIgnoreCase));
+
+                if (found == null && ticks < 40) return;
+
+                timer.Stop();
+                timer.Dispose();
+                if (found == null) return;
+
+                _lstFiles.SelectedItems.Clear();
+                found.Selected = true;
+                found.Focused = true;
+                found.EnsureVisible();
+                _lstFiles.Focus();
+            };
+            timer.Start();
+        }
+
+        // ==================== 传输队列 ====================
+        /// <summary>把复制/移动交给共享传输队列后立即返回；同名冲突回到 UI 线程询问。</summary>
+        private bool EnqueueFileOperation(string[] paths, string targetDir, bool move)
+        {
+            OperationLog.Write("enqueue-request " + paths.Length + " 项 -> " + targetDir + " move=" + move);
+            if (string.IsNullOrWhiteSpace(targetDir) || !Directory.Exists(targetDir))
+            {
+                OperationLog.Write("enqueue-rejected: 目标目录不存在 " + targetDir);
+                return false;
+            }
+
+            var validList = new List<string>();
+            var blocked = new List<string>();
+
+            foreach (var path in paths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !(File.Exists(path) || Directory.Exists(path)))
+                    continue;
+
+                if (FileOperationGuard.WouldRecurse(path, targetDir))
+                {
+                    blocked.Add(path);
+                    continue;
+                }
+
+                validList.Add(path);
+            }
+
+            if (blocked.Count > 0)
+            {
+                var names = string.Join("、", blocked
+                    .Select(Path.GetFileName)
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .Take(3));
+                var message = blocked.Count == 1
+                    ? $"不能把“{names}”粘贴到它自己或子目录里"
+                    : $"不能把选中的 {blocked.Count} 个文件夹粘贴到它自己或子目录里";
+                ToastForm.ShowToast(message, ToastKind.Error);
+                OperationLog.Write("enqueue-blocked-recursive " + string.Join("; ", blocked));
+            }
+
+            if (validList.Count == 0)
+            {
+                OperationLog.Write("enqueue-rejected: 过滤后没有有效来源");
+                return false;
+            }
+
+            var valid = validList.ToArray();
+            var options = new FileOperationOptions { Conflict = ConflictPolicy.Ask };
+            FileOperationQueue.Shared.Enqueue(
+                move ? FileOperationKind.Move : FileOperationKind.Copy,
+                valid,
+                targetDir,
+                options,
+                AskConflict);
+            return true;
+        }
+
+        /// <summary>冲突回调：工作线程 → UI 线程弹框；窗口已销毁时按跳过处理。</summary>
+        private ConflictAnswer AskConflict(ConflictInfo info)
+        {
+            OperationLog.Write("conflict-ask " + info.TargetPath);
+            if (IsDisposed || !IsHandleCreated)
+            {
+                OperationLog.Write("conflict-skip: 窗体已释放");
+                return new ConflictAnswer(ConflictDecision.Skip);
+            }
+            try
+            {
+                return (ConflictAnswer)Invoke(new Func<ConflictAnswer>(
+                    () => ConflictDialog.Ask(FindForm(), info)));
+            }
+            catch
+            {
+                return new ConflictAnswer(ConflictDecision.Skip);
+            }
+        }
+
+        /// <summary>任务结束后，若源目录或目标目录就是本窗格，就刷新列表。</summary>
+        private void OnSharedJobChanged(object? sender, FileOperationJob job)
+        {
+            if (job.State is not (FileOperationState.Completed or FileOperationState.Failed)) return;
+            if (IsDisposed) return;
+
+            bool affected = string.Equals(job.Destination, _currentDir, StringComparison.OrdinalIgnoreCase)
+                || job.Sources.Any(s => string.Equals(
+                    Path.GetDirectoryName(s), _currentDir, StringComparison.OrdinalIgnoreCase));
+            if (!affected) return;
+            OperationLog.Write("job-changed " + job.State + " dest=" + (job.Destination ?? "-"));
+
+            try
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new Action(() => { if (!IsDisposed) _ = LoadFileListAsync(); }));
+            }
+            catch
+            {
+                // 窗口正在关闭
+            }
+        }
+
+        /// <summary>按默认文件名新建常用文件；.xlsx/.docx 生成可打开的最小文件，重名时提示。</summary>
+        private void CreateNewFile(string defaultName)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            if (!NewItemService.TryCreateTypedFile(_currentDir, defaultName, out var path, out var error))
+            {
+                ToastForm.ShowToast("新建文件失败：" + ShortText(error), ToastKind.Error, 5000);
+                return;
+            }
+
+            _ = LoadFileListAsync();
+            SelectPath(path);
+        }
+
+        /// <summary>新建空文件，创建后定位到它。</summary>
+        private void CreateNewFile()
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            using var dialog = new NewItemDialog(
+                "新建文件",
+                "文件名（含扩展名，例如 cfg_quest.csv）",
+                "新建文件.txt",
+                name => NewItemService.Validate(_currentDir, name));
+
+            if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
+
+            if (!NewItemService.TryCreateTypedFile(_currentDir, dialog.Value, out var path, out var error))
+            {
+                ToastForm.ShowToast("新建文件失败：" + ShortText(error), ToastKind.Error, 5000);
+                return;
+            }
+
+            _ = LoadFileListAsync();
+            SelectPath(path);
         }
 
         /// <summary>新建文件夹并进入重命名</summary>
@@ -2580,7 +3074,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), "新建文件夹失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("新建文件夹失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -2750,7 +3244,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -2807,6 +3301,23 @@ namespace wxd.files.winforms
             if (IsTextEditing())
                 return base.ProcessCmdKey(ref msg, keyData);
 
+            // 列表有焦点时直接在 ProcessCmdKey 处理剪贴板，避免个别 ListView 主题/输入法吞掉 KeyDown
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.C))
+            {
+                CopyFilesToClipboard(GetSelectedFullPaths(), cut: false);
+                return true;
+            }
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.X))
+            {
+                CopyFilesToClipboard(GetSelectedFullPaths(), cut: true);
+                return true;
+            }
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.V))
+            {
+                PasteFromClipboard();
+                return true;
+            }
+
             if (keyData == (Keys.Alt | Keys.Left))
             {
                 NavigateBack();
@@ -2829,7 +3340,8 @@ namespace wxd.files.winforms
             }
             if (keyData == Keys.F2)
             {
-                StartRename();
+                if (_lstFiles.SelectedItems.Count > 1) OpenBatchRename();
+                else StartRename();
                 return true;
             }
             if (keyData == Keys.Delete)
@@ -2854,6 +3366,16 @@ namespace wxd.files.winforms
             if (keyData == (Keys.Control | Keys.Shift | Keys.N))
             {
                 CreateNewFolder();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.Alt | Keys.N))
+            {
+                CreateNewFile();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.F))
+            {
+                OpenSearch();
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -2940,7 +3462,8 @@ namespace wxd.files.winforms
                 target = tag.FullName;
 
             bool move = e.Effect == DragDropEffects.Move;
-            RunFileOperation(paths, target, move);
+            OperationLog.Write("drop " + paths.Length + " 项 -> " + target + " move=" + move);
+            EnqueueFileOperation(paths, target, move);
         }
 
         // ==================== F2 重命名 ====================
@@ -2982,12 +3505,12 @@ namespace wxd.files.winforms
                         }
                         catch (Exception ex)
                         {
-                            AlertForm.Show(this.FindForm(), $"重命名失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                            ToastForm.ShowToast("重命名失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
                         }
                     }
                     else
                     {
-                        AlertForm.Show(this.FindForm(), "该名称已存在。", "重命名", AlertType.Warning);
+                        ToastForm.ShowToast("该名称已存在", ToastKind.Warning);
                     }
                 }
                 tb.LostFocus -= CommitRename;
@@ -3071,8 +3594,9 @@ namespace wxd.files.winforms
 
         protected override void Dispose(bool disposing)
         {
-            // 取消 VCS 状态事件订阅
+            // 取消 VCS 状态与传输队列事件订阅
             VcsStatusCache.RemoveListener(OnVcsStatusRefreshed);
+            FileOperationQueue.Shared.JobChanged -= OnSharedJobChanged;
 
             // 停止定时器并立即保存
             _saveDebounceTimer?.Stop();
@@ -3088,6 +3612,8 @@ namespace wxd.files.winforms
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
                 _imagePreviewTip?.Dispose();
+                _breadcrumbRebuildTimer?.Dispose();
+                _menuMoreActions?.Dispose();
                 _imgList?.Dispose();
                 _imgListLarge?.Dispose();
                 _lstFiles?.Dispose();
