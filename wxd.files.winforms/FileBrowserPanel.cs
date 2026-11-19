@@ -770,19 +770,29 @@ namespace wxd.files.winforms
                 Font = Theme.Body
             };
 
-            // 创建下拉菜单
+            // 创建下拉菜单：按「文件 / 查找 / 视图 / 工具」分组
             _menuMoreActions = new ContextMenuStrip { Font = Theme.Body };
+
             _menuMoreActions.Items.Add("打开目录", null, OnOpenExplorerClick);
-            _menuMoreActions.Items.Add("新建文件夹", null, (s, e) => CreateNewFolder());
-            _menuMoreActions.Items.Add("新建文件…", null, (s, e) => CreateNewFile());
-            _menuMoreActions.Items.Add("日志分析", null, OnLogAnalysisClick);
-            _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
-            _menuVcsUpdateItem.Enabled = false;
-            _menuMoreActions.Items.Add(_menuVcsUpdateItem);
+
+            var menuNew = new ToolStripMenuItem("新建");
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件夹", null, (s, e) => CreateNewFolder())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Shift+N"
+            });
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件…", null, (s, e) => CreateNewFile())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Alt+N"
+            });
+            _menuMoreActions.Items.Add(menuNew);
+
+            _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
+
             _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
             _menuMoreActions.Items.Add("批量重命名", null, (s, e) => OpenBatchRename());
             _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
-            _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
 
             // 视图模式二级菜单
             _menuViewModeItem = new ToolStripMenuItem("视图模式");
@@ -797,11 +807,9 @@ namespace wxd.files.winforms
                 _menuViewModeItem.DropDownItems.Add(_viewModeSubItems[i]);
             }
             _viewModeSubItems[(int)_viewMode].Checked = true;
-            _menuMoreActions.Items.Add(_menuViewModeItem);
 
             // 排序方式二级菜单
             _menuSortFieldItem = new ToolStripMenuItem("排序方式");
-
             string[] sortFieldNames = { "名称", "文件大小", "修改日期" };
             for (int i = 0; i < sortFieldNames.Length; i++)
             {
@@ -813,7 +821,6 @@ namespace wxd.files.winforms
                 _menuSortFieldItem.DropDownItems.Add(_sortFieldSubItems[i]);
             }
 
-            // 分隔线 + 排序方向
             _menuSortFieldItem.DropDownItems.Add(new ToolStripSeparator());
             string[] sortDirNames = { "递增", "递减" };
             for (int i = 0; i < sortDirNames.Length; i++)
@@ -828,7 +835,21 @@ namespace wxd.files.winforms
 
             _sortFieldSubItems[(int)_sortField].Checked = true;
             _sortDirectionSubItems[(int)_sortDirection].Checked = true;
-            _menuMoreActions.Items.Add(_menuSortFieldItem);
+
+            var menuViewGroup = new ToolStripMenuItem("视图");
+            menuViewGroup.DropDownItems.Add(_menuViewModeItem);
+            menuViewGroup.DropDownItems.Add(_menuSortFieldItem);
+            _menuMoreActions.Items.Add(menuViewGroup);
+
+            _menuMoreActions.Items.Add(new ToolStripSeparator());
+
+            // 工具：VCS 更新 + 日志分析
+            var menuTools = new ToolStripMenuItem("工具");
+            _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
+            _menuVcsUpdateItem.Enabled = false;
+            menuTools.DropDownItems.Add(_menuVcsUpdateItem);
+            menuTools.DropDownItems.Add(new ToolStripMenuItem("日志分析", null, OnLogAnalysisClick));
+            _menuMoreActions.Items.Add(menuTools);
 
             _menuMoreActions.Font = Theme.Body;
 
