@@ -1,14 +1,24 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms;
 
-/// <summary>右下角飘窗提示：无边框、不抢焦点、自动消失。</summary>
+/// <summary>右下角飘窗提示：多实例向上叠加、默认 2 秒后淡出，不抢焦点。</summary>
 internal sealed class ToastForm : Form
 {
-    private readonly System.Windows.Forms.Timer _timer;
-    private static ToastForm? _current;
+    private const int FadeDurationMs = 260;
+    private const int StackGap = 8;
+    private const int ScreenMargin = 16;
+    private const int MaxVisible = 6;
+
+    private static readonly List<ToastForm> Active = new();
+
+    private readonly System.Windows.Forms.Timer _lifeTimer;
+    private readonly System.Windows.Forms.Timer _fadeTimer;
+    private DateTime _fadeStartedAt;
+    private bool _closing;
 
     private ToastForm(string message, bool warning, int durationMs)
     {
@@ -19,7 +29,7 @@ internal sealed class ToastForm : Form
         Font = Theme.Body;
         BackColor = Theme.P.Surface;
         ForeColor = Theme.P.Text;
-        Padding = new Padding(0);
+        Opacity = 1;
 
         var accent = new Panel
         {
@@ -49,38 +59,95 @@ internal sealed class ToastForm : Form
         int height = Math.Max(52, measured.Height + 28);
         ClientSize = new Size(width, height);
 
-        var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-        Location = new Point(area.Right - Width - 16, area.Bottom - Height - 16);
+        Click += (_, _) => BeginFade();
+        label.Click += (_, _) => BeginFade();
 
-        Click += (_, _) => Close();
-        label.Click += (_, _) => Close();
+        _lifeTimer = new System.Windows.Forms.Timer { Interval = Math.Max(500, durationMs) };
+        _lifeTimer.Tick += (_, _) => BeginFade();
 
-        _timer = new System.Windows.Forms.Timer { Interval = Math.Max(1500, durationMs) };
-        _timer.Tick += (_, _) =>
+        _fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
+        _fadeTimer.Tick += (_, _) => StepFade();
+
+        FormClosed += (_, _) =>
         {
-            _timer.Stop();
-            Close();
+            _lifeTimer.Stop();
+            _fadeTimer.Stop();
+            Active.Remove(this);
+            RepositionAll();
         };
     }
 
-    public static void ShowToast(string message, bool warning = true, int durationMs = 3500)
+    public static void ShowToast(string message, bool warning = true, int durationMs = 2000)
     {
         try
         {
-            if (_current is { IsDisposed: false })
-                _current.Close();
+            while (Active.Count >= MaxVisible)
+            {
+                var oldest = Active[0];
+                Active.RemoveAt(0);
+                oldest.Close();
+            }
 
             var toast = new ToastForm(message, warning, durationMs);
-            _current = toast;
-            toast.FormClosed += (_, _) =>
-            {
-                if (ReferenceEquals(_current, toast)) _current = null;
-            };
+            Active.Add(toast);
+            RepositionAll();
             toast.Show();
+            toast._lifeTimer.Start();
         }
         catch
         {
             // 提示失败不影响主流程
+        }
+    }
+
+    private static void RepositionAll()
+    {
+        if (Active.Count == 0) return;
+
+        var area = (Screen.PrimaryScreen ?? Screen.FromPoint(Cursor.Position)).WorkingArea;
+        int y = area.Bottom - ScreenMargin;
+
+        // 最新的在最下面，旧的依次往上叠
+        for (int i = Active.Count - 1; i >= 0; i--)
+        {
+            var toast = Active[i];
+            if (toast.IsDisposed) continue;
+
+            y -= toast.Height;
+            int x = area.Right - toast.Width - ScreenMargin;
+            if (y < area.Top)
+                y = area.Top;
+
+            toast.Location = new Point(x, y);
+            y -= StackGap;
+        }
+    }
+
+    private void BeginFade()
+    {
+        if (_closing || IsDisposed) return;
+        _closing = true;
+        _lifeTimer.Stop();
+        _fadeStartedAt = DateTime.UtcNow;
+        _fadeTimer.Start();
+    }
+
+    private void StepFade()
+    {
+        if (IsDisposed)
+        {
+            _fadeTimer.Stop();
+            return;
+        }
+
+        double elapsed = (DateTime.UtcNow - _fadeStartedAt).TotalMilliseconds;
+        double progress = Math.Min(1, elapsed / FadeDurationMs);
+        Opacity = 1 - progress;
+
+        if (progress >= 1)
+        {
+            _fadeTimer.Stop();
+            Close();
         }
     }
 
@@ -99,7 +166,11 @@ internal sealed class ToastForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _timer?.Dispose();
+        if (disposing)
+        {
+            _lifeTimer?.Dispose();
+            _fadeTimer?.Dispose();
+        }
         base.Dispose(disposing);
     }
 }
