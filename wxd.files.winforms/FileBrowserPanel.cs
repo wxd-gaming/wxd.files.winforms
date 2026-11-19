@@ -99,7 +99,10 @@ namespace wxd.files.winforms
         private bool _hasUnsavedChanges = false;
         private bool _menuMoreActionsVisible = false;
         private string _savedFilterForCompare = "";
-        private ToolStripMenuItem? _menuVcsUpdateItem;
+        private ToolStripMenuItem? _menuSvnUpdateItem;
+        private ToolStripMenuItem? _menuSvnCleanupItem;
+        private ToolStripMenuItem? _menuGitUpdateItem;
+        private ToolStripMenuItem? _menuGitCleanupItem;
 
         // ==================== VCS 状态字段 ====================
         private VcsDirectoryStatus? _vcsStatus;
@@ -845,9 +848,20 @@ namespace wxd.files.winforms
 
             // 工具：VCS 更新 + 日志分析
             var menuTools = new ToolStripMenuItem("工具");
-            _menuVcsUpdateItem = new ToolStripMenuItem("VCS更新", null, OnSvnUpdateClick);
-            _menuVcsUpdateItem.Enabled = false;
-            menuTools.DropDownItems.Add(_menuVcsUpdateItem);
+            _menuSvnUpdateItem = new ToolStripMenuItem("SVN 更新", null, (s, e) => OnVcsUpdateClick(VcsType.Svn));
+            _menuSvnCleanupItem = new ToolStripMenuItem("SVN 清理", null, (s, e) => OnVcsCleanupClick(VcsType.Svn));
+            _menuGitUpdateItem = new ToolStripMenuItem("Git 更新", null, (s, e) => OnVcsUpdateClick(VcsType.Git));
+            _menuGitCleanupItem = new ToolStripMenuItem("Git 清理", null, (s, e) => OnVcsCleanupClick(VcsType.Git));
+            _menuSvnUpdateItem.Enabled = false;
+            _menuSvnCleanupItem.Enabled = false;
+            _menuGitUpdateItem.Enabled = false;
+            _menuGitCleanupItem.Enabled = false;
+            menuTools.DropDownItems.Add(_menuSvnUpdateItem);
+            menuTools.DropDownItems.Add(_menuSvnCleanupItem);
+            menuTools.DropDownItems.Add(new ToolStripSeparator());
+            menuTools.DropDownItems.Add(_menuGitUpdateItem);
+            menuTools.DropDownItems.Add(_menuGitCleanupItem);
+            menuTools.DropDownItems.Add(new ToolStripSeparator());
             menuTools.DropDownItems.Add(new ToolStripMenuItem("日志分析", null, OnLogAnalysisClick));
             _menuMoreActions.Items.Add(menuTools);
 
@@ -1764,49 +1778,43 @@ namespace wxd.files.winforms
             }
         }
 
-        // ==================== SVN更新 ====================
-        /// <summary>根据当前目录的 VCS 类型更新更多按钮菜单中的 VCS 更新项文本和启用状态</summary>
+        // ==================== VCS 更新 / 清理 ====================
+        /// <summary>根据当前目录的 VCS 类型启用/禁用 SVN、Git 的更新与清理项</summary>
         private void UpdateVcsMenuText()
         {
-            if (_menuVcsUpdateItem == null) return;
-
-            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
-            {
-                _menuVcsUpdateItem.Text = "VCS更新";
-                _menuVcsUpdateItem.Enabled = false;
+            if (_menuSvnUpdateItem == null || _menuSvnCleanupItem == null ||
+                _menuGitUpdateItem == null || _menuGitCleanupItem == null)
                 return;
-            }
 
-            var vcsType = VersionControlHelper.DetectVcs(_currentDir);
-            switch (vcsType)
-            {
-                case VcsType.Svn:
-                    _menuVcsUpdateItem.Text = "SVN更新";
-                    _menuVcsUpdateItem.Enabled = true;
-                    break;
-                case VcsType.Git:
-                    _menuVcsUpdateItem.Text = "Git更新";
-                    _menuVcsUpdateItem.Enabled = true;
-                    break;
-                default:
-                    _menuVcsUpdateItem.Text = "VCS更新";
-                    _menuVcsUpdateItem.Enabled = false;
-                    break;
-            }
+            var vcsType = (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
+                ? VersionControlHelper.DetectVcs(_currentDir)
+                : VcsType.None;
+
+            var isSvn = vcsType == VcsType.Svn;
+            var isGit = vcsType == VcsType.Git;
+
+            _menuSvnUpdateItem.Enabled = isSvn;
+            _menuSvnCleanupItem.Enabled = isSvn;
+            _menuGitUpdateItem.Enabled = isGit;
+            _menuGitCleanupItem.Enabled = isGit;
         }
 
-        private async void OnSvnUpdateClick(object? sender, EventArgs e)
+        private async void OnVcsUpdateClick(VcsType vcsType)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
                 return;
+
+            var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
 
             try
             {
-                var vcsType = VersionControlHelper.DetectVcs(_currentDir);
-                if (vcsType == VcsType.None)
+                var detected = VersionControlHelper.DetectVcs(_currentDir);
+                if (detected != vcsType)
                 {
                     this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(), "当前目录不受版本控制（未检测到 .svn 或 .git 目录）。", "提示", AlertType.Information));
+                        AlertForm.Show(this.FindForm(),
+                            $"当前目录不是 {vcsName} 工作副本，无法执行 {vcsName} 更新。",
+                            "提示", AlertType.Information));
                     return;
                 }
 
@@ -1819,7 +1827,6 @@ namespace wxd.files.winforms
                     return;
                 }
 
-                var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
                 string msg;
                 AlertType alertType;
 
@@ -1850,6 +1857,67 @@ namespace wxd.files.winforms
             {
                 this.BeginInvoke(() =>
                     AlertForm.Show(this.FindForm(), $"更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
+            }
+        }
+
+        private async void OnVcsCleanupClick(VcsType vcsType)
+        {
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
+                return;
+
+            var vcsName = vcsType == VcsType.Svn ? "SVN" : "Git";
+
+            try
+            {
+                var detected = VersionControlHelper.DetectVcs(_currentDir);
+                if (detected != vcsType)
+                {
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(),
+                            $"当前目录不是 {vcsName} 工作副本，无法执行 {vcsName} 清理。",
+                            "提示", AlertType.Information));
+                    return;
+                }
+
+                if (vcsType == VcsType.Git)
+                {
+                    var confirm = MessageBox.Show(FindForm(),
+                        "Git 清理将执行 git gc --prune=now，压缩仓库并清理不可达对象。" + GlobalConst.Lf
+                        + "不会删除工作区中未跟踪的文件。是否继续？",
+                        "Git 清理", MessageBoxButtons.OKCancel, MessageBoxIcon.Question,
+                        MessageBoxDefaultButton.Button2);
+                    if (confirm != DialogResult.OK)
+                        return;
+                }
+
+                var result = await VersionControlHelper.CleanupAsync(_currentDir, vcsType);
+
+                if (!result.Started)
+                {
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(), result.ErrorMessage ?? "清理失败", "错误", AlertType.Error));
+                    return;
+                }
+
+                if (result.Success)
+                {
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(),
+                            $"{vcsName} 清理完成。{GlobalConst.Lf}{result.Output}",
+                            $"{vcsName} 清理", AlertType.Information));
+                }
+                else
+                {
+                    this.BeginInvoke(() =>
+                        AlertForm.Show(this.FindForm(),
+                            $"{vcsName} 清理失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}",
+                            $"{vcsName} 清理", AlertType.Error));
+                }
+            }
+            catch (Exception ex)
+            {
+                this.BeginInvoke(() =>
+                    AlertForm.Show(this.FindForm(), $"清理出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
             }
         }
 

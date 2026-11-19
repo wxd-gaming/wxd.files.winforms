@@ -56,6 +56,9 @@ internal static partial class Program
         Run("新建 名称校验", Test_NewItemValidate);
         Run("新建 文件与文件夹创建", Test_NewItemCreate);
         Run("新建 重名与非法名拒绝", Test_NewItemReject);
+        Run("VCS 清理 非版本控制目录拒绝", Test_VcsCleanupNoneRejected);
+        Run("VCS 清理 Git 进程可启动", Test_VcsCleanupStartsGit);
+        Run("VCS 清理 SVN 进程可启动", Test_VcsCleanupStartsSvn);
 
         Console.WriteLine("--- 文件操作失败提示 ---");
         Run("失败提示 权限错误给出中文建议", Test_OperationErrorPermission);
@@ -1028,6 +1031,56 @@ internal static partial class Program
 
             Assert(!NewItemService.TryCreateDirectory(root, "bad*name", out _, out var dirError), "非法名应拒绝");
             Assert(dirError != null, "应返回原因");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_VcsCleanupNoneRejected()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var result = VersionControlHelper.CleanupAsync(root, VcsType.None).GetAwaiter().GetResult();
+            Assert(!result.Started, "None 类型不应启动清理进程");
+            Assert(!string.IsNullOrEmpty(result.ErrorMessage), "应给出不支持的提示");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_VcsCleanupStartsGit()
+    {
+        var probe = VersionControlHelper.RunProcessAsync("git", "--version", timeoutMs: 10_000)
+            .GetAwaiter().GetResult();
+        if (!probe.Started)
+            return; // 环境没有 Git，跳过
+
+        var root = NewTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, ".git"));
+            var result = VersionControlHelper.CleanupAsync(root, VcsType.Git).GetAwaiter().GetResult();
+            Assert(result.Started, "Git 清理应能启动进程: " + result.ErrorMessage);
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_VcsCleanupStartsSvn()
+    {
+        var root = NewTempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, ".svn"));
+            var result = VersionControlHelper.CleanupAsync(root, VcsType.Svn).GetAwaiter().GetResult();
+            Assert(result.Started, "SVN 清理应能启动进程: " + result.ErrorMessage);
         }
         finally
         {

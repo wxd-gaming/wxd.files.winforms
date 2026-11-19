@@ -835,6 +835,91 @@ namespace wxd.files.winforms
             return result;
         }
 
+        /// <summary>执行 VCS 清理操作（SVN cleanup 或 Git gc）</summary>
+        /// <param name="directory">要清理的目录路径</param>
+        /// <param name="vcs">版本控制类型（Svn 或 Git）</param>
+        public static async Task<VcsUpdateResult> CleanupAsync(string directory, VcsType vcs)
+        {
+            var result = new VcsUpdateResult();
+
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            {
+                result.ErrorMessage = "指定的目录不存在。";
+                return result;
+            }
+
+            try
+            {
+                var root = GetVcsRoot(directory, vcs);
+                ProcessRunResult run;
+
+                if (vcs == VcsType.Svn)
+                {
+                    var svnExe = FindSvnExe();
+                    if (svnExe == null)
+                    {
+                        result.ErrorMessage = "未找到 SVN 命令行工具（svn.exe）。请安装 TortoiseSVN（需勾选命令行工具）或 SlikSVN，并确保 svn.exe 在 PATH 中。";
+                        return result;
+                    }
+
+                    run = await RunProcessAsync(svnExe, $"cleanup \"{root}\" --non-interactive",
+                        outputEncoding: Encoding.GetEncoding(936),
+                        timeoutMs: 120_000,
+                        disableInteractivePrompts: true).ConfigureAwait(false);
+                    if (!run.Started)
+                    {
+                        result.ErrorMessage = $"无法启动 SVN 进程（{svnExe}）：{run.Error}";
+                        return result;
+                    }
+                }
+                else if (vcs == VcsType.Git)
+                {
+                    // git gc：压缩/整理仓库对象，不会删除工作区里未跟踪的文件
+                    run = await RunProcessAsync("git", "gc --prune=now",
+                        workingDirectory: root,
+                        timeoutMs: 180_000,
+                        disableInteractivePrompts: true).ConfigureAwait(false);
+                    if (!run.Started)
+                    {
+                        result.ErrorMessage = $"无法启动 Git 进程：{run.Error}";
+                        return result;
+                    }
+                }
+                else
+                {
+                    result.ErrorMessage = "不支持的版本控制类型。";
+                    return result;
+                }
+
+                result.Started = true;
+                result.ExitCode = run.ExitCode;
+                result.Output = run.Output;
+                result.Error = run.Error;
+                if (run.TimedOut)
+                    result.ErrorMessage = vcs == VcsType.Svn
+                        ? "SVN 清理超时（120 秒），已终止。"
+                        : "Git 清理超时（180 秒），已终止。";
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                var toolName = vcs == VcsType.Svn ? "SVN" : "Git";
+                var installTip = vcs == VcsType.Svn
+                    ? "请安装 TortoiseSVN（安装时需勾选 \"command line client tools\"）或 SlikSVN，并确保 svn.exe 在 PATH 中。"
+                    : "请安装 Git for Windows（https://git-scm.com/）并确保 git.exe 在 PATH 中。";
+                result.ErrorMessage = $"本功能需要安装 {toolName} 命令行工具。{installTip}";
+            }
+            catch (DirectoryNotFoundException)
+            {
+                result.ErrorMessage = "目录不存在，可能已被移动或删除。";
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = $"清理操作异常：{ex.Message}";
+            }
+
+            return result;
+        }
+
         /// <summary>标记冲突已解决（SVN resolved 或 Git add）</summary>
         public static void MarkConflictResolved(string filePath, VcsType vcs)
         {
