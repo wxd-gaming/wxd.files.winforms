@@ -61,6 +61,9 @@ namespace wxd.files.winforms
             if (ver != null)
                 Text = $"{Text} v{ver}";
 
+            if (ProcessIntegrity.IsLow)
+                Text += "（低权限：SVN 右键可能不可用）";
+
             // 先按存档恢复窗格数量/布局/明暗，再激活令牌，后面控件创建期取色和菜单勾选才是最终值
             _paneCount = Math.Clamp(CsvSettings.PaneCount, 1, 10);
             _layoutIndex = Math.Clamp(CsvSettings.LayoutIndex, 0, 2);
