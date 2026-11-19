@@ -25,6 +25,7 @@ internal static partial class Program
         Run("队列 顺序执行与完成状态", Test_QueueSequential);
         Run("队列 失败收集", Test_QueueFailure);
         Run("队列 失败事件", Test_QueueFailedEvent);
+        Run("队列 复制目录", Test_QueueCopyDirectory);
         Run("暂停闸门", Test_PauseToken);
         Run("唯一命名与长路径前缀", Test_UniqueAndLongPath);
         Run("统计文件数与字节", Test_Measure);
@@ -334,6 +335,31 @@ internal static partial class Program
             Assert(seen > 0, "取消前应已写入数据");
             AssertEq(0, Directory.GetFiles(targetDir, "*.wxd-tmp-*").Length, "取消后不应遗留临时文件");
             Assert(!File.Exists(Path.Combine(targetDir, "big.bin")), "取消后不应出现半截目标文件");
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_QueueCopyDirectory()
+    {
+        var root = NewTempDir();
+        try
+        {
+            var source = Path.Combine(root, "src");
+            Directory.CreateDirectory(Path.Combine(source, "sub"));
+            File.WriteAllText(Path.Combine(source, "a.txt"), "A");
+            File.WriteAllText(Path.Combine(source, "sub", "b.txt"), "B");
+
+            var target = Path.Combine(root, "dst");
+            Directory.CreateDirectory(target);
+
+            using var queue = new FileOperationQueue(1);
+            var job = queue.Enqueue(FileOperationKind.Copy, new[] { source }, target);
+            Assert(queue.WaitAsync(job).Wait(TimeSpan.FromSeconds(20)), "队列复制目录超时");
+            AssertEq(FileOperationState.Completed, job.State, "队列状态");
+            AssertEq("B", File.ReadAllText(Path.Combine(target, "src", "sub", "b.txt")), "目录内容");
         }
         finally
         {

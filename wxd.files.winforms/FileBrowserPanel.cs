@@ -2719,27 +2719,30 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>复制或剪切文件到剪贴板</summary>
+        /// <summary>复制或剪切文件/文件夹到剪贴板</summary>
         private void CopyFilesToClipboard(List<string> paths, bool cut)
         {
+            if (paths.Count == 0) return;
+
             try
             {
                 var collection = new System.Collections.Specialized.StringCollection();
                 collection.AddRange(paths.ToArray());
-                Clipboard.SetFileDropList(collection);
-                if (cut)
-                {
-                    // 标记剪切操作（通过设置包含 Preferred DropEffect 的 MemoryStream）
-                    byte[] dropEffect = new byte[] { (byte)DragDropEffects.Move, 0, 0, 0 };
-                    // 不能 using：剪贴板可能在 SetDataObject 之后才去读这个流
-                    var ms = new System.IO.MemoryStream();
-                    ms.Write(dropEffect, 0, dropEffect.Length);
-                    ms.Position = 0;
-                    var data = new DataObject();
-                    data.SetFileDropList(collection);
-                    data.SetData("Preferred DropEffect", ms);
-                    Clipboard.SetDataObject(data);
-                }
+
+                var data = new DataObject();
+                data.SetFileDropList(collection);
+
+                // 显式写 Preferred DropEffect：复制=Copy，剪切=Move。
+                // 不能 using：剪贴板在 SetDataObject 之后才去读这个流。
+                var ms = new System.IO.MemoryStream();
+                var effect = cut ? (int)DragDropEffects.Move : (int)DragDropEffects.Copy;
+                ms.Write(BitConverter.GetBytes(effect), 0, 4);
+                ms.Position = 0;
+                data.SetData("Preferred DropEffect", ms);
+                Clipboard.SetDataObject(data);
+
+                OperationLog.Write("clipboard-copy " + paths.Count + " 项 cut=" + cut
+                    + " dirs=" + paths.Count(Directory.Exists));
             }
             catch (Exception ex)
             {
@@ -2776,7 +2779,8 @@ namespace wxd.files.winforms
             catch { return; }
 
             if (paths == null || paths.Length == 0) return;
-            OperationLog.Write("paste " + paths.Length + " 项 -> " + _currentDir + " move=" + move);
+            OperationLog.Write("paste " + paths.Length + " 项 -> " + _currentDir + " move=" + move
+                + " dirs=" + paths.Count(Directory.Exists));
             if (EnqueueFileOperation(paths, _currentDir, move) && move)
             {
                 try { Clipboard.Clear(); } catch { }
@@ -3290,6 +3294,23 @@ namespace wxd.files.winforms
             // 否则 Delete/F2/Backspace 会误触发文件操作或导航
             if (IsTextEditing())
                 return base.ProcessCmdKey(ref msg, keyData);
+
+            // 列表有焦点时直接在 ProcessCmdKey 处理剪贴板，避免个别 ListView 主题/输入法吞掉 KeyDown
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.C))
+            {
+                CopyFilesToClipboard(GetSelectedFullPaths(), cut: false);
+                return true;
+            }
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.X))
+            {
+                CopyFilesToClipboard(GetSelectedFullPaths(), cut: true);
+                return true;
+            }
+            if (_lstFiles.Focused && keyData == (Keys.Control | Keys.V))
+            {
+                PasteFromClipboard();
+                return true;
+            }
 
             if (keyData == (Keys.Alt | Keys.Left))
             {
