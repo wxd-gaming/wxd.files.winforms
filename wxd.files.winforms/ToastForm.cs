@@ -84,6 +84,13 @@ internal sealed class ToastForm : Form
         };
     }
 
+    internal static string Shorten(string? text, int max = 160)
+    {
+        var line = (text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault() ?? "";
+        return line.Length <= max ? line : line[..max] + "…";
+    }
+
     public static void ShowToast(string message, ToastKind kind = ToastKind.Warning, int durationMs = 2000)
     {
         IntPtr focus = IntPtr.Zero;

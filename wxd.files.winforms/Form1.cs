@@ -507,8 +507,7 @@ namespace wxd.files.winforms
             catch (Exception ex)
             {
                 ReaderLog.Exception($"打开阅读器失败 dir={dialog.SelectedPath}", ex);
-                AlertForm.Show(this, "打开阅读器失败：" + GlobalConst.NewLine + ex.Message,
-                    "阅读器", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("打开阅读器失败：" + ex.Message, ToastKind.Error, 5000);
             }
         }
 
@@ -1036,7 +1035,9 @@ namespace wxd.files.winforms
             void ShowAlert()
             {
                 if (IsDisposed) return;
-                AlertForm.Show(this, OperationErrorPresenter.Build(job), "文件操作失败", AlertType.Error);
+                var message = OperationErrorPresenter.Build(job);
+                if (message.Length > 300) message = message[..300] + "…";
+                ToastForm.ShowToast(message, ToastKind.Error, 6000);
             }
 
             if (InvokeRequired)
@@ -1254,7 +1255,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(null, $"执行命令 [{item.Name}] 失败：{ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast($"执行命令 [{item.Name}] 失败：{ex.Message}", ToastKind.Error, 5000);
             }
         }
 

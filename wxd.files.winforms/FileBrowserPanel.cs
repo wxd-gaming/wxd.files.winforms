@@ -1219,7 +1219,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
+                ToastForm.ShowToast("无法访问：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1261,7 +1261,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this, $"无法访问路径:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Warning, exception: ex);
+                ToastForm.ShowToast("无法访问：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1752,7 +1752,7 @@ namespace wxd.files.winforms
                 }
                 catch (Exception ex)
                 {
-                    AlertForm.Show(this.FindForm(), $"无法打开资源管理器: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                    ToastForm.ShowToast("无法打开资源管理器：" + ShortText(ex.Message), ToastKind.Error, 5000);
                 }
             }
         }
@@ -1767,7 +1767,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开CSV阅读器: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开 CSV 阅读器：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1781,7 +1781,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开日志分析: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开日志分析：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -1806,6 +1806,14 @@ namespace wxd.files.winforms
             _menuGitCleanupItem.Enabled = isGit;
         }
 
+        /// <summary>取错误信息第一行，避免飘窗被长 stderr 撑得过高。</summary>
+        private static string ShortText(string? text, int max = 160)
+        {
+            var line = (text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? "";
+            return line.Length <= max ? line : line[..max] + "…";
+        }
+
         private async void OnVcsUpdateClick(VcsType vcsType)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir))
@@ -1818,10 +1826,7 @@ namespace wxd.files.winforms
                 var detected = VersionControlHelper.DetectVcs(_currentDir);
                 if (detected != vcsType)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(),
-                            $"当前目录不是 {vcsName} 工作副本，无法执行 {vcsName} 更新。",
-                            "提示", AlertType.Information));
+                    ToastForm.ShowToast($"当前目录不是 {vcsName} 工作副本", ToastKind.Warning);
                     return;
                 }
 
@@ -1829,13 +1834,9 @@ namespace wxd.files.winforms
 
                 if (!result.Started)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(), result.ErrorMessage ?? "更新失败", "错误", AlertType.Error));
+                    ToastForm.ShowToast(result.ErrorMessage ?? $"{vcsName} 更新失败", ToastKind.Error, 5000);
                     return;
                 }
-
-                string msg;
-                AlertType alertType;
 
                 if (result.HasConflicts)
                 {
@@ -1843,27 +1844,23 @@ namespace wxd.files.winforms
                     if (result.ConflictLines.Count > 20)
                         conflictSummary += $"{GlobalConst.Lf}... 以及另外 {result.ConflictLines.Count - 20} 行冲突信息";
 
-                    msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
-                    alertType = AlertType.Warning;
+                    var msg = $"{vcsName} 更新完成，但检测到 {result.ConflictLines.Count} 个冲突。{GlobalConst.Lf}请手动解决冲突后提交。{GlobalConst.Lf}{GlobalConst.Lf}冲突详情：{GlobalConst.Lf}{conflictSummary}";
+                    AlertForm.Show(this.FindForm(), msg, $"{vcsName} 更新", AlertType.Warning);
                 }
                 else if (result.Success)
                 {
-                    msg = $"{vcsName} 更新完成。{GlobalConst.Lf}{result.Output}";
-                    alertType = AlertType.Information;
+                    ToastForm.ShowToast($"{vcsName} 更新完成", ToastKind.Info);
                 }
                 else
                 {
-                    msg = $"{vcsName} 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}";
-                    alertType = AlertType.Error;
+                    ToastForm.ShowToast(
+                        $"{vcsName} 更新失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{ShortText(result.Error)}",
+                        ToastKind.Error, 5000);
                 }
-
-                this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), msg, $"{vcsName} 更新", alertType));
             }
             catch (Exception ex)
             {
-                this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), $"更新出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
+                ToastForm.ShowToast($"更新出错: {ex.Message}", ToastKind.Error, 5000);
             }
         }
 
@@ -1879,10 +1876,7 @@ namespace wxd.files.winforms
                 var detected = VersionControlHelper.DetectVcs(_currentDir);
                 if (detected != vcsType)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(),
-                            $"当前目录不是 {vcsName} 工作副本，无法执行 {vcsName} 清理。",
-                            "提示", AlertType.Information));
+                    ToastForm.ShowToast($"当前目录不是 {vcsName} 工作副本", ToastKind.Warning);
                     return;
                 }
 
@@ -1901,30 +1895,24 @@ namespace wxd.files.winforms
 
                 if (!result.Started)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(), result.ErrorMessage ?? "清理失败", "错误", AlertType.Error));
+                    ToastForm.ShowToast(result.ErrorMessage ?? $"{vcsName} 清理失败", ToastKind.Error, 5000);
                     return;
                 }
 
                 if (result.Success)
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(),
-                            $"{vcsName} 清理完成。{GlobalConst.Lf}{result.Output}",
-                            $"{vcsName} 清理", AlertType.Information));
+                    ToastForm.ShowToast($"{vcsName} 清理完成", ToastKind.Info);
                 }
                 else
                 {
-                    this.BeginInvoke(() =>
-                        AlertForm.Show(this.FindForm(),
-                            $"{vcsName} 清理失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{result.Error}",
-                            $"{vcsName} 清理", AlertType.Error));
+                    ToastForm.ShowToast(
+                        $"{vcsName} 清理失败（ExitCode: {result.ExitCode}）{GlobalConst.Lf}{ShortText(result.Error)}",
+                        ToastKind.Error, 5000);
                 }
             }
             catch (Exception ex)
             {
-                this.BeginInvoke(() =>
-                    AlertForm.Show(this.FindForm(), $"清理出错: {ex.Message}", "错误", AlertType.Error, exception: ex));
+                ToastForm.ShowToast($"清理出错: {ex.Message}", ToastKind.Error, 5000);
             }
         }
 
@@ -2746,7 +2734,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"复制到剪贴板失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("复制到剪贴板失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -2825,7 +2813,7 @@ namespace wxd.files.winforms
                 if (ret == 1223 || op.fAnyOperationsAborted != 0) return false;
                 if (ret != 0)
                 {
-                    AlertForm.Show(this.FindForm(), $"文件操作失败（代码 {ret}）", "错误", AlertType.Error);
+                    ToastForm.ShowToast("文件操作失败（代码 " + ret + "）", ToastKind.Error, 5000);
                     return false;
                 }
 
@@ -2834,7 +2822,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), "文件操作失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("文件操作失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
                 return false;
             }
         }
@@ -2855,8 +2843,7 @@ namespace wxd.files.winforms
             var files = GetSelectedFullPaths().Where(File.Exists).ToList();
             if (files.Count == 0)
             {
-                AlertForm.Show(FindForm(), "请先选择要重命名的文件（暂不支持批量重命名文件夹）。",
-                    "批量重命名", AlertType.Warning);
+                ToastForm.ShowToast("请先选择要重命名的文件（暂不支持文件夹）", ToastKind.Warning);
                 return;
             }
 
@@ -3025,7 +3012,7 @@ namespace wxd.files.winforms
 
             if (!NewItemService.TryCreateTypedFile(_currentDir, defaultName, out var path, out var error))
             {
-                AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
+                ToastForm.ShowToast("新建文件失败：" + ShortText(error), ToastKind.Error, 5000);
                 return;
             }
 
@@ -3048,7 +3035,7 @@ namespace wxd.files.winforms
 
             if (!NewItemService.TryCreateTypedFile(_currentDir, dialog.Value, out var path, out var error))
             {
-                AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
+                ToastForm.ShowToast("新建文件失败：" + ShortText(error), ToastKind.Error, 5000);
                 return;
             }
 
@@ -3087,7 +3074,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), "新建文件夹失败: " + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("新建文件夹失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -3257,7 +3244,7 @@ namespace wxd.files.winforms
             }
             catch (Exception ex)
             {
-                AlertForm.Show(this.FindForm(), $"无法打开:" + GlobalConst.NewLine + ex.Message, "错误", AlertType.Error, exception: ex);
+                ToastForm.ShowToast("无法打开：" + ShortText(ex.Message), ToastKind.Error, 5000);
             }
         }
 
@@ -3518,12 +3505,12 @@ namespace wxd.files.winforms
                         }
                         catch (Exception ex)
                         {
-                            AlertForm.Show(this.FindForm(), $"重命名失败: {ex.Message}", "错误", AlertType.Error, exception: ex);
+                            ToastForm.ShowToast("重命名失败：" + ShortText(ex.Message), ToastKind.Error, 5000);
                         }
                     }
                     else
                     {
-                        AlertForm.Show(this.FindForm(), "该名称已存在。", "重命名", AlertType.Warning);
+                        ToastForm.ShowToast("该名称已存在", ToastKind.Warning);
                     }
                 }
                 tb.LostFocus -= CommitRename;
