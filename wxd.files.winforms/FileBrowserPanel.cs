@@ -2924,8 +2924,10 @@ namespace wxd.files.winforms
             var point = screenPoint ?? Cursor.Position;
             try
             {
-                if (!WindowsShellContextMenu.ShowBackground(_currentDir, this, point.X, point.Y))
+                if (!WindowsShellContextMenu.ShowBackground(_currentDir, this, point.X, point.Y, out int action))
                     ShowBuiltInBackgroundMenu(point);
+                else if (action > 0)
+                    ExecuteBackgroundAction(action);
             }
             catch (Exception ex)
             {
@@ -2935,6 +2937,32 @@ namespace wxd.files.winforms
             finally
             {
                 if (!IsDisposed) _ = LoadFileListAsync();
+            }
+        }
+
+        /// <summary>执行系统背景菜单里替换过的“新建”项。</summary>
+        private void ExecuteBackgroundAction(int action)
+        {
+            switch (action)
+            {
+                case 1:
+                    CreateNewFolder();
+                    break;
+                case 2:
+                    CreateNewFile("新建文本文档.txt");
+                    break;
+                case 3:
+                    CreateNewFile("新建表格.csv");
+                    break;
+                case 4:
+                    CreateNewFile("新建文件.json");
+                    break;
+                case 5:
+                    CreateNewFile("新建文档.md");
+                    break;
+                case 6:
+                    CreateNewFile();
+                    break;
             }
         }
 

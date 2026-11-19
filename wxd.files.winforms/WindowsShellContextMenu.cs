@@ -26,6 +26,12 @@ namespace wxd.files.winforms
         private const uint MF_BYPOSITION = 0x00000400;
         private const uint MF_POPUP = 0x00000010;
         private const uint ShellNewMenuIdFirst = 20000;
+        private const uint BackgroundNewFolderId = 30001;
+        private const uint BackgroundNewTextId = 30002;
+        private const uint BackgroundNewCsvId = 30003;
+        private const uint BackgroundNewJsonId = 30004;
+        private const uint BackgroundNewMarkdownId = 30005;
+        private const uint BackgroundNewOtherId = 30006;
         private const uint SVGIO_BACKGROUND = 0;
         private static readonly Guid CLSID_NewMenu = new("D969A300-E7FF-11D0-A93B-00A0C90F2719");
         private static readonly Guid CLSID_ExplorerBrowser = new("71F96385-DDD6-48D3-A0C1-AE06E8B055FB");
@@ -325,11 +331,12 @@ namespace wxd.files.winforms
         public static void ShowBackgroundAtCursor(string folderPath, Control control)
         {
             var cursor = Cursor.Position;
-            ShowBackground(folderPath, control, cursor.X, cursor.Y);
+            ShowBackground(folderPath, control, cursor.X, cursor.Y, out _);
         }
 
-        public static bool ShowBackground(string folderPath, Control control, int screenX, int screenY)
+        public static bool ShowBackground(string folderPath, Control control, int screenX, int screenY, out int customAction)
         {
+            customAction = 0;
             if (control == null || control.IsDisposed || !control.IsHandleCreated) return false;
             if (!Directory.Exists(folderPath) || !IsWindows()) return false;
 
@@ -415,6 +422,10 @@ namespace wxd.files.winforms
                 OperationLog.Write("view-background query=" + queryResult + " folder=" + folderPath);
                 if (queryResult < 0) return false;
 
+                // 系统视图的“新建”依赖视图窗口站点，直接调用会 E_FAIL；
+                // 把 New 子菜单换成可在本程序里执行的基础模板（文件夹/文本/CSV/JSON/Markdown）。
+                ReplaceBackgroundNewSubmenu(hMenu);
+
                 var window = new MenuHostWindow(contextMenu2, contextMenu3);
                 uint commandId;
                 try
@@ -433,6 +444,12 @@ namespace wxd.files.winforms
                 }
 
                 OperationLog.Write("view-background command=" + commandId);
+                if (commandId >= BackgroundNewFolderId && commandId <= BackgroundNewOtherId)
+                {
+                    customAction = (int)(commandId - BackgroundNewFolderId) + 1;
+                    return true;
+                }
+
                 if (commandId > 0)
                 {
                     IntPtr owner = control.TopLevelControl?.Handle ?? control.Handle;
@@ -565,6 +582,28 @@ namespace wxd.files.winforms
             {
                 Marshal.FreeHGlobal(buffer);
             }
+        }
+
+        private static void ReplaceBackgroundNewSubmenu(IntPtr hMenu)
+        {
+            IntPtr hNew = User32.CreatePopupMenu();
+            if (hNew == IntPtr.Zero) return;
+
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewFolderId, "文件夹");
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewTextId, "文本文档");
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewCsvId, "CSV 表格");
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewJsonId, "JSON 文件");
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewMarkdownId, "Markdown 文档");
+            User32.AppendMenu(hNew, 0x00000800, IntPtr.Zero, "");
+            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewOtherId, "其他文件…");
+
+            int newPos = FindMenuItemPosition(hMenu, "新建");
+            if (newPos >= 0) User32.RemoveMenu(hMenu, (uint)newPos, MF_BYPOSITION);
+
+            if (newPos >= 0)
+                User32.InsertMenu(hMenu, (uint)newPos, MF_BYPOSITION | MF_POPUP, hNew, "新建");
+            else
+                User32.AppendMenu(hMenu, MF_POPUP, hNew, "新建");
         }
 
         private static int FindMenuItemPosition(IntPtr hMenu, string prefix)
