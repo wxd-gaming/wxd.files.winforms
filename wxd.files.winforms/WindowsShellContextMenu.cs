@@ -454,6 +454,18 @@ namespace wxd.files.winforms
                     };
                     int invokeHr = contextMenu.InvokeCommand(ref invokeInfo);
                     OperationLog.Write("view-background invoke hr=" + invokeHr);
+
+                    if (invokeHr != 0)
+                    {
+                        try
+                        {
+                            AlertForm.Show(control.FindForm(),
+                                "系统菜单命令执行失败（代码 " + invokeHr + "）。" + GlobalConst.NewLine
+                                + "如果是“新建”或“粘贴”，请确认目标目录有写入权限。",
+                                "系统菜单", AlertType.Warning);
+                        }
+                        catch { }
+                    }
                 }
 
                 return true;
