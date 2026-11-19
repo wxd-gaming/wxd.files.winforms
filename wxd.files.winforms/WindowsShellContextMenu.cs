@@ -397,7 +397,12 @@ namespace wxd.files.winforms
                 {
                     int newIndex = FindMenuItemPosition(hMenu, "新建");
                     if (newIndex >= 0) User32.RemoveMenu(hMenu, (uint)newIndex, MF_BYPOSITION);
-                    User32.AppendMenu(hMenu, MF_POPUP, shellNewMenu.DetachMenu(), "新建");
+
+                    var newSubmenu = shellNewMenu.DetachMenu();
+                    if (newIndex >= 0)
+                        User32.InsertMenu(hMenu, (uint)newIndex, MF_BYPOSITION | MF_POPUP, newSubmenu, "新建");
+                    else
+                        User32.AppendMenu(hMenu, MF_POPUP, newSubmenu, "新建");
                     OperationLog.Write("background-menu new-items=" + shellNewMenu.Count);
                 }
 
@@ -585,6 +590,9 @@ namespace wxd.files.winforms
 
             [DllImport("user32.dll", CharSet = CharSet.Unicode)]
             public static extern bool AppendMenu(IntPtr hMenu, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
+
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            public static extern bool InsertMenu(IntPtr hMenu, uint uPosition, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
         }
 
         #endregion
