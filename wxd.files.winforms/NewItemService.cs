@@ -52,6 +52,39 @@ internal static class NewItemService
         }
     }
 
+    /// <summary>按扩展名创建：.xlsx/.docx 生成最小 OOXML，其余为空文件。</summary>
+    public static bool TryCreateTypedFile(string directory, string? rawName, out string path, out string? error)
+    {
+        var name = (rawName ?? "").Trim();
+        path = Path.Combine(directory, name);
+        error = Validate(directory, name);
+        if (error != null) return false;
+
+        try
+        {
+            var ext = Path.GetExtension(name).ToLowerInvariant();
+            switch (ext)
+            {
+                case ".xlsx":
+                    OfficeFileTemplates.CreateXlsx(path);
+                    break;
+                case ".docx":
+                    OfficeFileTemplates.CreateDocx(path);
+                    break;
+                default:
+                    using (File.Create(path)) { }
+                    break;
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
+            return false;
+        }
+    }
+
     public static bool TryCreateDirectory(string directory, string? rawName, out string path, out string? error)
     {
         var name = (rawName ?? "").Trim();

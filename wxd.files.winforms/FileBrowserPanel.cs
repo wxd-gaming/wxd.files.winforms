@@ -783,7 +783,14 @@ namespace wxd.files.winforms
             {
                 ShortcutKeyDisplayString = "Ctrl+Shift+N"
             });
-            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件…", null, (s, e) => CreateNewFile())
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("文本文档", null, (s, e) => CreateNewFile("新建文本文档.txt")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Excel 工作表", null, (s, e) => CreateNewFile("新建工作表.xlsx")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Word 文档", null, (s, e) => CreateNewFile("新建文档.docx")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("CSV 表格", null, (s, e) => CreateNewFile("新建表格.csv")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("JSON 文件", null, (s, e) => CreateNewFile("新建文件.json")));
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("Markdown 文档", null, (s, e) => CreateNewFile("新建文档.md")));
+            menuNew.DropDownItems.Add(new ToolStripSeparator());
+            menuNew.DropDownItems.Add(new ToolStripMenuItem("其他文件…", null, (s, e) => CreateNewFile())
             {
                 ShortcutKeyDisplayString = "Ctrl+Alt+N"
             });
@@ -2988,12 +2995,12 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>按默认文件名新建空文件（常用类型），重名时提示。</summary>
+        /// <summary>按默认文件名新建常用文件；.xlsx/.docx 生成可打开的最小文件，重名时提示。</summary>
         private void CreateNewFile(string defaultName)
         {
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
 
-            if (!NewItemService.TryCreateFile(_currentDir, defaultName, out var path, out var error))
+            if (!NewItemService.TryCreateTypedFile(_currentDir, defaultName, out var path, out var error))
             {
                 AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
                 return;
@@ -3016,7 +3023,7 @@ namespace wxd.files.winforms
 
             if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
 
-            if (!NewItemService.TryCreateFile(_currentDir, dialog.Value, out var path, out var error))
+            if (!NewItemService.TryCreateTypedFile(_currentDir, dialog.Value, out var path, out var error))
             {
                 AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
                 return;

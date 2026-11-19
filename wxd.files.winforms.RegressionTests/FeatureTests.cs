@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -56,6 +57,7 @@ internal static partial class Program
         Run("新建 名称校验", Test_NewItemValidate);
         Run("新建 文件与文件夹创建", Test_NewItemCreate);
         Run("新建 重名与非法名拒绝", Test_NewItemReject);
+        Run("新建 Office 模板可打开", Test_NewItemOfficeTemplates);
         Run("VCS 清理 非版本控制目录拒绝", Test_VcsCleanupNoneRejected);
         Run("VCS 清理 Git 进程可启动", Test_VcsCleanupStartsGit);
         Run("VCS 清理 SVN 进程可启动", Test_VcsCleanupStartsSvn);
@@ -1081,6 +1083,37 @@ internal static partial class Program
             Directory.CreateDirectory(Path.Combine(root, ".svn"));
             var result = VersionControlHelper.CleanupAsync(root, VcsType.Svn).GetAwaiter().GetResult();
             Assert(result.Started, "SVN 清理应能启动进程: " + result.ErrorMessage);
+        }
+        finally
+        {
+            DeleteTempDir(root);
+        }
+    }
+
+    private static void Test_NewItemOfficeTemplates()
+    {
+        var root = NewTempDir();
+        try
+        {
+            Assert(NewItemService.TryCreateTypedFile(root, "a.xlsx", out var xlsx, out var xlsxError),
+                "xlsx 创建失败: " + xlsxError);
+            using (var zip = ZipFile.OpenRead(xlsx))
+            {
+                Assert(zip.GetEntry("xl/workbook.xml") != null, "xlsx 缺少 xl/workbook.xml");
+                Assert(zip.GetEntry("xl/worksheets/sheet1.xml") != null, "xlsx 缺少 sheet1.xml");
+            }
+
+            Assert(NewItemService.TryCreateTypedFile(root, "b.docx", out var docx, out var docxError),
+                "docx 创建失败: " + docxError);
+            using (var zip = ZipFile.OpenRead(docx))
+            {
+                Assert(zip.GetEntry("[Content_Types].xml") != null, "docx 缺少 [Content_Types].xml");
+                Assert(zip.GetEntry("word/document.xml") != null, "docx 缺少 word/document.xml");
+            }
+
+            Assert(NewItemService.TryCreateTypedFile(root, "c.txt", out var txt, out var txtError),
+                "txt 创建失败: " + txtError);
+            Assert(new FileInfo(txt).Length == 0, "txt 应为空文件");
         }
         finally
         {
