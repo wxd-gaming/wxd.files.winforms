@@ -25,7 +25,12 @@ namespace wxd.files.winforms
         private const uint MF_BYPOSITION = 0x00000400;
         private const uint MF_POPUP = 0x00000010;
         private const uint ShellNewMenuIdFirst = 20000;
+        private const uint SVGIO_BACKGROUND = 0;
         private static readonly Guid CLSID_NewMenu = new("D969A300-E7FF-11D0-A93B-00A0C90F2719");
+        private static readonly Guid CLSID_ExplorerBrowser = new("71F96385-DDD6-48D3-A0C1-AE06E8B055FB");
+        private static readonly Guid IID_ExplorerBrowser = new("DFD3B6B5-C10C-4BE9-85F6-A66949C03271");
+        private static readonly Guid IID_IShellView = new("000214E3-0000-0000-C000-000000000046");
+        private static readonly Guid IID_IShellItem = new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
         private const int TPM_RETURNCMD = 0x0100;
         private const int TPM_RIGHTBUTTON = 0x0002;
         private const int TPM_NONOTIFY = 0x0080;
@@ -245,16 +250,43 @@ namespace wxd.files.winforms
 
                     System.Diagnostics.Debug.WriteLine($"TrackPopupMenuEx 返回命令ID: {commandId}");
 
-                    // 执行选中的命令
+                    // 执行选中的命令：优先用系统提供的规范动词，
+                    // 直接按命令 ID 偏移调用时，TortoiseSVN 等扩展可能映射到别的项（例如属性）。
                     if (commandId > 0)
                     {
-                        var invokeInfo = new CMINVOKECOMMANDINFOEX();
-                        invokeInfo.cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX));
-                        invokeInfo.hwnd = control.Handle;
-                        invokeInfo.lpVerb = (IntPtr)(commandId - 1);
-                        invokeInfo.nShow = 1;
+                        var verb = GetCommandVerb(contextMenu, commandId);
+                        OperationLog.Write("item-menu cmd=" + commandId + " verb=" + (verb ?? "-")
+                            + " path=" + path);
 
-                        contextMenu.InvokeCommand(ref invokeInfo);
+                        var invokeInfo = new CMINVOKECOMMANDINFOEX
+                        {
+                            cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
+                            hwnd = control.Handle,
+                            nShow = 1,
+                            ptInvoke = new POINT { x = screenX, y = screenY },
+                            lpDirectoryW = Path.GetDirectoryName(path) ?? ""
+                        };
+
+                        IntPtr verbPtr = IntPtr.Zero;
+                        try
+                        {
+                            if (!string.IsNullOrEmpty(verb))
+                            {
+                                verbPtr = Marshal.StringToHGlobalUni(verb);
+                                invokeInfo.fMask = CMIC_MASK_UNICODE;
+                                invokeInfo.lpVerbW = verbPtr;
+                            }
+                            else
+                            {
+                                invokeInfo.lpVerb = (IntPtr)(commandId - 1);
+                            }
+
+                            contextMenu.InvokeCommand(ref invokeInfo);
+                        }
+                        finally
+                        {
+                            if (verbPtr != IntPtr.Zero) Marshal.FreeHGlobal(verbPtr);
+                        }
                     }
                 }
                 finally
@@ -507,6 +539,41 @@ namespace wxd.files.winforms
             return Path.DirectorySeparatorChar == '\\';
         }
 
+        /// <summary>取系统菜单项的规范动词；有动词时用动词调用，避免不同扩展对命令 ID 偏移的映射不一致。</summary>
+        private static string? GetCommandVerb(IContextMenu menu, uint commandId)
+        {
+            const uint GCS_VERBW = 4;
+            const uint GCS_VERBA = 0;
+            IntPtr buffer = Marshal.AllocHGlobal(2048);
+            try
+            {
+                int hr = menu.GetCommandString(commandId, GCS_VERBW, IntPtr.Zero, buffer, 1024);
+                if (hr >= 0)
+                {
+                    var wideVerb = Marshal.PtrToStringUni(buffer);
+                    if (!string.IsNullOrWhiteSpace(wideVerb)) return wideVerb.Trim();
+                }
+
+                for (int i = 0; i < 2048; i++) Marshal.WriteByte(buffer, i, 0);
+                hr = menu.GetCommandString(commandId, GCS_VERBA, IntPtr.Zero, buffer, 1024);
+                if (hr >= 0)
+                {
+                    var ansiVerb = Marshal.PtrToStringAnsi(buffer);
+                    if (!string.IsNullOrWhiteSpace(ansiVerb)) return ansiVerb.Trim();
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
         private static int FindMenuItemPosition(IntPtr hMenu, string prefix)
         {
             int count = User32.GetMenuItemCount(hMenu);
@@ -556,6 +623,9 @@ namespace wxd.files.winforms
 
             [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
             public static extern int SHGetDesktopFolder(out IntPtr ppshf);
+
+            [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+            public static extern IShellItem SHCreateItemFromParsingName(string pszPath, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid);
         }
 
         private static class User32
@@ -620,7 +690,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
+                IntPtr pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -654,7 +724,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
+                IntPtr pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -691,7 +761,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
+                IntPtr pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -708,6 +778,61 @@ namespace wxd.files.winforms
 
             [PreserveSig]
             int HandleMenuMsg2(uint uMsg, IntPtr wParam, IntPtr lParam, ref IntPtr lpResult);
+        }
+
+        [ComImport]
+        [Guid("DFD3B6B5-C10C-4BE9-85F6-A66949C03271")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IExplorerBrowser
+        {
+            [PreserveSig] int Initialize(IntPtr hwndParent, ref RECT prc, FOLDERVIEWMODE uViewMode, IntPtr punkEvents);
+            [PreserveSig] int Destroy();
+            [PreserveSig] int SetRect(ref RECT prc);
+            [PreserveSig] int SetRectNF(ref RECT prc);
+            [PreserveSig] int SetPropertyBag([MarshalAs(UnmanagedType.LPWStr)] string pszPropertyBag);
+            [PreserveSig] int SetEmptyText([MarshalAs(UnmanagedType.LPWStr)] string pszEmptyText);
+            [PreserveSig] int SetFolderSettings(IntPtr pFolderSettings);
+            [PreserveSig] int Advise(IntPtr punkEventSink, ref uint pdwCookie);
+            [PreserveSig] int Unadvise(uint dwCookie);
+            [PreserveSig] int SetOptions(uint uOptions);
+            [PreserveSig] int GetOptions(out uint puOptions);
+            [PreserveSig] int BrowseToIDList(IntPtr pidl, uint uFlags);
+            [PreserveSig] int BrowseToObject([MarshalAs(UnmanagedType.IUnknown)] object punk, uint uFlags);
+            [PreserveSig] int FillFromObject([MarshalAs(UnmanagedType.IUnknown)] object punk, uint uFlags);
+            [PreserveSig] int RemoveAll();
+            [PreserveSig] int GetCurrentView(ref Guid riid, out IntPtr ppv);
+        }
+
+        [ComImport]
+        [Guid("000214E3-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellView
+        {
+            [PreserveSig] int GetWindow(out IntPtr phwnd);
+            [PreserveSig] int ContextSensitiveHelp(bool fEnterMode);
+            [PreserveSig] int TranslateAccelerator(IntPtr pmsg);
+            [PreserveSig] int EnableModeless(bool fEnable);
+            [PreserveSig] int UIActivate(uint uState);
+            [PreserveSig] int Refresh();
+            [PreserveSig] int CreateViewWindow(IntPtr psvPrevious, IntPtr pfs, IntPtr psb, IntPtr prcView, out IntPtr phwndView);
+            [PreserveSig] int DestroyViewWindow();
+            [PreserveSig] int GetCurrentInfo(IntPtr pfs);
+            [PreserveSig] int AddPropertySheetPages(uint dwReserved, IntPtr pfn, IntPtr lparam);
+            [PreserveSig] int SaveViewState();
+            [PreserveSig] int SelectItem(IntPtr pidl, uint uFlags);
+            [PreserveSig] int GetItemObject(uint uItem, ref Guid riid, out IntPtr ppv);
+        }
+
+        [ComImport]
+        [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellItem
+        {
+            [PreserveSig] int BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+            [PreserveSig] int GetParent(out IShellItem ppsi);
+            [PreserveSig] int GetDisplayName(uint sigdnName, out IntPtr ppszName);
+            [PreserveSig] int GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
+            [PreserveSig] int Compare(IShellItem psi, uint hint, out int piOrder);
         }
 
         [ComImport]
@@ -816,6 +941,24 @@ namespace wxd.files.winforms
             public int y;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        private enum FOLDERVIEWMODE
+        {
+            FVM_AUTO = -1,
+            FVM_ICON = 1,
+            FVM_SMALLICON = 2,
+            FVM_LIST = 3,
+            FVM_DETAILS = 4
+        }
+
         #endregion
 
         /// <summary>
@@ -916,17 +1059,38 @@ namespace wxd.files.winforms
             {
                 if (_contextMenu == null || commandId < ShellNewMenuIdFirst) return -1;
 
+                var verb = GetCommandVerb(_contextMenu, commandId);
+                OperationLog.Write("new-menu cmd=" + commandId + " verb=" + (verb ?? "-"));
+
                 var invokeInfo = new CMINVOKECOMMANDINFOEX
                 {
                     cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
-                    fMask = CMIC_MASK_UNICODE,
                     hwnd = hwnd,
-                    lpVerbW = (IntPtr)(commandId - ShellNewMenuIdFirst),
                     lpDirectoryW = folderPath,
                     nShow = 1,
                     ptInvoke = new POINT { x = screenX, y = screenY }
                 };
-                return _contextMenu.InvokeCommand(ref invokeInfo);
+
+                IntPtr verbPtr = IntPtr.Zero;
+                try
+                {
+                    if (!string.IsNullOrEmpty(verb))
+                    {
+                        verbPtr = Marshal.StringToHGlobalUni(verb);
+                        invokeInfo.fMask = CMIC_MASK_UNICODE;
+                        invokeInfo.lpVerbW = verbPtr;
+                    }
+                    else
+                    {
+                        invokeInfo.lpVerb = (IntPtr)(commandId - ShellNewMenuIdFirst);
+                    }
+
+                    return _contextMenu.InvokeCommand(ref invokeInfo);
+                }
+                finally
+                {
+                    if (verbPtr != IntPtr.Zero) Marshal.FreeHGlobal(verbPtr);
+                }
             }
 
             public void Dispose()
