@@ -62,7 +62,6 @@ namespace wxd.files.winforms
         private Panel? _pnlBottom;
         private Button? _btnMoreActions;
         private ThemeButton? _btnNewItem;
-        private ContextMenuStrip? _menuNew;
         private ContextMenuStrip? _menuMoreActions;
         private Button? _btnOpenCsvReader;
         private ToolStripMenuItem? _menuViewModeItem;
@@ -594,11 +593,6 @@ namespace wxd.files.winforms
                 _menuMoreActions.BackColor = Theme.P.Surface;
                 _menuMoreActions.ForeColor = _colorTextPrimary;
             }
-            if (_menuNew != null)
-            {
-                _menuNew.BackColor = Theme.P.Surface;
-                _menuNew.ForeColor = _colorTextPrimary;
-            }
 
             Invalidate();
         }
@@ -768,11 +762,7 @@ namespace wxd.files.winforms
                 Text = "＋",
                 Font = Theme.Body
             };
-            _btnNewItem.Click += (s, e) => ShowNewItemMenu();
-
-            _menuNew = new ContextMenuStrip { Font = Theme.Body };
-            _menuNew.Items.Add("新建文件夹", null, (s, e) => CreateNewFolder());
-            _menuNew.Items.Add("新建文件", null, (s, e) => CreateNewFile());
+            _btnNewItem.Click += (s, e) => ShowSystemBackgroundMenu(Cursor.Position);
 
             // 创建下拉菜单
             _menuMoreActions = new ContextMenuStrip { Font = Theme.Body };
@@ -784,16 +774,6 @@ namespace wxd.files.winforms
             _menuMoreActions.Items.Add("搜索", null, (s, e) => OpenSearch());
             _menuMoreActions.Items.Add("批量重命名", null, (s, e) => OpenBatchRename());
             _menuMoreActions.Items.Add("传输中心", null, (s, e) => TransferCenterForm.ShowCenter(FindForm()));
-            var menuNew = new ToolStripMenuItem("新建");
-            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件夹", null, (s, e) => CreateNewFolder())
-            {
-                ShortcutKeyDisplayString = "Ctrl+Shift+N"
-            });
-            menuNew.DropDownItems.Add(new ToolStripMenuItem("文件", null, (s, e) => CreateNewFile())
-            {
-                ShortcutKeyDisplayString = "Ctrl+Alt+N"
-            });
-            _menuMoreActions.Items.Insert(0, menuNew);
             _menuMoreActions.Items.Add(new ToolStripMenuItem("粘贴", null, (s, e) => PasteFromClipboard()));
 
             // 视图模式二级菜单
@@ -2312,7 +2292,7 @@ namespace wxd.files.winforms
             if (IsPointOnColumnHeader(e.Location))
             {
                 Debug.WriteLine("MouseUp: 点击列头区域");
-                ShowSystemContextMenuForPaths(new[] { _currentDir });
+                ShowSystemBackgroundMenu();
                 return;
             }
 
@@ -2338,8 +2318,7 @@ namespace wxd.files.winforms
                 // 点击空白区域：取消所有选择，显示目录背景菜单
                 _lstFiles.SelectedItems.Clear();
                 Debug.WriteLine("MouseUp: 点击空白区域");
-                if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
-                    ShowSystemContextMenuForPaths(new[] { _currentDir });
+                ShowSystemBackgroundMenu();
             }
         }
 
@@ -2361,8 +2340,7 @@ namespace wxd.files.winforms
             var paths = GetSelectedFullPaths();
             if (paths.Count == 0)
             {
-                if (!string.IsNullOrEmpty(_currentDir) && Directory.Exists(_currentDir))
-                    ShowSystemContextMenuForPaths(new[] { _currentDir });
+                ShowSystemBackgroundMenu();
                 return;
             }
 
@@ -2421,6 +2399,7 @@ namespace wxd.files.winforms
                 Debug.WriteLine($"显示系统右键菜单失败: {ex.Message}");
                 ShowFallbackContextMenu(itemPath);
             }
+
         }
 
         /// <summary>显示系统右键上下文菜单（支持多路径——仅当仅一个路径时使用 Shell API）</summary>
@@ -2750,11 +2729,41 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>弹出「＋」下的新建菜单（文件夹 / 文件）。</summary>
-        private void ShowNewItemMenu()
+        /// <summary>显示文件夹背景系统菜单（含系统“新建”）；失败时退回内置菜单。</summary>
+        private void ShowSystemBackgroundMenu(Point? screenPoint = null)
         {
-            if (_btnNewItem == null || _menuNew == null) return;
-            _menuNew.Show(_btnNewItem, new Point(0, 0), ToolStripDropDownDirection.AboveRight);
+            if (IsDisposed || !IsHandleCreated) return;
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            var point = screenPoint ?? Cursor.Position;
+            try
+            {
+                WindowsShellContextMenu.ShowBackground(_currentDir, this, point.X, point.Y);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("显示文件夹背景菜单失败: " + ex);
+                ShowFallbackBackgroundMenu(point);
+            }
+            finally
+            {
+                if (!IsDisposed) _ = LoadFileListAsync();
+            }
+        }
+
+        private void ShowFallbackBackgroundMenu(Point screenPoint)
+        {
+            var menu = new ContextMenuStrip { Font = Theme.Body };
+            menu.Items.Add("新建文件夹", null, (s, e) => CreateNewFolder());
+            menu.Items.Add("新建文件", null, (s, e) => CreateNewFile());
+            menu.Items.Add("粘贴", null, (s, e) => PasteFromClipboard());
+            menu.Items.Add("刷新", null, (s, e) => RefreshCurrent());
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("在资源管理器中打开", null, (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(_currentDir)) OpenWithShell(_currentDir, "explore");
+            });
+            menu.Show(screenPoint);
         }
 
         /// <summary>新建空文件，创建后定位到它。</summary>
@@ -3332,7 +3341,6 @@ namespace wxd.files.winforms
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
                 _imagePreviewTip?.Dispose();
-                _menuNew?.Dispose();
                 _menuMoreActions?.Dispose();
                 _imgList?.Dispose();
                 _imgListLarge?.Dispose();

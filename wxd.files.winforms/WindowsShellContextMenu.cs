@@ -19,6 +19,8 @@ namespace wxd.files.winforms
 
         // 常量定义
         private const int CMF_NORMAL = 0x00000000;
+        private const int CMF_EXPLORE = 0x00000004;
+        private const int CMIC_MASK_UNICODE = 0x00004000;
         private const int TPM_RETURNCMD = 0x0100;
         private const int TPM_RIGHTBUTTON = 0x0002;
         private const int TPM_NONOTIFY = 0x0080;
@@ -278,6 +280,164 @@ namespace wxd.files.winforms
 
                 if (parentFolder != null && parentFolder != desktopFolder)
                     Marshal.ReleaseComObject(parentFolder);
+
+                if (desktopFolder != null)
+                    Marshal.ReleaseComObject(desktopFolder);
+
+                if (pidl != IntPtr.Zero)
+                    Ole32.CoTaskMemFree(pidl);
+
+                if (comInitialized)
+                {
+                    try { Ole32.CoUninitialize(); }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 显示文件夹**背景**右键菜单（空白处 / 列头）。与选中文件、文件夹的菜单不同，
+        /// 这里走 IShellFolder::CreateViewObject 拿 ShellView 的 IContextMenu，才会出现
+        /// “新建 / 粘贴 / 查看 / 排序 / 刷新 / 属性”这些资源管理器背景菜单项。
+        /// </summary>
+        public static void ShowBackgroundAtCursor(string folderPath, Control control)
+        {
+            var cursor = Cursor.Position;
+            ShowBackground(folderPath, control, cursor.X, cursor.Y);
+        }
+
+        public static void ShowBackground(string folderPath, Control control, int screenX, int screenY)
+        {
+            if (control == null || control.IsDisposed || !control.IsHandleCreated) return;
+            if (!Directory.Exists(folderPath) || !IsWindows()) return;
+
+            bool comInitialized = false;
+            IntPtr pidl = IntPtr.Zero;
+            IShellFolder? desktopFolder = null;
+            IShellFolder? viewFolder = null;
+            IContextMenu? contextMenu = null;
+            IContextMenu2? contextMenu2 = null;
+            IContextMenu3? contextMenu3 = null;
+            IntPtr hMenu = IntPtr.Zero;
+
+            try
+            {
+                try
+                {
+                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
+                    comInitialized = hr == 0 || hr == 1;
+                }
+                catch
+                {
+                    comInitialized = false;
+                }
+
+                if (Shell32.SHGetDesktopFolder(out IntPtr desktopPtr) != 0 || desktopPtr == IntPtr.Zero)
+                    return;
+
+                desktopFolder = (IShellFolder)Marshal.GetObjectForIUnknown(desktopPtr);
+                Marshal.Release(desktopPtr);
+
+                uint attributes = 0;
+                if (Shell32.SHParseDisplayName(folderPath, IntPtr.Zero, out pidl, 0, out attributes) != 0
+                    || pidl == IntPtr.Zero)
+                    return;
+
+                Guid shellFolderGuid = IID_IShellFolder;
+                desktopFolder.BindToObject(pidl, IntPtr.Zero, ref shellFolderGuid, out IntPtr viewFolderPtr);
+                if (viewFolderPtr == IntPtr.Zero) return;
+
+                viewFolder = (IShellFolder)Marshal.GetObjectForIUnknown(viewFolderPtr);
+                Marshal.Release(viewFolderPtr);
+
+                Guid contextMenuGuid = IID_IContextMenu;
+                viewFolder.CreateViewObject(control.Handle, ref contextMenuGuid, out IntPtr contextMenuPtr);
+                if (contextMenuPtr == IntPtr.Zero) return;
+
+                contextMenu = (IContextMenu)Marshal.GetObjectForIUnknown(contextMenuPtr);
+                Marshal.Release(contextMenuPtr);
+
+                IntPtr contextMenu3Ptr;
+                Guid contextMenu3Guid = IID_IContextMenu3;
+                if (contextMenu.QueryInterface(ref contextMenu3Guid, out contextMenu3Ptr) == 0)
+                {
+                    contextMenu3 = (IContextMenu3)Marshal.GetObjectForIUnknown(contextMenu3Ptr);
+                    Marshal.Release(contextMenu3Ptr);
+                    contextMenu2 = contextMenu3;
+                }
+                else
+                {
+                    IntPtr contextMenu2Ptr;
+                    Guid contextMenu2Guid = IID_IContextMenu2;
+                    if (contextMenu.QueryInterface(ref contextMenu2Guid, out contextMenu2Ptr) == 0)
+                    {
+                        contextMenu2 = (IContextMenu2)Marshal.GetObjectForIUnknown(contextMenu2Ptr);
+                        Marshal.Release(contextMenu2Ptr);
+                    }
+                }
+
+                hMenu = User32.CreatePopupMenu();
+                if (hMenu == IntPtr.Zero) return;
+
+                int queryResult = contextMenu.QueryContextMenu(hMenu, 0, 1, 0x7FFF,
+                    CMF_NORMAL | CMF_EXPLORE);
+                OperationLog.Write("background-menu query=" + queryResult + " folder=" + folderPath);
+                if (queryResult < 0) return;
+
+                var window = new MenuHostWindow(control.Handle, contextMenu2, contextMenu3);
+                uint commandId;
+                try
+                {
+                    commandId = User32.TrackPopupMenuEx(
+                        hMenu,
+                        TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                        screenX,
+                        screenY,
+                        control.Handle,
+                        IntPtr.Zero);
+                }
+                finally
+                {
+                    window.ClearHandlers();
+                }
+
+                OperationLog.Write("background-menu command=" + commandId);
+                if (commandId > 0)
+                {
+                    var invokeInfo = new CMINVOKECOMMANDINFOEX
+                    {
+                        cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
+                        fMask = CMIC_MASK_UNICODE,
+                        hwnd = control.Handle,
+                        lpVerbW = (IntPtr)(commandId - 1),
+                        lpDirectoryW = folderPath,
+                        nShow = 1,
+                        ptInvoke = new POINT { x = screenX, y = screenY }
+                    };
+                    int invokeHr = contextMenu.InvokeCommand(ref invokeInfo);
+                    OperationLog.Write("background-menu invoke hr=" + invokeHr);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("显示文件夹背景菜单失败: " + ex);
+            }
+            finally
+            {
+                if (hMenu != IntPtr.Zero)
+                    User32.DestroyMenu(hMenu);
+
+                if (contextMenu3 != null)
+                    Marshal.ReleaseComObject(contextMenu3);
+
+                if (contextMenu2 != null && contextMenu2 != contextMenu3)
+                    Marshal.ReleaseComObject(contextMenu2);
+
+                if (contextMenu != null)
+                    Marshal.ReleaseComObject(contextMenu);
+
+                if (viewFolder != null)
+                    Marshal.ReleaseComObject(viewFolder);
 
                 if (desktopFolder != null)
                     Marshal.ReleaseComObject(desktopFolder);
@@ -574,7 +734,7 @@ namespace wxd.files.winforms
             public int dwHotKey;
             public IntPtr hIcon;
             [MarshalAs(UnmanagedType.LPStr)] public string lpTitle;
-            [MarshalAs(UnmanagedType.LPWStr)] public string lpVerbW;
+            public IntPtr lpVerbW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpParametersW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpDirectoryW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpTitleW;
