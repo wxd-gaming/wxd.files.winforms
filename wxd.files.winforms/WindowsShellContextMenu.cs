@@ -384,7 +384,9 @@ namespace wxd.files.winforms
                 OperationLog.Write("background-menu query=" + queryResult + " folder=" + folderPath);
                 if (queryResult < 0) return;
 
-                var window = new MenuHostWindow(control.Handle, contextMenu2, contextMenu3);
+                // 背景菜单用独立隐藏窗口做宿主：ListView 自己的 WndProc 会吞掉
+                // WM_INITMENUPOPUP，导致“新建”子菜单没人填充。
+                var window = new MenuHostWindow(contextMenu2, contextMenu3);
                 uint commandId;
                 try
                 {
@@ -393,7 +395,7 @@ namespace wxd.files.winforms
                         TPM_RETURNCMD | TPM_RIGHTBUTTON,
                         screenX,
                         screenY,
-                        control.Handle,
+                        window.Handle,
                         IntPtr.Zero);
                 }
                 finally
@@ -754,19 +756,39 @@ namespace wxd.files.winforms
 
         private class MenuHostWindow : NativeWindow
         {
-            private readonly IContextMenu2 _contextMenu2;
-            private readonly IContextMenu3 _contextMenu3;
+            private readonly IContextMenu2? _contextMenu2;
+            private readonly IContextMenu3? _contextMenu3;
+            private readonly bool _ownWindow;
 
-            public MenuHostWindow(IntPtr ownerHandle, IContextMenu2 contextMenu2, IContextMenu3 contextMenu3)
+            public MenuHostWindow(IntPtr ownerHandle, IContextMenu2? contextMenu2, IContextMenu3? contextMenu3)
             {
                 _contextMenu2 = contextMenu2;
                 _contextMenu3 = contextMenu3;
                 AssignHandle(ownerHandle);
             }
 
+            /// <summary>独立隐藏窗口：背景菜单专用，确保 WM_INITMENUPOPUP 由这里处理。</summary>
+            public MenuHostWindow(IContextMenu2? contextMenu2, IContextMenu3? contextMenu3)
+            {
+                _contextMenu2 = contextMenu2;
+                _contextMenu3 = contextMenu3;
+                _ownWindow = true;
+                CreateHandle(new CreateParams
+                {
+                    Caption = "wxdMenuHost",
+                    Style = unchecked((int)0x80000000),
+                    ExStyle = 0x00000080,
+                    X = 0,
+                    Y = 0,
+                    Width = 1,
+                    Height = 1
+                });
+            }
+
             public void ClearHandlers()
             {
-                ReleaseHandle();
+                if (_ownWindow) DestroyHandle();
+                else ReleaseHandle();
             }
 
             protected override void WndProc(ref Message m)

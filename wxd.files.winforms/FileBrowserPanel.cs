@@ -762,7 +762,7 @@ namespace wxd.files.winforms
                 Text = "＋",
                 Font = Theme.Body
             };
-            _btnNewItem.Click += (s, e) => ShowSystemBackgroundMenu(Cursor.Position);
+            _btnNewItem.Click += (s, e) => ShowBackgroundMenu(Cursor.Position);
 
             // 创建下拉菜单
             _menuMoreActions = new ContextMenuStrip { Font = Theme.Body };
@@ -2292,7 +2292,7 @@ namespace wxd.files.winforms
             if (IsPointOnColumnHeader(e.Location))
             {
                 Debug.WriteLine("MouseUp: 点击列头区域");
-                ShowSystemBackgroundMenu();
+                ShowBackgroundMenu();
                 return;
             }
 
@@ -2318,7 +2318,7 @@ namespace wxd.files.winforms
                 // 点击空白区域：取消所有选择，显示目录背景菜单
                 _lstFiles.SelectedItems.Clear();
                 Debug.WriteLine("MouseUp: 点击空白区域");
-                ShowSystemBackgroundMenu();
+                ShowBackgroundMenu();
             }
         }
 
@@ -2340,7 +2340,7 @@ namespace wxd.files.winforms
             var paths = GetSelectedFullPaths();
             if (paths.Count == 0)
             {
-                ShowSystemBackgroundMenu();
+                ShowBackgroundMenu();
                 return;
             }
 
@@ -2729,41 +2729,121 @@ namespace wxd.files.winforms
             }
         }
 
-        /// <summary>显示文件夹背景系统菜单（含系统“新建”）；失败时退回内置菜单。</summary>
-        private void ShowSystemBackgroundMenu(Point? screenPoint = null)
+        /// <summary>
+        /// 文件夹背景菜单。系统背景菜单里的“新建”子菜单依赖 Explorer 自己的视图宿主，
+        /// 第三方进程拿到的 IContextMenu 只会给出一个空的新建子菜单；
+        /// 所以背景菜单由本程序提供，新建/查看/排序/粘贴/刷新/属性全部落到现有实现。
+        /// </summary>
+        private void ShowBackgroundMenu(Point? screenPoint = null)
         {
-            if (IsDisposed || !IsHandleCreated) return;
             if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
 
-            var point = screenPoint ?? Cursor.Position;
+            var menu = new ContextMenuStrip { Font = Theme.Body };
+
+            var newMenu = new ToolStripMenuItem("新建");
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("文件夹", null, (_, _) => CreateNewFolder())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Shift+N"
+            });
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("文本文档", null, (_, _) => CreateNewFile("新建文本文档.txt")));
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("CSV 表格", null, (_, _) => CreateNewFile("新建表格.csv")));
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("JSON 文件", null, (_, _) => CreateNewFile("新建文件.json")));
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("Markdown 文档", null, (_, _) => CreateNewFile("新建文档.md")));
+            newMenu.DropDownItems.Add(new ToolStripSeparator());
+            newMenu.DropDownItems.Add(new ToolStripMenuItem("其他文件…", null, (_, _) => CreateNewFile())
+            {
+                ShortcutKeyDisplayString = "Ctrl+Alt+N"
+            });
+            menu.Items.Add(newMenu);
+
+            menu.Items.Add(new ToolStripMenuItem("粘贴", null, (_, _) => PasteFromClipboard())
+            {
+                Enabled = HasFileDropInClipboard()
+            });
+            menu.Items.Add(new ToolStripMenuItem("刷新", null, (_, _) => RefreshCurrent()));
+            menu.Items.Add(new ToolStripSeparator());
+
+            var viewMenu = new ToolStripMenuItem("查看");
+            string[] viewModeNames = { "详细信息", "列表", "小图标", "大图标", "平铺" };
+            for (int i = 0; i < viewModeNames.Length; i++)
+            {
+                int index = i;
+                viewMenu.DropDownItems.Add(new ToolStripMenuItem(viewModeNames[i], null,
+                    (_, _) => OnViewModeMenuChanged(index))
+                {
+                    Checked = (int)_viewMode == index
+                });
+            }
+            menu.Items.Add(viewMenu);
+
+            var sortMenu = new ToolStripMenuItem("排序方式");
+            string[] sortNames = { "名称", "文件大小", "修改日期" };
+            for (int i = 0; i < sortNames.Length; i++)
+            {
+                int index = i;
+                sortMenu.DropDownItems.Add(new ToolStripMenuItem(sortNames[i], null,
+                    (_, _) => OnSortFieldChanged(index))
+                {
+                    Checked = (int)_sortField == index
+                });
+            }
+            sortMenu.DropDownItems.Add(new ToolStripSeparator());
+            sortMenu.DropDownItems.Add(new ToolStripMenuItem("升序", null,
+                (_, _) => OnSortDirectionChanged(0))
+            {
+                Checked = _sortDirection == SortDirection.Ascending
+            });
+            sortMenu.DropDownItems.Add(new ToolStripMenuItem("降序", null,
+                (_, _) => OnSortDirectionChanged(1))
+            {
+                Checked = _sortDirection == SortDirection.Descending
+            });
+            menu.Items.Add(sortMenu);
+
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripMenuItem("在资源管理器中打开", null, (_, _) =>
+                OpenWithShell(_currentDir, "explore")));
+            menu.Items.Add(new ToolStripMenuItem("属性", null, (_, _) => ShowPathProperties(_currentDir)));
+
+            menu.Show(screenPoint ?? Cursor.Position);
+        }
+
+        /// <summary>调用系统属性对话框。</summary>
+        private void ShowPathProperties(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
             try
             {
-                WindowsShellContextMenu.ShowBackground(_currentDir, this, point.X, point.Y);
+                var info = new SHELLEXECUTEINFO
+                {
+                    cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
+                    fMask = SEE_MASK_FLAG_NO_UI,
+                    hwnd = Handle,
+                    lpVerb = "properties",
+                    lpFile = path,
+                    nShow = 1
+                };
+                ShellExecuteEx(ref info);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("显示文件夹背景菜单失败: " + ex);
-                ShowFallbackBackgroundMenu(point);
-            }
-            finally
-            {
-                if (!IsDisposed) _ = LoadFileListAsync();
+                Debug.WriteLine("显示属性失败: " + ex);
             }
         }
 
-        private void ShowFallbackBackgroundMenu(Point screenPoint)
+        /// <summary>按默认文件名新建空文件（常用类型），重名时提示。</summary>
+        private void CreateNewFile(string defaultName)
         {
-            var menu = new ContextMenuStrip { Font = Theme.Body };
-            menu.Items.Add("新建文件夹", null, (s, e) => CreateNewFolder());
-            menu.Items.Add("新建文件", null, (s, e) => CreateNewFile());
-            menu.Items.Add("粘贴", null, (s, e) => PasteFromClipboard());
-            menu.Items.Add("刷新", null, (s, e) => RefreshCurrent());
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("在资源管理器中打开", null, (s, e) =>
+            if (string.IsNullOrEmpty(_currentDir) || !Directory.Exists(_currentDir)) return;
+
+            if (!NewItemService.TryCreateFile(_currentDir, defaultName, out var path, out var error))
             {
-                if (!string.IsNullOrEmpty(_currentDir)) OpenWithShell(_currentDir, "explore");
-            });
-            menu.Show(screenPoint);
+                AlertForm.Show(FindForm(), "新建文件失败：" + error, "新建文件", AlertType.Error);
+                return;
+            }
+
+            _ = LoadFileListAsync();
+            SelectPath(path);
         }
 
         /// <summary>新建空文件，创建后定位到它。</summary>
