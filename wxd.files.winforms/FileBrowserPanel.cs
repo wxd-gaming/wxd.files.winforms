@@ -51,6 +51,9 @@ namespace wxd.files.winforms
         private Button? _btnForward;
         private FlowLayoutPanel? _pnlBreadcrumb;
         private int _breadcrumbHeight = 28;
+        private System.Windows.Forms.Timer? _breadcrumbRebuildTimer;
+        private int _breadcrumbBuiltWidth = -1;
+        private bool _rebuildingBreadcrumb;
         private bool _breadcrumbVisible = true;
         private readonly List<string> _navBack = new();
         private readonly List<string> _navForward = new();
@@ -686,6 +689,20 @@ namespace wxd.files.winforms
                 BackColor = _colorToolbarBg
             };
 
+            _breadcrumbRebuildTimer = new System.Windows.Forms.Timer { Interval = 150 };
+            _breadcrumbRebuildTimer.Tick += (_, _) =>
+            {
+                _breadcrumbRebuildTimer?.Stop();
+                if (!_rebuildingBreadcrumb) RebuildBreadcrumb();
+            };
+            _pnlBreadcrumb.SizeChanged += (_, _) =>
+            {
+                if (_rebuildingBreadcrumb) return;
+                if (_breadcrumbBuiltWidth == _pnlBreadcrumb.ClientSize.Width) return;
+                _breadcrumbRebuildTimer?.Stop();
+                _breadcrumbRebuildTimer?.Start();
+            };
+
             _pnlToolbar.Controls.AddRange(new Control[] { _cboPath, _btnBack, _btnForward, _btnUp, _pnlBreadcrumb });
 
             // 路径框吃满剩余宽度，「上级」钉在右侧；两个条共用同一套度量
@@ -1259,7 +1276,9 @@ namespace wxd.files.winforms
 
         private void RebuildBreadcrumb()
         {
-            if (_pnlBreadcrumb == null) return;
+            if (_pnlBreadcrumb == null || _rebuildingBreadcrumb) return;
+
+            _rebuildingBreadcrumb = true;
             _pnlBreadcrumb.SuspendLayout();
             try
             {
@@ -1269,39 +1288,91 @@ namespace wxd.files.winforms
                 string root = Path.GetPathRoot(_currentDir) ?? "";
                 if (string.IsNullOrEmpty(root)) return;
 
-                string current = root;
-                _pnlBreadcrumb.Controls.Add(new Label
-                {
-                    Text = "路径",
-                    AutoSize = true,
-                    Font = Theme.Caption,
-                    ForeColor = _colorTextSecondary,
-                    Margin = new Padding(1, 5, 3, 0)
-                });
-                AddBreadcrumbLink(DisplaySegment(root), current);
-
                 string rest = _currentDir.Substring(root.Length);
                 var parts = rest.Split(Path.DirectorySeparatorChar,
                     StringSplitOptions.RemoveEmptyEntries);
+
                 // 根目录只有 "D:" 一段，面包屑没有信息量；直接隐藏，把高度还给列表
                 _breadcrumbVisible = parts.Length > 0;
                 _pnlBreadcrumb.Visible = _breadcrumbVisible;
                 if (!_breadcrumbVisible)
                 {
-                    LayoutToolbar();
+                    _breadcrumbBuiltWidth = _pnlBreadcrumb.ClientSize.Width;
                     return;
                 }
 
+                var segments = new List<(string Text, string Path)>
+                {
+                    (DisplaySegment(root), root)
+                };
+                string current = root;
                 foreach (var part in parts)
                 {
                     current = Path.Combine(current, part);
-                    AddBreadcrumbSeparator();
-                    AddBreadcrumbLink(part, current);
+                    segments.Add((part, current));
                 }
+
+                int available = _pnlBreadcrumb.ClientSize.Width - _pnlBreadcrumb.Padding.Horizontal;
+                if (available <= 0) available = _pnlBreadcrumb.Width > 0 ? _pnlBreadcrumb.Width : 1000;
+
+                const int linkPadding = 10;
+                const int separatorWidth = 13;
+                int labelWidth = TextRenderer.MeasureText("路径", Theme.Caption).Width + 3;
+                int maxSegmentWidth = Math.Max(80, Math.Min(240, available / 3));
+
+                var widths = segments
+                    .Select(s => Math.Min(
+                        TextRenderer.MeasureText(s.Text, Theme.Caption).Width + linkPadding,
+                        maxSegmentWidth))
+                    .ToArray();
+
+                int total = labelWidth + widths.Sum() + separatorWidth * (segments.Count - 1);
+                int tailStart = 1;
+                bool hasHidden = false;
+
+                if (total > available)
+                {
+                    // 从末尾往前塞，塞不下就把中间段折叠成“…”下拉
+                    const int ellipsisWidth = 26;
+                    int remaining = available - labelWidth - widths[0] - separatorWidth - ellipsisWidth;
+                    int used = 0;
+                    int start = segments.Count;
+
+                    for (int i = segments.Count - 1; i >= 1; i--)
+                    {
+                        int cost = widths[i] + separatorWidth;
+                        if (used + cost > remaining && start != segments.Count) break;
+                        used += cost;
+                        start = i;
+                    }
+
+                    if (start >= segments.Count) start = segments.Count - 1;
+                    tailStart = start;
+                    hasHidden = start > 1;
+                }
+
+                AddBreadcrumbLabel("路径", labelWidth);
+                AddBreadcrumbLinkFixed(segments[0].Text, segments[0].Path, widths[0], false);
+
+                if (hasHidden)
+                {
+                    AddBreadcrumbSeparatorFixed(separatorWidth);
+                    AddBreadcrumbEllipsis(segments.Skip(1).Take(tailStart - 1).ToList());
+                }
+
+                for (int i = tailStart; i < segments.Count; i++)
+                {
+                    AddBreadcrumbSeparatorFixed(separatorWidth);
+                    AddBreadcrumbLinkFixed(segments[i].Text, segments[i].Path, widths[i],
+                        i == segments.Count - 1);
+                }
+
+                _breadcrumbBuiltWidth = _pnlBreadcrumb.ClientSize.Width;
             }
             finally
             {
                 _pnlBreadcrumb.ResumeLayout();
+                _rebuildingBreadcrumb = false;
                 LayoutToolbar();
             }
         }
@@ -1311,6 +1382,118 @@ namespace wxd.files.winforms
             var trimmed = segment.TrimEnd(Path.DirectorySeparatorChar);
             return string.IsNullOrEmpty(trimmed) ? segment : trimmed;
         }
+
+        private void AddBreadcrumbLabel(string text, int width)
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.Controls.Add(new Label
+            {
+                Text = text,
+                AutoSize = false,
+                Width = width,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = Theme.Caption,
+                ForeColor = _colorTextSecondary,
+                Margin = new Padding(1, 2, 3, 0)
+            });
+        }
+
+        private void AddBreadcrumbLinkFixed(string text, string path, int width, bool isCurrent)
+        {
+            if (_pnlBreadcrumb == null) return;
+
+            var linkColor = Theme.Signal(Color.FromArgb(0, 102, 204));
+            var baseBack = Theme.CellTint(Color.FromArgb(234, 243, 252));
+            var hoverBack = Theme.CellTint(Color.FromArgb(210, 230, 250));
+
+            var link = new LinkLabel
+            {
+                Text = text,
+                AutoSize = false,
+                Width = Math.Max(24, width),
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = Theme.Caption,
+                LinkBehavior = LinkBehavior.AlwaysUnderline,
+                LinkColor = linkColor,
+                ActiveLinkColor = linkColor,
+                VisitedLinkColor = linkColor,
+                BackColor = isCurrent ? hoverBack : baseBack,
+                Cursor = Cursors.Hand,
+                Padding = new Padding(4, 0, 4, 0),
+                Margin = new Padding(1, 2, 1, 0),
+                Tag = path
+            };
+
+            link.LinkClicked += (s, e) =>
+            {
+                if (s is LinkLabel l && l.Tag is string target && Directory.Exists(target))
+                    NavigateTo(target);
+            };
+            link.MouseEnter += (s, e) => { if (s is LinkLabel l) l.BackColor = hoverBack; };
+            link.MouseLeave += (s, e) =>
+            {
+                if (s is LinkLabel l) l.BackColor = isCurrent ? hoverBack : baseBack;
+            };
+            _pathToolTip.SetToolTip(link, path);
+            _pnlBreadcrumb.Controls.Add(link);
+        }
+
+        private void AddBreadcrumbSeparatorFixed(int width)
+        {
+            if (_pnlBreadcrumb == null) return;
+            _pnlBreadcrumb.Controls.Add(new Label
+            {
+                Text = "›",
+                AutoSize = false,
+                Width = width,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.Caption,
+                ForeColor = _colorTextSecondary,
+                Margin = new Padding(0, 2, 0, 0)
+            });
+        }
+
+        private void AddBreadcrumbEllipsis(List<(string Text, string Path)> hidden)
+        {
+            if (_pnlBreadcrumb == null || hidden.Count == 0) return;
+
+            var menu = new ContextMenuStrip { Font = Theme.Body };
+            foreach (var (text, path) in hidden)
+            {
+                var item = new ToolStripMenuItem(text) { ToolTipText = path, Tag = path };
+                item.Click += (_, _) =>
+                {
+                    if (Directory.Exists(path)) NavigateTo(path);
+                };
+                menu.Items.Add(item);
+            }
+
+            var link = new LinkLabel
+            {
+                Text = "…",
+                AutoSize = false,
+                Width = 26,
+                Height = Math.Max(16, _breadcrumbHeight - 8),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = Theme.Caption,
+                LinkBehavior = LinkBehavior.NeverUnderline,
+                LinkColor = _colorTextSecondary,
+                ActiveLinkColor = _colorTextPrimary,
+                BackColor = Theme.CellTint(Color.FromArgb(240, 244, 248)),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(1, 2, 1, 0)
+            };
+
+            link.Click += (_, _) => menu.Show(link, new Point(0, link.Height));
+            link.Disposed += (_, _) => menu.Dispose();
+            _pathToolTip.SetToolTip(link, "展开被折叠的 " + hidden.Count + " 层目录");
+            _pnlBreadcrumb.Controls.Add(link);
+        }
+
 
         private void AddBreadcrumbSeparator()
         {
@@ -3421,6 +3604,7 @@ namespace wxd.files.winforms
                 _saveDebounceTimer?.Dispose();
                 _pathToolTip?.Dispose();
                 _imagePreviewTip?.Dispose();
+                _breadcrumbRebuildTimer?.Dispose();
                 _menuMoreActions?.Dispose();
                 _imgList?.Dispose();
                 _imgListLarge?.Dispose();
