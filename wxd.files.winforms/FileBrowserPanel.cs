@@ -2954,7 +2954,7 @@ namespace wxd.files.winforms
                 var message = blocked.Count == 1
                     ? $"不能把“{names}”粘贴到它自己或子目录里"
                     : $"不能把选中的 {blocked.Count} 个文件夹粘贴到它自己或子目录里";
-                ToastForm.ShowToast(message);
+                ToastForm.ShowToast(message, ToastKind.Error);
                 OperationLog.Write("enqueue-blocked-recursive " + string.Join("; ", blocked));
             }
 

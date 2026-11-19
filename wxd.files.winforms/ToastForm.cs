@@ -5,6 +5,8 @@ using System.Windows.Forms;
 
 namespace wxd.files.winforms;
 
+internal enum ToastKind { Info, Warning, Error }
+
 /// <summary>右下角飘窗提示：多实例向上叠加、默认 2 秒后淡出，不抢焦点。</summary>
 internal sealed class ToastForm : Form
 {
@@ -20,7 +22,7 @@ internal sealed class ToastForm : Form
     private DateTime _fadeStartedAt;
     private bool _closing;
 
-    private ToastForm(string message, bool warning, int durationMs)
+    private ToastForm(string message, ToastKind kind, int durationMs)
     {
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -35,7 +37,12 @@ internal sealed class ToastForm : Form
         {
             Dock = DockStyle.Left,
             Width = 4,
-            BackColor = warning ? Color.FromArgb(210, 120, 30) : Theme.P.Accent
+            BackColor = kind switch
+            {
+                ToastKind.Error => Color.FromArgb(196, 43, 43),
+                ToastKind.Warning => Color.FromArgb(210, 120, 30),
+                _ => Theme.P.Accent
+            }
         };
 
         var label = new Label
@@ -77,10 +84,15 @@ internal sealed class ToastForm : Form
         };
     }
 
-    public static void ShowToast(string message, bool warning = true, int durationMs = 2000)
+    public static void ShowToast(string message, ToastKind kind = ToastKind.Warning, int durationMs = 2000)
     {
+        IntPtr focus = IntPtr.Zero;
+        IntPtr foreground = IntPtr.Zero;
         try
         {
+            focus = GetFocus();
+            foreground = GetForegroundWindow();
+
             while (Active.Count >= MaxVisible)
             {
                 var oldest = Active[0];
@@ -88,7 +100,7 @@ internal sealed class ToastForm : Form
                 oldest.Close();
             }
 
-            var toast = new ToastForm(message, warning, durationMs);
+            var toast = new ToastForm(message, kind, durationMs);
             Active.Add(toast);
             RepositionAll();
             toast.Show();
@@ -97,6 +109,19 @@ internal sealed class ToastForm : Form
         catch
         {
             // 提示失败不影响主流程
+        }
+        finally
+        {
+            // 某些主题/输入法下 Show() 仍会把焦点带走，这里强制还给原控件
+            if (focus != IntPtr.Zero && GetFocus() != focus)
+            {
+                try { SetFocus(focus); } catch { }
+            }
+
+            if (foreground != IntPtr.Zero && GetForegroundWindow() != foreground)
+            {
+                try { SetForegroundWindow(foreground); } catch { }
+            }
         }
     }
 
@@ -150,6 +175,18 @@ internal sealed class ToastForm : Form
             Close();
         }
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SetFocus(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     protected override bool ShowWithoutActivation => true;
 
