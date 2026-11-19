@@ -26,6 +26,7 @@ internal static partial class Program
         Run("队列 失败收集", Test_QueueFailure);
         Run("队列 失败事件", Test_QueueFailedEvent);
         Run("队列 复制目录", Test_QueueCopyDirectory);
+        Run("文件操作 递归目标拦截", Test_FileOperationGuard);
         Run("暂停闸门", Test_PauseToken);
         Run("唯一命名与长路径前缀", Test_UniqueAndLongPath);
         Run("统计文件数与字节", Test_Measure);
@@ -340,6 +341,16 @@ internal static partial class Program
         {
             DeleteTempDir(root);
         }
+    }
+
+    private static void Test_FileOperationGuard()
+    {
+        Assert(FileOperationGuard.WouldRecurse(@"C:\a", @"C:\a"), "同目录应拦截");
+        Assert(FileOperationGuard.WouldRecurse(@"C:\a", @"C:\a\sub"), "子目录应拦截");
+        Assert(FileOperationGuard.WouldRecurse(@"C:\a\", @"C:\a\sub\"), "尾部分隔符应忽略");
+        Assert(FileOperationGuard.WouldRecurse(@"C:\A", @"c:\a\sub"), "路径比较应忽略大小写");
+        Assert(!FileOperationGuard.WouldRecurse(@"C:\a", @"C:\b"), "兄弟目录不应拦截");
+        Assert(!FileOperationGuard.WouldRecurse(@"C:\a", @"C:\ab"), "同前缀但非子目录不应拦截");
     }
 
     private static void Test_QueueCopyDirectory()

@@ -2928,24 +2928,43 @@ namespace wxd.files.winforms
                 return false;
             }
 
-            string normalizedTarget = targetDir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var valid = paths
-                .Where(p => !string.IsNullOrWhiteSpace(p) && (File.Exists(p) || Directory.Exists(p)))
-                .Where(p =>
-                {
-                    var full = Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar);
-                    var target = normalizedTarget.TrimEnd(Path.DirectorySeparatorChar);
-                    return !string.Equals(full, target, StringComparison.OrdinalIgnoreCase)
-                           && !target.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-                })
-                .ToArray();
+            var validList = new List<string>();
+            var blocked = new List<string>();
 
-            if (valid.Length == 0)
+            foreach (var path in paths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !(File.Exists(path) || Directory.Exists(path)))
+                    continue;
+
+                if (FileOperationGuard.WouldRecurse(path, targetDir))
+                {
+                    blocked.Add(path);
+                    continue;
+                }
+
+                validList.Add(path);
+            }
+
+            if (blocked.Count > 0)
+            {
+                var names = string.Join("、", blocked
+                    .Select(Path.GetFileName)
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .Take(3));
+                var message = blocked.Count == 1
+                    ? $"不能把“{names}”粘贴到它自己或子目录里"
+                    : $"不能把选中的 {blocked.Count} 个文件夹粘贴到它自己或子目录里";
+                ToastForm.ShowToast(message);
+                OperationLog.Write("enqueue-blocked-recursive " + string.Join("; ", blocked));
+            }
+
+            if (validList.Count == 0)
             {
                 OperationLog.Write("enqueue-rejected: 过滤后没有有效来源");
                 return false;
             }
 
+            var valid = validList.ToArray();
             var options = new FileOperationOptions { Conflict = ConflictPolicy.Ask };
             FileOperationQueue.Shared.Enqueue(
                 move ? FileOperationKind.Move : FileOperationKind.Copy,
