@@ -62,8 +62,6 @@ internal static partial class Program
         Run("失败提示 普通错误保留原始信息", Test_OperationErrorGeneric);
 
         Console.WriteLine("--- 系统右键菜单 ---");
-        Run("系统新建子菜单能填充模板", Test_ShellNewMenuPopulates);
-        Run("folder view 背景菜单能填充", Test_FolderViewMenuPopulates);
 
         Console.WriteLine("--- UI 构造冒烟 ---");
         Run("搜索/批量重命名窗体可在 STA 线程构造", Test_UiFormsConstruct);
@@ -1066,66 +1064,6 @@ internal static partial class Program
         var text = OperationErrorPresenter.Build(job);
         Assert(text.Contains("源不存在"), "普通错误应保留原始信息");
         Assert(!text.Contains("以管理员身份"), "非权限错误不应给管理员建议");
-    }
-
-    private static void Test_ShellNewMenuPopulates()
-    {
-        var root = NewTempDir();
-        try
-        {
-            int count = 0;
-            Exception? error = null;
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    using var menu = WindowsShellContextMenu.ShellNewMenu.Create(root);
-                    count = menu == null ? 0 : menu.Count;
-                }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-            })
-            {
-                IsBackground = true
-            };
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-
-            Assert(thread.Join(15000), "创建系统新建菜单超时");
-            if (error != null) throw new Exception("创建系统新建菜单失败: " + error);
-            Assert(count > 0, "系统新建菜单应至少包含一个模板，实际 " + count);
-        }
-        finally
-        {
-            DeleteTempDir(root);
-        }
-    }
-
-    private static void Test_FolderViewMenuPopulates()
-    {
-        var root = NewTempDir();
-        try
-        {
-            int count = 0;
-            var thread = new Thread(() =>
-            {
-                try { count = WindowsShellContextMenu.GetFolderViewMenuCount(root); }
-                catch { }
-            })
-            {
-                IsBackground = true
-            };
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            Assert(thread.Join(15000), "folder view 菜单超时");
-            Assert(count > 0, "folder view 背景菜单项数应为正数，实际 " + count);
-        }
-        finally
-        {
-            DeleteTempDir(root);
-        }
     }
 
     private static void Test_UiFormsConstruct()

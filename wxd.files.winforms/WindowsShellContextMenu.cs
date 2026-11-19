@@ -1,8 +1,6 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace wxd.files.winforms
@@ -21,24 +19,6 @@ namespace wxd.files.winforms
 
         // 常量定义
         private const int CMF_NORMAL = 0x00000000;
-        private const int CMF_EXPLORE = 0x00000004;
-        private const int CMIC_MASK_UNICODE = 0x00004000;
-        private const uint MF_BYPOSITION = 0x00000400;
-        private const uint MF_POPUP = 0x00000010;
-        private const uint ShellNewMenuIdFirst = 20000;
-        private const uint BackgroundNewFolderId = 30001;
-        private const uint BackgroundNewTextId = 30002;
-        private const uint BackgroundNewCsvId = 30003;
-        private const uint BackgroundNewJsonId = 30004;
-        private const uint BackgroundNewMarkdownId = 30005;
-        private const uint BackgroundNewOtherId = 30006;
-        private const uint SVGIO_BACKGROUND = 0;
-        private static readonly Guid CLSID_NewMenu = new("D969A300-E7FF-11D0-A93B-00A0C90F2719");
-        private static readonly Guid CLSID_ExplorerBrowser = new("71F96385-DDD6-48D3-A0C1-AE06E8B055FB");
-        private static readonly Guid IID_ExplorerBrowser = new("DFD3B6B5-C10C-4BE9-85F6-A66949C03271");
-        private static readonly Guid IID_IShellView = new("000214E3-0000-0000-C000-000000000046");
-        private static readonly Guid IID_IShellItem = new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
-        private static readonly Guid IID_IDataObject = new("0000010E-0000-0000-C000-000000000046");
         private const int TPM_RETURNCMD = 0x0100;
         private const int TPM_RIGHTBUTTON = 0x0002;
         private const int TPM_NONOTIFY = 0x0080;
@@ -258,24 +238,14 @@ namespace wxd.files.winforms
 
                     System.Diagnostics.Debug.WriteLine($"TrackPopupMenuEx 返回命令ID: {commandId}");
 
-                    // 标准调用方式：命令 ID 转成相对 idCmdFirst 的偏移。
-                    // verb 仅写日志用于定位扩展的映射问题，不用 verb 调用，
-                    // 因为部分扩展对 verb 的支持并不完整。
+                    // 执行选中的命令
                     if (commandId > 0)
                     {
-                        var verb = GetCommandVerb(contextMenu, commandId - 1);
-                        OperationLog.Write("item-menu cmd=" + commandId + " verb=" + (verb ?? "-")
-                            + " path=" + path);
-
-                        var invokeInfo = new CMINVOKECOMMANDINFOEX
-                        {
-                            cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
-                            hwnd = control.TopLevelControl?.Handle ?? control.Handle,
-                            lpVerb = (IntPtr)(commandId - 1),
-                            nShow = 1,
-                            ptInvoke = new POINT { x = screenX, y = screenY },
-                            lpDirectoryW = Path.GetDirectoryName(path) ?? ""
-                        };
+                        var invokeInfo = new CMINVOKECOMMANDINFOEX();
+                        invokeInfo.cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX));
+                        invokeInfo.hwnd = control.Handle;
+                        invokeInfo.lpVerb = (IntPtr)(commandId - 1);
+                        invokeInfo.nShow = 1;
 
                         contextMenu.InvokeCommand(ref invokeInfo);
                     }
@@ -324,209 +294,6 @@ namespace wxd.files.winforms
         }
 
         /// <summary>
-        /// 显示文件夹**背景**右键菜单（空白处 / 列头）。与选中文件、文件夹的菜单不同，
-        /// 这里走 IShellFolder::CreateViewObject 拿 ShellView 的 IContextMenu，才会出现
-        /// “新建 / 粘贴 / 查看 / 排序 / 刷新 / 属性”这些资源管理器背景菜单项。
-        /// </summary>
-        public static void ShowBackgroundAtCursor(string folderPath, Control control)
-        {
-            var cursor = Cursor.Position;
-            ShowBackground(folderPath, control, cursor.X, cursor.Y, out _);
-        }
-
-        public static bool ShowBackground(string folderPath, Control control, int screenX, int screenY, out int customAction)
-        {
-            customAction = 0;
-            if (control == null || control.IsDisposed || !control.IsHandleCreated) return false;
-            if (!Directory.Exists(folderPath) || !IsWindows()) return false;
-
-            bool comInitialized = false;
-            IntPtr pidl = IntPtr.Zero;
-            IShellFolder? desktopFolder = null;
-            IShellFolder? viewFolder = null;
-            IShellView? shellView = null;
-            IContextMenu? contextMenu = null;
-            IContextMenu2? contextMenu2 = null;
-            IContextMenu3? contextMenu3 = null;
-            IntPtr hMenu = IntPtr.Zero;
-
-            try
-            {
-                try
-                {
-                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
-                    comInitialized = hr == 0 || hr == 1;
-                }
-                catch
-                {
-                    comInitialized = false;
-                }
-
-                if (Shell32.SHGetDesktopFolder(out IntPtr desktopPtr) != 0 || desktopPtr == IntPtr.Zero)
-                    return false;
-
-                desktopFolder = (IShellFolder)Marshal.GetObjectForIUnknown(desktopPtr);
-                Marshal.Release(desktopPtr);
-
-                if (Shell32.SHParseDisplayName(folderPath, IntPtr.Zero, out pidl, 0, out _) != 0
-                    || pidl == IntPtr.Zero)
-                    return false;
-
-                Guid shellFolderGuid = IID_IShellFolder;
-                desktopFolder.BindToObject(pidl, IntPtr.Zero, ref shellFolderGuid, out IntPtr viewFolderPtr);
-                if (viewFolderPtr == IntPtr.Zero) return false;
-
-                viewFolder = (IShellFolder)Marshal.GetObjectForIUnknown(viewFolderPtr);
-                Marshal.Release(viewFolderPtr);
-
-                // 关键：CreateViewObject 用 IID_IShellView 拿真实 Shell 视图，
-                // 再从视图 GetItemObject(SVGIO_BACKGROUND) 取背景菜单，
-                // 这样“查看/排序/刷新/粘贴/新建”才完整，新建也由视图自己执行。
-                Guid viewGuid = IID_IShellView;
-                viewFolder.CreateViewObject(control.Handle, ref viewGuid, out IntPtr shellViewPtr);
-                if (shellViewPtr == IntPtr.Zero) return false;
-                shellView = (IShellView)Marshal.GetObjectForIUnknown(shellViewPtr);
-
-                Guid menuGuid = IID_IContextMenu;
-                if (shellView.GetItemObject(SVGIO_BACKGROUND, ref menuGuid, out IntPtr menuPtr) != 0
-                    || menuPtr == IntPtr.Zero)
-                    return false;
-
-                contextMenu = (IContextMenu)Marshal.GetObjectForIUnknown(menuPtr);
-                Marshal.Release(menuPtr);
-
-                IntPtr contextMenu3Ptr;
-                Guid contextMenu3Guid = IID_IContextMenu3;
-                if (contextMenu.QueryInterface(ref contextMenu3Guid, out contextMenu3Ptr) == 0)
-                {
-                    contextMenu3 = (IContextMenu3)Marshal.GetObjectForIUnknown(contextMenu3Ptr);
-                    Marshal.Release(contextMenu3Ptr);
-                    contextMenu2 = contextMenu3;
-                }
-                else
-                {
-                    IntPtr contextMenu2Ptr;
-                    Guid contextMenu2Guid = IID_IContextMenu2;
-                    if (contextMenu.QueryInterface(ref contextMenu2Guid, out contextMenu2Ptr) == 0)
-                    {
-                        contextMenu2 = (IContextMenu2)Marshal.GetObjectForIUnknown(contextMenu2Ptr);
-                        Marshal.Release(contextMenu2Ptr);
-                    }
-                }
-
-                hMenu = User32.CreatePopupMenu();
-                if (hMenu == IntPtr.Zero) return false;
-
-                int queryResult = contextMenu.QueryContextMenu(hMenu, 0, 1, 0x7FFF,
-                    CMF_NORMAL | CMF_EXPLORE);
-                OperationLog.Write("view-background query=" + queryResult + " folder=" + folderPath);
-                if (queryResult < 0) return false;
-
-                // 系统视图的“新建”依赖视图窗口站点，直接调用会 E_FAIL；
-                // 把 New 子菜单换成可在本程序里执行的基础模板（文件夹/文本/CSV/JSON/Markdown）。
-                ReplaceBackgroundNewSubmenu(hMenu);
-
-                var window = new MenuHostWindow(contextMenu2, contextMenu3);
-                uint commandId;
-                try
-                {
-                    commandId = User32.TrackPopupMenuEx(
-                        hMenu,
-                        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                        screenX,
-                        screenY,
-                        window.Handle,
-                        IntPtr.Zero);
-                }
-                finally
-                {
-                    window.ClearHandlers();
-                }
-
-                OperationLog.Write("view-background command=" + commandId);
-                if (commandId >= BackgroundNewFolderId && commandId <= BackgroundNewOtherId)
-                {
-                    customAction = (int)(commandId - BackgroundNewFolderId) + 1;
-                    return true;
-                }
-
-                if (commandId > 0)
-                {
-                    IntPtr owner = control.TopLevelControl?.Handle ?? control.Handle;
-                    try
-                    {
-                        if (shellView.GetWindow(out IntPtr viewHwnd) == 0 && viewHwnd != IntPtr.Zero)
-                            owner = viewHwnd;
-                    }
-                    catch { }
-
-                    var invokeInfo = new CMINVOKECOMMANDINFOEX
-                    {
-                        cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
-                        hwnd = owner,
-                        lpVerb = (IntPtr)(commandId - 1),
-                        nShow = 1,
-                        lpDirectoryW = folderPath,
-                        ptInvoke = new POINT { x = screenX, y = screenY }
-                    };
-                    int invokeHr = contextMenu.InvokeCommand(ref invokeInfo);
-                    OperationLog.Write("view-background invoke hr=" + invokeHr);
-
-                    if (invokeHr != 0)
-                    {
-                        try
-                        {
-                            AlertForm.Show(control.FindForm(),
-                                "系统菜单命令执行失败（代码 " + invokeHr + "）。" + GlobalConst.NewLine
-                                + "如果是“新建”或“粘贴”，请确认目标目录有写入权限。",
-                                "系统菜单", AlertType.Warning);
-                        }
-                        catch { }
-                    }
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                OperationLog.Write("view-background failed: " + ex.Message);
-                return false;
-            }
-            finally
-            {
-                if (hMenu != IntPtr.Zero)
-                    User32.DestroyMenu(hMenu);
-
-                if (contextMenu3 != null)
-                    Marshal.ReleaseComObject(contextMenu3);
-
-                if (contextMenu2 != null && contextMenu2 != contextMenu3)
-                    Marshal.ReleaseComObject(contextMenu2);
-
-                if (contextMenu != null)
-                    Marshal.ReleaseComObject(contextMenu);
-
-                if (shellView != null)
-                    Marshal.ReleaseComObject(shellView);
-
-                if (viewFolder != null)
-                    Marshal.ReleaseComObject(viewFolder);
-
-                if (desktopFolder != null)
-                    Marshal.ReleaseComObject(desktopFolder);
-
-                if (pidl != IntPtr.Zero)
-                    Ole32.CoTaskMemFree(pidl);
-
-                if (comInitialized)
-                {
-                    try { Ole32.CoUninitialize(); }
-                    catch { }
-                }
-            }
-        }
-
-        /// <summary>
         /// 显示系统右键菜单（使用控件当前位置）
         /// </summary>
         public static void Show(string path, Control control)
@@ -549,76 +316,6 @@ namespace wxd.files.winforms
             return Path.DirectorySeparatorChar == '\\';
         }
 
-        /// <summary>取系统菜单项的规范动词；有动词时用动词调用，避免不同扩展对命令 ID 偏移的映射不一致。</summary>
-        private static string? GetCommandVerb(IContextMenu menu, uint commandId)
-        {
-            const uint GCS_VERBW = 4;
-            const uint GCS_VERBA = 0;
-            IntPtr buffer = Marshal.AllocHGlobal(2048);
-            try
-            {
-                int hr = menu.GetCommandString(commandId, GCS_VERBW, IntPtr.Zero, buffer, 1024);
-                if (hr >= 0)
-                {
-                    var wideVerb = Marshal.PtrToStringUni(buffer);
-                    if (!string.IsNullOrWhiteSpace(wideVerb)) return wideVerb.Trim();
-                }
-
-                for (int i = 0; i < 2048; i++) Marshal.WriteByte(buffer, i, 0);
-                hr = menu.GetCommandString(commandId, GCS_VERBA, IntPtr.Zero, buffer, 1024);
-                if (hr >= 0)
-                {
-                    var ansiVerb = Marshal.PtrToStringAnsi(buffer);
-                    if (!string.IsNullOrWhiteSpace(ansiVerb)) return ansiVerb.Trim();
-                }
-
-                return null;
-            }
-            catch
-            {
-                return null;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
-
-        private static void ReplaceBackgroundNewSubmenu(IntPtr hMenu)
-        {
-            IntPtr hNew = User32.CreatePopupMenu();
-            if (hNew == IntPtr.Zero) return;
-
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewFolderId, "文件夹");
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewTextId, "文本文档");
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewCsvId, "CSV 表格");
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewJsonId, "JSON 文件");
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewMarkdownId, "Markdown 文档");
-            User32.AppendMenu(hNew, 0x00000800, IntPtr.Zero, "");
-            User32.AppendMenu(hNew, 0, (IntPtr)BackgroundNewOtherId, "其他文件…");
-
-            int newPos = FindMenuItemPosition(hMenu, "新建");
-            if (newPos >= 0) User32.RemoveMenu(hMenu, (uint)newPos, MF_BYPOSITION);
-
-            if (newPos >= 0)
-                User32.InsertMenu(hMenu, (uint)newPos, MF_BYPOSITION | MF_POPUP, hNew, "新建");
-            else
-                User32.AppendMenu(hMenu, MF_POPUP, hNew, "新建");
-        }
-
-        private static int FindMenuItemPosition(IntPtr hMenu, string prefix)
-        {
-            int count = User32.GetMenuItemCount(hMenu);
-            for (uint i = 0; i < (uint)count; i++)
-            {
-                var buffer = new StringBuilder(128);
-                User32.GetMenuString(hMenu, i, buffer, buffer.Capacity, MF_BYPOSITION);
-                var text = buffer.ToString().Replace("&", "");
-                if (text.StartsWith(prefix, StringComparison.Ordinal)) return (int)i;
-            }
-            return -1;
-        }
-
         #region Win32 API 声明
 
         private static class Ole32
@@ -634,10 +331,6 @@ namespace wxd.files.winforms
 
             [DllImport("ole32.dll")]
             public static extern void CoTaskMemFree(IntPtr pv);
-
-            [DllImport("ole32.dll")]
-            public static extern int CoCreateInstance(ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext,
-                ref Guid riid, out IntPtr ppv);
         }
 
         private static class Shell32
@@ -659,13 +352,6 @@ namespace wxd.files.winforms
 
             [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
             public static extern int SHGetDesktopFolder(out IntPtr ppshf);
-
-            [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
-            public static extern IShellItem SHCreateItemFromParsingName(string pszPath, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid);
-
-            [DllImport("shell32.dll", PreserveSig = false)]
-            public static extern void SHCreateDataObject(IntPtr pidlFolder, uint cidl, IntPtr apidl, IntPtr pdo,
-                [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IntPtr ppv);
         }
 
         private static class User32
@@ -688,24 +374,6 @@ namespace wxd.files.winforms
 
             [DllImport("user32.dll")]
             public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            public static extern int GetMenuItemCount(IntPtr hMenu);
-
-            [DllImport("user32.dll")]
-            public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            public static extern int GetMenuString(IntPtr hMenu, uint uIDItem, StringBuilder lpString, int cchMax, uint uFlags);
-
-            [DllImport("user32.dll")]
-            public static extern bool RemoveMenu(IntPtr hMenu, uint uPosition, uint uFlags);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            public static extern bool AppendMenu(IntPtr hMenu, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            public static extern bool InsertMenu(IntPtr hMenu, uint uPosition, uint uFlags, IntPtr uIDNewItem, string lpNewItem);
         }
 
         #endregion
@@ -733,7 +401,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                IntPtr pszName,
+                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -767,7 +435,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                IntPtr pszName,
+                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -804,7 +472,7 @@ namespace wxd.files.winforms
                 uint idCmd,
                 uint uType,
                 IntPtr pReserved,
-                IntPtr pszName,
+                [MarshalAs(UnmanagedType.LPStr)] out string pszName,
                 uint cchMax);
 
             [PreserveSig]
@@ -821,70 +489,6 @@ namespace wxd.files.winforms
 
             [PreserveSig]
             int HandleMenuMsg2(uint uMsg, IntPtr wParam, IntPtr lParam, ref IntPtr lpResult);
-        }
-
-        [ComImport]
-        [Guid("DFD3B6B5-C10C-4BE9-85F6-A66949C03271")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IExplorerBrowser
-        {
-            [PreserveSig] int Initialize(IntPtr hwndParent, ref RECT prc, FOLDERVIEWMODE uViewMode, IntPtr punkEvents);
-            [PreserveSig] int Destroy();
-            [PreserveSig] int SetRect(ref RECT prc);
-            [PreserveSig] int SetRectNF(ref RECT prc);
-            [PreserveSig] int SetPropertyBag([MarshalAs(UnmanagedType.LPWStr)] string pszPropertyBag);
-            [PreserveSig] int SetEmptyText([MarshalAs(UnmanagedType.LPWStr)] string pszEmptyText);
-            [PreserveSig] int SetFolderSettings(IntPtr pFolderSettings);
-            [PreserveSig] int Advise(IntPtr punkEventSink, ref uint pdwCookie);
-            [PreserveSig] int Unadvise(uint dwCookie);
-            [PreserveSig] int SetOptions(uint uOptions);
-            [PreserveSig] int GetOptions(out uint puOptions);
-            [PreserveSig] int BrowseToIDList(IntPtr pidl, uint uFlags);
-            [PreserveSig] int BrowseToObject([MarshalAs(UnmanagedType.IUnknown)] object punk, uint uFlags);
-            [PreserveSig] int FillFromObject([MarshalAs(UnmanagedType.IUnknown)] object punk, uint uFlags);
-            [PreserveSig] int RemoveAll();
-            [PreserveSig] int GetCurrentView(ref Guid riid, out IntPtr ppv);
-        }
-
-        [ComImport]
-        [Guid("000214E3-0000-0000-C000-000000000046")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IShellView
-        {
-            [PreserveSig] int GetWindow(out IntPtr phwnd);
-            [PreserveSig] int ContextSensitiveHelp(bool fEnterMode);
-            [PreserveSig] int TranslateAccelerator(IntPtr pmsg);
-            [PreserveSig] int EnableModeless(bool fEnable);
-            [PreserveSig] int UIActivate(uint uState);
-            [PreserveSig] int Refresh();
-            [PreserveSig] int CreateViewWindow(IntPtr psvPrevious, IntPtr pfs, IntPtr psb, IntPtr prcView, out IntPtr phwndView);
-            [PreserveSig] int DestroyViewWindow();
-            [PreserveSig] int GetCurrentInfo(IntPtr pfs);
-            [PreserveSig] int AddPropertySheetPages(uint dwReserved, IntPtr pfn, IntPtr lparam);
-            [PreserveSig] int SaveViewState();
-            [PreserveSig] int SelectItem(IntPtr pidl, uint uFlags);
-            [PreserveSig] int GetItemObject(uint uItem, ref Guid riid, out IntPtr ppv);
-        }
-
-        [ComImport]
-        [Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IShellItem
-        {
-            [PreserveSig] int BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
-            [PreserveSig] int GetParent(out IShellItem ppsi);
-            [PreserveSig] int GetDisplayName(uint sigdnName, out IntPtr ppszName);
-            [PreserveSig] int GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
-            [PreserveSig] int Compare(IShellItem psi, uint hint, out int piOrder);
-        }
-
-        [ComImport]
-        [Guid("000214E8-0000-0000-C000-000000000046")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IShellExtInit
-        {
-            [PreserveSig]
-            int Initialize(IntPtr pidlFolder, IntPtr lpdobj, IntPtr hKeyProgID);
         }
 
         [ComImport]
@@ -970,7 +574,7 @@ namespace wxd.files.winforms
             public int dwHotKey;
             public IntPtr hIcon;
             [MarshalAs(UnmanagedType.LPStr)] public string lpTitle;
-            public IntPtr lpVerbW;
+            [MarshalAs(UnmanagedType.LPWStr)] public string lpVerbW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpParametersW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpDirectoryW;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpTitleW;
@@ -984,587 +588,25 @@ namespace wxd.files.winforms
             public int y;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
-        {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
-        }
-
-        private enum FOLDERVIEWMODE
-        {
-            FVM_AUTO = -1,
-            FVM_ICON = 1,
-            FVM_SMALLICON = 2,
-            FVM_LIST = 3,
-            FVM_DETAILS = 4
-        }
-
         #endregion
-
-        /// <summary>
-        /// 系统“新建”子菜单。直接实例化 Shell 的 New 菜单处理程序（CLSID_NewMenu），
-        /// 它会按 HKCR\ShellNew 填出“文件夹 / 文本文档 / Office 文档 / 压缩包”等模板。
-        /// 这个处理程序原本是 Explorer 背景菜单里“新建”子菜单的实现。
-        /// </summary>
-        internal sealed class ShellNewMenu : IDisposable
-        {
-            private IContextMenu? _contextMenu;
-            private IContextMenu2? _contextMenu2;
-            private IContextMenu3? _contextMenu3;
-            private IntPtr _pidlFolder;
-            private IntPtr _dataObject;
-            private bool _comInitialized;
-
-            public IntPtr Menu { get; private set; }
-            public int Count { get; private set; }
-
-            public uint? FindItemId(string prefix)
-            {
-                for (uint i = 0; i < (uint)Count; i++)
-                {
-                    var buffer = new StringBuilder(128);
-                    User32.GetMenuString(Menu, i, buffer, buffer.Capacity, MF_BYPOSITION);
-                    var text = buffer.ToString().Replace("&", "");
-                    if (text.StartsWith(prefix, StringComparison.Ordinal))
-                        return ShellNewMenuIdFirst + i;
-                }
-                return null;
-            }
-
-            public static ShellNewMenu? Create(string folderPath)
-            {
-                var host = new ShellNewMenu();
-                try
-                {
-                    if (host.Initialize(folderPath)) return host;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("创建系统新建菜单失败: " + ex);
-                }
-
-                host.Dispose();
-                return null;
-            }
-
-            private bool Initialize(string folderPath)
-            {
-                try
-                {
-                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
-                    _comInitialized = hr == 0 || hr == 1;
-                }
-                catch
-                {
-                    _comInitialized = false;
-                }
-
-                if (Shell32.SHParseDisplayName(folderPath, IntPtr.Zero, out _pidlFolder, 0, out _) != 0
-                    || _pidlFolder == IntPtr.Zero)
-                    return false;
-
-                var type = Type.GetTypeFromCLSID(CLSID_NewMenu);
-                if (type == null) return false;
-
-                object? instance = Activator.CreateInstance(type);
-                if (instance is not IShellExtInit shellExtInit) return false;
-
-                // 背景“新建”需要文件夹的数据对象；传 IntPtr.Zero 时菜单能填出来，
-                // 但 InvokeCommand 会返回 E_FAIL，一个文件也建不出来。
-                try
-                {
-                    Shell32.SHCreateDataObject(_pidlFolder, 0, IntPtr.Zero, IntPtr.Zero, IID_IDataObject, out _dataObject);
-                }
-                catch
-                {
-                    _dataObject = IntPtr.Zero;
-                }
-
-                if (shellExtInit.Initialize(_pidlFolder, _dataObject, IntPtr.Zero) != 0)
-                    return false;
-
-                _contextMenu = instance as IContextMenu;
-                if (_contextMenu == null) return false;
-
-                IntPtr ptr;
-                Guid contextMenu3Guid = IID_IContextMenu3;
-                if (_contextMenu.QueryInterface(ref contextMenu3Guid, out ptr) == 0)
-                {
-                    _contextMenu3 = (IContextMenu3)Marshal.GetObjectForIUnknown(ptr);
-                    Marshal.Release(ptr);
-                    _contextMenu2 = _contextMenu3;
-                }
-                else
-                {
-                    Guid contextMenu2Guid = IID_IContextMenu2;
-                    if (_contextMenu.QueryInterface(ref contextMenu2Guid, out ptr) == 0)
-                    {
-                        _contextMenu2 = (IContextMenu2)Marshal.GetObjectForIUnknown(ptr);
-                        Marshal.Release(ptr);
-                    }
-                }
-
-                Menu = User32.CreatePopupMenu();
-                if (Menu == IntPtr.Zero) return false;
-
-                Count = _contextMenu.QueryContextMenu(Menu, 0, ShellNewMenuIdFirst,
-                    ShellNewMenuIdFirst + 0x7FFF, CMF_NORMAL);
-                return Count > 0;
-            }
-
-            /// <summary>把子菜单句柄交给父菜单，之后由父菜单负责销毁。</summary>
-            public IntPtr DetachMenu()
-            {
-                var menu = Menu;
-                Menu = IntPtr.Zero;
-                return menu;
-            }
-
-            public int Invoke(uint commandId, IntPtr hwnd, int screenX, int screenY, string folderPath)
-            {
-                if (_contextMenu == null || commandId < ShellNewMenuIdFirst) return -1;
-
-                var verb = GetCommandVerb(_contextMenu, commandId - ShellNewMenuIdFirst);
-                OperationLog.Write("new-menu cmd=" + commandId + " verb=" + (verb ?? "-"));
-
-                var invokeInfo = new CMINVOKECOMMANDINFOEX
-                {
-                    cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
-                    hwnd = hwnd,
-                    lpDirectoryW = folderPath,
-                    nShow = 1,
-                    ptInvoke = new POINT { x = screenX, y = screenY }
-                };
-
-                IntPtr verbPtr = IntPtr.Zero;
-                try
-                {
-                    if (!string.IsNullOrEmpty(verb))
-                    {
-                        verbPtr = Marshal.StringToHGlobalUni(verb);
-                        invokeInfo.fMask = CMIC_MASK_UNICODE;
-                        invokeInfo.lpVerbW = verbPtr;
-                    }
-                    else
-                    {
-                        invokeInfo.lpVerb = (IntPtr)(commandId - ShellNewMenuIdFirst);
-                    }
-
-                    return _contextMenu.InvokeCommand(ref invokeInfo);
-                }
-                finally
-                {
-                    if (verbPtr != IntPtr.Zero) Marshal.FreeHGlobal(verbPtr);
-                }
-            }
-
-            public void Dispose()
-            {
-                if (Menu != IntPtr.Zero)
-                {
-                    User32.DestroyMenu(Menu);
-                    Menu = IntPtr.Zero;
-                }
-
-                if (_contextMenu3 != null) Marshal.ReleaseComObject(_contextMenu3);
-                if (_contextMenu2 != null && _contextMenu2 != _contextMenu3) Marshal.ReleaseComObject(_contextMenu2);
-                if (_contextMenu != null) Marshal.ReleaseComObject(_contextMenu);
-
-                if (_dataObject != IntPtr.Zero)
-                {
-                    Marshal.Release(_dataObject);
-                    _dataObject = IntPtr.Zero;
-                }
-
-                if (_pidlFolder != IntPtr.Zero)
-                {
-                    Ole32.CoTaskMemFree(_pidlFolder);
-                    _pidlFolder = IntPtr.Zero;
-                }
-
-                if (_comInitialized)
-                {
-                    try { Ole32.CoUninitialize(); } catch { }
-                    _comInitialized = false;
-                }
-            }
-        }
-
-        /// <summary>
-        /// 用真正的 Shell 视图（ExplorerBrowser）取背景菜单。
-        /// 只有存在真实 IShellView 时，菜单才会带上“查看/排序/刷新/粘贴/新建”这些视图命令，
-        /// 并且“新建”由视图自己填充，InvokeCommand 不会返回 E_FAIL。
-        /// </summary>
-        internal sealed class ShellViewMenu : IDisposable
-        {
-            private IExplorerBrowser? _browser;
-            private IShellView? _view;
-            private IContextMenu? _menu;
-            private IContextMenu2? _menu2;
-            private IContextMenu3? _menu3;
-            private IShellItem? _item;
-            private HiddenHostWindow? _host;
-            private bool _comInitialized;
-
-            public IntPtr Menu { get; private set; }
-            public int Count { get; private set; }
-
-            public static ShellViewMenu? Create(string folderPath)
-            {
-                var session = new ShellViewMenu();
-                try
-                {
-                    if (session.Initialize(folderPath)) return session;
-                }
-                catch (Exception ex)
-                {
-                    OperationLog.Write("shell-view-menu create failed: " + ex.Message);
-                }
-
-                session.Dispose();
-                return null;
-            }
-
-            private bool Initialize(string folderPath)
-            {
-                try
-                {
-                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
-                    _comInitialized = hr == 0 || hr == 1;
-                }
-                catch
-                {
-                    _comInitialized = false;
-                }
-
-                _host = new HiddenHostWindow();
-                OperationLog.Write("shell-view host=" + _host.Handle);
-
-                var type = Type.GetTypeFromCLSID(CLSID_ExplorerBrowser);
-                if (type == null)
-                {
-                    OperationLog.Write("shell-view: CLSID not found");
-                    return false;
-                }
-
-                Guid clsid = CLSID_ExplorerBrowser;
-                Guid browserIid = IID_ExplorerBrowser;
-                int createHr = Ole32.CoCreateInstance(ref clsid, IntPtr.Zero, 0x17, ref browserIid, out IntPtr browserPtr);
-                OperationLog.Write("shell-view CoCreateInstance hr=" + createHr);
-                if (createHr != 0 || browserPtr == IntPtr.Zero) return false;
-
-                _browser = (IExplorerBrowser)Marshal.GetObjectForIUnknown(browserPtr);
-                Marshal.Release(browserPtr);
-                if (_browser == null)
-                {
-                    OperationLog.Write("shell-view: IExplorerBrowser cast failed");
-                    return false;
-                }
-
-                var rect = new RECT { Right = 200, Bottom = 200 };
-                int initHr = _browser.Initialize(_host.Handle, ref rect, FOLDERVIEWMODE.FVM_DETAILS, IntPtr.Zero);
-                OperationLog.Write("shell-view init hr=" + initHr);
-                if (initHr != 0) return false;
-
-                _item = Shell32.SHCreateItemFromParsingName(folderPath, IntPtr.Zero, IID_IShellItem);
-                if (_item == null)
-                {
-                    OperationLog.Write("shell-view: SHCreateItem failed");
-                    return false;
-                }
-
-                int browse = _browser.BrowseToObject(_item, 0);
-                OperationLog.Write("shell-view browse hr=" + browse + " folder=" + folderPath);
-
-                IntPtr viewPtr = IntPtr.Zero;
-                for (int i = 0; i < 60; i++)
-                {
-                    Guid iid = IID_IShellView;
-                    if (_browser.GetCurrentView(ref iid, out viewPtr) == 0 && viewPtr != IntPtr.Zero)
-                        break;
-
-                    Application.DoEvents();
-                    Thread.Sleep(50);
-                }
-
-                if (viewPtr == IntPtr.Zero)
-                {
-                    OperationLog.Write("shell-view: no current view");
-                    return false;
-                }
-                _view = (IShellView)Marshal.GetObjectForIUnknown(viewPtr);
-                Marshal.Release(viewPtr);
-
-                Guid menuGuid = IID_IContextMenu;
-                int itemObjectHr = _view.GetItemObject(SVGIO_BACKGROUND, ref menuGuid, out IntPtr menuPtr);
-                OperationLog.Write("shell-view GetItemObject hr=" + itemObjectHr);
-                if (itemObjectHr != 0 || menuPtr == IntPtr.Zero) return false;
-
-                _menu = (IContextMenu)Marshal.GetObjectForIUnknown(menuPtr);
-                Marshal.Release(menuPtr);
-
-                IntPtr ptr;
-                Guid menu3Guid = IID_IContextMenu3;
-                if (_menu.QueryInterface(ref menu3Guid, out ptr) == 0)
-                {
-                    _menu3 = (IContextMenu3)Marshal.GetObjectForIUnknown(ptr);
-                    Marshal.Release(ptr);
-                    _menu2 = _menu3;
-                }
-                else
-                {
-                    Guid menu2Guid = IID_IContextMenu2;
-                    if (_menu.QueryInterface(ref menu2Guid, out ptr) == 0)
-                    {
-                        _menu2 = (IContextMenu2)Marshal.GetObjectForIUnknown(ptr);
-                        Marshal.Release(ptr);
-                    }
-                }
-
-                Menu = User32.CreatePopupMenu();
-                if (Menu == IntPtr.Zero) return false;
-
-                Count = _menu.QueryContextMenu(Menu, 0, 1, 0x7FFF, CMF_NORMAL);
-                OperationLog.Write("shell-view menu count=" + Count);
-                return Count > 0;
-            }
-
-            public uint ShowMenu(int screenX, int screenY)
-            {
-                if (Menu == IntPtr.Zero) return 0;
-                var window = new MenuHostWindow(_menu2, _menu3);
-                try
-                {
-                    return User32.TrackPopupMenuEx(Menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                        screenX, screenY, window.Handle, IntPtr.Zero);
-                }
-                finally
-                {
-                    window.ClearHandlers();
-                }
-            }
-
-            public int Invoke(uint commandId, Control control, int screenX, int screenY, string folderPath)
-            {
-                if (_menu == null || commandId == 0) return -1;
-
-                IntPtr hwnd = control.TopLevelControl?.Handle ?? control.Handle;
-                try
-                {
-                    if (_view != null && _view.GetWindow(out IntPtr viewHwnd) == 0 && viewHwnd != IntPtr.Zero)
-                        hwnd = viewHwnd;
-                }
-                catch
-                {
-                    // 退回顶层窗口
-                }
-
-                var invokeInfo = new CMINVOKECOMMANDINFOEX
-                {
-                    cbSize = Marshal.SizeOf(typeof(CMINVOKECOMMANDINFOEX)),
-                    hwnd = hwnd,
-                    lpVerb = (IntPtr)(commandId - 1),
-                    nShow = 1,
-                    lpDirectoryW = folderPath,
-                    ptInvoke = new POINT { x = screenX, y = screenY }
-                };
-                return _menu.InvokeCommand(ref invokeInfo);
-            }
-
-            public void Dispose()
-            {
-                if (Menu != IntPtr.Zero)
-                {
-                    User32.DestroyMenu(Menu);
-                    Menu = IntPtr.Zero;
-                }
-
-                if (_menu3 != null) Marshal.ReleaseComObject(_menu3);
-                if (_menu2 != null && _menu2 != _menu3) Marshal.ReleaseComObject(_menu2);
-                if (_menu != null) Marshal.ReleaseComObject(_menu);
-                if (_view != null) Marshal.ReleaseComObject(_view);
-
-                if (_browser != null)
-                {
-                    try { _browser.Destroy(); } catch { }
-                    Marshal.ReleaseComObject(_browser);
-                }
-
-                if (_item != null) Marshal.ReleaseComObject(_item);
-                _host?.Destroy();
-
-                if (_comInitialized)
-                {
-                    try { Ole32.CoUninitialize(); } catch { }
-                    _comInitialized = false;
-                }
-            }
-        }
-
-        private sealed class HiddenHostWindow : NativeWindow
-        {
-            public HiddenHostWindow()
-            {
-                CreateHandle(new CreateParams
-                {
-                    Caption = "wxdShellViewHost",
-                    Style = unchecked((int)0x80000000),
-                    ExStyle = 0x00000080,
-                    X = -32000,
-                    Y = -32000,
-                    Width = 200,
-                    Height = 200
-                });
-                // ExplorerBrowser 在完全隐藏的宿主上可能不建视图；放到屏幕外但标记为可见
-                User32.ShowWindow(Handle, 4);
-            }
-
-            public void Destroy()
-            {
-                if (Handle != IntPtr.Zero) DestroyHandle();
-            }
-        }
-
-        /// <summary>显示真实 Shell 视图的背景菜单；失败返回 false。</summary>
-        public static bool ShowViewBackgroundMenu(string folderPath, Control control, int screenX, int screenY)
-        {
-            var session = ShellViewMenu.Create(folderPath);
-            if (session == null) return false;
-
-            using (session)
-            {
-                uint commandId = session.ShowMenu(screenX, screenY);
-                OperationLog.Write("view-menu command=" + commandId + " folder=" + folderPath);
-                if (commandId > 0)
-                {
-                    int hr = session.Invoke(commandId, control, screenX, screenY, folderPath);
-                    OperationLog.Write("view-menu invoke hr=" + hr);
-                }
-                return true;
-            }
-        }
-
-        /// <summary>诊断用：尝试从 IShellFolder.CreateViewObject 取视图背景菜单项数。</summary>
-        internal static int GetFolderViewMenuCount(string folderPath)
-        {
-            bool comInitialized = false;
-            IntPtr pidl = IntPtr.Zero;
-            IntPtr viewPtr = IntPtr.Zero;
-            IntPtr menuPtr = IntPtr.Zero;
-            IntPtr hMenu = IntPtr.Zero;
-            IShellFolder? desktop = null;
-            IShellFolder? folder = null;
-            IShellView? view = null;
-            IContextMenu? menu = null;
-
-            try
-            {
-                try
-                {
-                    int hr = Ole32.CoInitializeEx(IntPtr.Zero, Ole32.COINIT_APARTMENTTHREADED);
-                    comInitialized = hr == 0 || hr == 1;
-                }
-                catch { }
-
-                if (Shell32.SHGetDesktopFolder(out IntPtr desktopPtr) != 0 || desktopPtr == IntPtr.Zero)
-                    return 0;
-                desktop = (IShellFolder)Marshal.GetObjectForIUnknown(desktopPtr);
-                Marshal.Release(desktopPtr);
-
-                if (Shell32.SHParseDisplayName(folderPath, IntPtr.Zero, out pidl, 0, out _) != 0
-                    || pidl == IntPtr.Zero)
-                    return 0;
-
-                Guid folderGuid = IID_IShellFolder;
-                desktop.BindToObject(pidl, IntPtr.Zero, ref folderGuid, out IntPtr folderPtr);
-                if (folderPtr == IntPtr.Zero) return 0;
-                folder = (IShellFolder)Marshal.GetObjectForIUnknown(folderPtr);
-                Marshal.Release(folderPtr);
-
-                Guid viewGuid = IID_IShellView;
-                folder.CreateViewObject(IntPtr.Zero, ref viewGuid, out viewPtr);
-                OperationLog.Write("folder-view CreateViewObject ptr=" + viewPtr);
-                if (viewPtr == IntPtr.Zero) return 0;
-                view = (IShellView)Marshal.GetObjectForIUnknown(viewPtr);
-
-                Guid menuGuid = IID_IContextMenu;
-                int itemHr = view.GetItemObject(SVGIO_BACKGROUND, ref menuGuid, out menuPtr);
-                OperationLog.Write("folder-view GetItemObject hr=" + itemHr + " ptr=" + menuPtr);
-                if (menuPtr == IntPtr.Zero) return 0;
-                menu = (IContextMenu)Marshal.GetObjectForIUnknown(menuPtr);
-
-                hMenu = User32.CreatePopupMenu();
-                int count = menu.QueryContextMenu(hMenu, 0, 1, 0x7FFF, CMF_NORMAL);
-                OperationLog.Write("folder-view menu count=" + count);
-
-                int topCount = User32.GetMenuItemCount(hMenu);
-                OperationLog.Write("folder-view top-items=" + topCount);
-                for (uint i = 0; i < (uint)topCount; i++)
-                {
-                    var text = new StringBuilder(128);
-                    User32.GetMenuString(hMenu, i, text, text.Capacity, MF_BYPOSITION);
-                    OperationLog.Write("folder-view item[" + i + "]=" + text);
-                }
-
-                return count > 0 ? count : 0;
-            }
-            catch (Exception ex)
-            {
-                OperationLog.Write("folder-view failed: " + ex.Message);
-                return 0;
-            }
-            finally
-            {
-                if (hMenu != IntPtr.Zero) User32.DestroyMenu(hMenu);
-                if (menu != null) Marshal.ReleaseComObject(menu);
-                if (view != null) Marshal.ReleaseComObject(view);
-                if (folder != null) Marshal.ReleaseComObject(folder);
-                if (desktop != null) Marshal.ReleaseComObject(desktop);
-                if (pidl != IntPtr.Zero) Ole32.CoTaskMemFree(pidl);
-                if (comInitialized) { try { Ole32.CoUninitialize(); } catch { } }
-            }
-        }
 
         #region 菜单消息处理窗口
 
         private class MenuHostWindow : NativeWindow
         {
-            private readonly IContextMenu2? _contextMenu2;
-            private readonly IContextMenu3? _contextMenu3;
-            private readonly bool _ownWindow;
+            private readonly IContextMenu2 _contextMenu2;
+            private readonly IContextMenu3 _contextMenu3;
 
-            public MenuHostWindow(IntPtr ownerHandle, IContextMenu2? contextMenu2, IContextMenu3? contextMenu3)
+            public MenuHostWindow(IntPtr ownerHandle, IContextMenu2 contextMenu2, IContextMenu3 contextMenu3)
             {
                 _contextMenu2 = contextMenu2;
                 _contextMenu3 = contextMenu3;
                 AssignHandle(ownerHandle);
             }
 
-            /// <summary>独立隐藏窗口：背景菜单专用，确保 WM_INITMENUPOPUP 由这里处理。</summary>
-            public MenuHostWindow(IContextMenu2? contextMenu2, IContextMenu3? contextMenu3)
-            {
-                _contextMenu2 = contextMenu2;
-                _contextMenu3 = contextMenu3;
-                _ownWindow = true;
-                CreateHandle(new CreateParams
-                {
-                    Caption = "wxdMenuHost",
-                    Style = unchecked((int)0x80000000),
-                    ExStyle = 0x00000080,
-                    X = 0,
-                    Y = 0,
-                    Width = 1,
-                    Height = 1
-                });
-            }
-
             public void ClearHandlers()
             {
-                if (_ownWindow) DestroyHandle();
-                else ReleaseHandle();
+                ReleaseHandle();
             }
 
             protected override void WndProc(ref Message m)
