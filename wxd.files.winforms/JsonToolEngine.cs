@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -13,6 +14,9 @@ namespace wxd.files.winforms
         public bool Success { get; init; }
         public JsonNode? Root { get; init; }
         public string? Error { get; init; }
+
+        /// <summary>严格解析失败、靠给非字符串 key 补引号才解析成功。</summary>
+        public bool NormalizedKeys { get; init; }
     }
 
     /// <summary>
@@ -50,16 +54,238 @@ namespace wxd.files.winforms
                 var root = JsonNode.Parse(text, new JsonNodeOptions(), ParseOptions);
                 return new JsonParseResult { Success = true, Root = root };
             }
-            catch (JsonException ex)
+            catch (JsonException strictError)
             {
-                long line = (ex.LineNumber ?? 0) + 1;
-                long column = (ex.BytePositionInLine ?? 0) + 1;
-                return new JsonParseResult
+                // fastjson 序列化 Map<Integer,?> 默认输出 {1:"a"} 这类非标准 key，
+                // 严格解析必然失败；补上引号后重试，避免用户看到"语法错误"就以为文件坏了。
+                string normalized = QuoteNonStringKeys(text, out bool changed);
+                if (!changed) return Failure(strictError);
+
+                try
                 {
-                    Success = false,
-                    Error = $"JSON 语法错误（第 {line} 行，第 {column} 列）：{ex.Message}"
-                };
+                    var root = JsonNode.Parse(normalized, new JsonNodeOptions(), ParseOptions);
+                    return new JsonParseResult { Success = true, Root = root, NormalizedKeys = true };
+                }
+                catch (JsonException)
+                {
+                    // 补引号后仍失败：报原始文本的错误，行列号才对得上用户看到的源码
+                    return Failure(strictError);
+                }
             }
+        }
+
+        private static JsonParseResult Failure(JsonException ex)
+        {
+            long line = (ex.LineNumber ?? 0) + 1;
+            long column = (ex.BytePositionInLine ?? 0) + 1;
+            return new JsonParseResult
+            {
+                Success = false,
+                Error = $"JSON 语法错误（第 {line} 行，第 {column} 列）：{ex.Message}"
+            };
+        }
+
+        /// <summary>
+        /// 给对象里不带引号的 key 补上引号（数字、true/false 等），其余字符原样保留。
+        /// 按"当前是否在 key 位置"扫描，字符串内容、数组元素、注释不会被误改。
+        /// 返回 changed=false 表示没有可补的 key，调用方应报告原始解析错误。
+        /// </summary>
+        internal static string QuoteNonStringKeys(string text, out bool changed)
+        {
+            changed = false;
+            var output = new StringBuilder(text.Length + 16);
+            var openFrames = new List<bool>();   // 每层容器是否为对象
+            bool inObject = false;
+            int state = StateValueOrEnd;
+            int i = 0;
+
+            while (i < text.Length)
+            {
+                char c = text[i];
+
+                if (c == '/' && i + 1 < text.Length && (text[i + 1] == '/' || text[i + 1] == '*'))
+                {
+                    i = CopyComment(text, i, output);
+                    continue;
+                }
+
+                if (inObject && state == StateKeyOrEnd)
+                {
+                    if (char.IsWhiteSpace(c) || c == ',' || c == '}')
+                    {
+                        output.Append(c);
+                        i++;
+                        if (c == '}') PopFrame(openFrames, ref inObject, ref state);
+                        continue;
+                    }
+                    if (c == '"')
+                    {
+                        i = CopyString(text, i, output);
+                        state = StateAfterKey;
+                        continue;
+                    }
+
+                    int start = i;
+                    while (i < text.Length && text[i] != ':' && text[i] != '}' && text[i] != ','
+                           && !char.IsWhiteSpace(text[i]))
+                        i++;
+                    if (i == start)
+                    {
+                        output.Append(c);
+                        i++;
+                        continue;
+                    }
+
+                    output.Append('"');
+                    for (int k = start; k < i; k++)
+                    {
+                        if (text[k] == '"' || text[k] == '\\') output.Append('\\');
+                        output.Append(text[k]);
+                    }
+                    output.Append('"');
+                    changed = true;
+                    state = StateAfterKey;
+                    continue;
+                }
+
+                switch (state)
+                {
+                    case StateAfterKey:
+                        output.Append(c);
+                        i++;
+                        if (c == ':') state = StateValueOrEnd;
+                        continue;
+
+                    case StateValueOrEnd:
+                        if (char.IsWhiteSpace(c))
+                        {
+                            output.Append(c);
+                            i++;
+                            continue;
+                        }
+                        if (c == '{')
+                        {
+                            openFrames.Add(inObject);
+                            inObject = true;
+                            state = StateKeyOrEnd;
+                            output.Append(c);
+                            i++;
+                            continue;
+                        }
+                        if (c == '[')
+                        {
+                            openFrames.Add(inObject);
+                            inObject = false;
+                            state = StateValueOrEnd;
+                            output.Append(c);
+                            i++;
+                            continue;
+                        }
+                        if (c == ']' || c == '}')
+                        {
+                            output.Append(c);
+                            i++;
+                            PopFrame(openFrames, ref inObject, ref state);
+                            continue;
+                        }
+                        if (c == '"')
+                        {
+                            i = CopyString(text, i, output);
+                            state = StateAfterValue;
+                            continue;
+                        }
+
+                        // 字面量 / 数字：原样复制到分隔符
+                        int literalStart = i;
+                        while (i < text.Length && text[i] != ':' && text[i] != ',' && text[i] != ']'
+                               && text[i] != '}' && !char.IsWhiteSpace(text[i]))
+                            i++;
+                        if (i == literalStart)
+                        {
+                            output.Append(c);
+                            i++;
+                            continue;
+                        }
+                        output.Append(text, literalStart, i - literalStart);
+                        state = StateAfterValue;
+                        continue;
+
+                    default: // StateAfterValue
+                        if (char.IsWhiteSpace(c))
+                        {
+                            output.Append(c);
+                            i++;
+                            continue;
+                        }
+                        if (c == ',')
+                        {
+                            output.Append(c);
+                            i++;
+                            state = inObject ? StateKeyOrEnd : StateValueOrEnd;
+                            continue;
+                        }
+                        if (c == '}' || c == ']')
+                        {
+                            output.Append(c);
+                            i++;
+                            PopFrame(openFrames, ref inObject, ref state);
+                            continue;
+                        }
+                        output.Append(c);
+                        i++;
+                        continue;
+                }
+            }
+
+            return output.ToString();
+        }
+
+        private const int StateKeyOrEnd = 0;   // 对象内：期待 key 或 '}'
+        private const int StateAfterKey = 1;   // 已读 key：期待 ':'
+        private const int StateValueOrEnd = 2; // 期待值（数组或顶层还允许 ']' / 结束）
+        private const int StateAfterValue = 3; // 已读值：期待 ',' 或容器结束
+
+        private static void PopFrame(List<bool> openFrames, ref bool inObject, ref int state)
+        {
+            state = StateAfterValue;
+            if (openFrames.Count == 0)
+            {
+                inObject = false;
+                return;
+            }
+            inObject = openFrames[openFrames.Count - 1];
+            openFrames.RemoveAt(openFrames.Count - 1);
+        }
+
+        private static int CopyString(string text, int start, StringBuilder output)
+        {
+            int i = start + 1;
+            while (i < text.Length)
+            {
+                char c = text[i];
+                i++;
+                if (c == '\\' && i < text.Length) { i++; continue; }
+                if (c == '"') break;
+            }
+            output.Append(text, start, i - start);
+            return i;
+        }
+
+        private static int CopyComment(string text, int start, StringBuilder output)
+        {
+            int end;
+            if (text[start + 1] == '/')
+            {
+                end = text.IndexOf('\n', start);
+                if (end < 0) end = text.Length;
+            }
+            else
+            {
+                int close = text.IndexOf("*/", start + 2, StringComparison.Ordinal);
+                end = close < 0 ? text.Length : close + 2;
+            }
+            output.Append(text, start, end - start);
+            return end;
         }
 
         /// <summary>缩进 2 空格输出；sortKeys=true 时先递归排序 key。</summary>

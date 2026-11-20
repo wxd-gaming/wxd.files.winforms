@@ -104,6 +104,8 @@ namespace wxd.files.winforms.RegressionTests
             Run("JSON 递归 key 排序", Test_JsonSortKeys);
             Run("JSON 解析错误与宽松语法", Test_JsonParseErrors);
             Run("JSON 节点计数与顶层 null", Test_JsonCountAndNull);
+            Run("JSON 非字符串 key（fastjson 数字 key）", Test_JsonNonStringKeys);
+            Run("JSON 非字符串 key 补引号边界", Test_JsonNonStringKeyQuote);
             Run("JSON 注释检测", Test_JsonContainsComments);
             Run("编码 BOM 识别与原子写", Test_EncodingBomAndAtomicWrite);
 
@@ -935,6 +937,58 @@ namespace wxd.files.winforms.RegressionTests
             var nullResult = JsonToolEngine.Parse("null");
             Assert(nullResult.Success && nullResult.Root == null, "顶层 null 也是合法 JSON");
             AssertEq("null", JsonToolEngine.Format(nullResult.Root), "null 原样输出");
+        }
+
+        private static void Test_JsonNonStringKeys()
+        {
+            // 场景：fastjson 序列化 Map<Integer,?> 默认输出 {1:"a"}，key 不带引号（非 RFC 8259）。
+            // 断言：宽松解析成功、标记 NormalizedKeys、数字 key 可按字符串索引；
+            // 守的回归：System.Text.Json 严格解析这类文本直接报语法错误，工具会误判文件损坏。
+            var result = JsonToolEngine.Parse("""{1:"a",2:{3:[{4:5}]},-6:true}""");
+            Assert(result.Success, "数字 key 应能宽松解析成功");
+            Assert(result.NormalizedKeys, "应标记为补引号解析");
+
+            var obj = result.Root as JsonObject;
+            Assert(obj != null && obj.Count == 3, "应有三个数字 key");
+            AssertEq("a", obj?["1"]?.GetValue<string>(), "数字 key 按字符串索引");
+            var inner = obj?["2"]?["3"]?[0]?["4"];
+            Assert(inner is JsonValue v && v.GetValue<int>() == 5, "嵌套数字 key 保留层级");
+            var flag = obj?["-6"];
+            Assert(flag is JsonValue f && f.GetValue<bool>(), "负数 key 且布尔值不受影响");
+
+            var formatted = JsonToolEngine.Format(result.Root);
+            Assert(formatted.Contains("\"1\": \"a\""), "格式化输出应为合法字符串 key");
+
+            // 文件对比"对比前按 key 排序"走的就是 Parse → Format(sortKeys) 这条链路
+            var sorted = JsonToolEngine.Format(result.Root, sortKeys: true);
+            Assert(sorted.IndexOf("\"-6\"", StringComparison.Ordinal) < sorted.IndexOf("\"1\"", StringComparison.Ordinal),
+                "数字 key 参与排序（按字符串序）");
+            Assert(JsonToolEngine.Parse(sorted).Success, "排序输出仍是合法 JSON");
+        }
+
+        private static void Test_JsonNonStringKeyQuote()
+        {
+            // 断言：只给对象 key 位置补引号，字符串内容和数组元素必须原样；
+            // 合法 JSON 与含注释的输入不应被误改。
+            var quoted = JsonToolEngine.QuoteNonStringKeys("""{1:"a:b",2:["x",{3:true}],4:null}""", out bool changed);
+            Assert(changed, "应检测到非字符串 key");
+            AssertEq("""{"1":"a:b","2":["x",{"3":true}],"4":null}""", quoted,
+                "字符串值和数组元素不应被加引号");
+
+            string legal = """{"a":[1,2],"b":{"c":true},"d":"x:y"}""";
+            string same = JsonToolEngine.QuoteNonStringKeys(legal, out bool changedLegal);
+            Assert(!changedLegal, "合法 JSON 不应标记改动");
+            AssertEq(legal, same, "合法 JSON 应原样返回");
+
+            var withComment = JsonToolEngine.Parse("""
+{
+  // 注释里的 {9:1} 不是 key
+  1: [10, 20],
+  2: "x",
+}
+""");
+            Assert(withComment.Success, "注释/尾逗号与数字 key 共存应可解析");
+            AssertEq(2, (withComment.Root as JsonObject)?.Count ?? 0, "注释不影响字段数");
         }
 
         // ==================== YAML key 排序 ====================

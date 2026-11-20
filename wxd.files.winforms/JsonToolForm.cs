@@ -435,9 +435,12 @@ namespace wxd.files.winforms
             RebuildTree();
 
             int count = JsonToolEngine.CountNodes(result.Root);
-            SetStatus(successMessage == null
+            string message = successMessage == null
                 ? $"解析成功 · {count} 个节点"
-                : $"{successMessage} · {count} 个节点");
+                : $"{successMessage} · {count} 个节点";
+            if (result.NormalizedKeys)
+                message += " · 已为数字 key 补引号";
+            SetStatus(message);
         }
 
         private void RebuildTree()
