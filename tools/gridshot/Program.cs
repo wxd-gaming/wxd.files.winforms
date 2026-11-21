@@ -207,6 +207,43 @@ static void Run(string[] args)
             };
         }
 
+        if (args.Length > 4 && args[4] == "traytest")
+        {
+            main.Shown += (_, _) =>
+            {
+                var log = "";
+                try
+                {
+                    var iconField = mainType.GetField("_trayIcon", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    var menuField = mainType.GetField("_trayMenu", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    var icon = iconField.GetValue(main) as System.Windows.Forms.NotifyIcon;
+                    var menu = menuField.GetValue(main) as System.Windows.Forms.ContextMenuStrip;
+                    log += "icon=" + (icon != null) + " visible=" + icon?.Visible
+                         + " menu=" + string.Join("|", menu?.Items.Cast<System.Windows.Forms.ToolStripItem>()
+                               .Select(i => i.Text) ?? Array.Empty<string>()) + "\n";
+
+                    main.Close();
+                    log += "afterClose disposed=" + main.IsDisposed + " visible=" + main.Visible
+                         + " iconVisible=" + icon?.Visible + "\n";
+
+                    mainType.GetMethod("ShowMainWindow", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(main, null);
+                    log += "afterShow disposed=" + main.IsDisposed + " visible=" + main.Visible + "\n";
+
+                    mainType.GetMethod("ExitFromTray", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(main, null);
+                    log += "afterExit disposed=" + main.IsDisposed + " visible=" + main.Visible + "\n";
+                }
+                catch (Exception ex)
+                {
+                    log += "EX:" + ex.GetType().Name + " " + ex.Message;
+                }
+                File.WriteAllText(@"D:\work\wxd.files.winforms\tools\restyle-shots\traytest.txt", log);
+            };
+            Application.Run(main);
+            return;
+        }
+
         Application.Run(main);
         return;
     }

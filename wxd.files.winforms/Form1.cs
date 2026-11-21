@@ -32,6 +32,10 @@ namespace wxd.files.winforms
         private NoteForm? _noteForm;                        // 笔记窗体（单例）
         private TextCompareForm? _textCompareForm;          // 文本比对窗体（单例）
         private ToolboxForm? _toolboxForm;                  // 工具箱窗体（单例）
+        private NotifyIcon? _trayIcon;                      // 托盘图标：点×只收起，不退出
+        private ContextMenuStrip? _trayMenu;
+        private bool _allowExit;                            // 只有托盘菜单"退出"才放行关闭
+        private bool _trayHintShown;
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
@@ -76,6 +80,8 @@ namespace wxd.files.winforms
 
             // 应用主题（面板创建后再应用到面板）
             ApplyTheme();
+
+            CreateTrayIcon();
 
             // 显示Loading遮罩（独立STA线程，确保动画流畅）
             ShowStartupLoading();
@@ -545,7 +551,8 @@ namespace wxd.files.winforms
 
             _textCompareForm = new TextCompareForm();
             _textCompareForm.FormClosed += (s, e2) => _textCompareForm = null;
-            _textCompareForm.Show(this);
+            // 主窗收起到托盘时不能再当 Owner，否则从托盘菜单打开的子窗会跟着被隐藏
+            _textCompareForm.Show(Visible ? this : null);
         }
 
         // ==================== 打开工具箱（单例） ====================
@@ -561,7 +568,7 @@ namespace wxd.files.winforms
 
             _toolboxForm = new ToolboxForm();
             _toolboxForm.FormClosed += (s, e2) => _toolboxForm = null;
-            _toolboxForm.Show(this);
+            _toolboxForm.Show(Visible ? this : null);
         }
 
         // ==================== 打开笔记窗体（单例） ====================
@@ -579,6 +586,79 @@ namespace wxd.files.winforms
             _noteForm.Owner = null;
             _noteForm.FormClosed += (s, e2) => _noteForm = null;
             _noteForm.Show();
+        }
+
+        // ==================== 托盘图标 ====================
+        private void CreateTrayIcon()
+        {
+            _trayMenu = new ContextMenuStrip
+            {
+                Font = Theme.List,
+                ShowImageMargin = false,
+                ShowCheckMargin = false
+            };
+
+            var showItem = new ToolStripMenuItem("显示主界面") { Font = Theme.ListBold };
+            showItem.Click += (_, _) => ShowMainWindow();
+            _trayMenu.Items.Add(showItem);
+            _trayMenu.Items.Add(new ToolStripSeparator());
+
+            AddTrayAction("打开阅读器", OnOpenCsvReaderClick);
+            AddTrayAction("日志分析", OnOpenLargeFileViewerClick);
+            AddTrayAction("文本比对", OnOpenTextCompareClick);
+            AddTrayAction("工具箱", OnOpenToolboxClick);
+            AddTrayAction("笔记", OnOpenNotesClick);
+            _trayMenu.Items.Add(new ToolStripSeparator());
+
+            var exitItem = new ToolStripMenuItem("退出");
+            exitItem.Click += (_, _) => ExitFromTray();
+            _trayMenu.Items.Add(exitItem);
+
+            _trayIcon = new NotifyIcon
+            {
+                Icon = WindowIcons.App ?? SystemIcons.Application,
+                Text = "多窗格文件管理",
+                Visible = true,
+                ContextMenuStrip = _trayMenu
+            };
+            _trayIcon.DoubleClick += (_, _) => ShowMainWindow();
+        }
+
+        private void AddTrayAction(string text, EventHandler handler)
+        {
+            var item = new ToolStripMenuItem(text);
+            item.Click += handler;
+            _trayMenu!.Items.Add(item);
+        }
+
+        private void ShowMainWindow()
+        {
+            if (IsDisposed) return;
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+            Activate();
+            BringToFront();
+        }
+
+        private void HideToTray()
+        {
+            Hide();
+            if (_trayHintShown) return;
+            _trayHintShown = true;
+            try
+            {
+                _trayIcon?.ShowBalloonTip(3000, "程序仍在运行",
+                    "已收起到托盘：双击图标恢复窗口，右键菜单可退出。", ToolTipIcon.Info);
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private void ExitFromTray()
+        {
+            _allowExit = true;
+            if (_trayIcon != null) _trayIcon.Visible = false;
+            Close();
         }
 
         // ==================== 关于 / 更新 ====================
@@ -742,6 +822,10 @@ namespace wxd.files.winforms
 
             // 保存全局状态
             SaveGlobalState();
+
+            // 设置/最近路径是防抖后台写，收起或退出前必须同步落盘，否则会丢
+            CsvSettings.FlushSettings();
+            CsvSettings.FlushRecentPaths();
         }
 
 
@@ -798,6 +882,8 @@ namespace wxd.files.winforms
                     if (c is ThemeButton rb) rb.Invalidate();
                 }
             }
+
+            if (_trayMenu != null) _trayMenu.Font = Theme.List;
 
             // 顶栏尺寸放到最后重算：标题字体刚换过，量出来的高度才是最终值
             LayoutTopBar();
@@ -1052,29 +1138,31 @@ namespace wxd.files.winforms
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            System.Diagnostics.Debug.WriteLine("OnFormClosing called");
-            // 强制保存每个面板的全部状态（含目录、过滤条件、视图模式）
-            for (int i = 0; i < _panels.Length; i++)
+            // 点×/Alt+F4 只收起到托盘；真正退出只走托盘右键菜单（系统关机、任务管理器除外）
+            if (!_allowExit && e.CloseReason == CloseReason.UserClosing)
             {
-                _panels[i].ForceSaveState();
+                e.Cancel = true;
+                SaveAllState();
+                HideToTray();
+                return;
             }
 
-            // 持久化到文件
-            AppStateStore.Save();
-
-            CsvSettings.PaneCount = _panels.Length;
-            CsvSettings.LayoutIndex = _layoutIndex;
-            CsvSettings.ThemeMode = (int)_currentTheme;
-
-            // 设置/最近路径是防抖后台写，退出前必须同步落盘，否则关窗前改的状态会丢
-            CsvSettings.FlushSettings();
-            CsvSettings.FlushRecentPaths();
+            SaveAllState();
 
             _menuPane?.Dispose();
             _menuLayout?.Dispose();
             _menuTheme?.Dispose();
             FileOperationQueue.Shared.JobFailed -= OnFileOperationFailed;
             base.OnFormClosing(e);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            _trayMenu?.Dispose();
+            _trayMenu = null;
+            base.OnFormClosed(e);
         }
 
         // ==================== 打开命令管理面板 ====================
