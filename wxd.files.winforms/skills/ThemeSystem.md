@@ -76,7 +76,11 @@
    容器/窗体才订阅 `Theme.Changed`，并在 `Disposed` 退订。
 3. 尺寸不写死：行高用 `ThemeMetrics.RowH`，按钮高度用 `Theme.P.ButtonHeight`，
    间距用 `Margin/Gap/Group/RowPad`；按钮宽度用 `ThemeButton.FitWidth(text)` 按文字量算。
-4. 圆角用 `Theme.P.Radius`，且必须走 `ThemeButton.RoundRect`（它会把半径钳到宽高一半，别自己拼 AddArc）。
+   顶栏主操作组（`Tag = "action"`）例外：由 `LayoutTopBar` 按组内最长文字统一宽度和高度，新增按钮只要带上这个 Tag；
+   这组统一用 `Primary`（实底主色）+ `Raised = true`（大圆角浮雕面：上亮下暗渐变、顶面高光、底部投影），
+   保证整条工具栏上最醒目且彼此一致。`Raised` 只对实底按钮生效，悬停/按下的渐变翻转由 `ThemeButton` 自己处理。
+4. 圆角用 `Theme.P.Radius`，且必须走 `ThemeButton.RoundRect`（它会把半径钳到宽高一半，别自己拼 AddArc）；
+   浮雕按钮的圆角走 `PaintRaised` 里的 `Height * 0.36` 上限 11px，不要再另算一套。
 5. 新增界面先确认它接了 `Theme.Changed`，否则运行期切肤只有标题栏跟着变、客户区留在旧配色。
 6. 控件是在构造时把颜色写进 `BackColor`/`ForeColor` 的（局部变量、一次性赋值，`ApplyTheme` 里没有对应字段可刷），
    就在它的 `ApplyTheme` 末尾调一次 `ThemeRecolor.Apply(...)`：它拿 `Theme.Previous` 和新的 `Theme.P` 建旧→新映射，
@@ -87,8 +91,9 @@
 ## 5. 修改禁区
 
 - **❌ 不要在界面代码里写 `Color.FromArgb(数字)`**——需要新色就加令牌，并一次配齐 16 套（八皮肤 × 深浅色）。
-- **❌ 深色皮肤的 Accent 不能太亮**：`ThemeButton` 实底按钮按 `Theme.IsDark(fill)`（亮度阈值 145）选白字或 `p.Text`，
-  强调色亮度 ≥145 时会拿浅色正文压浅底，字读不出。Dracula 官方紫 #BD93F9 因此加深成 #8A63D2。
+- **❌ 深色皮肤的 Accent 不能太亮**：`ThemeButton` 实底按钮按 `Theme.IsDark(fill)`（亮度阈值 145）选白字；
+  浅色 accent 在深色皮肤下用 `p.Window` 当墨色兜底，但仍是白字观感最稳。
+  Dracula 官方紫 #BD93F9 因此加深成 #8A63D2。
 - **❌ 不要只配深色或只配浅色**：任何按明暗分支的取色都要两条分支都写，否则另一套会露出默认色。
 - **❌ 主题切换时不要遗漏任何子控件**：`ApplyTheme` 里漏一个控件，现象是切肤后那块区域保持旧配色，
   重启才正常，很容易被当成"缓存问题"。

@@ -348,6 +348,8 @@ namespace wxd.files.winforms
                 Text = "阅读器",
                 Font = Theme.Body,
                 Primary = true,
+                Raised = true,
+                Tag = "action",
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             _btnOpenCsvReader.Click += OnOpenCsvReaderClick;
@@ -357,6 +359,9 @@ namespace wxd.files.winforms
             {
                 Text = "日志分析",
                 Font = Theme.Body,
+                Primary = true,
+                Raised = true,
+                Tag = "action",
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             btnLargeFileViewer.Click += OnOpenLargeFileViewerClick;
@@ -366,6 +371,9 @@ namespace wxd.files.winforms
             {
                 Text = "文本比对",
                 Font = Theme.Body,
+                Primary = true,
+                Raised = true,
+                Tag = "action",
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             btnTextCompare.Click += OnOpenTextCompareClick;
@@ -375,6 +383,9 @@ namespace wxd.files.winforms
             {
                 Text = "工具箱",
                 Font = Theme.Body,
+                Primary = true,
+                Raised = true,
+                Tag = "action",
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             btnJsonTool.Click += OnOpenToolboxClick;
@@ -384,6 +395,9 @@ namespace wxd.files.winforms
             {
                 Text = "笔记",
                 Font = Theme.Body,
+                Primary = true,
+                Raised = true,
+                Tag = "action",
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
             _btnNotes.Click += OnOpenNotesClick;
@@ -459,23 +473,36 @@ namespace wxd.files.winforms
             int barH = ThemeMetrics.BarHeight;
             _pnlTopBar.Height = barH;
 
-            if (_flowPanel != null) LayoutTopBarChildren(_flowPanel, ThemeMetrics.RowH, barH);
-            if (_pnlTopRight != null) LayoutTopBarChildren(_pnlTopRight, ThemeMetrics.RowH, barH);
+            // 主操作按钮统一宽度：按最长文字量一次，避免"工具箱"和"笔记"一宽一窄
+            int actionW = 0;
+            if (_flowPanel != null)
+            {
+                foreach (Control c in _flowPanel.Controls)
+                {
+                    if (c is ThemeButton { Tag: "action" } tb)
+                        actionW = Math.Max(actionW, ThemeButton.FitWidth(tb.Text, 84));
+                }
+            }
+
+            if (_flowPanel != null) LayoutTopBarChildren(_flowPanel, ThemeMetrics.RowH, barH, actionW);
+            if (_pnlTopRight != null) LayoutTopBarChildren(_pnlTopRight, ThemeMetrics.RowH, barH, 0);
         }
 
-        private static void LayoutTopBarChildren(Control host, int rowH, int barH)
+        private static void LayoutTopBarChildren(Control host, int rowH, int barH, int actionWidth)
         {
             foreach (Control c in host.Controls)
             {
+                bool isAction = c is ThemeButton { Tag: "action" };
                 int h = c switch
                 {
                     ThemeSegmented => rowH + 4,
+                    ThemeButton when isAction => rowH + 4,
                     Label { AutoSize: true } => c.GetPreferredSize(Size.Empty).Height,
                     _ => rowH
                 };
 
                 if (c is Button btn)
-                    btn.Size = new Size(ThemeButton.FitWidth(btn.Text), h);
+                    btn.Size = new Size(isAction && actionWidth > 0 ? actionWidth : ThemeButton.FitWidth(btn.Text), h);
                 else if (c is ThemeSegmented)
                     c.Size = c.GetPreferredSize(Size.Empty);
                 else if (c is not Label)

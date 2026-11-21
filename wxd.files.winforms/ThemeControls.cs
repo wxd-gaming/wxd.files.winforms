@@ -28,6 +28,14 @@ namespace wxd.files.winforms
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public bool Danger { get; set; }
 
+        /// <summary>
+        /// 顶栏浮雕样式：大圆角 + 上亮下暗渐变 + 顶面高光 + 底部投影，仿 macOS 图标栏。
+        /// 只对有实底（Primary / FillOverride）的按钮生效。
+        /// </summary>
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Raised { get; set; }
+
         private bool _hover;
         private bool _down;
 
@@ -52,10 +60,15 @@ namespace wxd.files.winforms
             g.Clear(face);
 
             var flat = Primary || FillOverride.HasValue;
+            var raised = Raised && flat && !Ghost;
             var fill = FillOverride ?? (Primary ? p.Accent : face);
             var line = flat ? fill : p.Border;
+            // 浅色 accent 落在深色皮肤时，p.Text 也是浅色，浅压浅读不出；
+            // 这种情况改用深色窗口色当墨色（浅色皮肤仍用 p.Text）。
             var fore = flat
-                ? (Theme.IsDark(fill) ? Color.White : p.Text)
+                ? (Theme.IsDark(fill) ? Color.White
+                   : Primary ? (Theme.Dark ? p.Window : p.Text)
+                   : p.Text)
                 : Ghost ? p.Muted : p.Text;
 
             // 警示态在描边和文字上各来一刀；自绘按钮不认 ForeColor，只认这个开关
@@ -73,39 +86,105 @@ namespace wxd.files.winforms
                 line = Theme.Mix(line, face, 0.55f);
                 fore = Theme.Mix(fore, face, 0.45f);
             }
-            else if (_down)
+            else if (!raised && _down)
             {
                 fill = Theme.Mix(fill, Theme.IsDark(fill) ? Color.White : p.Text, 0.16f);
                 line = fill;
             }
-            else if (_hover)
+            else if (!raised && _hover)
             {
                 fill = Theme.Mix(fill, flat ? Color.White : p.Text, flat ? 0.14f : 0.06f);
                 if (!Ghost) line = Theme.Mix(line, flat ? Color.White : p.Text, 0.14f);
                 if (alert) line = Theme.Mix(line, Color.White, 0.18f);
             }
 
-            var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
-            var radius = (float)Math.Min(p.Radius, Height / 2f);
+            // 浮雕按钮缩进 2px：底部那点空间用来画投影，圆角也比普通按钮大得多
+            var rect = raised
+                ? new RectangleF(2f, 1f, Width - 4f, Height - 4f)
+                : new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
+            var radius = raised
+                ? Math.Min(Height * 0.36f, 11f)
+                : (float)Math.Min(p.Radius, Height / 2f);
 
             using (var path = RoundRect(rect, radius))
             {
-                if (!Ghost)
+                if (raised)
                 {
-                    using var br = new SolidBrush(fill);
-                    g.FillPath(br, path);
+                    PaintRaised(g, path, rect, radius, fill, face);
                 }
-                // 实底按钮的边框和底色同色，画了只是噪声；空心/幽灵按钮只在悬停时给反馈
-                if (!flat && (Ghost ? _hover : true))
+                else
                 {
-                    using var pen = new Pen(line, 1f);
-                    g.DrawPath(pen, path);
+                    if (!Ghost)
+                    {
+                        using var br = new SolidBrush(fill);
+                        g.FillPath(br, path);
+                    }
+                    // 实底按钮的边框和底色同色，画了只是噪声；空心/幽灵按钮只在悬停时给反馈
+                    if (!flat && (Ghost ? _hover : true))
+                    {
+                        using var pen = new Pen(line, 1f);
+                        g.DrawPath(pen, path);
+                    }
                 }
             }
 
             TextRenderer.DrawText(g, Text, Font, ClientRectangle, fore,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
               | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
+
+        /// <summary>浮雕面：先投影，再由按状态切换的渐变铺底，顶面加一层高光，最后压一道暗边。</summary>
+        private void PaintRaised(Graphics g, GraphicsPath path, RectangleF rect, float radius, Color fill, Color face)
+        {
+            if (Enabled && !_down)
+            {
+                using var shadow = new SolidBrush(Color.FromArgb(Theme.Dark ? 70 : 42, 0, 0, 0));
+                using var shadowPath = RoundRect(new RectangleF(rect.X, rect.Y + 1.5f, rect.Width, rect.Height), radius);
+                g.FillPath(shadow, shadowPath);
+            }
+
+            Color top, bottom;
+            if (!Enabled)
+            {
+                top = fill;
+                bottom = Theme.Mix(fill, face, 0.3f);
+            }
+            else if (_down)
+            {
+                // 按下时把渐变翻过来：上暗下亮，读起来像被压进去
+                top = Theme.Mix(fill, Color.Black, 0.12f);
+                bottom = Theme.Mix(fill, Color.White, 0.06f);
+            }
+            else if (_hover)
+            {
+                top = Theme.Mix(fill, Color.White, 0.32f);
+                bottom = Theme.Mix(fill, Color.Black, 0.02f);
+            }
+            else
+            {
+                top = Theme.Mix(fill, Color.White, 0.22f);
+                bottom = Theme.Mix(fill, Color.Black, 0.09f);
+            }
+
+            using (var br = new LinearGradientBrush(rect, top, bottom, LinearGradientMode.Vertical))
+                g.FillPath(br, path);
+
+            if (Enabled && !_down)
+            {
+                var state = g.Save();
+                g.SetClip(path, CombineMode.Replace);
+                var glossRect = new RectangleF(rect.X, rect.Y, rect.Width, rect.Height * 0.55f);
+                using (var gloss = new LinearGradientBrush(glossRect,
+                    Color.FromArgb(Theme.Dark ? 46 : 70, 255, 255, 255),
+                    Color.FromArgb(0, 255, 255, 255), LinearGradientMode.Vertical))
+                {
+                    g.FillRectangle(gloss, glossRect);
+                }
+                g.Restore(state);
+            }
+
+            using var pen = new Pen(Theme.Mix(fill, Color.Black, _down ? 0.34f : 0.26f), 1f);
+            g.DrawPath(pen, path);
         }
 
         /// <summary>
