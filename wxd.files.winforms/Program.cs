@@ -75,14 +75,18 @@ namespace wxd.files.winforms
 
             // 同一 exe 目录只允许一个实例：settings.json 是整文件读改写，
             // 同目录双开会互相覆盖；不同目录各有一份锁和设置，可以同时运行。
+            // 第二个实例不弹窗，通知已有实例显示窗口后自己退出。
             if (!SingleInstanceGuard.TryAcquire())
             {
-                MessageBox.Show(
-                    "同一目录只允许运行一个实例。" + GlobalConst.NewLine + GlobalConst.NewLine +
-                    "请切换到已打开的窗口；如需多开，请使用另一个目录的程序副本。",
-                    "多窗格文件夹管理器",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                if (!SingleInstanceGuard.SignalRunningInstance())
+                {
+                    MessageBox.Show(
+                        "同一目录已经有一个实例在运行，但没能唤起它的窗口。" + GlobalConst.NewLine + GlobalConst.NewLine +
+                        "请从任务栏或右下角托盘手动打开；如需多开，请使用另一个目录的程序副本。",
+                        "多窗格文件夹管理器",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
                 return;
             }
 

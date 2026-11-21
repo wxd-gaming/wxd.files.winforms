@@ -1092,6 +1092,12 @@ z: 1
         {
             Assert(SingleInstanceGuard.TryAcquire(), "首次获取锁应成功");
             Assert(!SingleInstanceGuard.TryAcquire(), "同一目录第二次获取应失败");
+
+            // 同目录第二个实例不应再弹提示：发唤起信号，已有实例的监听应被触发
+            using var activated = new ManualResetEventSlim(false);
+            SingleInstanceGuard.StartListener(() => activated.Set());
+            Assert(SingleInstanceGuard.SignalRunningInstance(), "第二实例应能发出唤起信号");
+            Assert(activated.Wait(2000), "已有实例应收到唤起信号");
         }
 
         private static void Test_SortRowIndicesMatchesComparer()

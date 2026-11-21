@@ -668,6 +668,28 @@ namespace wxd.files.winforms
             BringToFront();
         }
 
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            // 同目录再次双击 exe：第二个实例会通知这里，把窗口从托盘/最小化里拉出来
+            SingleInstanceGuard.StartListener(ActivateFromSecondLaunch);
+        }
+
+        private void ActivateFromSecondLaunch()
+        {
+            if (IsDisposed || Disposing) return;
+            try
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(ActivateFromSecondLaunch));
+                    return;
+                }
+                ShowMainWindow();
+            }
+            catch (InvalidOperationException) { }   // 含 ObjectDisposedException
+        }
+
         private void HideToTray()
         {
             Hide();
