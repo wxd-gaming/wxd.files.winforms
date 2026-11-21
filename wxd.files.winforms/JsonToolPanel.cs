@@ -11,11 +11,11 @@ using System.Windows.Forms;
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// JSON 面板：左边原始文本、右边可折叠的 JSON 树。
+    /// JSON 页签：左边原始文本、右边可折叠的 JSON 树。
     /// 支持格式化、压缩成一行、递归 key 排序、全部展开/折叠、按 key/值搜索。
     /// 解析用 System.Text.Json，保留数字原始写法、中文不转义。
     /// </summary>
-    internal sealed class JsonToolForm : Form
+    internal sealed class JsonToolPanel : UserControl
     {
         private static readonly JsonSerializerOptions PreviewOptions = new()
         {
@@ -38,7 +38,7 @@ namespace wxd.files.winforms
         private readonly TextBox _txtSource = new();
         private readonly ThemeBordered _sourceBorder;
         private readonly TreeView _tree = new();
-        private readonly SplitContainer _split = new();
+        private readonly SplitContainer _split = new SafeSplitContainer();
         private readonly Label _lblStatus = new();
         private readonly System.Windows.Forms.Timer _parseTimer = new();
         private readonly List<TreeNode> _matches = new();
@@ -51,15 +51,19 @@ namespace wxd.files.winforms
         private bool _suppressTextChanged;
         private bool _hasComments;
         private JsonNode? _root;
+        private string _tabCaption = "JSON";
 
-        internal JsonToolForm()
+        /// <summary>页签标题（文件名 / 未保存 *）变化，由工具集外壳刷新页签文字。</summary>
+        internal event EventHandler? CaptionChanged;
+
+        internal string TabCaption => _tabCaption;
+
+        internal JsonToolPanel()
         {
             _sourceBorder = new ThemeBordered(_txtSource);
-            InitializeComponent();
             BuildLayout();
             ApplyTheme();
             Theme.Changed += ApplyTheme;
-            FormClosing += OnFormClosing;
             Disposed += (_, _) =>
             {
                 Theme.Changed -= ApplyTheme;
@@ -68,24 +72,18 @@ namespace wxd.files.winforms
             };
         }
 
-        private void InitializeComponent()
-        {
-            SuspendLayout();
-            ClientSize = new Size(1280, 780);
-            MinimumSize = new Size(900, 560);
-            Text = "JSON 工具";
-            StartPosition = FormStartPosition.CenterScreen;
-            Font = Theme.Body;
-            Icon = WindowIcons.Reader;
-            KeyPreview = true;
-            ResumeLayout(false);
-        }
-
         // ==================== 布局 ====================
 
         private void BuildLayout()
         {
             SuspendLayout();
+
+            Dock = DockStyle.Fill;
+            BackColor = Theme.P.Window;
+            Font = Theme.Body;
+            AllowDrop = true;
+            DragEnter += OnDragEnter;
+            DragDrop += OnFileDrop;
 
             _top.Dock = DockStyle.Top;
             _top.Height = 46;
@@ -107,11 +105,13 @@ namespace wxd.files.winforms
 
             _btnPrev.Text = "上一个";
             _btnPrev.Font = Theme.Body;
+            _btnPrev.Size = new Size(ThemeButton.FitWidth("上一个"), ThemeMetrics.RowH);
             _btnPrev.Margin = new Padding(ThemeMetrics.Gap, 0, 0, 0);
             _btnPrev.Click += (_, _) => RunSearch(forward: false);
 
             _btnNext.Text = "下一个";
             _btnNext.Font = Theme.Body;
+            _btnNext.Size = new Size(ThemeButton.FitWidth("下一个"), ThemeMetrics.RowH);
             _btnNext.Margin = new Padding(ThemeMetrics.Gap, 0, 0, 0);
             _btnNext.Click += (_, _) => RunSearch(forward: true);
 
@@ -155,6 +155,7 @@ namespace wxd.files.winforms
             _split.Dock = DockStyle.Fill;
             _split.Orientation = Orientation.Vertical;
             _split.SplitterWidth = 6;
+            _split.SizeChanged += (_, _) => ApplySplitterLayout();
 
             _split.Panel1.Controls.Add(_sourceBorder);
             _split.Panel2.Controls.Add(_tree);
@@ -177,24 +178,11 @@ namespace wxd.files.winforms
                 ParseAndRender();
             };
 
-            AllowDrop = true;
-            DragEnter += OnDragEnter;
-            DragDrop += OnFileDrop;
-
-            Shown += (_, _) =>
+            Load += (_, _) =>
             {
-                try
-                {
-                    _split.SplitterDistance = Math.Max(320, _split.Width / 2);
-                    _split.Panel1MinSize = 240;
-                    _split.Panel2MinSize = 240;
-                    NormalizePaneLayout();
-                }
-                catch (InvalidOperationException) { }
+                ApplySplitterLayout();
                 _txtSource.Focus();
             };
-
-            KeyDown += OnFormKeyDown;
 
             ResumeLayout(false);
             PerformLayout();
@@ -207,6 +195,30 @@ namespace wxd.files.winforms
             button.Margin = new Padding(0, 0, ThemeMetrics.Gap, 0);
             button.Size = new Size(ThemeButton.FitWidth(text), ThemeMetrics.RowH);
             button.Click += onClick;
+        }
+
+        private bool _applyingSplitter;
+
+        private void ApplySplitterLayout()
+        {
+            // 面板创建初期宽度很小，固定 240 的 PanelNMinSize 会让 SplitContainer
+            // 内部布局反复抛 InvalidOperationException，按当前宽度自适应并夹紧。
+            if (_applyingSplitter || _split.IsDisposed) return;
+            int width = _split.Width;
+            if (width < 120) return;
+            int min = Math.Min(240, Math.Max(25, (width - _split.SplitterWidth) / 3));
+            int max = Math.Max(min, width - _split.SplitterWidth - min);
+            int distance = Math.Clamp(width / 2, min, max);
+            _applyingSplitter = true;
+            try
+            {
+                if (_split.Panel1MinSize != min) _split.Panel1MinSize = min;
+                if (_split.Panel2MinSize != min) _split.Panel2MinSize = min;
+                if (_split.SplitterDistance != distance) _split.SplitterDistance = distance;
+                NormalizePaneLayout();
+            }
+            catch (InvalidOperationException) { }
+            finally { _applyingSplitter = false; }
         }
 
         private void NormalizePaneLayout()
@@ -298,7 +310,7 @@ namespace wxd.files.winforms
                     string display = _hasComments ? text : JsonToolEngine.Format(result.Root);
                     SetSourceText(display, suppressChanged: true);
                     _dirty = false;
-                    UpdateTitle();
+                    UpdateCaption();
                     ParseAndRender(_hasComments
                         ? "已打开 " + Path.GetFileName(path) + " · 含注释，未自动格式化"
                         : "已打开 " + Path.GetFileName(path) + " · 已格式化");
@@ -307,11 +319,11 @@ namespace wxd.files.winforms
                 {
                     SetSourceText(text, suppressChanged: true);
                     _dirty = false;
-                    UpdateTitle();
+                    UpdateCaption();
                     ParseAndRender();
                 }
 
-                UpdateTitle();
+                UpdateCaption();
                 return true;
             }
             catch (Exception ex)
@@ -365,17 +377,18 @@ namespace wxd.files.winforms
             _currentPath = path;
             _currentEncoding = encoding;
             _dirty = false;
-            UpdateTitle();
+            UpdateCaption();
             SetStatus("已保存：" + path);
         }
 
-        private void OnFormClosing(object? sender, FormClosingEventArgs e)
+        /// <summary>工具集外壳关闭前调用：有未保存修改时询问是否丢弃。</summary>
+        internal bool ConfirmClose()
         {
-            if (!_dirty) return;
+            if (!_dirty) return true;
 
-            var result = AlertForm.ShowConfirm(this,
-                "有未保存的修改，关闭后丢失。确定关闭吗？", "JSON 工具", AlertType.Warning);
-            if (result != DialogResult.Yes) e.Cancel = true;
+            return AlertForm.ShowConfirm(this,
+                "JSON 页签有未保存的修改，关闭后丢失。确定关闭吗？", "JSON 工具", AlertType.Warning)
+                == DialogResult.Yes;
         }
 
         private void OnSourceTextChanged(object? sender, EventArgs e)
@@ -390,13 +403,17 @@ namespace wxd.files.winforms
         {
             if (_dirty) return;
             _dirty = true;
-            UpdateTitle();
+            UpdateCaption();
         }
 
-        private void UpdateTitle()
+        private void UpdateCaption()
         {
-            string suffix = _currentPath == null ? "" : " - " + Path.GetFileName(_currentPath);
-            Text = "JSON 工具" + suffix + (_dirty ? " *" : "");
+            string suffix = _currentPath == null ? "" : " · " + Path.GetFileName(_currentPath);
+            string caption = "JSON" + suffix + (_dirty ? " *" : "");
+            if (caption == _tabCaption) return;
+
+            _tabCaption = caption;
+            CaptionChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private void SetSourceText(string text, bool suppressChanged)
@@ -681,29 +698,30 @@ namespace wxd.files.winforms
 
         // ==================== 杂项 ====================
 
-        private void OnFormKeyDown(object? sender, KeyEventArgs e)
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (e.Control && e.KeyCode == Keys.O)
+            if (keyData == (Keys.Control | Keys.O))
             {
                 OpenFile();
-                e.Handled = true;
+                return true;
             }
-            else if (e.Control && e.KeyCode == Keys.S)
+            if (keyData == (Keys.Control | Keys.S))
             {
                 Save();
-                e.Handled = true;
+                return true;
             }
-            else if (e.Control && e.KeyCode == Keys.F)
+            if (keyData == (Keys.Control | Keys.F))
             {
                 _fldSearch.Edit.Focus();
                 _fldSearch.Edit.SelectAll();
-                e.Handled = true;
+                return true;
             }
-            else if (e.KeyCode == Keys.F3)
+            if (keyData == Keys.F3 || keyData == (Keys.Shift | Keys.F3))
             {
-                RunSearch(forward: !e.Shift);
-                e.Handled = true;
+                RunSearch(forward: keyData == Keys.F3);
+                return true;
             }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private static void OnDragEnter(object? sender, DragEventArgs e)

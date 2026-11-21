@@ -39,6 +39,7 @@
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
     <PackageReference Include="MiniExcel" Version="1.37.0" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
   <!-- 回归测试工程访问 internal 纯逻辑 helper（EncodeDiffCell/MergeOrderedIds/ParseGitLogOutput 等） -->

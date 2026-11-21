@@ -359,8 +359,21 @@ wxd.files.winforms/
 ├── TableDiffEngine.cs                # 表格按行对齐、逐单元格差分
 ├── SimpleTableReader.cs              # CSV/Excel 原始单元格读取（不认表头、不做冻结行）
 ├── TextFileReader.cs                 # 文本读取（按行 + UTF-8/GB18030 自动识别）
-├── JsonToolForm.cs                   # JSON 工具窗体（源文本 + 可折叠树 + 搜索）
+├── ToolboxForm.cs                    # 工具箱窗体（JSON / YAML / 时间戳 / 编码 / 哈希 / Cron 六页签）
+├── ToolPanelBase.cs                  # 工具页骨架（按钮条 + 状态栏）
+├── JsonToolPanel.cs                  # JSON 页：源文本 + 可折叠树 + 搜索 + 保存
+├── YamlToolPanel.cs                  # YAML 页：YAML↔JSON、校验
+├── TimeToolPanel.cs                  # 时间戳页：秒/毫秒/微秒与日期互转
+├── EncodingToolPanel.cs              # 编码页：Unicode/UTF-8 Hex/Base64/URL/HTML
+├── HashToolPanel.cs                  # 哈希页：MD5 / SHA256（输入即算）
+├── CronToolPanel.cs                  # Cron 页：解析 5/6 段表达式 + 后续触发时间
 ├── JsonToolEngine.cs                 # JSON 解析/格式化/压缩/递归 key 排序
+├── YamlToolEngine.cs                 # YAML↔JSON 互转与校验
+├── TimeToolEngine.cs                 # 时间戳 / 日期文本换算
+├── EncodingToolEngine.cs             # 文本转义与编码转换
+├── HashToolEngine.cs                 # MD5 / SHA256
+├── CronToolEngine.cs                 # cron 解析与触发时间推算
+├── SafeSplitContainer.cs             # SplitContainer 安全子类（.NET 10 GDI+ 崩溃兜底）
 ├── LineListView.cs                   # 虚拟滚动行列表
 ├── FileSplitter.cs                   # 大文件分块读取
 ├── FileCacheStore.cs                 # 搜索结果缓存（内存 LRU + 磁盘）
@@ -399,7 +412,7 @@ wxd.files.winforms/
 | [FileBrowserPanel.md](wxd.files.winforms/skills/FileBrowserPanel.md) | 单窗格文件浏览 |
 | [LargeFileViewer.md](wxd.files.winforms/skills/LargeFileViewer.md) | 大文件流式读取与虚拟滚动 |
 | [TextCompare.md](wxd.files.winforms/skills/TextCompare.md) | 文本/表格比对：差分算法、对齐口径、编码识别 |
-| [JsonTool.md](wxd.files.winforms/skills/JsonTool.md) | JSON 面板：格式化/折叠/搜索/key 排序 |
+| [Toolbox.md](wxd.files.winforms/skills/Toolbox.md) | 工具箱六页签：JSON / YAML / 时间戳 / 编码 / 哈希 / Cron |
 | [ThemeSystem.md](wxd.files.winforms/skills/ThemeSystem.md) | 深色 / 浅色主题体系 |
 | [CustomCommand.md](wxd.files.winforms/skills/CustomCommand.md) | 自定义命令系统 |
 

@@ -31,7 +31,7 @@ namespace wxd.files.winforms
         private Button? _btnNotes;                          // 笔记按钮
         private NoteForm? _noteForm;                        // 笔记窗体（单例）
         private TextCompareForm? _textCompareForm;          // 文本比对窗体（单例）
-        private JsonToolForm? _jsonToolForm;                // JSON 工具窗体（单例）
+        private ToolboxForm? _toolboxForm;                  // 工具箱窗体（单例）
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
         private Panel? _pnlTopBar;
@@ -364,14 +364,14 @@ namespace wxd.files.winforms
             };
             btnTextCompare.Click += OnOpenTextCompareClick;
 
-            // JSON 工具按钮
+            // 工具箱按钮（JSON / YAML / 时间戳 / 编码 / 哈希 / Cron）
             var btnJsonTool = new ThemeButton
             {
-                Text = "JSON",
+                Text = "工具箱",
                 Font = Theme.Body,
                 Margin = new Padding(0, 0, ThemeMetrics.Gap, 0)
             };
-            btnJsonTool.Click += OnOpenJsonToolClick;
+            btnJsonTool.Click += OnOpenToolboxClick;
 
             // 笔记按钮
             _btnNotes = new ThemeButton
@@ -548,20 +548,20 @@ namespace wxd.files.winforms
             _textCompareForm.Show(this);
         }
 
-        // ==================== 打开 JSON 工具（单例） ====================
-        private void OnOpenJsonToolClick(object? sender, EventArgs e)
+        // ==================== 打开工具箱（单例） ====================
+        private void OnOpenToolboxClick(object? sender, EventArgs e)
         {
-            if (_jsonToolForm != null && !_jsonToolForm.IsDisposed)
+            if (_toolboxForm != null && !_toolboxForm.IsDisposed)
             {
-                if (_jsonToolForm.WindowState == FormWindowState.Minimized)
-                    _jsonToolForm.WindowState = FormWindowState.Normal;
-                _jsonToolForm.Activate();
+                if (_toolboxForm.WindowState == FormWindowState.Minimized)
+                    _toolboxForm.WindowState = FormWindowState.Normal;
+                _toolboxForm.Activate();
                 return;
             }
 
-            _jsonToolForm = new JsonToolForm();
-            _jsonToolForm.FormClosed += (s, e2) => _jsonToolForm = null;
-            _jsonToolForm.Show(this);
+            _toolboxForm = new ToolboxForm();
+            _toolboxForm.FormClosed += (s, e2) => _toolboxForm = null;
+            _toolboxForm.Show(this);
         }
 
         // ==================== 打开笔记窗体（单例） ====================

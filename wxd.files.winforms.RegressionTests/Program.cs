@@ -121,6 +121,9 @@ namespace wxd.files.winforms.RegressionTests
             Run("单实例锁", Test_SingleInstanceGuard);
             Run("表格排序与旧比较器等价", Test_SortRowIndicesMatchesComparer);
 
+            // 工具箱：时间戳 / 编码 / 哈希 / Cron / YAML
+            RunToolboxTests();
+
             RunFeatureTests();
 
             Console.WriteLine();

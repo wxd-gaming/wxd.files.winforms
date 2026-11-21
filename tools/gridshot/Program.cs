@@ -47,6 +47,44 @@ static void Run(string[] args)
         return;
     }
 
+    if (args.Length > 3 && args[3] == "toolbox")
+    {
+        var formType = asm.GetType("wxd.files.winforms.ToolboxForm")!;
+        var logPath = @"D:\work\wxd.files.winforms\tools\restyle-shots\toolbox-error.txt";
+        try
+        {
+            var toolbox = (Form)Activator.CreateInstance(formType, true)!;
+            int tab = args.Length > 4 ? int.Parse(args[4]) : 0;
+            bool fill = args.Length > 5 && args[5] == "fill";
+            bool actions = args.Length > 6 && args[6] == "actions";
+
+            toolbox.Shown += (_, _) =>
+            {
+                try
+                {
+                    var tabs = (TabControl)formType
+                        .GetField("_tabs", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .GetValue(toolbox)!;
+                    tabs.SelectedIndex = Math.Clamp(tab, 0, tabs.TabPages.Count - 1);
+                    if (fill) FillToolbox(tabs, tab);
+                    if (actions) RunToolboxActions(tabs, tab, logPath);
+                }
+                catch (Exception ex)
+                {
+                    File.WriteAllText(logPath, "Shown: " + ex);
+                }
+            };
+
+            Application.ThreadException += (_, e) => File.WriteAllText(logPath, "Thread: " + e.Exception);
+            Application.Run(toolbox);
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(logPath, "Ctor/Run: " + ex);
+        }
+        return;
+    }
+
     if (args.Length > 3 && args[3] == "main")
     {
         var settings = asm.GetType("wxd.files.winforms.CsvSettings")!;
@@ -989,6 +1027,115 @@ static void SmokeTest(Type mainType, Form main, string log)
             main.Close();
         }
     };
+}
+
+// 给工具箱各页签塞一份样例内容，方便截图时看到真实排版
+static void FillToolbox(TabControl tabs, int tab)
+{
+    if (tab < 0 || tab >= tabs.TabPages.Count) return;
+    var page = tabs.TabPages[tab];
+    if (page.Controls.Count == 0) return;
+    var panel = page.Controls[0];
+    var type = panel.GetType();
+
+    object? Field(string name) =>
+        type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(panel);
+    TextBox? Editor(string name) => Field(name) as TextBox;
+    TextBox? FieldEdit(string name)
+    {
+        var holder = Field(name);
+        return holder?.GetType().GetProperty("Edit")?.GetValue(holder, null) as TextBox;
+    }
+
+    switch (tab)
+    {
+        case 0: // JSON
+            if (Editor("_txtSource") is { } src)
+                src.Text = """
+{
+  "monsterId": 10001,
+  "name": "史莱姆",
+  "hp": 120,
+  "skills": ["撞击", "分裂"],
+  "drop": { "itemId": 2001, "rate": 0.35 }
+}
+""";
+            break;
+
+        case 1: // YAML
+            if (Editor("_editor") is { } yaml)
+                yaml.Text = "name: 史莱姆\r\nlevel: 12\r\nboss: true\r\nskills:\r\n  - 撞击\r\n  - 分裂\r\n";
+            break;
+
+        case 2: // 时间戳
+            if (FieldEdit("_field") is { } timeInput) timeInput.Text = "1700000000123";
+            type.GetMethod("ConvertInput", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(panel, null);
+            break;
+
+        case 3: // 编码
+            if (Editor("_input") is { } encIn) encIn.Text = "史莱姆 <tag> & a b";
+            if (Editor("_output") is { } encOut) encOut.Text = "Unicode 转义 / UTF-8 Hex / Base64 / URL / HTML 的输出会显示在这里";
+            break;
+
+        case 4: // 哈希
+            if (Editor("_input") is { } hashIn) hashIn.Text = "史莱姆";
+            break;
+
+        case 5: // Cron
+            if (FieldEdit("_field") is { } cronInput) cronInput.Text = "*/5 9-18 * * 1-5";
+            break;
+    }
+}
+
+// 页签按钮冒烟：点一个已知按钮后把结果字段写进日志，确认事件接线正确
+static void RunToolboxActions(TabControl tabs, int tab, string logPath)
+{
+    if (tab < 0 || tab >= tabs.TabPages.Count) return;
+    var page = tabs.TabPages[tab];
+    if (page.Controls.Count == 0) return;
+    var panel = page.Controls[0];
+    var type = panel.GetType();
+    object? Field(string name) =>
+        type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(panel);
+    string? EditorText(string name) => (Field(name) as TextBox)?.Text;
+    bool Click(string text)
+    {
+        foreach (var c in Walk(panel))
+        {
+            if (c is System.Windows.Forms.Button b && b.Text == text)
+            {
+                b.PerformClick();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    string? result = null;
+    string action = "";
+    switch (tab)
+    {
+        case 0:
+            action = "格式化";
+            Click(action);
+            result = EditorText("_txtSource");
+            break;
+        case 1:
+            action = "YAML → JSON";
+            Click(action);
+            result = EditorText("_editor");
+            break;
+        case 3:
+            action = "Base64 编码";
+            Click(action);
+            result = EditorText("_output");
+            break;
+        case 4:
+            action = "(live)";
+            result = EditorText("_output");
+            break;
+    }
+    File.AppendAllText(logPath, $"actions tab={tab} click={action}\n{result}\n----\n");
 }
 
 // 递归遍历控件树（含 DockContent 之类嵌套容器）
