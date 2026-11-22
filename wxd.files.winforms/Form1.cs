@@ -23,6 +23,8 @@ namespace wxd.files.winforms
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
+        // 顶栏比通用工具条略高一点，给按钮槽留出上下呼吸空间
+        private const int TopBarExtraHeight = 6;
         private ThemeSegmented? _segSettings;                 // 窗格 / 布局 / 主题 分段入口
         private ContextMenuStrip? _menuPane;                  // 窗格菜单
         private ContextMenuStrip? _menuLayout;                // 布局菜单
@@ -38,11 +40,11 @@ namespace wxd.files.winforms
         private bool _trayHintShown;
         private Panel _pnlContainer = new();
         private TabbedFileBrowserPanel[] _panels = Array.Empty<TabbedFileBrowserPanel>();
-        private Panel? _pnlTopBar;
+        private ThemeTopBar? _pnlTopBar;
         private Panel? _pnlTopRight;                        // 顶栏右侧固定区
         private Button? _btnCmdManager;                      // 命令管理按钮
         private Button? _btnSaveState;                        // 保存状态按钮
-        private FlowLayoutPanel? _flowPanel;                  // 顶部流式布局面板
+        private ThemeShelfFlowPanel? _flowPanel;              // 顶部流式布局面板
         private readonly List<Button> _cmdActionButtons = new(); // 动态生成的命令按钮
 
         private int _paneCount = 7;                           // 当前窗格数量
@@ -283,12 +285,14 @@ namespace wxd.files.winforms
             SuspendLayout();
 
             // 顶部工具栏面板：高度与内边距跟其它工具条同源，皮肤切换时由 LayoutTopBar 重算
-            _pnlTopBar = new Panel
+            // 背景栏贴顶栏四边各留 Gap（6），内容再往里留同样宽度，左右边界与下方窗格对齐
+            _pnlTopBar = new ThemeTopBar
             {
                 Dock = DockStyle.Top,
-                Height = ThemeMetrics.BarHeight,
-                Padding = new Padding(ThemeMetrics.Margin, 0, ThemeMetrics.Margin, 0),
-                BackColor = Theme.P.Chrome
+                Height = ThemeMetrics.BarHeight + TopBarExtraHeight,
+                Padding = new Padding(
+                    ThemeMetrics.Gap * 2, 0,
+                    ThemeMetrics.Gap * 2, 0)
             };
 
             // 容器面板
@@ -308,15 +312,14 @@ namespace wxd.files.winforms
 
             // 流式布局面板：左侧按「标题 → 设置入口 → 主操作」从左到右排开
             // 顶栏高度固定，控件不再靠容器内边距下移，而是各自的 Margin.Top 居中
-            _flowPanel = new FlowLayoutPanel
+            _flowPanel = new ThemeShelfFlowPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 AutoScroll = true,   // 窄窗口时按钮可横向滚动，避免被裁掉
                 AutoSize = false,
-                Padding = new Padding(0),
-                BackColor = Color.Transparent
+                Padding = new Padding(0)
             };
 
             var lblTitle = new Label
@@ -325,6 +328,7 @@ namespace wxd.files.winforms
                 AutoSize = true,
                 Font = Theme.Title,
                 ForeColor = Theme.P.Text,
+                BackColor = Color.Transparent,
                 Tag = "title",
                 Margin = new Padding(0, 0, ThemeMetrics.Group, 0)
             };
@@ -470,7 +474,7 @@ namespace wxd.files.winforms
         {
             if (_pnlTopBar == null) return;
 
-            int barH = ThemeMetrics.BarHeight;
+            int barH = ThemeMetrics.BarHeight + TopBarExtraHeight;
             _pnlTopBar.Height = barH;
 
             // 主操作按钮统一宽度：按最长文字量一次，避免"工具箱"和"笔记"一宽一窄
@@ -894,7 +898,8 @@ namespace wxd.files.winforms
             // 顶部工具栏
             if (_pnlTopBar != null)
             {
-                _pnlTopBar.BackColor = Theme.P.Chrome;
+                _pnlTopBar.ApplyTheme();
+                _flowPanel?.ApplyTheme();
                 // 更新分隔线颜色
                 foreach (Control c in _pnlTopBar.Controls)
                 {

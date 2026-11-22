@@ -58,7 +58,8 @@ namespace wxd.files.winforms
                 Text = text,
                 Font = Theme.Body,
                 Primary = primary,
-                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
+                // 底部留一行距：单行工具条看不出差别，编码页等换行工具条的行与行之间就有间隔
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, ThemeMetrics.Gap),
                 Size = new Size(ThemeButton.FitWidth(text), ThemeMetrics.RowH),
                 BackColor = Theme.P.Chrome
             };
@@ -73,7 +74,7 @@ namespace wxd.files.winforms
             var field = new ThemeField
             {
                 Size = new Size(width, ThemeMetrics.RowH),
-                Margin = new Padding(0, 0, ThemeMetrics.Gap, 0),
+                Margin = new Padding(0, 0, ThemeMetrics.Gap, ThemeMetrics.Gap),
                 Placeholder = placeholder
             };
             Top.Controls.Add(field);

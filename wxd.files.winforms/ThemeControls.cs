@@ -57,7 +57,10 @@ namespace wxd.files.winforms
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var face = FaceColor();
-            g.Clear(face);
+            if (ThemeTopBar.FindFor(this) is { } topBar)
+                topBar.PaintSurface(g, this);
+            else
+                g.Clear(face);
 
             var flat = Primary || FillOverride.HasValue;
             var raised = Raised && flat && !Ghost;
@@ -191,7 +194,13 @@ namespace wxd.files.winforms
         /// 取真正垫在按钮下面的底色：容器可能设了 Transparent，
         /// 直接 Clear(Transparent) 会画成黑块，要往上找到第一个不透明的父级。
         /// </summary>
-        private Color FaceColor() => FaceColorOf(this);
+        private Color FaceColor()
+        {
+            // 顶栏里的按钮统一用背景栏的渐变色清屏，圆角外才不会露出顶栏底色。
+            if (ThemeTopBar.SurfaceColorFor(this) is Color surface)
+                return surface;
+            return FaceColorOf(this);
+        }
 
         /// <summary>
         /// 取真正垫在按钮下面的底色：容器可能设了 Transparent，
@@ -400,6 +409,64 @@ namespace wxd.files.winforms
                     new PointF(5.8f, top + box - 4f),
                     new PointF(box - 3.2f, top + 3.6f)
                 });
+            }
+
+            int textX = box + 6;
+            TextRenderer.DrawText(g, Text, Font,
+                new Rectangle(textX, 0, Math.Max(0, Width - textX), Height), fore,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left
+              | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    /// <summary>
+    /// 单选框：原生圆点同样走系统视觉样式，深色皮肤里会留白点，按复选框的方式自绘。
+    /// 互斥仍交给 RadioButton 自身（要求同一个父容器）。
+    /// </summary>
+    internal class ThemeRadioButton : RadioButton
+    {
+        public override Size GetPreferredSize(Size proposedSize)
+        {
+            var sz = base.GetPreferredSize(proposedSize);
+            if (!AutoSize || string.IsNullOrEmpty(Text)) return sz;
+            int need = TextRenderer.MeasureText(Text, Font, Size.Empty, TextFormatFlags.NoPrefix).Width + 24;
+            sz.Width = Math.Max(sz.Width, need);
+            return sz;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var p = Theme.P;
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(ThemeButton.FaceColorOf(this));
+
+            const int box = 14;
+            int top = (Height - box) / 2;
+            var rect = new RectangleF(0.5f, top + 0.5f, box - 1f, box - 1f);
+            var fill = Checked ? p.Accent : p.Surface;
+            var line = Checked ? p.Accent : p.Border;
+            var fore = Enabled ? p.Text : p.Muted;
+            if (!Enabled)
+            {
+                fill = Theme.Mix(fill, ThemeButton.FaceColorOf(this), 0.55f);
+                line = Theme.Mix(line, ThemeButton.FaceColorOf(this), 0.55f);
+            }
+
+            using (var circle = new GraphicsPath())
+            {
+                circle.AddEllipse(rect);
+                using var br = new SolidBrush(fill);
+                g.FillPath(br, circle);
+                using var pen = new Pen(line, 1f);
+                g.DrawPath(pen, circle);
+            }
+
+            if (Checked)
+            {
+                var dot = new RectangleF(rect.X + 3.5f, rect.Y + 3.5f, rect.Width - 7f, rect.Height - 7f);
+                using var br = new SolidBrush(Theme.IsDark(fill) ? Color.White : p.AccentText);
+                g.FillEllipse(br, dot);
             }
 
             int textX = box + 6;
@@ -622,7 +689,10 @@ namespace wxd.files.winforms
             var g = e.Graphics;
             var p = Theme.P;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(ThemeButton.FaceColorOf(this));
+            if (ThemeTopBar.FindFor(this) is { } topBar)
+                topBar.PaintSurface(g, this);
+            else
+                g.Clear(ThemeButton.FaceColorOf(this));
             if (_items.Length == 0) return;
 
             var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
@@ -700,6 +770,140 @@ namespace wxd.files.winforms
             base.OnMouseLeave(e);
             _hoverIndex = -1;
             _downIndex = -1;
+            Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// 顶栏背景层：整条顶栏共享一条圆角背景栏，标题、主操作和右侧固定入口都包在里面。
+    /// 背景栏四边留白相同，左右边界与下方窗格容器的外边距对齐。
+    /// </summary>
+    internal class ThemeTopBar : Panel
+    {
+        public ThemeTopBar()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                   | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Theme.P.Chrome;
+        }
+
+        public void ApplyTheme()
+        {
+            BackColor = Theme.P.Chrome;
+            Invalidate(true);
+        }
+
+        internal RectangleF ShelfBounds()
+        {
+            float inset = ThemeMetrics.Gap;
+            float w = ClientSize.Width - inset * 2f;
+            float h = ClientSize.Height - inset * 2f;
+            return w > 0 && h > 0
+                ? new RectangleF(inset, inset, w, h)
+                : RectangleF.Empty;
+        }
+
+        /// <summary>按钮清屏用：取控件中心位置对应的背景栏渐变色，避免露出顶栏底色。</summary>
+        internal Color SurfaceColorAt(Control child)
+        {
+            var shelf = ShelfBounds();
+            if (shelf.Height <= 0) return Theme.P.Chrome;
+            var (_, top, bottom) = ShelfTones();
+            var origin = PointToClient(child.PointToScreen(Point.Empty));
+            float t = Math.Clamp((origin.Y + child.Height / 2f - shelf.Top) / shelf.Height, 0f, 1f);
+            return Theme.Mix(top, bottom, t);
+        }
+
+        /// <summary>控件在顶栏里时返回它该用的背景色，否则返回 null，交回普通取色逻辑。</summary>
+        internal static Color? SurfaceColorFor(Control child)
+            => FindFor(child)?.SurfaceColorAt(child);
+
+        /// <summary>找控件所属的顶栏；没有就返回 null。</summary>
+        internal static ThemeTopBar? FindFor(Control child)
+        {
+            for (var p = child.Parent; p != null; p = p.Parent)
+                if (p is ThemeTopBar bar) return bar;
+            return null;
+        }
+
+        /// <summary>
+        /// 按控件所在的纵向区间画一段与背景栏对齐的渐变。
+        /// 只用单一颜色清屏时，渐变背景会在按钮上下沿留下一条淡淡的矩形；这里按位置取样就不会。
+        /// </summary>
+        internal void PaintSurface(Graphics g, Control child)
+        {
+            var rect = new Rectangle(0, 0, Math.Max(1, child.Width), Math.Max(1, child.Height));
+            var shelf = ShelfBounds();
+            if (shelf.Height <= 0)
+            {
+                using var plain = new SolidBrush(Theme.P.Chrome);
+                g.FillRectangle(plain, rect);
+                return;
+            }
+
+            var origin = PointToClient(child.PointToScreen(Point.Empty));
+            var (_, top, bottom) = ShelfTones();
+            float y0 = Math.Clamp((origin.Y - shelf.Top) / shelf.Height, 0f, 1f);
+            float y1 = Math.Clamp((origin.Y + child.Height - shelf.Top) / shelf.Height, 0f, 1f);
+            using var brush = new LinearGradientBrush(
+                rect, Theme.Mix(top, bottom, y0), Theme.Mix(top, bottom, y1), 90f);
+            g.FillRectangle(brush, rect);
+        }
+
+        private static (Color Fill, Color Top, Color Bottom) ShelfTones()
+        {
+            var p = Theme.P;
+            var fill = Theme.Mix(p.Chrome, p.Accent, Theme.Dark ? 0.24f : 0.20f);
+            return (
+                fill,
+                Theme.Mix(fill, Color.White, Theme.Dark ? 0.06f : 0.10f),
+                Theme.Mix(fill, Color.Black, Theme.Dark ? 0.10f : 0.07f));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var p = Theme.P;
+            using (var bg = new SolidBrush(p.Chrome))
+                g.FillRectangle(bg, ClientRectangle);
+
+            var shelf = ShelfBounds();
+            if (shelf.Width <= 0 || shelf.Height <= 0) return;
+
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var (fill, top, bottom) = ShelfTones();
+            var radius = Math.Max(9f, Math.Min(14f, shelf.Height * 0.32f));
+
+            // 先垫一层淡投影，背景栏才有浮在顶栏上的层次，而不是又一条硬边。
+            using (var shadowPath = ThemeButton.RoundRect(
+                new RectangleF(shelf.X, shelf.Y + 2f, shelf.Width, shelf.Height), radius))
+            using (var shadow = new SolidBrush(Color.FromArgb(Theme.Dark ? 70 : 30, 0, 0, 0)))
+                g.FillPath(shadow, shadowPath);
+
+            using (var path = ThemeButton.RoundRect(shelf, radius))
+            {
+                using (var brush = new LinearGradientBrush(shelf, top, bottom, 90f))
+                    g.FillPath(brush, path);
+                using var pen = new Pen(Theme.Mix(fill, p.Text, Theme.Dark ? 0.18f : 0.22f), 1f);
+                g.DrawPath(pen, path);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 顶栏流式布局：自身透明，背景栏由 ThemeTopBar 统一画，按钮增减和窄窗口滚动都不需要重算槽位。
+    /// </summary>
+    internal class ThemeShelfFlowPanel : FlowLayoutPanel
+    {
+        public ThemeShelfFlowPanel()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer, true);
+            BackColor = Color.Transparent;
+        }
+
+        public void ApplyTheme()
+        {
+            BackColor = Color.Transparent;
             Invalidate();
         }
     }
