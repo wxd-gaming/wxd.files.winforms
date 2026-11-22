@@ -3,6 +3,14 @@ using System.Globalization;
 
 namespace wxd.files.winforms
 {
+    /// <summary>时间戳单位；纳秒只保留 100ns 精度（.NET DateTime 的 tick）。</summary>
+    internal enum TimeUnit
+    {
+        Seconds,
+        Milliseconds,
+        Nanoseconds
+    }
+
     /// <summary>一次时间换算的结果：识别到的类型 + 格式化后的多行报告。</summary>
     internal readonly struct TimeToolResult
     {
@@ -14,8 +22,8 @@ namespace wxd.files.winforms
     }
 
     /// <summary>
-    /// 时间戳 / 日期文本换算。支持 10 位秒、13 位毫秒、16 位微秒（含小数），
-    /// 也接受 ISO 8601 和常见日期写法；输出同时给出 UTC、本地时间和三种时间戳。
+    /// 时间戳 / 日期文本换算。自动识别秒、毫秒、微秒、纳秒时间戳（含小数），
+    /// 也接受 ISO 8601 和常见日期写法；显式单位转换由 TimeToolPanel 的分栏调用。
     /// </summary>
     internal static class TimeToolEngine
     {
@@ -42,6 +50,30 @@ namespace wxd.files.winforms
             if (!TryParse(text, out var value, out string kind, out string? error))
                 return Fail(error ?? "无法识别该时间格式");
 
+            return Describe(value, kind, now);
+        }
+
+        /// <summary>按指定单位转换，不再按数值大小猜；纳秒输入只有 100ns 精度。</summary>
+        internal static TimeToolResult Convert(string input, TimeUnit unit, DateTimeOffset? now = null)
+        {
+            string text = (input ?? "").Trim();
+            if (text.Length == 0)
+                return Fail("请输入" + UnitName(unit) + "时间戳");
+
+            if (!decimal.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture, out decimal number))
+                return Fail(UnitName(unit) + "时间戳必须是数字");
+
+            if (!TryFromUnit(number, unit, out var value, out string? error))
+                return Fail(error ?? "时间戳超出可表示范围");
+
+            string kind = UnitName(unit) + "级时间戳" + (text.Contains('.') ? "（带小数）" : "");
+            return Describe(value, kind, now);
+        }
+
+        /// <summary>把已经确定的时间包装成报告，供“时间 → 时间戳”使用。</summary>
+        internal static TimeToolResult Describe(DateTimeOffset value, string kind, DateTimeOffset? now = null)
+        {
             return new TimeToolResult
             {
                 Success = true,
@@ -49,6 +81,40 @@ namespace wxd.files.winforms
                 InputKind = kind,
                 Report = BuildReport(value, kind, now ?? DateTimeOffset.Now)
             };
+        }
+
+        internal static string UnitName(TimeUnit unit) => unit switch
+        {
+            TimeUnit.Milliseconds => "毫秒",
+            TimeUnit.Nanoseconds => "纳秒",
+            _ => "秒"
+        };
+
+        /// <summary>把时间转成指定单位的时间戳；纳秒超出 long 范围时返回 false。</summary>
+        internal static bool TryToUnixTime(DateTimeOffset value, TimeUnit unit, out long timestamp, out string? error)
+        {
+            error = null;
+            try
+            {
+                switch (unit)
+                {
+                    case TimeUnit.Seconds:
+                        timestamp = value.ToUnixTimeSeconds();
+                        return true;
+                    case TimeUnit.Milliseconds:
+                        timestamp = value.ToUnixTimeMilliseconds();
+                        return true;
+                    default:
+                        timestamp = checked((value.UtcDateTime.Ticks - UnixEpochTicks) * 100L);
+                        return true;
+                }
+            }
+            catch (OverflowException)
+            {
+                timestamp = 0;
+                error = "纳秒时间戳超出 long 范围（约 1677-09-21 至 2262-04-11）";
+                return false;
+            }
         }
 
         private static bool TryParse(string text, out DateTimeOffset value, out string kind, out string? error)
@@ -83,8 +149,31 @@ namespace wxd.files.winforms
                 }
             }
 
-            error = "无法识别：支持 10 位秒 / 13 位毫秒 / 16 位微秒时间戳，或 2024-01-01 12:00:00、ISO 8601 等写法";
+            error = "无法识别：支持秒 / 毫秒 / 微秒 / 纳秒时间戳，或 2024-01-01 12:00:00、ISO 8601 等写法";
             return false;
+        }
+
+        private static bool TryFromUnit(decimal number, TimeUnit unit, out DateTimeOffset value, out string? error)
+        {
+            value = default;
+            error = null;
+            decimal ticks = unit switch
+            {
+                TimeUnit.Seconds => number * TimeSpan.TicksPerSecond,
+                TimeUnit.Milliseconds => number * TimeSpan.TicksPerMillisecond,
+                _ => number / 100m
+            };
+
+            try
+            {
+                long rounded = decimal.ToInt64(decimal.Round(ticks, 0, MidpointRounding.AwayFromZero));
+                return TryFromUnixTicks(rounded, out value, out error);
+            }
+            catch (OverflowException)
+            {
+                error = "时间戳超出可表示范围";
+                return false;
+            }
         }
 
         private static bool TryFromNumber(long raw, out DateTimeOffset value, out string kind, out string? error)
@@ -106,10 +195,10 @@ namespace wxd.files.winforms
                 return TryFromUnixTicks(checked(raw * 10L), out value, out error);
             }
 
-            value = default;
-            kind = "";
-            error = "时间戳位数过多，无法识别（支持秒 / 毫秒 / 微秒）";
-            return false;
+            // long 能表示的时间戳里，剩余全部按纳秒处理；上限约到 2262 年
+            kind = "纳秒级时间戳";
+            long ticks = decimal.ToInt64(decimal.Round(raw / 100m, 0, MidpointRounding.AwayFromZero));
+            return TryFromUnixTicks(ticks, out value, out error);
         }
 
         private static bool TryFromDecimal(decimal dec, out DateTimeOffset value, out string kind, out string? error)
@@ -131,17 +220,22 @@ namespace wxd.files.winforms
                 kind = "微秒级时间戳（带小数）";
                 ticks = dec * 10m;
             }
+            else if (abs < 10_000_000_000_000_000_000m)
+            {
+                kind = "纳秒级时间戳（带小数）";
+                ticks = dec / 100m;
+            }
             else
             {
                 value = default;
                 kind = "";
-                error = "时间戳位数过多，无法识别（支持秒 / 毫秒 / 微秒）";
+                error = "时间戳位数过多，无法识别（支持秒 / 毫秒 / 微秒 / 纳秒）";
                 return false;
             }
 
             try
             {
-                return TryFromUnixTicks(decimal.ToInt64(decimal.Round(ticks, 0)), out value, out error);
+                return TryFromUnixTicks(decimal.ToInt64(decimal.Round(ticks, 0, MidpointRounding.AwayFromZero)), out value, out error);
             }
             catch (OverflowException)
             {
@@ -193,20 +287,23 @@ namespace wxd.files.winforms
             var local = value.ToLocalTime();
             long ms = value.ToUnixTimeMilliseconds();
             long sec = value.ToUnixTimeSeconds();
-            string offset = $"UTC{(local.Offset >= TimeSpan.Zero ? "+" : "-")}{Math.Abs(local.Offset.Hours):D2}:{Math.Abs(local.Offset.Minutes):D2}";
+            string ns = TryToUnixTime(value, TimeUnit.Nanoseconds, out long nano, out _)
+                ? nano.ToString(CultureInfo.InvariantCulture)
+                : "超出 long 范围（约 1677-09-21 至 2262-04-11）";
+            string offsetText = $"UTC{(local.Offset >= TimeSpan.Zero ? "+" : "-")}{Math.Abs(local.Offset.Hours):D2}:{Math.Abs(local.Offset.Minutes):D2}";
 
             return string.Join(Environment.NewLine, new[]
             {
                 "识别为      : " + kind,
                 "UTC         : " + utc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                "UTC 毫秒    : " + utc.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
+                "UTC 高精度  : " + utc.ToString("yyyy-MM-dd HH:mm:ss.fffffff", CultureInfo.InvariantCulture),
                 "UTC ISO     : " + utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
-                "本地时间    : " + local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "  (" + offset + ")",
-                "本地毫秒    : " + local.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
+                "本地时间    : " + local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "  (" + offsetText + ")",
+                "本地高精度  : " + local.ToString("yyyy-MM-dd HH:mm:ss.fffffff", CultureInfo.InvariantCulture),
                 "本地 ISO    : " + local.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
                 "秒时间戳    : " + sec.ToString(CultureInfo.InvariantCulture),
                 "毫秒时间戳  : " + ms.ToString(CultureInfo.InvariantCulture),
-                "微秒时间戳  : " + checked(ms * 1000L).ToString(CultureInfo.InvariantCulture),
+                "纳秒时间戳  : " + ns,
                 "星期        : " + Weekdays[(int)local.DayOfWeek],
                 "相对现在    : " + DescribeRelative(value - now)
             });
