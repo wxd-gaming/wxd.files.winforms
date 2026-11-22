@@ -6,7 +6,7 @@ using System.Windows.Forms;
 namespace wxd.files.winforms
 {
     /// <summary>
-    /// 工具集窗口：JSON、YAML、时间戳、编码、哈希、Cron 六个页签。
+    /// 工具集窗口：JSON、YAML、时间戳、编码、HTTP、Cron 六个页签。
     /// JSON 页签沿用原来的文本 + 树布局，其余页签都是即用即走的转换工具。
     /// </summary>
     internal sealed class ToolboxForm : Form
@@ -46,7 +46,8 @@ namespace wxd.files.winforms
         {
             _tabs.Dock = DockStyle.Fill;
             _tabs.Font = Theme.Body;
-            _tabs.ItemSize = new Size(170, Theme.P.ButtonHeight + 8);
+            // 六个页签 × 160 = 960，比最小窗口宽度 984 留了余量，窄窗口不裁最后一个页签
+            _tabs.ItemSize = new Size(160, Theme.P.ButtonHeight + 8);
             _tabs.SizeMode = TabSizeMode.Fixed;
             _tabs.Multiline = true;
             _tabs.BackColor = Theme.P.Window;
@@ -58,7 +59,7 @@ namespace wxd.files.winforms
             AddTab("YAML", new YamlToolPanel());
             AddTab("时间戳", new TimeToolPanel());
             AddTab("编码", new EncodingToolPanel());
-            AddTab("哈希", new HashToolPanel());
+            AddTab("HTTP", new HttpToolPanel());
             AddTab("Cron", new CronToolPanel());
 
             Controls.Add(_tabs);
@@ -93,7 +94,7 @@ namespace wxd.files.winforms
             BackColor = p.Window;
             _tabs.Font = Theme.Body;
             _tabs.BackColor = p.Window;
-            _tabs.ItemSize = new Size(170, p.ButtonHeight + 8);
+            _tabs.ItemSize = new Size(160, p.ButtonHeight + 8);
 
             foreach (TabPage page in _tabs.TabPages)
                 page.BackColor = p.Window;
