@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)][int]$Y,
     [string]$SetText = "",
     [switch]$Enter,
+    [switch]$EditOnly,
     [int]$WaitMs = 1500
 )
 
@@ -103,10 +104,10 @@ $edit = [FS]::EditAt($top, $X, $Y)
 if ($edit -eq [IntPtr]::Zero) { Write-Output "no edit at $X,$Y"; [FS]::DumpEdits($top); exit 1 }
 
 if ($SetText -ne "") { [FS]::Type($edit, $SetText) }
-if ($Enter) { [FS]::PressEnter($edit) } else { [void][FS]::SetFocus($edit) }
+if ($Enter) { [FS]::PressEnter($edit) } elseif (-not $EditOnly) { [void][FS]::SetFocus($edit) }
 
 Start-Sleep -Milliseconds $WaitMs
-$bmp = [FS]::Capture($top)
+$bmp = if ($EditOnly) { [FS]::Capture($edit) } else { [FS]::Capture($top) }
 $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
 Write-Output "saved=$Out"

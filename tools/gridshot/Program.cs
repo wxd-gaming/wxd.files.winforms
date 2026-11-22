@@ -76,6 +76,24 @@ static void Run(string[] args)
             };
 
             Application.ThreadException += (_, e) => File.WriteAllText(logPath, "Thread: " + e.Exception);
+
+            // GRIDSHOT_FLIP=1：起来后翻一次明暗，验 Cron 网格在皮肤字号变化后有没有重新量宽
+            if (Environment.GetEnvironmentVariable("GRIDSHOT_FLIP") == "1")
+            {
+                toolbox.Shown += (_, _) =>
+                {
+                    var timer = new System.Windows.Forms.Timer { Interval = 2500 };
+                    timer.Tick += (_, _) =>
+                    {
+                        timer.Stop();
+                        timer.Dispose();
+                        theme.GetMethod("Set")!.Invoke(null,
+                            new object[] { Enum.GetValues(skinEnum).GetValue(skin), !dark });
+                    };
+                    timer.Start();
+                };
+            }
+
             Application.Run(toolbox);
         }
         catch (Exception ex)
@@ -1105,21 +1123,123 @@ static void FillToolbox(TabControl tabs, int tab)
             break;
 
         case 2: // 时间戳
-            if (FieldEdit("_field") is { } timeInput) timeInput.Text = "1700000000123";
-            type.GetMethod("ConvertInput", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(panel, null);
+            if (FieldEdit("_secInput") is { } secInput) secInput.Text = "1700000000";
+            if (FieldEdit("_msInput") is { } msInput) msInput.Text = "1700000000123";
+            if (FieldEdit("_nsInput") is { } nsInput) nsInput.Text = "1700000000123456789";
+
+            var timeUnitType = type.Assembly.GetType("wxd.files.winforms.TimeUnit");
+            var convertTimestamp = type.GetMethod("ConvertTimestamp", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (timeUnitType != null && convertTimestamp != null)
+            {
+                foreach (var (unit, inputName, resultName) in new[]
+                {
+                    ("Seconds", "_secInput", "_secResult"),
+                    ("Milliseconds", "_msInput", "_msResult"),
+                    ("Nanoseconds", "_nsInput", "_nsResult")
+                })
+                {
+                    convertTimestamp.Invoke(panel, new object?[]
+                    {
+                        Enum.Parse(timeUnitType, unit), Field(inputName), Field(resultName)
+                    });
+                }
+            }
+
+            if (Field("_year") is ComboBox yearCombo) yearCombo.SelectedItem = 2026;
+            if (Field("_month") is ComboBox monthCombo) monthCombo.SelectedIndex = 10;
+            if (Field("_day") is ComboBox dayCombo) dayCombo.SelectedIndex = 20;
+            if (Field("_hour") is ComboBox hourCombo) hourCombo.SelectedIndex = 20;
+            if (Field("_minute") is ComboBox minuteCombo) minuteCombo.SelectedIndex = 15;
+            if (Field("_second") is ComboBox secondCombo) secondCombo.SelectedIndex = 32;
+            if (Field("_dateUnit") is ComboBox dateUnitCombo) dateUnitCombo.SelectedIndex = 1;
+            type.GetMethod("ConvertDate", BindingFlags.Instance | BindingFlags.NonPublic)?
+                .Invoke(panel, new object[] { true });
             break;
 
         case 3: // 编码
             if (Editor("_input") is { } encIn) encIn.Text = "史莱姆 <tag> & a b";
-            if (Editor("_output") is { } encOut) encOut.Text = "Unicode 转义 / UTF-8 Hex / Base64 / URL / HTML 的输出会显示在这里";
-            break;
-
-        case 4: // 哈希
-            if (Editor("_input") is { } hashIn) hashIn.Text = "史莱姆";
+            if (Editor("_output") is { } encOut) encOut.Text = "Unicode 转义 / UTF-8 Hex / Base64 / URL / HTML / 哈希的输出会显示在这里";
             break;
 
         case 5: // Cron
-            if (FieldEdit("_field") is { } cronInput) cronInput.Text = "*/5 9-18 * * 1-5";
+            string? dialect = Environment.GetEnvironmentVariable("THEMELAB_CRON_DIALECT");
+            if (dialect == "standard" && Field("_dialect") is ComboBox standardCombo)
+                standardCombo.SelectedIndex = 0;
+            else if (dialect == "spring" && Field("_dialect") is ComboBox springCombo)
+                springCombo.SelectedIndex = 2;
+            if (FieldEdit("_field") is { } cronInput)
+                cronInput.Text = dialect switch
+                {
+                    "standard" => "*/5 9-18 * * 1-5",
+                    "spring" => "0 0/5 9-18 * * MON-FRI",
+                    _ => "0 0/5 9-18 ? * MON-FRI"
+                };
+            // THEMELAB_CRON_TAB=日 + THEMELAB_CRON_MODE=list：直接停在指定模式的某个字段页签上截图
+            string? cronTab = Environment.GetEnvironmentVariable("THEMELAB_CRON_TAB");
+            if (cronTab != null && Field("_builder") is { } cronBuilder)
+            {
+                var bt = cronBuilder.GetType();
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                var visible = (int[])bt.GetMethod("VisibleFields", flags)!.Invoke(cronBuilder, Array.Empty<object>())!;
+                string[] names = { "秒", "分", "时", "日", "月", "周", "年" };
+                int index = Array.FindIndex(visible, f => names[f] == cronTab);
+                if (index >= 0)
+                {
+                    bt.GetMethod("OnTabClicked", flags)!.Invoke(cronBuilder, new object[] { index });
+                    if (Environment.GetEnvironmentVariable("THEMELAB_CRON_MODE") == "list")
+                        bt.GetMethod("SetMode", flags)!.Invoke(cronBuilder, new object[] { 3 });
+                }
+            }
+            break;
+
+        case 4: // HTTP
+            // THEMELAB_HTTP_METHOD = GET|POST|PUT|DELETE（默认 POST）
+            if (Field("_method") is ComboBox httpMethod)
+            {
+                string? httpMethodName = Environment.GetEnvironmentVariable("THEMELAB_HTTP_METHOD") ?? "POST";
+                int methodIndex = httpMethod.Items.IndexOf(httpMethodName);
+                httpMethod.SelectedIndex = methodIndex >= 0 ? methodIndex : 1;
+            }
+            // Body 单选：THEMELAB_HTTP_CT = none|json|urlencoded|multipart（默认 multipart）。
+            // 主程序是反射加载的，ThemeRadioButton 类型编译期不可见，走 Array + 反射
+            if (Field("_bodyType") is Array httpBodyType && httpBodyType.Length >= 4)
+            {
+                int ctIndex = Environment.GetEnvironmentVariable("THEMELAB_HTTP_CT") switch
+                {
+                    "none" => 0,
+                    "json" => 1,
+                    "urlencoded" => 2,
+                    _ => 3,
+                };
+                var target = httpBodyType.GetValue(ctIndex);
+                target?.GetType().GetProperty("Checked")!.SetValue(target, true);
+            }
+            if (Field("_encoding") is ComboBox httpEncoding)
+            {
+                string? httpEnc = Environment.GetEnvironmentVariable("THEMELAB_HTTP_ENC");
+                int encIndex = httpEncoding.Items.IndexOf(httpEnc ?? "UTF-8");
+                if (encIndex >= 0) httpEncoding.SelectedIndex = encIndex;
+            }
+            if (FieldEdit("_url") is { } httpUrl)
+                httpUrl.Text = "https://httpbin.org/" + (Environment.GetEnvironmentVariable("THEMELAB_HTTP_METHOD") is "GET" or "DELETE" ? "get" : "post");
+            if (FieldEdit("_count") is { } httpCount)
+                httpCount.Text = Environment.GetEnvironmentVariable("THEMELAB_HTTP_COUNT") ?? "5";
+            if (FieldEdit("_threads") is { } httpThreads) httpThreads.Text = "2";
+            // 单一参数网格：POST/PUT 时是请求体，GET/DELETE 时拼到 URL
+            if (Field("_params") is DataGridView httpParams)
+            {
+                httpParams.Rows.Add("name", "史莱姆");
+                httpParams.Rows.Add("level", "99");
+            }
+            if (Field("_headers") is DataGridView httpHeaders)
+                httpHeaders.Rows.Add("X-Game", "wxd");
+            if (Field("_inputTabs") is TabControl httpInputTabs && httpInputTabs.TabPages.Count > 0)
+            {
+                string? itab = Environment.GetEnvironmentVariable("THEMELAB_HTTP_ITAB");
+                httpInputTabs.SelectedIndex = itab != null
+                    ? Math.Clamp(int.Parse(itab), 0, httpInputTabs.TabPages.Count - 1)
+                    : 0;
+            }
             break;
     }
 }
@@ -1135,6 +1255,11 @@ static void RunToolboxActions(TabControl tabs, int tab, string logPath)
     object? Field(string name) =>
         type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(panel);
     string? EditorText(string name) => (Field(name) as TextBox)?.Text;
+    TextBox? FieldEdit(string name)
+    {
+        var holder = Field(name);
+        return holder?.GetType().GetProperty("Edit")?.GetValue(holder, null) as TextBox;
+    }
     bool Click(string text)
     {
         foreach (var c in Walk(panel))
@@ -1162,15 +1287,489 @@ static void RunToolboxActions(TabControl tabs, int tab, string logPath)
             Click(action);
             result = EditorText("_editor");
             break;
+        case 2:
+        {
+            action = "填入当前 + 分栏转换";
+            Click("填入当前");
+            var convertButtons = Walk(panel).OfType<Button>().Where(b => b.Text == "转换").ToList();
+            if (convertButtons.Count >= 4)
+            {
+                foreach (var button in convertButtons)
+                    button.PerformClick();
+            }
+            result = "buttons=" + convertButtons.Count
+                + "\n秒结果=" + FieldEdit("_secResult")?.Text
+                + "\n毫秒结果=" + FieldEdit("_msResult")?.Text
+                + "\n纳秒结果=" + FieldEdit("_nsResult")?.Text
+                + "\n时间结果=" + FieldEdit("_dateResult")?.Text
+                + "\n报告=" + EditorText("_output");
+            break;
+        }
         case 3:
             action = "Base64 编码";
             Click(action);
-            result = EditorText("_output");
+            string b64 = EditorText("_output") ?? "";
+            Click("MD5");
+            string md5 = EditorText("_output") ?? "";
+            string inputBefore = EditorText("_input") ?? "";
+            Click("⇄");
+            string inputAfter = EditorText("_input") ?? "";
+            string outputAfter = EditorText("_output") ?? "";
+            result = "base64=" + b64 + "\nmd5=" + md5
+                + "\nswap_ok=" + (inputAfter == md5 && outputAfter == inputBefore)
+                + "\ninput_after=" + inputAfter;
             break;
         case 4:
-            action = "(live)";
-            result = EditorText("_output");
+            // DROPDOWN=1：点开键单元格的下拉候选并保持住，供截屏验证（不联网、不写保存文件）
+            // DROPDOWN=2：只 BeginEdit 不手动下拉，等 2 秒后读 DroppedDown——验证进编辑自动展开有没有生效
+            if (Environment.GetEnvironmentVariable("THEMELAB_HTTP_DROPDOWN") is "1" or "2")
+            {
+                action = "(dropdown)";
+                if (Field("_headers") is DataGridView dropGrid && dropGrid.Rows.Count > 0)
+                {
+                    // DROPDOWN=2/3 模拟用户路径：2 = 空的新行键单元格（用户截图的场景），3 = 已有值的首行
+                    int probeRow = Environment.GetEnvironmentVariable("THEMELAB_HTTP_DROPDOWN") == "3"
+                        ? 0
+                        : dropGrid.Rows.GetLastRow(DataGridViewElementStates.Visible);
+                    dropGrid.CurrentCell = dropGrid.Rows[probeRow].Cells[0];
+                    bool began = dropGrid.BeginEdit(false);
+                    Application.DoEvents();
+                    if (dropGrid.EditingControl is ComboBox dropCombo)
+                    {
+                        if (Environment.GetEnvironmentVariable("THEMELAB_HTTP_DROPDOWN") == "1")
+                        {
+                            dropCombo.DroppedDown = true;
+                            Application.DoEvents();
+                        }
+                        else
+                        {
+                            for (int i = 0; i < 20 && !dropCombo.DroppedDown; i++)
+                            {
+                                Thread.Sleep(100);
+                                Application.DoEvents();
+                            }
+                        }
+                        result = "dropdown_opened=" + (dropCombo.DroppedDown ? 1 : 0)
+                            + " items=" + dropCombo.Items.Count
+                            + " focused=" + dropCombo.Focused
+                            + " probeRow=" + probeRow
+                            + " text=" + dropCombo.Text;
+                    }
+                    else
+                    {
+                        result = "dropdown_opened=0"
+                            + " began=" + began
+                            + " probeRow=" + probeRow
+                            + " rows=" + dropGrid.Rows.Count
+                            + " ctl=" + (dropGrid.EditingControl?.GetType().Name ?? "null")
+                            + " cellType=" + dropGrid.Rows[probeRow].Cells[0].GetType().Name;
+                    }
+                }
+                else
+                {
+                    result = "dropdown_opened=0";
+                }
+                break;
+            }
+            if (Environment.GetEnvironmentVariable("THEMELAB_HTTP_SEND") == "1")
+            {
+                action = "发送";
+                var statusLabel = (Label)type.GetField("Status", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(panel)!;
+                bool clickedSend = Click("发送");
+                string final = statusLabel.Text;
+                // 异步完成时状态会离开“请求中/压测中”；最多等 50 秒
+                for (int i = 0; i < 100 && (final.Contains("请求中") || final.Contains("压测中")); i++)
+                {
+                    Thread.Sleep(500);
+                    Application.DoEvents();
+                    final = statusLabel.Text;
+                }
+                result = "clickedSend=" + clickedSend + "\nstatus=" + final + "\nresp=" + EditorText("_respBody")
+                    + "\nreqBody=" + EditorText("_reqBody")
+                    + "\nreqLine=" + EditorText("_reqLine");
+                // 详情三页并进 _inputTabs：0 参数 / 1 请求头 / 2 响应 / 3 请求 / 4 响应头，TAB 偏移 +2
+                string? detailTab = Environment.GetEnvironmentVariable("THEMELAB_HTTP_TAB");
+                if (detailTab != null && Field("_inputTabs") is TabControl detail)
+                {
+                    detail.SelectedIndex = Math.Clamp(int.Parse(detailTab) + 2, 0, detail.TabPages.Count - 1);
+                    result += $"\ndetail_tab={detail.SelectedIndex}";
+                }
+                break;
+            }
+            action = "(no send)"; // HTTP 页不真发请求，避免 harness 依赖外网
+            string bodyType = "";
+            if (Field("_bodyType") is Array httpBodyType && httpBodyType.Length >= 4)
+            {
+                for (int i = 0; i < httpBodyType.Length; i++)
+                {
+                    var radio = httpBodyType.GetValue(i);
+                    if (radio != null && (bool)radio.GetType().GetProperty("Checked")!.GetValue(radio)!)
+                        bodyType = (string)radio.GetType().GetProperty("Text")!.GetValue(radio)!;
+                }
+            }
+            result = "method=" + (Field("_method") as ComboBox)?.Text
+                + " bodyType=" + bodyType
+                + " url=" + (FieldEdit("_url")?.Text ?? "")
+                + " count=" + (FieldEdit("_count")?.Text ?? "")
+                + " threads=" + (FieldEdit("_threads")?.Text ?? "");
+
+            // 保存→清空→选中自动加载 往返，验证已保存请求功能（不联网）
+            if (Field("_savedList") is ListBox savedList && Field("_saveName") is TextBox saveName
+                && FieldEdit("_url") is { } rtUrl
+                && Field("_params") is DataGridView rtParams
+                && Field("_headers") is DataGridView rtHeaders)
+            {
+                saveName.Text = "harness-往返";
+                bool saveClicked = Click("保存");
+                rtUrl.Text = "";
+                rtParams.Rows.Clear();
+                rtHeaders.Rows.Clear();
+                savedList.SelectedIndex = -1; // 保存后本来就停在 0，直接再设 0 不触发选中事件
+                savedList.SelectedIndex = 0;  // 选中即自动加载
+                int paramRows = rtParams.Rows.Cast<DataGridViewRow>().Count(r => !r.IsNewRow);
+                int headerRows = rtHeaders.Rows.Cast<DataGridViewRow>().Count(r => !r.IsNewRow);
+                bool keepSaved = Environment.GetEnvironmentVariable("THEMELAB_HTTP_KEEP") == "1";
+                bool deleteClicked = !keepSaved && Click("删除"); // 默认清理 harness 沙箱里的保存文件；KEEP=1 留着供截图
+                result += $"\nsave_clicked={saveClicked} load_url={rtUrl.Text} load_params={paramRows} "
+                    + $"load_headers={headerRows} delete_clicked={deleteClicked}";
+            }
             break;
+        case 5:
+        {
+            if (Environment.GetEnvironmentVariable("THEMELAB_CRON_ACTION") == "reference")
+            {
+                action = "语法参考";
+                result = "clicked=" + Click(action) + "\n" + EditorText("_output");
+                break;
+            }
+
+            action = "(builder drive)";
+            var split = Field("_split") as SplitContainer;
+            var builder = Field("_builder") as Control;
+            var border = Field("_border") as Control;
+            var output = Field("_output") as TextBox;
+            if (split == null || builder == null || output == null)
+            {
+                result = "split/builder/output missing";
+                break;
+            }
+
+            var bt = builder.GetType();
+            object? BField(string name) => bt.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(builder);
+            object? BCall(string name, params object?[] args) =>
+                bt.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(builder, args);
+            string Expr() => bt.GetProperty("Expression")?.GetValue(builder)?.ToString() ?? "?";
+            string DialectName() => bt.GetProperty("Dialect")?.GetValue(builder)?.ToString() ?? "?";
+            string InputText()
+            {
+                var holder = Field("_field");
+                return holder?.GetType().GetProperty("Edit")?.GetValue(holder, null) is TextBox edit ? edit.Text : "";
+            }
+            var options = BField("_options") as FlowLayoutPanel;
+            var fieldGrids = BField("_fieldGrids") as Dictionary<int, FlowLayoutPanel>;
+            List<Control> OptionFields() =>
+                options?.Controls.OfType<Control>().Where(c => c.GetType().Name == "ThemeField").ToList() ?? new();
+            TextBox? EditOf(Control field) => Walk(field).OfType<TextBox>().FirstOrDefault();
+            void SetOptionField(int index, string text)
+            {
+                var field = OptionFields().ElementAtOrDefault(index);
+                if (field != null) EditOf(field)!.Text = text;
+            }
+            void SetOptionCombo(int index, int selected)
+            {
+                var combos = options?.Controls.OfType<ComboBox>().ToList() ?? new();
+                if (index < combos.Count) combos[index].SelectedIndex = selected;
+            }
+            FlowLayoutPanel? ActiveGrid()
+            {
+                int active = (int)(BField("_activeField") ?? -1);
+                return fieldGrids != null && fieldGrids.TryGetValue(active, out var found) ? found : null;
+            }
+            void ClickGridValue(int value)
+            {
+                var grid = ActiveGrid();
+                if (grid == null) return;
+                foreach (CheckBox check in grid.Controls.OfType<CheckBox>())
+                {
+                    if (check.Tag is int v && v == value)
+                    {
+                        check.Checked = !check.Checked;
+                        return;
+                    }
+                }
+            }
+
+            if (Environment.GetEnvironmentVariable("THEMELAB_CRON_ACTION") == "tabstress")
+            {
+                var stressDialect = Field("_dialect") as ComboBox;
+                if (stressDialect == null)
+                {
+                    result = "dialect combo missing";
+                    break;
+                }
+                stressDialect.SelectedIndex = 2; // Spring：日/周不互斥，六个页签都能停在列表模式
+
+                var fields = (int[])(BCall("VisibleFields") ?? Array.Empty<int>());
+                var sets = BField("_selected") as System.Collections.Generic.HashSet<int>[];
+                if (sets == null)
+                {
+                    result = "selected sets missing";
+                    break;
+                }
+                foreach (var set in sets) set.Clear();
+
+                var picks = new Dictionary<int, int>
+                {
+                    [0] = 7, [1] = 13, [2] = 21, [3] = 17, [4] = 9, [5] = 3, [6] = 2033
+                };
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    BCall("OnTabClicked", i);
+                    BCall("SetMode", 3);
+                    ClickGridValue(picks[fields[i]]);
+                }
+
+                const int rounds = 240;
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                for (int n = 0; n < rounds; n++)
+                    BCall("OnTabClicked", n % fields.Length);
+                watch.Stop();
+
+                var flags = BindingFlags.Static | BindingFlags.NonPublic;
+                var valuesOf = bt.GetMethod("ValuesOf", flags)!;
+                var valueLabel = bt.GetMethod("ValueLabel", flags)!;
+                IEnumerable<int> ValuesOfField(int field) =>
+                    ((System.Collections.IEnumerable)valuesOf.Invoke(null, new object[] { field })!).Cast<int>();
+
+                var report = new List<string>
+                {
+                    $"tabstress rounds={rounds} totalMs={watch.ElapsedMilliseconds} avgMs={watch.Elapsed.TotalMilliseconds / rounds:F2}",
+                };
+                bool allOk = true;
+                foreach (int field in fields)
+                {
+                    BCall("OnTabClicked", Array.IndexOf(fields, field));
+                    var activeGrid = ActiveGrid();
+                    var visibleChecks = activeGrid!.Controls.OfType<CheckBox>().Where(c => c.Visible).ToList();
+                    var expectedValues = ValuesOfField(field).ToList();
+                    var expectedLabels = expectedValues
+                        .Select(v => (string)valueLabel.Invoke(null, new object[] { field, v })!).ToList();
+                    var actualLabels = visibleChecks.Select(c => c.Text).ToList();
+                    var actualChecked = visibleChecks
+                        .Where(c => c.Checked && c.Tag is int)
+                        .Select(c => (int)c.Tag!)
+                        .OrderBy(v => v)
+                        .ToList();
+                    bool labelsOk = visibleChecks.Count == expectedValues.Count
+                                    && actualLabels.SequenceEqual(expectedLabels);
+                    bool stateOk = actualChecked.SequenceEqual(new[] { picks[field] })
+                                   && sets[field].SetEquals(new[] { picks[field] });
+                    allOk &= labelsOk && stateOk;
+                    report.Add($"field={field} checks={visibleChecks.Count}/{expectedValues.Count} "
+                               + $"labels={labelsOk} state={stateOk}");
+                }
+
+                int expectedTotal = fields.Sum(f => ValuesOfField(f).Count());
+                int totalChecks = fieldGrids?.Values.Sum(g => g.Controls.OfType<CheckBox>().Count()) ?? -1;
+                bool gridsOk = fieldGrids != null && fieldGrids.Count == fields.Length && totalChecks == expectedTotal;
+                allOk &= gridsOk;
+                report.Add($"grids={fieldGrids?.Count ?? -1} checks={totalChecks}/{expectedTotal} stable={gridsOk}");
+
+                void Timed(string name, int count, Action act)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    for (int i = 0; i < count; i++) act();
+                    sw.Stop();
+                    report.Add($"{name} count={count} totalMs={sw.ElapsedMilliseconds} "
+                               + $"avgMs={sw.Elapsed.TotalMilliseconds / count:F2}");
+                }
+
+                var activeFieldInfo = bt.GetField("_activeField", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                BCall("OnTabClicked", 0);
+                Timed("refresh-mode", 100, () => BCall("RefreshModeRadios"));
+                Timed("refresh-options", 100, () => BCall("RefreshOptions"));
+                Timed("refresh-grid-same", 100, () => BCall("RefreshGrid"));
+                int alternate = 0;
+                int[] gridFieldCycle = { 0, 2, 3, 4, 5, 1 };
+                Timed("refresh-grid", 100, () =>
+                {
+                    activeFieldInfo.SetValue(builder, gridFieldCycle[alternate++ % gridFieldCycle.Length]);
+                    BCall("RefreshGrid");
+                });
+                Timed("scroll-reset", 1000, () => ActiveGrid()!.AutoScrollPosition = Point.Empty);
+
+                activeFieldInfo.SetValue(builder, -1);
+                BCall("OnTabClicked", 1);
+                ClickGridValue(0);
+                ClickGridValue(1);
+                var minuteGrid = ActiveGrid()!;
+                var minuteChecks = minuteGrid.Controls.OfType<CheckBox>().Where(c => c.Visible && c.Checked)
+                    .Select(c => (int)c.Tag!).OrderBy(v => v).ToList();
+                report.Add($"final=minute checked={string.Join(",", minuteChecks)} expr={Expr()} allOk={allOk}");
+                result = string.Join("\n", report);
+                break;
+            }
+
+            if (Environment.GetEnvironmentVariable("THEMELAB_CRON_ACTION") == "selectall")
+            {
+                var names = new[] { "秒", "分", "时", "日", "月", "周", "年" };
+                var visibleFields = (int[])(BCall("VisibleFields") ?? Array.Empty<int>());
+                int dayIndex = Array.FindIndex(visibleFields, f => names[f] == "日");
+                BCall("OnTabClicked", dayIndex);
+                BCall("SetMode", 3);
+
+                bool clickedAll = Click("全选");
+                var dayChecks = ActiveGrid()?.Controls.OfType<CheckBox>().ToList() ?? new List<CheckBox>();
+                string allExpr = Expr();
+                bool allChecked = dayChecks.Count > 0 && dayChecks.All(c => c.Checked);
+                bool clickedNone = Click("取消全选");
+                string noneExpr = Expr();
+                bool noneChecked = dayChecks.Count > 0 && dayChecks.All(c => !c.Checked);
+
+                result = $"allClicked={clickedAll} checks={dayChecks.Count} allChecked={allChecked} expr={allExpr}\n"
+                       + $"noneClicked={clickedNone} noneChecked={noneChecked} expr={noneExpr}";
+                break;
+            }
+
+            if (Environment.GetEnvironmentVariable("THEMELAB_CRON_ACTION") == "quartzday")
+            {
+                var names = new[] { "秒", "分", "时", "日", "月", "周", "年" };
+                var vf = (int[])(BCall("VisibleFields") ?? Array.Empty<int>());
+                int domIdx = Array.FindIndex(vf, f => names[f] == "日");
+                int dowIdx = Array.FindIndex(vf, f => names[f] == "周");
+                var sets = BField("_selected") as System.Collections.Generic.HashSet<int>[];
+                string defaultExpr = Expr();
+
+                BCall("OnTabClicked", domIdx);
+                ClickGridValue(15);
+                string domExpr = Expr();
+                bool domBefore = sets![3].Contains(15);
+
+                BCall("OnTabClicked", dowIdx);
+                ClickGridValue(1);
+                bool domCleared = sets[3].Count == 0;
+                string dowExpr = Expr();
+                result = $"default={defaultExpr}\ndom={domExpr} domBefore={domBefore}\n"
+                       + $"dow={dowExpr} domCleared={domCleared}";
+                break;
+            }
+
+            if (Environment.GetEnvironmentVariable("THEMELAB_CRON_ACTION") == "example")
+            {
+                var exampleDialect = Field("_dialect") as ComboBox;
+                if (exampleDialect == null)
+                {
+                    result = "dialect combo missing";
+                    break;
+                }
+
+                var names = new[] { "秒", "分", "时", "日", "月", "周", "年" };
+                var report = new List<string>();
+                bool allOk = true;
+                foreach (int dialectIndex in new[] { 1, 0, 2 })
+                {
+                    exampleDialect.SelectedIndex = dialectIndex;
+                    string dialect = DialectName();
+                    string previous = "";
+                    var seen = new HashSet<string>();
+                    for (int i = 0; i < 6; i++)
+                    {
+                        bool clicked = Click("示例");
+                        string input = InputText();
+                        string expr = Expr();
+                        int active = (int)(BField("_activeField") ?? -1);
+                        string activeName = active >= 0 && active < names.Length ? names[active] : "?";
+                        var modes = (int[])BField("_modes")!;
+                        var selectedSets = BField("_selected") as System.Collections.Generic.HashSet<int>[];
+                        string state = string.Join(" ", Enumerable.Range(0, 7)
+                            .Select(f => $"{names[f]}:{modes[f]}{(selectedSets != null && modes[f] == 3 ? "[" + selectedSets[f].Count + "]" : "")}"));
+                        bool parseOk = output!.Text.Contains("接下来 10 次") && !output.Text.StartsWith("解析失败");
+                        bool synced = input.Trim() == expr && expr.Length > 0;
+                        bool changed = input != previous;
+                        allOk &= clicked && parseOk && synced && changed;
+                        seen.Add(expr);
+                        previous = input;
+                        report.Add($"dialect={dialect} clicked={clicked} synced={synced} parse={parseOk} changed={changed} "
+                                   + $"active={activeName} expr={expr} | {state}");
+                    }
+                    report.Add($"dialect={dialect} distinct={seen.Count}/6");
+                    allOk &= seen.Count >= 2;
+                }
+                report.Add("allOk=" + allOk);
+                result = string.Join("\n", report);
+                break;
+            }
+
+            var lines = new List<string>
+            {
+                $"dims split={split.Bounds} dist={split.SplitterDistance} p1={split.Panel1.Bounds} p2={split.Panel2.Bounds} "
+                + $"builder={builder.Bounds} border={border?.Bounds} output={output.Bounds} client={output.ClientSize} "
+                + $"pos0={output.GetPositionFromCharIndex(0)} len={output.TextLength} font={output.Font.Name}/{output.Font.SizeInPoints}"
+            };
+            void Step(string name) =>
+                lines.Add($"{name}: expr={Expr()} dialect={DialectName()} input={InputText()}");
+
+            Step("default");
+            BCall("OnTabClicked", 1);
+            BCall("SetMode", 1);
+            SetOptionField(0, "10");
+            SetOptionField(1, "20");
+            Step("minute-range");
+            BCall("SetMode", 2);
+            SetOptionField(0, "0");
+            SetOptionField(1, "5");
+            Step("minute-step");
+            BCall("OnTabClicked", 0);
+            BCall("SetMode", 3);
+            ClickGridValue(0);
+            ClickGridValue(10);
+            Step("second-grid");
+            BCall("OnTabClicked", 3);
+            BCall("SetMode", 4);
+            SetOptionCombo(0, 1);
+            SetOptionField(0, "2");
+            Step("dom-L2");
+            BCall("OnTabClicked", 5);
+            BCall("SetMode", 4);
+            SetOptionCombo(0, 4);
+            SetOptionCombo(1, 1);
+            SetOptionField(0, "3");
+            Step("dow-fri#3");
+            BCall("OnTabClicked", 3);
+            BCall("SetMode", 1);
+            SetOptionField(0, "15");
+            SetOptionField(1, "20");
+            Step("dom-range-auto-q");
+            BCall("OnTabClicked", 6);
+            BCall("SetMode", 1);
+            SetOptionField(0, "2027");
+            SetOptionField(1, "2030");
+            Step("year-range");
+
+            var dialectCombo = Field("_dialect") as ComboBox;
+            if (dialectCombo == null)
+            {
+                result = "dialect combo missing";
+                break;
+            }
+            dialectCombo.SelectedIndex = 0;
+            Step("switch-standard");
+            dialectCombo.SelectedIndex = 2;
+            Step("switch-spring");
+            BCall("OnTabClicked", 5);
+            BCall("SetMode", 4);
+            SetOptionCombo(0, 4);
+            SetOptionCombo(1, 1);
+            SetOptionField(0, "3");
+            Step("spring-dow#3");
+
+            string[] fieldNames = { "秒", "分", "时", "日", "月", "周", "年" };
+            var visible = (int[])(BCall("VisibleFields") ?? Array.Empty<int>());
+            lines.Add("tabs=" + string.Join("/", visible.Select(i => fieldNames[i])));
+            result = string.Join("\n", lines);
+            break;
+        }
     }
     File.AppendAllText(logPath, $"actions tab={tab} click={action}\n{result}\n----\n");
 }

@@ -24,10 +24,10 @@ public class WinMove {
   }
 }
 '@
-$h = [WinMove]::Find($TitleMatch)
-Write-Host ("hwnd=" + $h)
-if ($h -ne [IntPtr]::Zero) {
-  [void][WinMove]::MoveWindow($h, $X, $Y, $W, $H, $true)
+$hwnd = [WinMove]::Find($TitleMatch)
+Write-Host ("hwnd=" + $hwnd)
+if ($hwnd -ne [IntPtr]::Zero) {
+  [void][WinMove]::MoveWindow($hwnd, $X, $Y, $W, $H, $true)
   Start-Sleep -Seconds 2
   Write-Host "moved"
 }
