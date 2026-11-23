@@ -92,18 +92,23 @@ namespace wxd.files.winforms
         private const long SPLIT_LINES_PER_FILE = 500_000_000L;   // 每5亿行
         // ★ _idxCount 改为 long，行数也可能超 int.MaxValue（极端超短行场景）
         private long _idxCount;
-        private volatile int _idxProg;
+        // 已扫描字节数：并行/单线程两条路径都累加，状态栏按它显示真实扫描进度。
+        // 以前只有“整块完成”才跳一次进度，21GB 文件首块要读上百 MB，界面会长时间停在 0%。
+        private long _indexBytesDone;
+        // 工具条进度文字节流：百分比没变就不重排
+        private int _lastIndexPct = -1;
 
         // ★ 并行索引构建相关常量与字段
         // 文件按字节大小动态切块，每块约 100MB，最大 4 线程并行构建行索引
         private const long BLOCK_SIZE = 100L * 1024 * 1024;  // 每块目标大小：100MB
         private const int MAX_BLOCK_COUNT = 128;             // 块数上限
         private const int MAX_PARALLEL = 4;
+        // 反向找上一个换行符时的分片大小：正常日志一个 64KB 片就能命中，不必整段 64MB 读
+        private const int BACK_SEARCH_STEP = 64 * 1024;
         private int _blockCount;  // 动态块数，根据文件大小在 BuildIndex 中计算
         // 单块构建结果：块号 → BlockIndexResult
         private readonly ConcurrentDictionary<int, BlockIndexResult> _blockResults = new();
         private CancellationTokenSource? _indexCts;
-        private volatile int _completedBlocks;        // 已完成块数（原子计数）
         private long _partialMaxLine;                 // 已连续构建的最大行号（long）
         // ★ 横向滚动条：索引构建期间按字节长度跟踪的最长行（索引完成后一次性测量并设置滚动条，之后不再重算）
         private long _longestLineOffset = -1;         // 最长行起始字节偏移（-1 表示尚未发现）
@@ -119,12 +124,7 @@ namespace wxd.files.winforms
         /// <summary>单块索引构建结果</summary>
         private sealed class BlockIndexResult
         {
-            public int BlockId;
-            public long BlockStart;         // 块起始字节（已修正跨块边界）
-            public long BlockEnd;           // 块结束字节（不含）
             public List<long> LineStarts;   // 块内每行起始偏移（绝对偏移，long）
-            public bool EndsWithNewline;    // 块尾是否以LF换行符结尾
-            public long FirstLineStart;     // 块第一行真正起始偏移（已修正跨块）
             public long MaxLineLen;         // 块内最长行字节长度
             public long MaxLineOffset;      // 块内最长行起始偏移（-1 表示无）
         }
@@ -534,7 +534,7 @@ namespace wxd.files.winforms
 
             _filePath = path;
             _fileLength = new FileInfo(path).Length;
-            _cancel = false; _indexReady = false; _idxProg = 0; _idxCount = 0;
+            _cancel = false; _indexReady = false; _idxCount = 0; _indexBytesDone = 0; _lastIndexPct = -1;
             _longestLineOffset = -1; _longestLineBytes = 0;
             _lstContent.SetMaxLineWidth(0);
             _lstContent.SetTotalLines(0);
@@ -640,7 +640,8 @@ namespace wxd.files.winforms
 
                 var bounds = ComputeBlockBoundaries();
                 _blockResults.Clear();
-                _completedBlocks = 0;
+                _indexBytesDone = 0;
+                _lastIndexPct = -1;
                 _partialMaxLine = 0;
 
                 var options = new ParallelOptions
@@ -658,22 +659,46 @@ namespace wxd.files.winforms
                         if (result == null) return;
                         _blockResults[blockId] = result;
 
-                        // ★ 增量反馈：原子计数 + 从块0开始连续已完成时扩大 VirtualListSize
-                        int done = Interlocked.Increment(ref _completedBlocks);
-                        UpdatePartialIndex(done);
+                        // ★ 增量反馈：块完成后按“从块0连续已完成”的行数扩大 VirtualListSize
+                        UpdatePartialIndex();
                     });
                 }
                 catch (OperationCanceledException) { return; }
 
                 if (_cancel) return;
 
-                // 全部完成 → 顺序合并 64 块
+                // 全部完成 → 顺序合并
                 _lineOffsets = MergeBlockResults();
                 _idxCount = _lineOffsets.Length;
-                _idxProg = 100;
+                _indexBytesDone = _fileLength;
                 _indexReady = true;
             }
-            catch (Exception ex) { Debug.WriteLine($"Index: {ex}"); _indexReady = false; }
+            catch (Exception ex)
+            {
+                _blockResults.Clear();
+                ReportIndexFailure(ex);
+            }
+        }
+
+        /// <summary>索引失败不能只写调试输出：界面会永远停在“索引中”，用户只能重开页签碰运气。</summary>
+        private void ReportIndexFailure(Exception ex)
+        {
+            _indexReady = false;
+            Debug.WriteLine($"Index: {ex}");
+            string msg = ex.GetBaseException().Message;
+            try
+            {
+                if (IsHandleCreated)
+                {
+                    BeginInvoke(() =>
+                    {
+                        _lblFileLines.Text = "行数：索引失败";
+                        Status("行索引构建失败");
+                        AlertForm.Show(ParentForm, $"行索引构建失败：{msg}", "错误", AlertType.Error);
+                    });
+                }
+            }
+            catch { }
         }
 
         /// <summary>小文件快速路径：保留原单线程顺序扫描逻辑</summary>
@@ -704,7 +729,7 @@ namespace wxd.files.winforms
                         }
                     }
                     _idxCount = off.Count - 1;
-                    _idxProg = (int)(pos * 100 / _fileLength);
+                    Interlocked.Add(ref _indexBytesDone, n);
                 }
                 // 文件末尾无换行符的最后一行也要参与最长行统计
                 if (_fileLength > lineStart)
@@ -717,9 +742,10 @@ namespace wxd.files.winforms
                 if (off.Count > 1 && off[off.Count - 1] >= _fileLength) off.RemoveAt(off.Count - 1);
                 _lineOffsets = off.ToArray();
                 _idxCount = _lineOffsets.Length;
-                _idxProg = 100; _indexReady = true;
+                _indexBytesDone = _fileLength;
+                _indexReady = true;
             }
-            catch (Exception ex) { Debug.WriteLine($"Index: {ex}"); _indexReady = false; }
+            catch (Exception ex) { ReportIndexFailure(ex); }
         }
 
         /// <summary>计算 _blockCount 块的字节边界，按字节大小均匀分配（余数均匀分到前 N 块）</summary>
@@ -738,58 +764,98 @@ namespace wxd.files.winforms
             return bounds;
         }
 
-        /// <summary>从 position 往前回退查找上一个  的位置，返回该  之后的位置（即本块第一行真正起始）</summary>
-        private long FindPrevNewlineEnd(long position, FileStream fs)
-        {
-            // 回退最多 MAX_LINE 字节查找上一个换行符
-            long back = Math.Min(position, FULL_LINE_LIMIT);
-            long searchStart = position - back;
-            fs.Position = searchStart;
-            var buf = new byte[back];
-            int got = 0;
-            while (got < buf.Length)
-            {
-                int r = fs.Read(buf, got, buf.Length - got);
-                if (r <= 0) break;
-                got += r;
-            }
-            // 从后往前找最后一个 
+        /// <summary>从 position 往前回退查找上一个换行符，返回该换行符之后的位置（即本块第一行真正起始）</summary>
+        private long FindPrevNewlineEnd(long position, FileStream fs, out bool found)
+            => FindPrevNewlineEndCore(fs, position, FULL_LINE_LIMIT, BACK_SEARCH_STEP,
+                n => Interlocked.Add(ref _indexBytesDone, n), out found);
 
-            for (int i = got - 1; i >= 0; i--)
+        /// <summary>
+        /// 从 position 往前最多回退 maxBack 字节找上一个 LF，返回 LF 之后的位置。
+        /// 按 step 分片从后往前读：正常日志一片就命中；老实现每块都无条件读满 maxBack，
+        /// 21GB 文件 127 个块边界白读约 8GB。
+        /// </summary>
+        internal static long FindPrevNewlineEndCore(Stream fs, long position, int maxBack, int step,
+            Action<int>? onBytesRead, out bool found)
+        {
+            found = false;
+            long back = Math.Min(position, maxBack);
+            long searchStart = position - back;
+            var buf = new byte[step];
+            long chunkEnd = position;
+            while (chunkEnd > searchStart)
             {
-                if (buf[i] == GlobalConst.LfChar)
-                    return searchStart + i + 1;
+                long chunkStart = Math.Max(searchStart, chunkEnd - step);
+                int need = (int)(chunkEnd - chunkStart);
+                fs.Position = chunkStart;
+                int got = 0;
+                while (got < need) { int r = fs.Read(buf, got, need - got); if (r <= 0) break; got += r; }
+                if (got > 0) onBytesRead?.Invoke(got);
+                for (int i = got - 1; i >= 0; i--)
+                {
+                    if (buf[i] == GlobalConst.LfChar)
+                    {
+                        found = true;
+                        return chunkStart + i + 1;
+                    }
+                }
+                if (got < need) break;
+                chunkEnd = chunkStart;
             }
-            // 没找到换行符，使用 searchStart（块边界）
+            // 没找到换行符：说明这行比回退上限还长，从回退下限开始扫
             return searchStart;
         }
 
         /// <summary>单块索引构建（独立 FileStream，处理跨块边界）</summary>
         private BlockIndexResult? BuildBlockIndex(int blockId, long blockStart, long blockEnd, CancellationToken token)
         {
-            var lineStarts = new List<long>();
-            long firstLineStart;
-
             using var fs = new FileStream(_filePath!, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite, 65536, FileOptions.RandomAccess);
+                FileShare.ReadWrite, 65536, FileOptions.SequentialScan);
 
-            // 块0：第一行起始为 0
-            // 块N>0：回退找上一个 ，其 +1 为本块第一行真正起始（跨块边界行修正）
+            // 块0：第一行起始为 0；块N>0：回退找上一个 LF，其 +1 为本块第一行真正起始。
+            // 上一块的最后一个 LF 正好落在块尾时，其“下一行起始”等于块边界，上一块按 < blockEnd 判据
+            // 不会收录，所以本块要自己补一条，否则该行会从合并结果里消失。
+            long firstLineStart = 0;
+            bool addFirstLine = false;
             if (blockId > 0)
-                firstLineStart = FindPrevNewlineEnd(blockStart, fs);
-            else
-                firstLineStart = 0;
+                firstLineStart = FindPrevNewlineEnd(blockStart, fs, out addFirstLine);
+
+            var scan = ScanBlock(fs, firstLineStart, blockEnd, CHUNK, addFirstLine, token,
+                n => Interlocked.Add(ref _indexBytesDone, n));
+            if (scan == null) return null;
+            return new BlockIndexResult
+            {
+                LineStarts = scan.Value.LineStarts,
+                MaxLineLen = scan.Value.MaxLineLen,
+                MaxLineOffset = scan.Value.MaxLineOffset
+            };
+        }
+
+        internal struct BlockScanResult
+        {
+            public List<long> LineStarts;
+            public long MaxLineLen;
+            public long MaxLineOffset;
+        }
+
+        /// <summary>
+        /// 扫描 [firstLineStart, blockEnd) 内的换行符，收集行起始偏移与最长行。
+        /// addFirstLineStart：跨块补行（见 BuildBlockIndex 注释）。返回 null 表示已取消。
+        /// </summary>
+        internal static BlockScanResult? ScanBlock(Stream fs, long firstLineStart, long blockEnd, int chunkSize,
+            bool addFirstLineStart, CancellationToken token, Action<int>? onBytesRead = null)
+        {
+            var lineStarts = new List<long>();
+            if (addFirstLineStart) lineStarts.Add(firstLineStart);
 
             fs.Position = firstLineStart;
-            var buf = new byte[CHUNK];
+            var buf = new byte[chunkSize];
             long pos = firstLineStart;
-            bool endsWithNewline = false;
             long lineStart = firstLineStart;         // 当前行起始偏移
             long maxLen = 0, maxOff = -1;            // 块内最长行（按字节长度）
 
             while (pos < blockEnd)
             {
-                if (token.IsCancellationRequested || _cancel) return null;
+                if (token.IsCancellationRequested) return null;
                 int toRead = (int)Math.Min(buf.Length, blockEnd - pos);
                 int n = fs.Read(buf, 0, toRead);
                 if (n <= 0) break;
@@ -804,12 +870,11 @@ namespace wxd.files.winforms
                         if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
                         if (nextLineStart < blockEnd)
                             lineStarts.Add(nextLineStart);
-                        else
-                            endsWithNewline = true;
                         lineStart = nextLineStart;
                     }
                 }
                 pos += n;
+                onBytesRead?.Invoke(n);
             }
             // 块尾无换行符的部分行也参与统计（其完整长度会在下一块被完整统计，此处仅为兜底）
             if (pos > lineStart)
@@ -818,82 +883,77 @@ namespace wxd.files.winforms
                 if (lineLen > maxLen) { maxLen = lineLen; maxOff = lineStart; }
             }
 
-            return new BlockIndexResult
-            {
-                BlockId = blockId,
-                BlockStart = firstLineStart,
-                BlockEnd = blockEnd,
-                LineStarts = lineStarts,
-                EndsWithNewline = endsWithNewline,
-                FirstLineStart = firstLineStart,
-                MaxLineLen = maxLen,
-                MaxLineOffset = maxOff
-            };
+            return new BlockScanResult { LineStarts = lineStarts, MaxLineLen = maxLen, MaxLineOffset = maxOff };
         }
 
-        /// <summary>按 0→63 顺序合并块结果，去重跨块边界行</summary>
+        /// <summary>按 0→N-1 顺序合并块结果，去重跨块边界行</summary>
         private long[] MergeBlockResults()
         {
-            var merged = new List<long>(_lineOffsets?.Length ?? 65536) { 0 }; // 第一行起始为 0
-
-            for (int i = 0; i < _blockCount; i++)
-            {
-                if (!_blockResults.TryGetValue(i, out var br)) continue;
-                foreach (var off in br.LineStarts)
-                {
-                    // 去重：跨块边界行偏移可能与 merged 最后一项相同
-                    if (merged.Count == 0 || merged[merged.Count - 1] != off)
-                        merged.Add(off);
-                }
-            }
-
-            // 修正：如果最后一块尾部不是 LF，移除最后一个虚拟行偏移
-            if (merged.Count > 1 && merged[merged.Count - 1] >= _fileLength)
-                merged.RemoveAt(merged.Count - 1);
-
-            // ★ 汇总各块最长行，取全局最大（跨块首行完整落入其起始块统计，取 max 正确）
+            // 最长行汇总（跨块首行完整落入其起始块统计，取 max 正确）
             long maxLen = 0, maxOff = -1;
+            var perBlock = new List<long>?[_blockCount];
             for (int i = 0; i < _blockCount; i++)
             {
-                if (!_blockResults.TryGetValue(i, out var br)) continue;
+                if (!_blockResults.TryRemove(i, out var br)) continue;
+                perBlock[i] = br.LineStarts;
                 if (br.MaxLineLen > maxLen) { maxLen = br.MaxLineLen; maxOff = br.MaxLineOffset; }
             }
+            _blockResults.Clear();
             _longestLineOffset = maxOff;
             _longestLineBytes = maxLen;
 
-            return merged.ToArray();
+            return MergeBlockLineStarts(perBlock, _fileLength);
         }
 
-        /// <summary>计算从块0开始连续已完成的行数，用于增量 UI 反馈</summary>
+        /// <summary>
+        /// 把各块行起始按块顺序拼成一个严格递增的偏移表。
+        /// 先按精确总行数一次性分配：老实现用 List 从 64K 容量翻倍增长再 ToArray，
+        /// 21GB 级文件要多拷约 2GB、峰值多占一整份数组。
+        /// 相邻块的边界行可能被两块同时收录（上一块的 LF 在块尾、本块补了首行），靠 > 判据去重。
+        /// </summary>
+        internal static long[] MergeBlockLineStarts(IReadOnlyList<List<long>?> perBlock, long fileLength)
+        {
+            long count = 1; // 第一行起始为 0
+            for (int i = 0; i < perBlock.Count; i++)
+                if (perBlock[i] != null) count += perBlock[i]!.Count;
+
+            var merged = new long[count];
+            int w = 1; // merged[0] = 0
+            for (int i = 0; i < perBlock.Count; i++)
+            {
+                var starts = perBlock[i];
+                if (starts == null) continue;
+                foreach (var off in starts)
+                    if (off > merged[w - 1]) merged[w++] = off;
+            }
+
+            // 修正：文件末尾是 LF 时最后一条“行起始”等于文件长度，属虚拟行
+            if (w > 1 && merged[w - 1] >= fileLength) w--;
+            if (w < merged.Length) Array.Resize(ref merged, w);
+            return merged;
+        }
+
+        /// <summary>计算从块0开始连续已完成的行数，用于增量 UI 反馈（按块行数求和，不再逐行遍历）</summary>
         private long CountContinuousBuiltLines()
         {
             long total = 1; // 第 0 行起始为 0
-            long lastOffset = 0;
             for (int i = 0; i < _blockCount; i++)
             {
                 if (!_blockResults.TryGetValue(i, out var br)) break;
-                foreach (var off in br.LineStarts)
-                {
-                    if (off > lastOffset)
-                    {
-                        total++;
-                        lastOffset = off;
-                    }
-                }
+                total += br.LineStarts.Count;
             }
             return total;
         }
 
         /// <summary>增量更新部分索引：从块0开始连续完成时扩大 VirtualListSize，让用户可提前查看</summary>
-        private void UpdatePartialIndex(int doneBlocks)
+        private void UpdatePartialIndex()
         {
             long continuous = CountContinuousBuiltLines();
             if (continuous <= _partialMaxLine) return;
             _partialMaxLine = continuous;
             _idxCount = continuous;
-            _idxProg = doneBlocks * 100 / _blockCount;
 
-            // 回 UI 线程扩大 VirtualListSize
+            // 回 UI 线程扩大 VirtualListSize（行数/进度文案由 Tick 按已扫描字节统一刷新）
             try
             {
                 BeginInvoke(() =>
@@ -903,7 +963,7 @@ namespace wxd.files.winforms
                     if (newSize > _lstContent.TotalLines)
                     {
                         _lstContent.SetTotalLines(newSize);
-                        _lblFileLines.Text = $"行数：已构建 {continuous:N0} 行 ({doneBlocks}/{_blockCount}块 {_idxProg}%)";
+                        _lstContent.Invalidate();
                     }
                 });
             }
@@ -937,10 +997,18 @@ namespace wxd.files.winforms
                 _lstContent.Invalidate();
                 return;
             }
-            // ★ 索引构建过程中实时刷新底部状态栏的行数和缓存大小
-            // 部分索引可用时显示已构建行数 + 块进度（UpdatePartialIndex 会单独更新文案）
-            if (_partialMaxLine == 0)
-                _lblFileLines.Text = $"行数：{_idxCount:N0} ({_idxProg}%)";
+            // ★ 索引构建中：按已扫描字节显示真实进度。
+            // 以前整块完成才跳一次进度，21GB 文件首块要读上百 MB，界面长时间停在 0%，看起来像卡死。
+            int pct = _fileLength <= 0 ? 0 : (int)Math.Min(99, _indexBytesDone * 100 / _fileLength);
+            string scanned = $"{FormatSize(_indexBytesDone)} / {FormatSize(_fileLength)}";
+            _lblFileLines.Text = _partialMaxLine > 0
+                ? $"行数：已构建 {_partialMaxLine:N0} 行（扫描 {pct}%）"
+                : $"行数：索引中 {pct}%（{scanned}）";
+            if (pct != _lastIndexPct)
+            {
+                _lastIndexPct = pct;
+                Status($"正在构建索引 {pct}%（{scanned}）");
+            }
             RefreshCacheSizeStatus();
         }
 
@@ -3674,7 +3742,8 @@ namespace wxd.files.winforms
             // ★ 提前置 null，防止 OnCache/OnRetrieve 在清理过程中访问已释放的资源
             _indexReady = false;
             _partialMaxLine = 0;
-            _completedBlocks = 0;
+            _indexBytesDone = 0;
+            _lastIndexPct = -1;
             _filePath = null;
             _lineOffsets = null;
             _blockResults.Clear();

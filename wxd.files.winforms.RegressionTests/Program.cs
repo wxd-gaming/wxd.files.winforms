@@ -126,6 +126,9 @@ namespace wxd.files.winforms.RegressionTests
 
             RunFeatureTests();
 
+            // 日志分析行索引（跨块边界 / 反向查找 / 合并）
+            RunLargeFileIndexTests();
+
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
             return _failed == 0 ? 0 : 1;

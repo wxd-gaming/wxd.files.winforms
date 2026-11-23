@@ -5,6 +5,7 @@ wxd.files.winforms/Properties/PublishProfiles/FolderProfile.pubxml.user
 wxd.files.winforms/Properties/PublishProfiles
 wxd.files.winforms.dll.config
 publish
+dist/
 md5.txt
 wxd.files.winforms.exe
 md5.txt
