@@ -1000,14 +1000,19 @@ namespace wxd.files.winforms
             }
 
             // 背景：选中/非选中
-            var backColor = (e.State & TreeNodeStates.Selected) != 0
+            bool selected = (e.State & TreeNodeStates.Selected) != 0;
+            var backColor = selected
                 ? _colorSelectedBg
                 : _treeFiles.BackColor;
 
             // 获取 VCS 状态对应的颜色
             var status = VcsStatusCache.GetFileStatus(fullPath);
-            // Normal 的状态色是写死的黑色，深色底上等于隐形，这里回落到主题正文色
-            var textColor = status == FileVcsStatus.Normal ? Theme.P.Text : VcsStatusCache.GetStatusColor(status);
+            // Normal 的状态色是写死的黑色，深色底上等于隐形，这里回落到主题正文色；
+            // 选中时状态色（如已删除的浅灰）压在淡彩选中底上同样看不清，统一改回选中文字色，
+            // 状态提示还有行首图标和文字前缀，不必靠颜色硬撑
+            var textColor = selected
+                ? Theme.P.SelectionText
+                : status == FileVcsStatus.Normal ? Theme.P.Text : VcsStatusCache.GetStatusColor(status);
 
             // 绘制背景：选中时整行高亮，右侧留出大小列后仍然铺满
             int rowRight = _treeFiles.ClientSize.Width;
@@ -1020,7 +1025,7 @@ namespace wxd.files.winforms
             {
                 glyphLeft = Math.Max(2, e.Bounds.Left - TreeGlyphOffset);
                 int gy = e.Bounds.Top + (e.Bounds.Height - 8) / 2;
-                using var glyphBrush = new SolidBrush(Theme.P.Muted);
+                using var glyphBrush = new SolidBrush(selected ? Theme.P.SelectionText : Theme.P.Muted);
                 Point[] arrow = e.Node.IsExpanded
                     ? new[] { new Point(glyphLeft, gy), new Point(glyphLeft + 8, gy), new Point(glyphLeft + 4, gy + 7) }
                     : new[] { new Point(glyphLeft, gy), new Point(glyphLeft, gy + 8), new Point(glyphLeft + 7, gy + 4) };
@@ -1061,7 +1066,7 @@ namespace wxd.files.winforms
             {
                 var sizeRect = new Rectangle(rowRight - SizeColumnWidth - 6, e.Bounds.Top, SizeColumnWidth, e.Bounds.Height);
                 TextRenderer.DrawText(e.Graphics, FileBrowserPanel.FormatFileSize(sizeBytes), _treeFiles.Font, sizeRect,
-                    Theme.P.Muted, backColor,
+                    selected ? Theme.P.SelectionText : Theme.P.Muted, backColor,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
                     TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
             }
@@ -2270,7 +2275,7 @@ namespace wxd.files.winforms
 
                     // 绘制文本
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Color.White : Theme.P.Text;
+                    Color textColor = isSelected ? Theme.P.AccentText : Theme.P.SelectionText;
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 

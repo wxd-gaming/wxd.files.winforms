@@ -28,7 +28,7 @@ namespace wxd.files.winforms
         private int _rowPad = 6;
         private const int LeftMargin = 4;
         private Color _selectionBack = Theme.P.Selection;
-        private Color _selectionText = Theme.P.AccentText;
+        private Color _selectionText = Theme.P.SelectionText;
 
         // ==================== 滚动条 ====================
         private readonly VScrollBar _vScroll;
@@ -89,7 +89,7 @@ namespace wxd.files.winforms
             BackColor = p.Surface;
             ForeColor = p.Text;
             _selectionBack = p.Selection;
-            _selectionText = p.AccentText;
+            _selectionText = p.SelectionText;
             // 行高随皮肤变了，可视行数跟着变：不重夹的话底部会画空白行、滚动条范围也对不上
             ClampVPos();
             UpdateVScroll();

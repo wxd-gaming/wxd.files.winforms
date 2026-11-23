@@ -137,8 +137,9 @@ namespace wxd.files.winforms
             BackColor = bg;
             _lblTitle.BackColor = bg;
             _lblTime.BackColor = bg;
-            _lblTitle.ForeColor = p.Text;
-            _lblTime.ForeColor = p.Muted;
+            _lblTitle.ForeColor = _isSelected ? p.SelectionText : p.Text;
+            // 次级时间也用选中文字色：Muted 压在淡彩选中底上只有 3.1~3.6:1，选中时先保可读
+            _lblTime.ForeColor = _isSelected ? p.SelectionText : p.Muted;
         }
     }
 }

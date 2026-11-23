@@ -129,6 +129,9 @@ namespace wxd.files.winforms.RegressionTests
             // 日志分析行索引（跨块边界 / 反向查找 / 合并）
             RunLargeFileIndexTests();
 
+            // 主题选中行可读性（16 套配色对比度 + 日志列表取色）
+            RunThemeContrastTests();
+
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed}  失败 {_failed}  跳过 {_skipped}");
             return _failed == 0 ? 0 : 1;

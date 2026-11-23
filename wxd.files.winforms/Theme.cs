@@ -20,6 +20,13 @@ namespace wxd.files.winforms
         public required Color AccentText;
         public required Color Selection;
         public required Color Hover;
+
+        /// <summary>
+        /// 选中行/选中块的文字色。不能直接用 Text：Solarized 的正文偏灰，压在同一皮肤的选中底上
+        /// 只有 3.3~3.9:1；更不能沿用 AccentText（给饱和 Accent 底配的白字，落在浅色皮肤的淡彩
+        /// 选中底上几乎看不见，日志行、树节点都踩过）。所以深色选中底配白字、浅色选中底用加深的正文色。
+        /// </summary>
+        public Color SelectionText => Theme.IsDark(Selection) ? Color.White : Theme.Mix(Text, Color.Black, 0.2f);
         public required Color Zebra;
         public required Color GridLine;
         public required Color RowHead;

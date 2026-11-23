@@ -829,7 +829,7 @@ namespace wxd.files.winforms
                     }
 
                     var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 32, tabRect.Height - 8);
-                    Color textColor = isSelected ? Theme.P.AccentText : Theme.P.Text;
+                    Color textColor = isSelected ? Theme.P.AccentText : Theme.P.SelectionText;
                     TextRenderer.DrawText(e.Graphics, tabPage.Text, _tabContent.Font, textRect, textColor,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 

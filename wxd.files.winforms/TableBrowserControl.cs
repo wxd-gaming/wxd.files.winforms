@@ -1285,7 +1285,7 @@ namespace wxd.files.winforms
             {
                 BackColor = p.ZebraOn ? p.Zebra : p.Surface,
                 SelectionBackColor = p.Selection,
-                SelectionForeColor = p.Text
+                SelectionForeColor = p.SelectionText
             };
 
             dgv.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
@@ -1306,7 +1306,7 @@ namespace wxd.files.winforms
                 Font = Theme.Body,
                 // 冻结网格只是主表的镜像，选中态由主表表达，这里不再叠一层高亮
                 SelectionBackColor = frozenHeader ? cellBack : p.Selection,
-                SelectionForeColor = p.Text,
+                SelectionForeColor = p.SelectionText,
                 Padding = new Padding(p.CellPadX, 0, p.CellPadX, 0)
             };
         }
@@ -4492,8 +4492,9 @@ namespace wxd.files.winforms
                 if (_headerFilterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
                 {
                     e.CellStyle.Font = BoldCellStyleFont(e.CellStyle.Font ?? _dataGridHeader.Font);
-                    e.CellStyle.ForeColor = Color.Red;
-                    e.CellStyle.SelectionForeColor = Color.Red;
+                    // 纯红在深色皮肤的选中底上只有 ~2.9:1；Signal 在深色模式会提亮，两种底色都可读
+                    e.CellStyle.ForeColor = Theme.Signal(Color.Red);
+                    e.CellStyle.SelectionForeColor = Theme.Signal(Color.Red);
                 }
             }
         }
@@ -4511,7 +4512,7 @@ namespace wxd.files.winforms
                 {
                     e.CellStyle.BackColor = Theme.P.Selection;
                     e.CellStyle.SelectionBackColor = Theme.Mix(Theme.P.Selection, Theme.P.Text, 0.08f);
-                    e.CellStyle.SelectionForeColor = Theme.P.Text;
+                    e.CellStyle.SelectionForeColor = Theme.P.SelectionText;
                 }
 
                 // ==================== 行编辑模式：编辑行浅黄色背景 + 修改的单元格红色背景 ====================
@@ -4574,8 +4575,8 @@ namespace wxd.files.winforms
                 if (_filterMatchCells.TryGetValue(e.RowIndex, out var matchCols) && matchCols.Contains(e.ColumnIndex))
                 {
                     e.CellStyle.Font = BoldCellStyleFont(e.CellStyle.Font ?? _dataGrid.Font);
-                    e.CellStyle.ForeColor = Color.Red;
-                    e.CellStyle.SelectionForeColor = Color.Red;
+                    e.CellStyle.ForeColor = Theme.Signal(Color.Red);
+                    e.CellStyle.SelectionForeColor = Theme.Signal(Color.Red);
                 }
             }
             // 转发给外部事件处理器（如版本对比的差异高亮）

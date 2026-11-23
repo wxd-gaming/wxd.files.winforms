@@ -402,7 +402,9 @@ namespace wxd.files.winforms
 
             if (Checked)
             {
-                using var mark = new Pen(Theme.IsDark(fill) ? Color.White : p.AccentText, 1.8f);
+                // 勾号对的是 Accent 底色而非选中底色：AccentText 在浅色皮肤里仍是白字，
+                // 亮底（浅肤的 Accent 混色、禁用态）上会消失，亮底改配正文色
+                using var mark = new Pen(Theme.IsDark(fill) ? Color.White : p.Text, 1.8f);
                 g.DrawLines(mark, new[]
                 {
                     new PointF(3.2f, top + box / 2f),
@@ -465,7 +467,7 @@ namespace wxd.files.winforms
             if (Checked)
             {
                 var dot = new RectangleF(rect.X + 3.5f, rect.Y + 3.5f, rect.Width - 7f, rect.Height - 7f);
-                using var br = new SolidBrush(Theme.IsDark(fill) ? Color.White : p.AccentText);
+                using var br = new SolidBrush(Theme.IsDark(fill) ? Color.White : p.Text);
                 g.FillEllipse(br, dot);
             }
 
@@ -728,7 +730,8 @@ namespace wxd.files.winforms
                 for (int i = 0; i < _items.Length; i++)
                 {
                     var seg = SegmentBounds(i, body);
-                    var fore = i == _activeIndex ? p.Accent : i == _hoverIndex ? p.Text : p.Muted;
+                    // 激活段底是淡彩 Selection：Accent 压在上面浅色皮肤只有 2.7~4.3:1，看不清，改用正文色
+                    var fore = i == _activeIndex ? p.SelectionText : i == _hoverIndex ? p.Text : p.Muted;
                     TextRenderer.DrawText(g, _items[i], Font, seg, fore,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                       | TextFormatFlags.NoPrefix);
@@ -1257,14 +1260,14 @@ namespace wxd.files.winforms
                 ForeColor = p.Text,
                 Font = Theme.Body,
                 SelectionBackColor = p.Selection,
-                SelectionForeColor = p.Text,
+                SelectionForeColor = p.SelectionText,
                 Padding = new Padding(4, 0, 4, 0)
             };
             dgv.AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
             {
                 BackColor = p.Zebra,
                 SelectionBackColor = p.Selection,
-                SelectionForeColor = p.Text
+                SelectionForeColor = p.SelectionText
             };
             dgv.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
             {

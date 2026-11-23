@@ -139,7 +139,7 @@ namespace wxd.files.winforms
             }
 
             var textRect = new Rectangle(tabRect.X + 8, tabRect.Y + 2, tabRect.Width - 16, tabRect.Height - 4);
-            var textColor = selected ? Theme.P.AccentText : Theme.P.Text;
+            var textColor = selected ? Theme.P.AccentText : Theme.P.SelectionText;
             TextRenderer.DrawText(g, page.Text, selected ? Theme.BodyBold : Theme.Body, textRect, textColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }

@@ -366,7 +366,7 @@ namespace wxd.files.winforms
             }
 
             var textRect = new Rectangle(tabRect.X + 10, tabRect.Y + 4, tabRect.Width - 20, tabRect.Height - 8);
-            Color textColor = isSelected ? Theme.P.AccentText : Theme.P.Text;
+            Color textColor = isSelected ? Theme.P.AccentText : Theme.P.SelectionText;
             TextRenderer.DrawText(e.Graphics, tabPage.Text, tabs.Font, textRect, textColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         }
@@ -470,7 +470,7 @@ namespace wxd.files.winforms
             using (var brush = new SolidBrush(selected ? Theme.P.Selection : _savedList.BackColor))
                 e.Graphics.FillRectangle(brush, e.Bounds);
             TextRenderer.DrawText(e.Graphics, Convert.ToString(_savedList.Items[e.Index]), e.Font, e.Bounds,
-                Theme.P.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                selected ? Theme.P.SelectionText : Theme.P.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }
 
         private int BodyTypeIndex()
@@ -724,6 +724,7 @@ namespace wxd.files.winforms
             {
                 BackColor = Theme.P.Header,
                 SelectionBackColor = Theme.P.Selection,
+                SelectionForeColor = Theme.P.SelectionText,
                 Font = Theme.Caption,
                 Alignment = DataGridViewContentAlignment.MiddleCenter
             };
